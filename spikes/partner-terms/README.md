@@ -14,6 +14,9 @@
 
 ## FreePBX access (freepbx.chinasky.org)
 
+Step-by-step guide for the PBX side, with the rights table and troubleshooting:
+https://claude.ai/artifact/Fs93chULAW47LsLYx9Ejq8
+
 The probe is in the repository: `backend/src/pos/phones/ami.py` logs in with a challenge-response, lists the
 PBX (version, queues, endpoints, live channels), tails incoming calls with the location detected from the
 dialed number, pauses and unpauses an agent in the queues, and originates a call. Those are the three
