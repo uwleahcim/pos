@@ -29,4 +29,5 @@ uv venv .venv && uv pip install -e '.[dev]'
 .venv/bin/uvicorn pos.api.app:app --reload
 ```
 
-The first spike, the order operation log with hybrid logical clocks, lives in `backend/src/pos/sync/`.
+The first spike, the order operation log with hybrid logical clocks, lives in `backend/src/pos/sync/`; the second,
+the menu engine built from the specification, in `backend/src/pos/menu/`. Both pass in software; see `spikes/`.
