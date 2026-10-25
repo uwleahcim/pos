@@ -25,3 +25,20 @@ jobs:
         run: .venv/bin/pytest
       - name: Sync simulation (pulled cables)
         run: .venv/bin/python -m pos.sync.simulate --replicas 4 --rounds 400 --drop 0.4 --dup 0.2 --seed 7
+
+  hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Lint the hub scripts
+        run: shellcheck infra/hub/bootstrap.sh infra/hub/hubctl
+      - name: Validate the compose file
+        run: POSTGRES_PASSWORD=x docker compose -f infra/hub/docker-compose.yml config -q
+      - name: Build the backend image
+        run: docker build -t pos-backend:ci backend
+      - name: Smoke test the image
+        run: |
+          docker run -d --name api -p 8000:8000 pos-backend:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health
+          docker logs api

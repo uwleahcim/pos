@@ -15,7 +15,7 @@ merges after any disconnect.
 backend/   Python backend: menu engine, orders and sync, taxes, payments, APIs (FastAPI)
 apps/      Flutter apps: POS, kitchen, admin portal (screens only, no business rules)
 spikes/    Phase 0 spikes: one folder per question, each with its pass criteria and result
-infra/     Hub image, cloud deployment, CI (arrives in phase 1)
+infra/     Hub install for the mini PCs (infra/hub); hub image and cloud deployment later
 docs/      Architecture, spec, decisions, plans
 ```
 

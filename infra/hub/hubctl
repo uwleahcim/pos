@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# hubctl: everyday commands for a POS hub.
+#   hubctl status | logs [service] | update | restart | psql | backup
+set -euo pipefail
+POS_HOME=/opt/pos
+
+compose() {
+  docker compose --project-directory "$POS_HOME" -f "$POS_HOME/src/infra/hub/docker-compose.yml" "$@"
+}
+
+case "${1:-status}" in
+  status)
+    echo "hub: $(hostname)   ip: $(hostname -I | awk '{print $1}')   up: $(uptime -p)"
+    compose ps
+    printf 'api:  '
+    curl -fsS http://127.0.0.1:8000/health || printf 'down'
+    echo
+    printf 'time: '
+    chronyc tracking 2> /dev/null | awk -F': *' '/^(Stratum|System time)/ {printf "%s %s; ", $1, $2}'
+    echo
+    echo "disk: $(df -h / | awk 'NR == 2 {print $4 " free of " $2}')"
+    if command -v sensors > /dev/null; then sensors 2> /dev/null | grep -iE 'package|core 0|temp1' | head -2; fi
+    ;;
+  logs)
+    shift
+    compose logs -f --tail=200 "$@"
+    ;;
+  update)
+    git -C "$POS_HOME/src" pull --ff-only
+    compose build
+    compose up -d --remove-orphans
+    compose ps
+    ;;
+  restart) compose restart ;;
+  psql) compose exec db psql -U pos -d pos ;;
+  backup)
+    mkdir -p /var/backups/pos
+    file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
+    compose exec -T db pg_dump -U pos pos | gzip > "$file"
+    echo "$file"
+    ;;
+  *)
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup" >&2
+    exit 2
+    ;;
+esac
