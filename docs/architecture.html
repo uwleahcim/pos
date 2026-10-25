@@ -1,0 +1,727 @@
+<title>Restaurant POS Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: technical design doc. Sticky contents rail on wide screens, one reading column, wide figures scroll in place. */
+:root {
+  --bg: #f6f8f7;
+  --surface: #ffffff;
+  --ink: #15211d;
+  --muted: #56645f;
+  --line: #d6dfdb;
+  --jade: #0d7356;
+  --jade-soft: #e1f1eb;
+  --amber: #9a5b00;
+  --amber-soft: #fbf0dc;
+  --red: #a8322b;
+  --code-bg: #eef3f1;
+  --loc: #2f4fb5;
+  --loc-soft: #e4e9fa;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1614; --surface: #16201d; --ink: #e3ece8; --muted: #9aaba4; --line: #2a3833;
+    --jade: #4cc89f; --jade-soft: #173229; --amber: #e8b45a; --amber-soft: #33270f; --red: #f0837a; --code-bg: #1b2724; --loc: #93a9f5; --loc-soft: #1c2546;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1614; --surface: #16201d; --ink: #e3ece8; --muted: #9aaba4; --line: #2a3833;
+  --jade: #4cc89f; --jade-soft: #173229; --amber: #e8b45a; --amber-soft: #33270f; --red: #f0837a; --code-bg: #1b2724; --loc: #93a9f5; --loc-soft: #1c2546;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1fr; gap: 48px; }
+@media (min-width: 1040px) { .wrap { grid-template-columns: 210px minmax(0, 1fr); } }
+nav.toc { display: none; }
+@media (min-width: 1040px) {
+  nav.toc { display: block; position: sticky; top: calc(24px + env(safe-area-inset-top, 0px)); align-self: start; font-size: 14px; }
+}
+nav.toc p { font-family: var(--f-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+nav.toc a { color: var(--muted); text-decoration: none; display: block; padding: 3px 0 3px 10px; border-left: 2px solid var(--line); }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); border-left-color: var(--jade); outline: none; }
+main { min-width: 0; max-width: 820px; }
+header.doc { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--jade); margin: 0; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(34px, 5vw, 50px); line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { font-size: 19px; color: var(--muted); margin: 0; max-width: 62ch; }
+.meta { font-family: var(--f-mono); font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+section { padding-top: 44px; }
+h2 { font-family: var(--f-display); font-weight: 700; font-size: 28px; line-height: 1.15; margin: 0 0 14px; text-wrap: balance; }
+h2 .n { font-family: var(--f-mono); font-size: 14px; color: var(--jade); font-weight: 600; margin-right: 10px; vertical-align: 4px; }
+h3 { font-family: var(--f-display); font-weight: 500; font-size: 20px; margin: 28px 0 8px; }
+p, li { max-width: 68ch; }
+p { margin: 0 0 14px; }
+ul, ol { padding-left: 22px; margin: 0 0 16px; }
+li { margin-bottom: 6px; }
+strong { font-weight: 700; }
+code { font-family: var(--f-mono); font-size: .86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--jade); }
+.zh { font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Source Han Sans SC", sans-serif; }
+
+.decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 24px 0 0; }
+.decision { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: grid; gap: 4px; align-content: start; }
+.decision .k { font-family: var(--f-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.decision .v { font-weight: 700; font-size: 17px; line-height: 1.3; }
+.decision .why { font-size: 14.5px; color: var(--muted); line-height: 1.45; }
+
+
+.scroll { overflow-x: auto; margin: 18px 0 22px; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; line-height: 1.45; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--f-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--surface); }
+td:first-child { font-weight: 600; }
+table.wide { min-width: 720px; }
+table.matrix td:not(:first-child), table.matrix th:not(:first-child) { text-align: center; }
+.y { color: var(--jade); font-weight: 700; }
+.ap { color: var(--amber); font-size: 13px; font-weight: 600; }
+.no { color: var(--muted); }
+.pick { display: inline-block; font-family: var(--f-mono); font-size: 11px; background: var(--jade-soft); color: var(--jade); padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; font-weight: 600; }
+
+figure { margin: 22px 0 26px; }
+figure .scroll { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; }
+svg.diagram { display: block; min-width: 860px; width: 100%; height: auto; font-family: var(--f-body); }
+svg .zone { fill: none; stroke: var(--line); stroke-width: 1.5; }
+svg .zone-label { fill: var(--muted); font-family: var(--f-mono); font-size: 12px; letter-spacing: .1em; }
+svg .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .box.hub { fill: var(--jade-soft); stroke: var(--jade); }
+svg .box.standby { fill: var(--bg); stroke: var(--jade); stroke-dasharray: 5 4; }
+svg .t { fill: var(--ink); font-size: 13.5px; font-weight: 700; }
+svg .s { fill: var(--muted); font-size: 11.5px; }
+svg .wire { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+svg .wire.fallback { stroke: var(--amber); stroke-dasharray: 6 5; }
+svg .wl { fill: var(--ink); font-family: var(--f-mono); font-size: 11px; }
+svg .wl.fb { fill: var(--amber); }
+svg .arrowhead { fill: var(--ink); }
+svg .arrowhead.fb { fill: var(--amber); }
+
+.entities { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0; }
+.entity { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.entity h4 { margin: 0 0 8px; font-family: var(--f-mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--jade); }
+.entity ul { list-style: none; padding: 0; margin: 0; font-size: 14.5px; line-height: 1.5; }
+.entity li { margin: 0 0 5px; }
+.entity li b { font-family: var(--f-mono); font-size: 13px; font-weight: 600; }
+.entity li span { color: var(--muted); }
+
+pre { font-family: var(--f-mono); font-size: 13px; line-height: 1.6; background: var(--code-bg); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 16px 0 20px; color: var(--ink); }
+pre .c { color: var(--muted); }
+pre .h { color: var(--jade); font-weight: 600; }
+
+.ticket { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 18px 0; }
+@media (min-width: 680px) { .ticket { grid-template-columns: 1fr 1fr; } }
+.ticket > div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; font-size: 15px; min-width: 0; }
+.ticket .label { font-family: var(--f-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 6px; }
+
+.phases { display: grid; gap: 0; margin: 20px 0; border-left: 2px solid var(--line); }
+.phase { position: relative; padding: 4px 0 24px 24px; }
+.phase::before { content: ""; position: absolute; left: -7px; top: 10px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--jade); }
+.phase .when { font-family: var(--f-mono); font-size: 12px; color: var(--jade); letter-spacing: .06em; }
+.phase h3 { margin: 2px 0 6px; }
+.phase .exit { font-size: 15px; color: var(--muted); }
+.phase .exit b { color: var(--ink); }
+
+.callcard { border: 2px solid var(--loc); border-radius: 10px; overflow: hidden; background: var(--surface); margin: 18px 0 8px; }
+.cc-banner { background: var(--loc); color: var(--surface); padding: 14px 18px; display: grid; gap: 2px; }
+.cc-banner .cc-k { font-family: var(--f-mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+.cc-banner strong { font-family: var(--f-display); font-size: 26px; line-height: 1.15; }
+.cc-banner span:last-child { font-size: 14.5px; }
+.cc-body { display: grid; grid-template-columns: 1fr; gap: 14px; padding: 16px 18px; font-size: 15px; }
+@media (min-width: 640px) { .cc-body { grid-template-columns: 1fr 1fr; } }
+.cc-body > div { min-width: 0; }
+.cc-body .label { font-family: var(--f-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 4px; }
+.cc-script { grid-column: 1 / -1; background: var(--loc-soft); border-radius: 6px; padding: 10px 14px; }
+.cc-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.cc-actions span { border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font-weight: 600; font-size: 14px; }
+.cc-actions span:first-child { background: var(--loc); border-color: var(--loc); color: var(--surface); }
+.note { border-left: 3px solid var(--jade); padding: 4px 0 4px 16px; margin: 18px 0; color: var(--ink); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+@media (max-width: 520px) { body { font-size: 16px; } h2 { font-size: 24px; } }
+.phase ul { margin: 6px 0 8px; padding-left: 20px; }
+.phase li { font-size: 15.5px; margin-bottom: 4px; }
+.phase li b { font-weight: 700; }
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#summary">Summary &amp; decisions</a></li>
+    <li><a href="#stack">Stack</a></li>
+    <li><a href="#topology">Where things run</a></li>
+    <li><a href="#resilience">Staying up</a></li>
+    <li><a href="#orders">Orders &amp; sync</a></li>
+    <li><a href="#data">Data model</a></li>
+    <li><a href="#menu">Menu engine</a></li>
+    <li><a href="#taxes">Taxes</a></li>
+    <li><a href="#payments">Payments</a></li>
+    <li><a href="#identity">Identity &amp; access</a></li>
+    <li><a href="#phones">Phones &amp; remote operators</a></li>
+    <li><a href="#service">Service, sushi, bar, catering</a></li>
+    <li><a href="#integrations">Integrations</a></li>
+    <li><a href="#backoffice">Back office</a></li>
+    <li><a href="#operations">Operations &amp; quality</a></li>
+    <li><a href="#hardware">Hardware &amp; network</a></li>
+    <li><a href="#plan">Build plan</a></li>
+    <li><a href="#risks">Risks</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="doc">
+  <p class="eyebrow">Architecture design · draft 4</p>
+  <h1>Restaurant POS Architecture</h1>
+  <p class="lede">A point of sale for one full-service Chinese restaurant with a sushi bar, a full bar and a catering business today, and a couple dozen locations later. Every location keeps selling when the internet drops, and keeps selling through the cloud when both of its local servers die.</p>
+  <div class="meta"><span>Prepared for Mike</span><span>25 Oct 2026</span><span>Status: for review, no code yet</span></div>
+</header>
+
+<section id="summary">
+  <h2><span class="n">1</span>Summary &amp; decisions</h2>
+  <p>Five ideas carry the whole design.</p>
+  <ol>
+    <li><strong>Terminals are screens.</strong> The Flutter app draws screens, collects what was chosen, and sends it as a small, append-only <em>operation</em> to a backend. It holds no business rules and no business data.</li>
+    <li><strong>One backend, two homes.</strong> All rules, including the menu engine, live in one Python backend. It runs on a pair of <strong>hubs</strong> at each location and in the <strong>cloud</strong> in two regions. Each side is a complete system on its own, both are live at all times, and a terminal uses whichever it can reach.</li>
+    <li><strong>Hubs are for speed and independence.</strong> They sit on the restaurant's own network, so they are fast, reach printers and kitchen screens without NAT or firewall tricks, keep that network closed to the internet, and keep the location working when the internet line is down.</li>
+    <li><strong>Orders are logs that merge.</strong> An order is the set of operations made against it. Two copies merge by taking the union, so hubs, cloud and terminals always agree, whatever order things arrive in.</li>
+    <li><strong>Everything else is data.</strong> Menus, taxes, languages, roles, routing and integrations are rows with effective dates, set per location in the admin portal. Opening in a new state or adding a provider is setup, not code.</li>
+  </ol>
+  <div class="decisions">
+    <div class="decision"><span class="k">Apps</span><span class="v">Flutter, screens only</span><span class="why">One codebase for iOS, Android, Windows, macOS, Linux and the web admin portal.</span></div>
+    <div class="decision"><span class="k">Backend</span><span class="v">Python, FastAPI</span><span class="why">Menu engine, orders, taxes, payments and sync. Same code on hubs and cloud.</span></div>
+    <div class="decision"><span class="k">Storage</span><span class="v">PostgreSQL everywhere</span><span class="why">One schema, replicated between the two hubs and between two cloud regions.</span></div>
+    <div class="decision"><span class="k">Sync</span><span class="v">Operation log, hybrid clocks</span><span class="why">Orders merge without loss; a few rules settle true conflicts.</span></div>
+    <div class="decision"><span class="k">Uptime</span><span class="v">Two hubs, two regions, both live</span><span class="why">Terminals switch on their own in seconds. No single failure stops a sale.</span></div>
+    <div class="decision"><span class="k">Payments</span><span class="v">Adapters + cost router</span><span class="why">Stripe, GoDaddy, PayPal side by side; cheapest healthy provider per sale.</span></div>
+    <div class="decision"><span class="k">Sign-in</span><span class="v">PIN, NFC tag or face</span><span class="why">Instant user switching, and a photo with every major action.</span></div>
+  </div>
+
+  <h3>Settled in this thread</h3>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Topic</th><th>Decision</th><th>Section</th></tr></thead>
+    <tbody>
+      <tr><td>Apps and backend</td><td>Flutter for screens only; Python backend owns every rule, running on hubs and cloud. No engine copy in the apps.</td><td>2</td></tr>
+      <tr><td>Hubs and cloud</td><td>Two hubs per location and two cloud regions, each side a complete system, both live. Screens need not work if hubs and internet fail together.</td><td>3, 4</td></tr>
+      <tr><td>Menu engine</td><td>Mike's Menu Engine Design (24 Oct 2026) is the spec, used in full, with listed adaptations and extensions.</td><td>7</td></tr>
+      <tr><td>Languages</td><td>Unlimited, with per-screen display lists and user-defined fallback chains.</td><td>7</td></tr>
+      <tr><td>Media</td><td>Photos and short videos on items, options, ingredients, recipes and more.</td><td>7</td></tr>
+      <tr><td>Taxes</td><td>A model for all 48 continental states plus county, city and district taxes.</td><td>8</td></tr>
+      <tr><td>Payments</td><td>Stripe, GoDaddy Payments, PayPal, Apple Pay and Google Pay at once, with physical readers, routed to the lowest cost.</td><td>9</td></tr>
+      <tr><td>Sign-in</td><td>PIN, NFC tag or face, plus a photo on every major action.</td><td>10</td></tr>
+      <tr><td>Phones</td><td>FreePBX in the cloud; remote operators over VPN with cloud fallback; calls pooled across locations by dialed number.</td><td>11</td></tr>
+      <tr><td>Printers</td><td>Ethernet ESC/POS printers with IP addresses, working with or without hubs.</td><td>4, 16</td></tr>
+      <tr><td>Restaurant type</td><td>Full service with a sushi bar, a full bar and catering; ezCater for catering orders; Resy planned for reservations.</td><td>12, 13</td></tr>
+      <tr><td>Payroll</td><td>ADP.</td><td>14</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Still open:</strong> the accounting system (QuickBooks, Xero or other), server banking versus shared drawers, whether tips are pooled, and team size (the plan assumes 2 to 4 developers). The own online storefront and delivery marketplaces are planned for phase 4. Each can change without rework.</p>
+</section>
+
+<section id="stack">
+  <h2><span class="n">2</span>Stack</h2>
+  <p>Flutter is the only mainstream UI toolkit where iOS, Android, Windows, macOS and Linux are all official targets from one codebase, with documentation among the best of any framework. Python with FastAPI fits the menu engine design as written and has the strongest tools for validation, migrations, spreadsheet import, testing and reporting. The split is strict: the app renders and collects, the backend prices, validates, routes and records.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Option</th><th>Platforms</th><th>For</th><th>Against</th></tr></thead>
+    <tbody>
+      <tr><td>Flutter apps + Python backend <span class="pick">chosen</span></td><td>All five official, plus web</td><td>One UI codebase, fast touch UI, strong docs. FastAPI, Pydantic, SQLAlchemy, Alembic, a large hiring pool, and the menu design used as written.</td><td>Two languages. Terminals need a hub or the cloud, which the redundancy covers. Some payment SDKs need thin native plugins.</td></tr>
+      <tr><td>React Native + Node</td><td>iOS, Android; Windows and macOS via Microsoft; no official Linux</td><td>Huge ecosystem, TypeScript end to end.</td><td>Linux stations unsupported; desktop trails mobile.</td></tr>
+      <tr><td>Kotlin Multiplatform + Compose</td><td>All five (desktop via JVM)</td><td>Shared logic, native performance, strong Android tooling.</td><td>Smaller UI community, desktop ships a JVM, fewer POS libraries.</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Backend:</strong> FastAPI and Pydantic, SQLAlchemy and Alembic, Hypothesis for property tests, openpyxl for the spreadsheet round-trip. One container image runs on hubs and in the cloud.</li>
+    <li><strong>Data:</strong> PostgreSQL on every hub and in the cloud with one schema, so the menu engine's JSONB, arrays and trigram search work unchanged. Cloud Postgres is managed (RDS or Cloud SQL) with point-in-time recovery. Terminals keep only settings and a short queue of operations in flight.</li>
+    <li><strong>Transport:</strong> WebSocket for live pushes, HTTPS for bulk sync and admin APIs, mutual TLS with a certificate per device. Remote devices join a location's network over WireGuard through Tailscale (or self-hosted Headscale).</li>
+    <li><strong>Cloud:</strong> containers on a managed service (Cloud Run, ECS or Fly.io), object storage for backups, receipts, photos and media.</li>
+    <li><strong>Admin portal:</strong> Flutter web, same widgets as the POS, for owners and managers.</li>
+  </ul>
+</section>
+
+<section id="topology">
+  <h2><span class="n">3</span>Where things run</h2>
+  <figure>
+    <div class="scroll">
+      <svg class="diagram" viewBox="0 0 960 640" role="img" aria-labelledby="diag-t">
+        <title id="diag-t">Component diagram: cloud services on top, a restaurant location with two hubs, printers, readers and terminals below, and remote units connecting over VPN with cloud fallback.</title>
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ahf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead fb" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <rect class="zone" x="20" y="20" width="920" height="210" rx="10"/>
+        <text class="zone-label" x="40" y="48">CLOUD · TWO REGIONS</text>
+        <rect class="box hub" x="40" y="62" width="205" height="62" rx="6"/><text class="t" x="54" y="88">Backend</text><text class="s" x="54" y="108">same code as the hubs</text>
+        <rect class="box" x="265" y="62" width="205" height="62" rx="6"/><text class="t" x="279" y="88">Menu publisher</text><text class="s" x="279" y="108">numbered snapshots</text>
+        <rect class="box" x="490" y="62" width="205" height="62" rx="6"/><text class="t" x="504" y="88">CRM &amp; loyalty</text><text class="s" x="504" y="108">customers across locations</text>
+        <rect class="box" x="715" y="62" width="205" height="62" rx="6"/><text class="t" x="729" y="88">Admin portal</text><text class="s" x="729" y="108">Flutter web</text>
+        <rect class="box" x="40" y="146" width="205" height="62" rx="6"/><text class="t" x="54" y="172">PostgreSQL</text><text class="s" x="54" y="192">replicated across regions</text>
+        <rect class="box" x="265" y="146" width="205" height="62" rx="6"/><text class="t" x="279" y="172">Reporting</text><text class="s" x="279" y="192">read replica, analytics</text>
+        <rect class="box" x="490" y="146" width="205" height="62" rx="6"/><text class="t" x="504" y="172">Integrations</text><text class="s" x="504" y="192">payments, ezCater, Resy, PBX</text>
+        <rect class="box" x="715" y="146" width="205" height="62" rx="6"/><text class="t" x="729" y="172">Object storage</text><text class="s" x="729" y="192">backups, receipts, media</text>
+
+        <rect class="zone" x="20" y="290" width="700" height="330" rx="10"/>
+        <text class="zone-label" x="40" y="318">RESTAURANT LOCATION · LAN</text>
+        <rect class="box hub" x="40" y="334" width="300" height="70" rx="6"/><text class="t" x="54" y="360">Hub (primary)</text><text class="s" x="54" y="380">backend · PostgreSQL · print routing</text><text class="s" x="54" y="396">payment router · 86 board · leases</text>
+        <rect class="box standby" x="40" y="416" width="300" height="52" rx="6"/><text class="t" x="54" y="438">Hub (standby)</text><text class="s" x="54" y="456">live replica, takes over in 5 s</text>
+        <rect class="box" x="380" y="334" width="150" height="70" rx="6"/><text class="t" x="394" y="360">Printers</text><text class="s" x="394" y="380">Ethernet, ESC/POS</text><text class="s" x="394" y="396">kitchen, receipt, drawer</text>
+        <rect class="box" x="550" y="334" width="150" height="70" rx="6"/><text class="t" x="564" y="360">Card readers</text><text class="s" x="564" y="380">several providers,</text><text class="s" x="564" y="396">paired per station</text>
+        <line class="wire" x1="340" y1="369" x2="378" y2="369" marker-end="url(#ah)"/>
+        <path class="wire fallback" d="M455,506 V406" marker-end="url(#ahf)"/>
+        <text class="wl fb" x="462" y="462">print relay</text><text class="wl fb" x="462" y="476">if hubs down</text>
+
+        <rect class="box" x="40" y="540" width="200" height="64" rx="6"/><text class="t" x="54" y="566">Fixed stations</text><text class="s" x="54" y="586">Windows / Linux / iPad</text>
+        <rect class="box" x="270" y="540" width="200" height="64" rx="6"/><text class="t" x="284" y="566">Handhelds</text><text class="s" x="284" y="586">iOS / Android, Wi-Fi</text>
+        <rect class="box" x="500" y="540" width="200" height="64" rx="6"/><text class="t" x="514" y="566">Kitchen &amp; bar screens</text><text class="s" x="514" y="586">per station, expo</text>
+        <path class="wire" d="M140,540 V506 H600 V540 M370,540 V506"/>
+        <line class="wire" x1="190" y1="506" x2="190" y2="470" marker-end="url(#ah)" marker-start="url(#ah)"/>
+        <text class="wl" x="200" y="496">LAN · WebSocket</text>
+        <line class="wire" x1="190" y1="334" x2="190" y2="232" marker-end="url(#ah)" marker-start="url(#ah)"/>
+        <text class="wl" x="200" y="266">hub-initiated sync, mTLS</text>
+        <text class="wl" x="200" y="282">outbox / cursor</text>
+        <path class="wire fallback" d="M680,540 V520 H732 V234" marker-end="url(#ahf)"/>
+        <text class="wl fb" transform="translate(746 470) rotate(-90)">if hubs unreachable</text>
+
+        <rect class="box" x="760" y="540" width="180" height="64" rx="6"/><text class="t" x="774" y="566">Remote units</text><text class="s" x="774" y="586">off-site order takers</text>
+        <path class="wire" d="M820,540 V411 H300 V407" marker-end="url(#ah)"/>
+        <text class="wl" x="828" y="496">VPN to hub</text>
+        <path class="wire fallback" d="M905,540 V234" marker-end="url(#ahf)"/>
+        <text class="wl fb" transform="translate(921 470) rotate(-90)">cloud fallback</text>
+      </svg>
+    </div>
+    <figcaption>Solid lines are normal paths, dashed lines are fallbacks. On-site terminals use the hubs; remote units reach the hubs over a VPN; anything that cannot reach the hubs uses the cloud. While the hubs are down, a terminal relays print jobs from the cloud to the printers.</figcaption>
+  </figure>
+
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Component</th><th>Runs on</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td>POS app</td><td>Every terminal</td><td>Screens only: orders, table map, payments, sign-in. Camera and NFC are inputs (a tag, a face signature) that the backend judges. Can relay print jobs. Kitchen, bar, expo and customer-display modes are the same app in other roles.</td></tr>
+      <tr><td>Remote unit</td><td>An off-site worker's device, same app</td><td>Takes phone orders for one or more locations over the VPN; no cash, no card-present actions.</td></tr>
+      <tr><td>Hubs</td><td>Two mini PCs per location</td><td>The complete backend for the location: menu engine, pricing, taxes, live orders, kitchen and print routing, payment router, 86 board, table leases, ticket number blocks, sync to cloud. Runs with no internet.</td></tr>
+      <tr><td>Cloud backend</td><td>Two regions</td><td>The same backend: system of record for the group, virtual hub for any location that cannot reach its own, public endpoint for integrations and webhooks.</td></tr>
+      <tr><td>Menu publisher</td><td>Cloud</td><td>Menu editing and validation; numbered snapshots pushed to hubs, with the media sizes they need.</td></tr>
+      <tr><td>CRM &amp; loyalty</td><td>Cloud, cached on hubs</td><td>Customer profiles, phone lookup, history, points, gift cards, consent.</td></tr>
+      <tr><td>Reporting</td><td>Cloud read replica</td><td>Close-of-day, sales, labor, tips, tax by jurisdiction, cross-location analytics.</td></tr>
+      <tr><td>Integrations</td><td>Cloud</td><td>Adapters for payment providers, ezCater, Resy, FreePBX, ADP, accounting, scheduling, marketplaces (section 13).</td></tr>
+    </tbody>
+  </table></div>
+  <p>A location can open with no hubs and run entirely on the cloud; it then depends on its internet line. The two hubs per location are the recommended shape, for speed and for selling without internet.</p>
+</section>
+
+<section id="resilience">
+  <h2><span class="n">4</span>Staying up</h2>
+  <p>Every terminal holds a ranked list of backends and checks them every couple of seconds: primary hub, standby hub, main cloud region, backup region. Switching is automatic and shows as a status light, not a pop-up. Hubs and cloud speak the same protocol and merge the same way, so a terminal can move between them mid-order. The hubs and the cloud are not a main system and a spare: each alone is complete, both accept orders for a location at the same moment, and each hub keeps an always-on outbound connection to the cloud, so an operation taken on either side reaches the other within a second or two and the kitchen gets every ticket whichever side took it.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Failure</th><th>Staff notice</th><th>System does</th><th>Recovery</th></tr></thead>
+    <tbody>
+      <tr><td>Internet down</td><td>Nothing, except card limits below</td><td>Hubs run the location alone; printing, kitchen screens and handhelds keep working; cloud-bound operations queue at the hub.</td><td>Hub drains its outbox; reports catch up in minutes.</td></tr>
+      <tr><td>Primary hub down</td><td>Nothing</td><td>Standby takes over in about five seconds with every order already copied, with or without internet.</td><td>Repaired hub rejoins as standby.</td></tr>
+      <tr><td>Both hubs down</td><td>Amber status light</td><td>Terminals use the cloud, which runs the location in full; print jobs go through a terminal relay (below).</td><td>Hubs pull state from the cloud; terminals switch back.</td></tr>
+      <tr><td>Hubs and internet down</td><td>"No connection to server"; no new orders</td><td>By design, terminals do not run alone. Needs two hubs and the line to fail at once; a cellular backup on the router makes it rarer.</td><td>Reconnects when either side is back; nothing sent is lost.</td></tr>
+      <tr><td>One terminal dies</td><td>That device only</td><td>Its open orders are on the hub; any terminal picks them up.</td><td>Enroll a replacement; ready in a minute.</td></tr>
+      <tr><td>VPN or firewall broken</td><td>Remote staff notice nothing</td><td>Remote units switch to the cloud; the cloud forwards their orders over the hub's own outbound link.</td><td>Back to the VPN when it works.</td></tr>
+      <tr><td>FreePBX unreachable</td><td>Phones work, no call card</td><td>Calls follow the PBX's own fallback; staff look customers up by number.</td><td>Call cards resume when the connector reconnects.</td></tr>
+      <tr><td>Main cloud region down</td><td>Nothing</td><td>Locations run on hubs; the backup region is promoted for remote operators, integrations and hub-less locations.</td><td>Main region catches up; traffic moves back.</td></tr>
+      <tr><td>Power cut</td><td>Hubs and network on UPS</td><td>Battery devices keep working; writes are durable.</td><td>Stations reboot into the app.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Two hubs, two regions</h3>
+  <p>The standby hub keeps a live copy of the primary's database through streaming replication. If the primary stops responding for about five seconds the standby takes over. A third vote prevents both from acting as primary when they merely lose sight of each other: the cloud when the internet is up, a small witness device (a Raspberry Pi) when it is not. If both still accept orders for a moment, the operation log merges them without loss. The hubs sit in different spots on separate UPS units and circuits, so one spill or one tripped breaker cannot take out both. The cloud runs in a main and a backup region; the backup keeps a replica seconds behind, is promoted on failed health checks, and every hub and terminal already holds both addresses.</p>
+
+  <h3>Printing with and without hubs</h3>
+  <p>Printers are Ethernet devices with reserved IP addresses on the closed restaurant network, which the cloud cannot reach directly. The backend always renders the whole ticket to ESC/POS bytes; delivery is a dumb <strong>print relay</strong> with no business logic. With hubs up, the hub prints directly. With hubs down, each terminal tells the cloud which printer addresses it can reach, the cloud hands every job to one of them (wired stations first), and the job moves to the next terminal if that one does not confirm in a few seconds. Every job has an id and is kept until a printer accepts it, so nothing is lost or printed twice; the cash drawer kick travels the same way. Each station also has a backup printer: a ticket not acknowledged within a few seconds reprints there with a "reprinted from Wok" header. Kitchen screens are terminals and need no relay, and remote operators never touch printers.</p>
+  <div class="note"><strong>Cards while offline.</strong> Card processing needs the internet. With the line down, readers use the processor's store-and-forward mode, capped per transaction and per day by a setting you control, with cash always available. Which readers support it, and on what terms, is confirmed in phase 0.</div>
+</section>
+
+<section id="orders">
+  <h2><span class="n">5</span>Orders &amp; sync</h2>
+  <p>Terminals never overwrite an order; they append operations to it. Each operation carries an id, the device that made it, and a hybrid logical clock timestamp: wall-clock time corrected so ordering stays right even when a tablet's clock drifts. The current order is the replay of its operations in clock order, and merging two copies is the union of their operations. An <code>add_line</code> from a terminal carries only the customer's choices (the engine's <code>LineRequest</code>); the backend resolves it and appends the priced line as its own operation, so every screen shows the backend's price.</p>
+<pre><span class="c"># order 0193f2…  table 12 · 4 guests</span>
+<span class="h">hlc 16:42:07.120·0</span>  dev T3  add_line    L7  kung_pao  variant=quart  spice=hot  seat=2
+<span class="h">hlc 16:42:09.884·0</span>  dev T3  add_line    L8  lunch_special  slots=[mapo_tofu, hot_sour, fried]
+<span class="h">hlc 16:42:15.002·0</span>  dev H2  set_qty     L7  qty=2          <span class="c"># server's handheld</span>
+<span class="h">hlc 16:42:21.310·0</span>  dev T3  fire        course=entrees  → wok, expo
+<span class="h">hlc 16:58:40.017·1</span>  dev T1  payment     card  $58.14  ref=pi_3Q…  tip=$9.00
+<span class="h">hlc 16:58:40.551·0</span>  dev T1  close</pre>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Conflict</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td>Two devices edit the same field</td><td>Latest clock wins for that field only.</td></tr>
+      <tr><td>A void and an edit cross</td><td>Void wins; the edit stays in history.</td></tr>
+      <tr><td>A fired line changes</td><td>Becomes a "modify" ticket to the station, never a silent change.</td></tr>
+      <tr><td>Operations reach a closed order</td><td>Payments are always kept; anything else reopens the order and flags a manager.</td></tr>
+      <tr><td>Two servers open one table</td><td>The hub hands out a short editing lease ("Amy is editing on T3"). Without a hub, both edit and the rules above merge the result.</td></tr>
+      <tr><td>Ticket numbers while disconnected</td><td>Each terminal holds a block of numbers in advance (T3: 3400 to 3499).</td></tr>
+      <tr><td>A customer created twice</td><td>Both kept, merged by phone number in the cloud, merge recorded.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Who owns what.</strong> Orders, payments and time punches are created at the location and flow up; the cloud stores and reports, never edits. Menus, prices, staff and roles are edited in the cloud and flow down as numbered snapshots; a hub can run for days on its last one. The 86 board and table leases are local to the location and held by its hub, mirrored to the cloud for remote operators and the storefront. Customers and loyalty are cloud records, with recent and frequent customers cached on hubs; points earned offline post when the operation reaches the cloud. Every link keeps an outbox and a cursor, retries until acknowledged, and ignores duplicates, so a flaky connection can never double a charge or a line.</p>
+</section>
+
+<section id="data">
+  <h2><span class="n">6</span>Data model</h2>
+  <p>Every record has a UUIDv7 id created where it was made, so terminals never wait for the server. Money is integer cents. Every row carries <code>tenant_id</code> and, where it applies, <code>location_id</code>: one cloud serves every location while each hub stores only its own. Order lines store the engine's full resolved line as JSON, so a later menu change never alters a past receipt or report.</p>
+  <div class="entities">
+    <div class="entity"><h4>Organization</h4><ul>
+      <li><b>Tenant · Location</b> <span>timezone, hours, business day, languages, tax profile</span></li>
+      <li><b>Device · Printer · Station</b> <span>certificates, IP addresses, routing</span></li>
+      <li><b>FloorPlan · Table</b> <span>sections, seats, counter seats</span></li>
+      <li><b>Language · FallbackChain · SurfaceLanguages</b> <span>unlimited, per screen</span></li>
+      <li><b>TaxJurisdiction · TaxComponent · TaxGroup · TaxRule · DeliveryZone</b> <span>section 8</span></li>
+    </ul></div>
+    <div class="entity"><h4>Menu engine (19 tables + 2)</h4><ul>
+      <li><b>Category · Item · ItemVariant</b> <span>inherited defaults, variant sets</span></li>
+      <li><b>ModifierGroup · Option · Attachment</b> <span>rules, effects, combo slots</span></li>
+      <li><b>Menu · Section · MenuEntry</b> <span>channels, schedules, numbers, prices</span></li>
+      <li><b>Ingredient · Recipe · Component · Unit</b> <span>versioned, roles, yields</span></li>
+      <li><b>Allergen · declarations · overrides</b> <span>reviewed or unknown</span></li>
+      <li><b>Station · AvailabilityState · Keg · Tap</b> <span>routing, 86, volume per tap</span></li>
+      <li><b>Media · MediaAttachment</b> <span>photos on anything</span></li>
+    </ul></div>
+    <div class="entity"><h4>Orders</h4><ul>
+      <li><b>Order · OrderOp · Check</b> <span>channel, type, table, the operation log</span></li>
+      <li><b>Line · Seat · Course</b> <span>resolved line as JSON, seat and course</span></li>
+      <li><b>Discount · Comp · Void · Waste</b> <span>reason, approver</span></li>
+      <li><b>TaxLine · Exemption</b> <span>what was charged, per jurisdiction</span></li>
+      <li><b>Payment · Refund · Tip · Tab · PreAuth</b> <span>provider reference, fees</span></li>
+      <li><b>CateringEvent · Deposit · Invoice</b> <span>date, address, headcount, balance</span></li>
+      <li><b>KitchenTicket · PrintJob</b> <span>fired, bumped, printed, relayed</span></li>
+    </ul></div>
+    <div class="entity"><h4>People</h4><ul>
+      <li><b>Staff · Role · Permission</b> <span>per location, screen language</span></li>
+      <li><b>StaffCredential · BiometricConsent · EventPhoto</b> <span>PINs, tags, face signatures, action photos</span></li>
+      <li><b>Shift · TimePunch · TipPool · TipOut</b> <span>clock, breaks, pooling</span></li>
+      <li><b>CashDrawer · PaidInOut</b> <span>counts, drops, server banks</span></li>
+      <li><b>Customer · LoyaltyAccount · GiftCard</b> <span>language, consent, balances</span></li>
+      <li><b>AuditEvent</b> <span>who, what, which device, photo</span></li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="menu">
+  <h2><span class="n">7</span>Menu engine</h2>
+  <p><strong>Mike's Menu Engine Design</strong> (24 Oct 2026, saved in the project files) is the specification, used in full: catalog with inherited defaults and variant sets; modifier groups with selection rules, per-attachment overrides, nesting and pure instructions; recipe effects by ingredient or role; menus per channel and schedule with numbers on the entry; combos as slots with linked variants, nested platters and locked components; the shared ingredient master with preps, cuts, yields and units; versioned recipes and the five-step explosion to cost and usage; allergens that are contains, may contain, free or unknown, with station cross-contact and logged overrides; dietary rules; availability rules, the 86 board and opt-in auto-86; kitchen routing per station; the <code>ResolvedLine</code> contract with provenance and problems; the five operating layers, spreadsheet round-trip, validating saves, back-of-house screens, audit log with undo and <code>menu check</code>. The package runs in the backend on every hub and in the cloud.</p>
+
+  <h3>Adaptations and extensions</h3>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>The design says</th><th>Here</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Python package behind FastAPI</td><td>Kept. Order, kitchen and inventory modules call it directly; the apps call it through the API.</td><td>Apps draw, the backend rules.</td></tr>
+      <tr><td>PostgreSQL schema, 19 tables</td><td>Kept, in the cloud and on every hub. Menus are edited in the cloud and published as numbered snapshots; a line records its snapshot beside <code>recipe_version_id</code>.</td><td>Hubs price without internet; every terminal agrees mid-rollout.</td></tr>
+      <tr><td>Single location for now</td><td><code>location_id</code> from day one on menus, entries, stations, printers and the 86 board; a menu belongs to all locations or one.</td><td>A couple dozen locations; phone operators need each location's exact menu.</td></tr>
+      <tr><td>86 pushed by the server over SSE</td><td>Each hub owns its location's 86 board and pushes over the LAN in under a second; the cloud mirrors it.</td><td>An 86 must work with no internet.</td></tr>
+      <tr><td><code>en</code> and <code>zh</code> plus a kitchen label; English fallback</td><td>Unlimited languages, per-screen display lists, user-defined fallback chains, provenance of the language used (below).</td><td>Mike's requirement; same <code>names</code> storage.</td></tr>
+      <tr><td>Description and image per channel</td><td>A media library on anything (below).</td><td>Mike's requirement.</td></tr>
+      <tr><td><code>tax_class</code> is text; the order module applies rates</td><td>Tax class is a small table, a modifier can set it ("heated"), and the order module applies the full model in section 8.</td><td>All continental states.</td></tr>
+      <tr><td>Not in the design</td><td>Market-price and open-price variants, minimum quantity on a variant, an age-check flag, alcohol service hours on a category, routing by the station that placed the order, and a waste operation that depletes inventory without a sale.</td><td>Sushi bar, full bar, catering (section 12).</td></tr>
+      <tr><td>HTMX screens</td><td>The same screens in the Flutter web portal.</td><td>One UI toolkit.</td></tr>
+      <tr><td>Open decisions</td><td>Agreed as recommended: one shared ingredient master; lunch, delivery and holiday pricing as menus; half-up rounding per line with tax outside the engine; linked combo pricing later; auto-86 opt-in. Changed: single location, and two languages. Noted: the storefront and driver app the design lists are phase 4.</td><td></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Languages: unlimited, with fallback chains</h3>
+  <p>Every name, description and label is a map from language tag to text (<code>en</code>, <code>zh-Hans</code>, <code>zh-Hant</code>, <code>es</code>, <code>vi</code>…) with no limit; Simplified and Traditional Chinese are separate languages, and the kitchen label keeps its own key. Every surface has an ordered list of languages set per location: POS screens, customer display, receipts (two languages side by side if wanted), kitchen tickets per station, storefront, kiosk, boards and text messages. Staff pick their own screen language; a customer's preferred language lives in their profile. The owner defines fallback chains per language (<code>zh-Hant → zh-Hans → en</code>, <code>kitchen → zh-Hans → en</code>); nothing assumes English. The engine walks the chain, returns the first text found and which language it came from, which feeds a translation gap report and a <code>menu check</code> warning per enabled language. Search covers every language at once, including pinyin (<code>zzt</code> finds <span class="zh">左宗棠鸡</span>). The apps bundle fonts for every enabled script, handle right-to-left, and print a kitchen ticket as an image when a printer cannot render its script. The same chains apply to the apps' own buttons and labels.</p>
+
+  <h3>Media: photos on anything</h3>
+  <p>Photos and short videos attach to items, variants, options, categories and sections, combos, ingredients, recipes and their steps, stations and locations, several per thing, each with a purpose (menu photo, POS tile, plating reference, prep step, ingredient label, receiving photo, gallery), limited to channels and overridable per location. They show as POS photo tiles, on the storefront, kiosk, boards and customer display, in marketplace menus through the channel adapters, on the kitchen screen when a cook taps a ticket, and in the allergen review queue, where a label photo is the <em>source</em> on a declaration. Uploads come from the admin portal, a camera button on any terminal (manager approval before anything customer-facing), or the spreadsheet round-trip with a zip. The cloud strips camera metadata, makes every size once, and names files by content hash; the sizes a location uses travel with its menu snapshot and stay on its hubs, so tiles and plating photos work without internet and terminals fetch only what changed. Alt text per language, a usage-rights note, "where used" before deletion, and a missing-photo report per channel round it out. Two tables, <code>media</code> and <code>media_attachment</code>, join the design's nineteen; <code>item_detail</code> and <code>menu_for</code> return ready-to-use URLs per channel. Menu media is content with no retention limit, kept apart from the staff audit photos in section 10.</p>
+
+  <h3>The worked example, as the first test</h3>
+  <div class="ticket">
+    <div><span class="label">Request</span><strong>General Tso's Chicken <span class="zh">左宗棠鸡</span></strong>, Quart<br>Extra spicy · Sub brown rice (+$1.00) · Add shrimp (+$4.00)<br>Ordered from the Dinner menu, #87</div>
+    <div><span class="label">Resolved line</span><strong>$29.95</strong> · cost $7.05 (23.5%) · 7 stock ingredients<br>Contains wheat, soybeans, crustacean shellfish · may contain sesame, peanuts · the rest unknown until the dried chili is reviewed<br>Wok: <span class="zh">1 左宗鸡 (Qt) · 加辣 · 糙米 · 加虾</span></div>
+  </div>
+  <p>This example, the C5 combination plate and the design's property tests (a price is never negative, a same-amount substitution keeps quantity, adding never removes an allergen) are the engine's test suite. Every change passes it before it ships.</p>
+</section>
+
+<section id="taxes">
+  <h2><span class="n">8</span>Taxes</h2>
+  <p>The engine attaches a tax class to every line; the order module decides what to charge. The model covers every continental state and the county, city and district taxes under them. Every rate, rule and exemption is data with an effective date, set per location.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Piece</th><th>Holds</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>Jurisdiction</td><td>A taxing authority and its level, with its parent.</td><td>Illinois · Cook County · Chicago · MPEA district</td></tr>
+      <tr><td>Tax component</td><td>One rate from one jurisdiction: a percentage, a per-unit amount (per fluid ounce, per item) or a fixed amount, with effective dates, a reporting code and a rounding rule. Changes are entered ahead and switch at midnight.</td><td>Illinois 6.25% · Philadelphia 1.5¢ per fl oz</td></tr>
+      <tr><td>Tax group</td><td>An ordered bundle of components; a component can compound on the ones before it.</td><td>Chicago downtown prepared food: six components</td></tr>
+      <tr><td>Tax class</td><td>What a thing is for tax purposes, inherited from the category, overridable per item and variant, changeable by a modifier.</td><td>Prepared food · cold food to go · bakery · alcohol · sweetened beverage · merchandise · gift card · service charge · delivery fee</td></tr>
+      <tr><td>Tax rule</td><td>Per location: for a class, an order type (dine-in, takeout, delivery, catering), a channel and optionally a time window, which group applies or exempt. Most specific wins.</td><td>Cold food to go in California: exempt; the same item dine-in: prepared food</td></tr>
+      <tr><td>Exemption</td><td>A customer's certificate (type, number, state, expiry) or a manager override on one order with a reason; both logged and reported.</td><td>A school's certificate on a catering order</td></tr>
+      <tr><td>Delivery zone</td><td>ZIP codes or map areas with their own group, for destination-based states. Lives on the hub.</td><td>Deliveries to the next town use its rate</td></tr>
+      <tr><td>Tax line</td><td>What was charged, per order and component, with base, rate, amount, jurisdiction, inclusive flag and exemption reason. Never recomputed.</td><td>Cook County 1.75% on $42.00 = $0.74</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>How a check is taxed.</strong> Each line gets its class from item, variant, category or modifier, and the order carries its type, channel, location and customer. The location's rules pick a group or exempt, using the delivery zone where the location taxes at the destination. The base is the line after the discounts that reduce it (a store coupon does; a third-party-reimbursed coupon may not, by state). Each component is computed as a percentage of the base (or of base plus earlier components when compounding), a per-unit amount from the variant's size, or a fixed amount. Fees and charges go through the same rules with their own class, so a mandatory service charge or delivery fee is taxed only where the state taxes it; voluntary tips never are. Inclusive pricing, per menu, item or location, backs the tax out of the price. Rounding is per line or per check as the location sets, half up by default, and the result is written as tax lines.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Situation</th><th>Where it comes up</th><th>Handled by</th></tr></thead>
+    <tbody>
+      <tr><td>Several layers on one sale</td><td>Chicago: state, county, city, transit, restaurant tax, downtown district</td><td>One group, six components, each reported to its jurisdiction</td></tr>
+      <tr><td>A meals tax apart from sales tax</td><td>Massachusetts, Vermont, Maine, Virginia cities; New Hampshire, with no general sales tax</td><td>A prepared-food class with its own group; a zero general rate is fine</td></tr>
+      <tr><td>No state sales tax, a local food tax</td><td>Oregon, where Ashland taxes prepared food</td><td>A city jurisdiction with a rule at that location</td></tr>
+      <tr><td>Dine-in taxed, cold takeout not</td><td>California, New York and others</td><td>Rules keyed on class and order type; a "heated" modifier switches the class</td></tr>
+      <tr><td>Alcohol taxed differently</td><td>Texas mixed-beverage taxes; Minneapolis downtown liquor tax</td><td>An alcohol class with its own group per location</td></tr>
+      <tr><td>Per-ounce beverage taxes</td><td>Philadelphia, Seattle, Boulder, several California cities</td><td>Per-unit components from the variant's volume, as a line or folded into the price</td></tr>
+      <tr><td>Delivery taxed at the customer's address</td><td>Most states; Texas, Arizona and Illinois tax at the restaurant</td><td>A sourcing setting per location plus delivery zones</td></tr>
+      <tr><td>Taxable service charges and fees</td><td>Mandatory gratuities, delivery and bag fees in some states</td><td>Each fee has a class and goes through the rules</td></tr>
+      <tr><td>Exempt customers</td><td>Schools, nonprofits, government, resale</td><td>Certificates on the profile, order overrides with reason</td></tr>
+      <tr><td>Rates that change</td><td>Quarterly local changes, new districts</td><td>Effective dates, entered ahead</td></tr>
+      <tr><td>Prices that include tax</td><td>Bar menus, food trucks, events</td><td>Inclusive flag per menu, item or location</td></tr>
+      <tr><td>Filing</td><td>Returns by state and local authority</td><td>Tax lines roll up by jurisdiction, component, period and location</td></tr>
+    </tbody>
+  </table></div>
+  <p>Rates live on the hubs as well as in the cloud, so tax is identical offline. A rate service (Stripe Tax, Avalara or TaxJar) can look up rates by address, suggest updates and verify delivery addresses, but is never in the path of a sale. The portal's tax area per location holds jurisdictions and rates, groups, classes, the class-by-order-type rule matrix, fee taxability, exemptions, rounding and inclusive pricing, delivery zones and scheduled changes. A weekly report compares tax collected with tax expected per jurisdiction, so a wrong setting shows within days.</p>
+  <div class="note"><strong>The places and rates here are examples</strong> of the model's range, not a tax guide. Each location's rules should be set up with its accountant and reviewed when rates change.</div>
+</section>
+
+<section id="payments">
+  <h2><span class="n">9</span>Payments</h2>
+  <p>The POS talks to a payment layer with one adapter per provider; each adapter starts, captures, tips, voids, refunds and reports status. Card data never enters the system: the reader talks to the processor, and the POS stores a reference, which keeps PCI scope minimal. Adding a provider is one adapter.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Provider</th><th>In person</th><th>Online and phone</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Stripe</td><td>Stripe Terminal readers, Tap to Pay on iPhone and Android</td><td>Payment links, saved cards</td><td>Best-documented API; first adapter.</td></tr>
+      <tr><td>GoDaddy Payments</td><td>GoDaddy readers and Smart Terminal</td><td>Online checkout</td><td>Often lower in-person rates. How far a third-party POS can drive its terminals is confirmed in phase 0.</td></tr>
+      <tr><td>PayPal</td><td>Zettle reader, PayPal and Venmo QR codes</td><td>PayPal and Venmo checkout</td><td>QR payments need no hardware.</td></tr>
+      <tr><td>Apple Pay, Google Pay</td><td>Tap on any reader above</td><td>Wallet buttons online</td><td>Wallets, not processors: the fee belongs to the reader's provider.</td></tr>
+      <tr><td>Cash, gift cards, house accounts</td><td>Built in</td><td>Gift cards</td><td>No fees.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Routing to the lowest cost.</strong> When staff press <em>Pay by card</em>, a router on the hub keeps only providers that are reachable with a reader at this station, picks the lowest estimated fee for the amount from each provider's rate table (small tickets favor a low fixed fee, large ones a low percentage), applies your preferences (a default per location, a volume target), and names the reader or sends the payment to it. A provider that is down is skipped. The limit: once a card is tapped on a reader, that reader's provider processes it, so the cost choice happens when the reader is chosen. Bar tabs need pre-authorization, incremental authorization and capture with tip, and go only to providers whose readers support it.</p>
+  <p><strong>What is recorded.</strong> Provider, reference, method (tap, chip, wallet, QR), estimated fee, and later the actual fee. Refunds and tip adjustments return to the original provider. A nightly reconciliation pulls each provider's payout reports and shows the real cost per provider, so the routing rules are proven or corrected. Orders from ezCater and other marketplaces arrive paid and are recorded as external payments with the channel's commission as a fee. Each provider has its own merchant account; keys stay in the cloud and on hubs, never on terminals.</p>
+</section>
+
+<section id="identity">
+  <h2><span class="n">10</span>Identity &amp; access</h2>
+  <p>A terminal is enrolled once by a manager scanning a code and receives a certificate tied to one location; a lost device is revoked in the portal. The admin portal uses email sign-in with two-factor authentication. Staff sign in on an enrolled device three ways, and the device only collects; the backend decides who it is. Credentials and roles are cached on the hubs, so sign-in works without internet.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>Method</th><th>How</th><th>Where</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>PIN</td><td>4 to 6 digits, stored hashed; five wrong tries lock it for a minute.</td><td>Every device</td><td>Always available.</td></tr>
+      <tr><td>NFC tag</td><td>A fob, card or sticker tapped on the device. Built-in readers on iPhones and most Android devices; a USB reader (about $30) on stations. iPads have no NFC reader, so an iPad station uses a USB reader, face or PIN.</td><td>Phones, Android tablets, stations with a reader</td><td>Uncopyable tags (NTAG 424 DNA or DESFire), $1 to $3 each.</td></tr>
+      <tr><td>Face</td><td>The front camera turns the face into a numeric signature on the device; only the signature goes to the backend, which matches it against the location's enrolled staff. Under a second, hands free.</td><td>Any device with a front camera or USB webcam</td><td>Identification among staff, not a lock against a determined impostor; liveness checks help but are not perfect.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Rules per location and role say which methods may sign in and which are required for sensitive actions; by default any method takes and edits orders, and a PIN or tag is required on top of face for voids after firing, refunds, drawer opens outside a sale and manager approvals. Switching users on a shared station is instant, and a station can lock itself when no face has been in front of it for a set time.</p>
+
+  <h3>A photo with every major action</h3>
+  <p>Every device with a front camera takes a quick low-resolution photo (about 320 pixels, 20 to 30 KB) of whoever is operating it when a major action is committed, and attaches it to that action in the audit log: creating an order, modifying or voiding a line, firing, discounts and comps, closing a check, refunds, drawer opens, paid in and out, clock in and out, manager approvals and 86 changes, each a switch per location. The action never waits for the camera; if it is covered or missing, the action goes through marked "no photo". Recent photos stay on the hubs, all go to cloud object storage (a busy day at 20 terminals is well under 100 MB), and a manager opens any refund and sees who was at the screen. An optional session guard compares each photo with the signed-in person's enrolled face and flags mismatches for review without blocking anything. Photos are deleted after 30 days by default, 90 at most, except those attached to a dispute. Customer-facing displays and kiosks never take photos, and a flipped screen's camera is off while it faces the customer.</p>
+
+  <h3>Consent and the law</h3>
+  <p>Face signatures are biometric data. Illinois requires written consent and a public retention policy and allows lawsuits; Texas and Washington have similar laws; California's privacy law covers employee data; New York requires written notice of electronic monitoring; Portland, Oregon restricts face recognition in places open to the public. So face sign-in and session guard are opt-in per location after a legal review for its state, and per person: enrollment records a signed consent with date and policy version, staff who decline use PIN or a tag with no difference in what they can do, signatures are encrypted, kept only on the location's hubs and the group's own cloud, never shared with a vendor, and deleted within 30 days of leaving or on withdrawal; enrollment photos are deleted once the signature exists. Event photos are plain photos but still monitoring: written notice at hiring, an on-screen indicator when a photo is taken, and viewing photos is itself an audited, manager-only action. One policy page in the portal lists everything collected about staff, why and for how long.</p>
+  <div class="note"><strong>Not legal advice.</strong> Before face sign-in or event photos go live at a location, have an employment lawyer in that state check the consent form, the notice and the retention policy.</div>
+
+  <h3>Default roles</h3>
+  <p>Editable per location. "Approval" means a manager's PIN or tag on the spot, logged with both names.</p>
+  <div class="scroll"><table class="wide matrix">
+    <thead><tr><th>Action</th><th>Owner</th><th>Manager</th><th>Server</th><th>Cashier</th><th>Host</th><th>Kitchen</th><th>Remote</th></tr></thead>
+    <tbody>
+      <tr><td>Create and edit own orders</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="no">–</td><td class="no">–</td><td class="y">phone, takeout</td></tr>
+      <tr><td>Edit another server's order</td><td class="y">✓</td><td class="y">✓</td><td class="ap">approval</td><td class="ap">approval</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+      <tr><td>Void a fired item, comp, discount</td><td class="y">✓</td><td class="y">✓</td><td class="ap">approval</td><td class="ap">approval</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+      <tr><td>Take payment, split checks</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="no">–</td><td class="no">–</td><td class="y">link, pay at pickup</td></tr>
+      <tr><td>Refund a closed check</td><td class="y">✓</td><td class="y">✓</td><td class="no">–</td><td class="ap">approval</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+      <tr><td>Seat guests, waitlist</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="no">–</td><td class="y">✓</td><td class="no">–</td><td class="no">–</td></tr>
+      <tr><td>Bump tickets, mark 86</td><td class="y">✓</td><td class="y">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="y">✓</td><td class="no">–</td></tr>
+      <tr><td>Edit menu and prices</td><td class="y">✓</td><td class="ap">if granted</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+      <tr><td>Reports, staff, settings</td><td class="y">✓</td><td class="y">own location</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="phones">
+  <h2><span class="n">11</span>Phones &amp; remote operators</h2>
+  <p>The restaurant's lines run on <strong>FreePBX</strong> (VoIP) hosted in the cloud, so remote staff answer on a softphone or desk phone exactly as on-site staff do. A PBX connector in the POS cloud subscribes to Asterisk's event feed (the Asterisk Manager Interface) over an encrypted connection, maps each extension to a staff member or terminal, and pops the caller's profile, past orders and usual order on the screen of whoever picks up. The same link gives click-to-call from a customer record, and FreePBX's caller ID lookup asks the POS for the customer's name so it shows on the phone. Calls and audio stay on FreePBX; if it is unreachable, calls follow its own fallback without the pop-up and the POS carries on.</p>
+
+  <h3>Remote operators</h3>
+  <p>Remote workers take phone and takeout orders from anywhere. Their device joins the location's network over WireGuard (Tailscale, or self-hosted Headscale), reaches only the hub's POS service, never printers or cameras, and talks to the hub like an on-site terminal, so orders print in the kitchen instantly. Three locks apply: the VPN, the device certificate, and the staff sign-in with a second factor at the start of each shift, optionally limited to set hours. One operator can be allowed into several locations. The remote role creates and edits phone and takeout orders, looks up customers, quotes wait times, and takes payment by text link or "pay at pickup"; no cash drawer, no voids after firing, no refunds. If the hubs cannot be reached for any reason (hubs down, VPN misconfigured, firewall change), the device switches to the cloud within seconds and the cloud forwards orders over the hub's own outbound link. Only when the restaurant's internet itself is down does the location show as unavailable, so no order is taken that the kitchen cannot see.</p>
+
+  <h3>One call pool across locations</h3>
+  <p>Each location has its own number, and each number's inbound route in FreePBX tags the call with its location (a prefix on the caller ID name, such as <code>WS: Linda Chen</code>, and a call variable the POS reads). Each location has its own queue: its own cashiers ring first, and if nobody answers within a set time or too many calls wait, the queue widens to cashiers at other locations and remote operators, using Asterisk queue priorities. A cashier taps <em>Take calls</em> to join; the POS pauses them while they ring up a customer at the counter and unpauses after, and signing out removes them. Managers choose which locations help which and during which hours, and a live board shows calls waiting per location, time to answer, and who is on a call where. A call on a number not tied to one location asks the operator to choose, suggesting the caller's usual location.</p>
+  <p>When the phone rings, a call card opens in the calling location's color; on answer, the whole order screen switches to that location's menu, prices, taxes, hours, 86 list and wait times, and the banner stays until the order is sent:</p>
+  <div class="callcard" aria-label="Example call card">
+    <div class="cc-banner"><span class="cc-k">Incoming call for</span><strong>Westside</strong><span>(206) 555-0142 · 3 calls waiting · you are at Downtown</span></div>
+    <div class="cc-body">
+      <div><span class="label">Caller</span><strong>Linda Chen</strong> · (425) 555-0199<br>14 orders at Westside · usually pickup<br>Usual: Kung Pao Chicken (quart, hot), steamed rice</div>
+      <div><span class="label">Westside right now</span>Pickup in 25 min · delivery in 45 min<br>Out: Peking duck <span class="zh">北京烤鸭</span><br>Open until 10:00 pm</div>
+      <div class="cc-script"><span class="label">Say</span>"Thank you for calling <strong>Westside</strong>, this is Amy."</div>
+      <div class="cc-actions"><span>Answer and start order</span><span>Repeat usual order</span><span>Send to Westside staff</span></div>
+    </div>
+  </div>
+  <p style="font-size:14px;color:var(--muted)">Names, numbers and wait times are illustrative.</p>
+  <p>The order belongs to the calling location from the first tap and goes straight to that location's hub over the VPN, or through the cloud if the direct path fails, reaching its kitchen in a second or two. The confirmation step reads the location and address back before sending, the ticket and receipt say who took it and where (<code>Phone · Amy (Downtown)</code>), staff need the phone operator permission per location, and card payments by phone are text links, so card numbers are never read out. If the calling location is offline, the card turns red and the operator can offer a nearby location or take a callback note.</p>
+</section>
+
+<section id="service">
+  <h2><span class="n">12</span>Table service, sushi, bar and catering</h2>
+  <p>All of this sits on the order model and the menu engine without new machinery; the extensions are the six listed in section 7.</p>
+  <h3>Table service</h3>
+  <ul>
+    <li><strong>Seats and courses.</strong> Every line carries a seat and a course (drinks, appetizers, entrées, dessert, custom). Tickets and the expo screen show both; a check splits by seat with one tap. Courses are held and fired by the server, after a set delay, or by the expo when the previous course is bumped; the kitchen screen shows what is held and for how long. Rush and VIP tags and the allergy note print on every station's copy.</li>
+    <li><strong>Moving things.</strong> Transfer a table or check to another server, move or merge tables, combine checks, split by seat, item, amount or evenly, reopen a closed check with approval. Each is an operation, so it merges and audits like everything else.</li>
+    <li><strong>Paying.</strong> At the table on a handheld, or by a QR code on the receipt that lets the guest pay and tip on their phone. Suggested tips on receipts and readers. Automatic gratuity above a party size, as a service charge with its own tax class. Tips adjustable until the nightly batch.</li>
+    <li><strong>Cash.</strong> Server banking or cashier banking per location. The server close-out shows cash due, card tips, sales by category and open checks to close first.</li>
+    <li><strong>Tips and payroll.</strong> Pooling by role and shift, tip-outs to bartenders, bussers and sushi chefs, card tip fees where passed on, declared cash tips at clock-out, a per-employee tip report for payroll and IRS reporting, and the ADP export.</li>
+    <li><strong>Hosting.</strong> Floor plan with sections and server assignments, table status (open, ordered, entrées fired, check dropped, paid, needs bussing), turn times, a waitlist with text paging, and a built-in reservation book, with the Resy adapter in section 13.</li>
+    <li><strong>Expo and runners.</strong> An expo mode shows every ticket, bumps per item, paces courses, and prints runner slips with table and seat.</li>
+  </ul>
+  <h3>Sushi bar</h3>
+  <ul>
+    <li><strong>Shapes the engine already handles:</strong> nigiri by the piece (1 pc and 2 pc variants), half rolls, wrap choices (soy paper, no rice, cucumber) as substitutions on the <code>rice</code> role, platters and omakase as combos, chef's choice per guest with courses fired from the sushi station, sake by glass, carafe or bottle with hot or cold as a modifier.</li>
+    <li><strong>Market and open price:</strong> a variant flagged market price takes today's price from the 86 board or portal; an open-price variant takes a typed price with approval rules. Both record on the line like any price.</li>
+    <li><strong>The station:</strong> a kitchen screen or printer with all-day piece counts; counter seats are tables on the floor plan and the chef can ring in orders directly.</li>
+    <li><strong>Fish by weight:</strong> cuts and yields in the recipes (loin to saku to slices) give true cost and usage, and auto-86 fires when a critical fish runs out.</li>
+    <li><strong>Consumer advisory</strong> on items flagged raw or undercooked, on menus, storefront and receipts, in every enabled language.</li>
+  </ul>
+  <h3>Full bar</h3>
+  <ul>
+    <li><strong>Tabs.</strong> Open by name or by card with a pre-authorization that grows with the tab and is captured with tip at close. Tabs transfer to a table and back, close in a row at last call, and unclosed tabs are captured at end of day under the location's default tip rule.</li>
+    <li><strong>Drinks in the engine.</strong> Pour sizes as variants or scale modifiers; well, call, premium and top shelf as tiers on a <code>spirit</code> role, so "make it Grey Goose" swaps the ingredient and adds the upcharge; mixers and garnishes as modifiers; flights and pitchers as combos and variants; cocktail specs from the recipe on the bar screen.</li>
+    <li><strong>Taps and kegs.</strong> Each tap maps to a keg of known size; pours deplete it; the bar screen shows ounces left and warns before a keg kicks; "keg kicked" on the 86 board swaps the next keg and updates the tap list on boards and online.</li>
+    <li><strong>Routing by origin:</strong> drinks from servers print at the service bar, the bartender's own rings stay on their screen, and the main bar can watch the service bar queue.</li>
+    <li><strong>Happy hour and last call.</strong> Happy hour is a scheduled menu; a location chooses whether an order started in happy hour keeps its prices. Alcohol service hours block alcohol lines outside legal hours, with a logged override.</li>
+    <li><strong>Age checks.</strong> The first alcoholic item prompts: a tap to confirm or a license barcode scan that reads the birth date and keeps nothing else, logged with who checked.</li>
+    <li><strong>Waste and inventory.</strong> A waste operation records spills and remakes with a reason and depletes inventory without a sale. Bottle counts by weight or tenths, pour cost and bottle variance arrive with inventory in phase 4.</li>
+    <li><strong>Compliance reports:</strong> food versus alcohol sales by day and month for liquor license rules, plus comps, voids and spills by bartender.</li>
+  </ul>
+  <h3>Catering</h3>
+  <ul>
+    <li><strong>The order.</strong> Event date and time, headcount, pickup or delivery with address and contact, setup notes, utensils and disposables, per-item lead times, quotes that become orders, change and cancellation cutoffs per location, every change an operation the kitchen sees.</li>
+    <li><strong>Menus and money.</strong> A catering channel menu with half and full trays as variants, per-person items with a minimum headcount, packages as combos, packaging and utensils as recipe components. Deposits and partial payments, balance due at handover, invoices and receipts by email, house accounts with terms, service, delivery and gratuity charges with their own tax classes, delivery-zone tax where required.</li>
+    <li><strong>Production and delivery.</strong> A daily prep sheet aggregates catering orders by item and, through the recipe explosion, by ingredient. Orders fire automatically ahead of the event; tray labels print with item names, allergens and customer; a packing list prints with the receipt; a driver is assigned and marks delivery with a photo in the driver app the design plans for.</li>
+    <li><strong>ezCater</strong> orders arrive through the channel adapter in section 13 and behave exactly like orders taken by staff.</li>
+  </ul>
+</section>
+
+<section id="integrations">
+  <h2><span class="n">13</span>Integrations</h2>
+  <p>Every outside system connects through an adapter with a small, fixed interface, built the way the payment adapters are. Webhooks and public endpoints terminate only in the cloud, which forwards to the location's hubs through the normal sync; nothing on a restaurant network is reachable from the internet. Except for payments at the moment of sale, no adapter is in the path of taking an order, so an outside outage never stops service.</p>
+  <div class="scroll"><table class="wide">
+    <thead><tr><th>System</th><th>What flows</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td>Stripe, GoDaddy Payments, PayPal</td><td>Payments, pre-authorizations, refunds, payout reports (section 9).</td><td>1, 3</td></tr>
+      <tr><td>ezCater</td><td>New orders, changes and cancellations in; confirmations and the catering menu with ezCater's prices and lead times out; commission recorded as a fee; orders marked paid externally. Direct partner integration or an order aggregator that already carries ezCater and the delivery marketplaces, confirmed with ezCater in phase 0.</td><td>2</td></tr>
+      <tr><td>FreePBX</td><td>Call events in for the screen pop and queue control; caller ID lookup and click-to-call out (section 11).</td><td>3</td></tr>
+      <tr><td>Resy</td><td>Reservations and waitlist onto the host screen; table status back for turn times; guests linked to the CRM. OpenTable would use the same adapter shape.</td><td>4</td></tr>
+      <tr><td>ADP</td><td>Hours, overtime, breaks, declared tips and tip-outs per pay period, through ADP's connector or time-import file, employee ids matched.</td><td>2</td></tr>
+      <tr><td>Accounting (QuickBooks, Xero or a ledger file)</td><td>Daily sales journal: sales by category and location, tax by jurisdiction, tips, discounts, gift card and deposit liabilities, house account receivables, expected deposits per provider.</td><td>2</td></tr>
+      <tr><td>Scheduling (7shifts or HotSchedules)</td><td>Sales and punches out; the schedule in, with clock-in enforcement.</td><td>3</td></tr>
+      <tr><td>Delivery marketplaces (DoorDash, Uber Eats), own storefront</td><td>Orders in, menus with channel pricing out, on the ezCater adapter pattern.</td><td>4</td></tr>
+      <tr><td>Text and email</td><td>Payment links, receipts, waitlist paging, marketing with consent, alerts, through a messaging provider.</td><td>1</td></tr>
+      <tr><td>Tax rate service (Stripe Tax, Avalara, TaxJar)</td><td>Rate lookups by address and suggested updates; never in the sale path.</td><td>3</td></tr>
+      <tr><td>Device management</td><td>Apple Business Manager and Android Enterprise for tablets and phones; a signed release feed for stations and hubs.</td><td>2</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="backoffice">
+  <h2><span class="n">14</span>Back office</h2>
+  <ul>
+    <li><strong>Reporting.</strong> Reports run on a cloud read replica seconds behind, never on the database taking orders; cross-location analytics and years of history sit in a column store fed from it. Standard reports: sales by server, section, hour and location; product mix with food, beverage and catering split; voids and comps after firing by employee; discounts by reason; table turns and covers; ticket times per station; tip and tip-out summaries; cash variance per drawer or server; catering due this week with balances; tax by jurisdiction; food versus alcohol; and a daily close with each provider's batch beside the cash count. Owners get a daily summary by text or email at close.</li>
+    <li><strong>Your data is yours.</strong> Every report exports to a spreadsheet, every table is reachable through a documented API under the same roles, and a full export is available on request.</li>
+    <li><strong>Labor.</strong> Time clock, roles and tip reporting are built in because they are tied to sign-in; scheduling connects through the adapter in section 13 and could be built in later by replacing it. Meal and rest break reminders and attestations, overtime alerts before they happen, minor work-hour limits and predictive-scheduling notices are set per location.</li>
+    <li><strong>Loyalty and gift cards.</strong> Points or visits, rewards redeemed as discounts the engine already handles, tiers, birthday and win-back offers. A gift card liability ledger in the cloud, physical cards and e-gifts, redeemable at every location. Points earned offline post when the order reaches the cloud; redemptions offline are allowed up to a set amount and settle on reconnect.</li>
+    <li><strong>Marketing and privacy.</strong> Text and email campaigns from the CRM with consent per channel and customer, opt-out everywhere, quiet hours respected. Customer data encrypted, access logged, and a customer's request to see or delete their data handled from one screen.</li>
+    <li><strong>Customer-facing screens.</strong> A customer display at the register shows the order, prompts for tip and signature, offers a text or email receipt and loyalty sign-up by phone number, and never takes photos. Tap lists, specials and menu boards run on the menu engine, in the location's languages, and change the moment a price or an 86 changes.</li>
+    <li><strong>Inventory and purchasing (phase 4).</strong> Counts by storage area, par levels and suggested orders, purchase orders and vendor invoices that update costs with invoice photos, transfers between locations, waste logs, and theoretical versus actual usage with variance by ingredient, on the ingredient master the design already shares.</li>
+  </ul>
+</section>
+
+<section id="operations">
+  <h2><span class="n">15</span>Operations &amp; quality</h2>
+  <ul>
+    <li><strong>Updates that never interrupt service.</strong> Releases go to a test location first, then to hubs in waves outside service hours, standby before primary. The app and backend speak a versioned API, so older apps keep working and terminals update when idle. Any release rolls back per location. New features switch on per location behind flags.</li>
+    <li><strong>Hubs as appliances.</strong> One standard image: plug in, scan a code, and the hub enrolls, pulls its location's data and joins as standby. Replacing a dead hub takes ten minutes. Hubs patch themselves in the maintenance window and are the time source for every device on the network.</li>
+    <li><strong>Watching everything.</strong> Every hub, terminal, printer, reader, VPN link and region reports health to a status board, with text and email alerts: hub failed over, printer out of paper, sync behind by a minute, provider failing, certificate expiring. Logs and metrics collect centrally; a diagnostic bundle is one tap away.</li>
+    <li><strong>Backups and recovery.</strong> Every operation reaches the cloud within seconds; the cloud database is replicated to the second region with point-in-time recovery, backups kept a year, media and receipts versioned in object storage, a restore rehearsed quarterly. Targets: seconds of data at risk at most, hub takeover in about five seconds, region takeover in minutes.</li>
+    <li><strong>Security.</strong> Card data never enters the system (simplest PCI category; readers are the processors' certified devices). A closed POS network per location, device certificates, encrypted disks on hubs, secrets in a vault, encryption at rest and in transit, a yearly penetration test, and audit logs for every data access by staff and support.</li>
+    <li><strong>Support.</strong> Support reaches hubs over the VPN and sees a terminal's screen with the operator's consent, never through an opened port. A "help" button sends a diagnostic bundle and opens a ticket with location and device filled in.</li>
+    <li><strong>Day-to-day details.</strong> A business day ends at a set hour (say 4 am) so a 1 am tab lands on the right night in every report and batch. Training mode on any terminal runs the full system with nothing posted, printed or charged, under a watermark. Opening a location is a portal checklist: create it, copy menus and tax rules from a similar one, image two hubs, enroll devices by code, discover printers, set languages, run printer and payment tests, go live, in about a day.</li>
+    <li><strong>Testing and rollout.</strong> The engine and order model are tested like a calculator: the design's worked examples and property tests, plus operation logs replayed out of order, duplicated and with pulled cables, on every change. A simulated restaurant of twenty virtual terminals, kitchen screens and printers runs a scripted Friday night against a real hub and the cloud, with hubs killed and the internet cut mid-service, as the release gate. A hardware lab holds one of every device, reader and printer model. One real location, or a test tenant, gets every release first. Phase 1 ends with a shadow week beside the old system, totals compared nightly.</li>
+  </ul>
+  <p>Every row carries a tenant id, so the same cloud could host another restaurant group with full separation. Nothing depends on it; it costs nothing now.</p>
+</section>
+
+<section id="hardware">
+  <h2><span class="n">16</span>Hardware &amp; network</h2>
+  <ul>
+    <li><strong>Hubs:</strong> two fanless mini PCs (8 GB RAM, SSD, Linux), each on its own small UPS in different spots, about $300 to $500 each, plus a small witness device (a Raspberry Pi) for failover votes.</li>
+    <li><strong>Printers:</strong> Ethernet ESC/POS printers (Epson TM series or compatible) with reserved IP addresses, one per kitchen station plus a backup, a receipt printer with cash drawer at each register. USB-only printers do not fit, since nothing could reach them when their host is down.</li>
+    <li><strong>Fixed stations:</strong> touch all-in-ones on Windows or Linux, or iPads on stands, with a front camera (or USB webcam) and a USB NFC reader.</li>
+    <li><strong>Handhelds:</strong> iPhones, iPads or rugged Android devices with a paired card reader for pay at the table; phones and most Android devices read NFC tags on their own.</li>
+    <li><strong>NFC tags:</strong> fobs, cards or phone stickers (NTAG 424 DNA or DESFire), $1 to $3 each.</li>
+    <li><strong>Kitchen and bar screens (KDS):</strong> Android tablets or small Linux PCs with wall-mounted displays, one per station plus expo.</li>
+    <li><strong>Card readers:</strong> one from each provider you want to route between at the stations where it matters, or one default reader everywhere with the others as backup.</li>
+    <li><strong>Network:</strong> a separate POS network, wired for hubs, stations and printers, Wi-Fi for handhelds, a cellular backup on the router. At 20 terminals a busy Friday is a few thousand operations an hour, well within one small hub.</li>
+  </ul>
+</section>
+
+<section id="plan">
+  <h2><span class="n">17</span>Build plan</h2>
+  <p>Ordered so your restaurant runs on the system as early as possible, with multi-location pieces arriving once the core has survived real service. Durations assume 2 to 4 developers.</p>
+  <div class="phases">
+    <div class="phase"><span class="when">Phase 0 · weeks 1 to 3</span><h3>Spikes</h3>
+      <ul>
+        <li>The Python menu engine package, with the worked example as its first passing test.</li>
+        <li>On real hardware: Flutter on each device type; front cameras and face signatures on Windows, Linux and Mac stations; NFC readers on each device type; ESC/POS printing from the hub and through a terminal relay from the cloud; Stripe and GoDaddy readers driven from the POS, including offline mode and pre-authorized tabs.</li>
+        <li>Integration terms confirmed with GoDaddy, ezCater and Resy.</li>
+        <li>A two-terminal sync prototype that survives pulled cables.</li>
+      </ul>
+      <p class="exit"><b>Done when:</b> two tablets and a laptop hub take orders, print a ticket, and merge correctly after being disconnected.</p></div>
+    <div class="phase"><span class="when">Phase 1 · months 1 to 4</span><h3>One restaurant, full service</h3>
+      <ul>
+        <li><b>Menu:</b> layers 1 and 2 of the design (sell, configure): catalog, variants, modifiers, combos, menus with numbers and schedules, kitchen labels, 86 board, spreadsheet import of the current item list; languages with fallback chains, English and Chinese loaded first; media library with POS photo tiles; market and open price.</li>
+        <li><b>Orders:</b> order entry, table map, seats and courses with hold and fire, transfers and merges, split checks, kitchen and receipt printing, service bar routing, catering orders with event details, deposits, invoices and prep sheets.</li>
+        <li><b>Money:</b> Stripe then GoDaddy through the payment layer, bar tabs with pre-authorization, auto-gratuity, age-check prompt, server banking and close-out, end of day; taxes set up for the first location.</li>
+        <li><b>People:</b> sign-in by PIN and NFC tag, event photos with retention, roles.</li>
+        <li><b>Platform:</b> hubs with offline mode, business-day cutoff, printer failover, training mode, basic health alerts, text links and receipts.</li>
+      </ul>
+      <p class="exit"><b>Done when:</b> your restaurant runs a full week on it beside the old system, then without it.</p></div>
+    <div class="phase"><span class="when">Phase 2 · months 4 to 6</span><h3>Cloud, kitchen screens, handhelds</h3>
+      <ul>
+        <li><b>Platform:</b> standby hub with automatic takeover, cloud sync with the cloud as a live second backend, admin portal, staged updates, status board and alerting, reporting replica.</li>
+        <li><b>Floor and kitchen:</b> kitchen display with bump and recall, expo mode, plating photos on screens, handheld ordering and pay at the table, QR pay, customer display at the register, keg and tap tracking, tray labels.</li>
+        <li><b>People and money:</b> face sign-in and session guard after the first state's legal review, time clock, tip pooling and tip-outs, ADP and accounting exports, tax reports by jurisdiction.</li>
+        <li><b>Menu:</b> ingredients and recipes for the top fifty sellers, with food cost and margin in the portal.</li>
+        <li><b>Channels:</b> the ezCater adapter.</li>
+      </ul>
+      <p class="exit"><b>Done when:</b> unplugging either hub, or the internet, mid-service goes unnoticed by guests.</p></div>
+    <div class="phase"><span class="when">Phase 3 · months 6 to 9</span><h3>Customers and multiple locations</h3>
+      <ul>
+        <li><b>Customers:</b> profiles, caller ID pop with FreePBX, order history, loyalty points, gift cards across locations, allergen review queue and badges.</li>
+        <li><b>Payments:</b> PayPal and QR payments, cost-based routing across providers, payout reconciliation, rate service.</li>
+        <li><b>Locations:</b> central menu with per-location overrides, cross-location reporting, backup cloud region, device enrollment at scale, feature flags, scheduling adapter, remote operators over VPN, the shared call pool with queues and call cards. Second and third locations go live.</li>
+      </ul>
+      <p class="exit"><b>Done when:</b> three locations run on it and an owner changes a price everywhere from the portal.</p></div>
+    <div class="phase"><span class="when">Phase 4 · month 9 onward</span><h3>Growth</h3>
+      <ul>
+        <li>Own storefront and driver app on the same engine; delivery marketplaces; QR ordering at the table; the Resy adapter.</li>
+        <li>Inventory and purchasing with counts, variance and auto-86 (liquor by bottle, fish by weight); loyalty campaigns; deeper analytics.</li>
+      </ul></div>
+  </div>
+</section>
+
+<section id="risks">
+  <h2><span class="n">18</span>Risks</h2>
+  <ul>
+    <li><strong>Terminals depend on a backend.</strong> Screens stop only if both hubs and the internet fail together; two hubs, two regions and a cellular backup make that rare.</li>
+    <li><strong>Sync bugs are costly.</strong> The merge logic is one small package with heavy tests, including random disconnect and reorder, on every change.</li>
+    <li><strong>Provider depth.</strong> Not every provider lets a third-party POS fully drive its readers; one that does not can still be used as a standalone reader with the amount keyed in, losing automatic routing for it. Desktop SDKs are avoided by server-driven readers. Offline store-and-forward risks later declines, so limits are configurable.</li>
+    <li><strong>Marketplace access.</strong> If ezCater or Resy do not offer direct partner access, an aggregator carries them; the adapter shape is the same.</li>
+    <li><strong>Biometric law.</strong> Face sign-in is opt-in per location and person with consent records, in-house encrypted signatures and scheduled deletion; a location where it is not allowed runs on PIN and tags, nothing else changed.</li>
+    <li><strong>Tax settings.</strong> Effective-dated rates, a weekly collected-versus-expected report per jurisdiction, and each location's rules reviewed with its accountant.</li>
+    <li><strong>Printers and scripts.</strong> Chinese character support varies; tickets fall back to printing as an image on any ESC/POS printer.</li>
+  </ul>
+</section>
+
+<footer>Draft 4 for review. No repository or code exists yet; the next step after your feedback is a phase 0 plan with the spikes above.</footer>
+</main>
+</div>
