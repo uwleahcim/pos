@@ -30,7 +30,17 @@ from typing import TextIO
 Message = dict[str, str]
 
 # Contexts FreePBX gives to calls arriving on a trunk; Exten on those channels is the dialed number (DID).
-TRUNK_CONTEXTS = frozenset({"from-trunk", "from-pstn", "from-did-direct", "from-trunk-sip", "from-sip-external"})
+TRUNK_CONTEXTS = frozenset(
+    {
+        "from-trunk",
+        "from-pstn",
+        "from-pstn-e164-us",
+        "from-pstn-toheader",
+        "from-did-direct",
+        "from-trunk-sip",
+        "from-sip-external",
+    }
+)
 _NOT_DIGITS = re.compile(r"\D+")
 
 
@@ -214,12 +224,14 @@ class CallSeen:
     location: str | None
 
 
-def call_from_event(packet: Message, locations: Mapping[str, str] | None = None) -> CallSeen | None:
+def call_from_event(
+    packet: Message, locations: Mapping[str, str] | None = None, contexts: frozenset[str] = TRUNK_CONTEXTS
+) -> CallSeen | None:
     """An incoming call as the POS sees it: Newchannel on a trunk context carries the caller and the dialed
     number; QueueCallerJoin says which queue it landed in. Anything else is not a call for us."""
     event = packet.get("Event", "")
     context = packet.get("Context", "")
-    if event == "Newchannel" and context not in TRUNK_CONTEXTS:
+    if event == "Newchannel" and context not in contexts:
         return None
     if event not in ("Newchannel", "QueueCallerJoin"):
         return None
@@ -311,6 +323,7 @@ async def tail(
     count: int | None = None,
     seconds: float | None = None,
     out: TextIO = sys.stdout,
+    contexts: frozenset[str] = TRUNK_CONTEXTS,
 ) -> int:
     """Print incoming calls as they arrive, one JSON line each with the detected location."""
     seen = 0
@@ -318,7 +331,7 @@ async def tail(
     async def run() -> None:
         nonlocal seen
         async for packet in client.events():
-            call = call_from_event(packet, locations)
+            call = call_from_event(packet, locations, contexts)
             if call is None:
                 continue
             seen += 1
@@ -351,6 +364,9 @@ def build_parser() -> argparse.ArgumentParser:
     tail_cmd.add_argument("--location", action="append", default=[], metavar="NUMBER=NAME")
     tail_cmd.add_argument("--count", type=int, help="stop after this many calls")
     tail_cmd.add_argument("--seconds", type=float, help="stop after this many seconds")
+    tail_cmd.add_argument(
+        "--trunk-context", action="append", default=[], help="an extra inbound context to treat as a trunk"
+    )
     for name in ("pause", "unpause"):
         cmd = sub.add_parser(name, help=f"{name} an agent in the queues")
         cmd.add_argument("--interface", required=True, help="e.g. Local/201@from-queue/n or PJSIP/201")
@@ -376,7 +392,8 @@ async def run(args: argparse.Namespace) -> int:
             print(json.dumps(await probe(client), indent=2))
         elif args.command == "tail":
             locations = dict(item.split("=", 1) for item in args.location)
-            await tail(client, locations, count=args.count, seconds=args.seconds)
+            contexts = TRUNK_CONTEXTS | frozenset(args.trunk_context)
+            await tail(client, locations, count=args.count, seconds=args.seconds, contexts=contexts)
         elif args.command in ("pause", "unpause"):
             response = await set_paused(client, args.interface, args.command == "pause", args.queue, args.reason)
             print(response.get("Message", response.get("Response", "")))

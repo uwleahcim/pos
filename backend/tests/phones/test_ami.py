@@ -108,6 +108,9 @@ def test_location_matching_ignores_formatting_and_the_country_code():
     assert location_for("5551239999", locations) is None
     assert location_for("", locations) is None
     assert call_from_event({"Event": "Hangup", "Channel": "x"}) is None
+    custom = {"Event": "Newchannel", "Context": "from-my-trunk", "Exten": "5551230001", "CallerIDNum": "1"}
+    assert call_from_event(custom, locations) is None
+    assert call_from_event(custom, locations, frozenset({"from-my-trunk"})).location == "Downtown"
 
 
 def test_cli_probe_prints_json(monkeypatch, capsys):
