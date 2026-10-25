@@ -7,7 +7,7 @@
 | GoDaddy Payments | Can a third-party POS drive your readers (sale, tip, refund, pre-auth, incremental, offline)? Developer program, fees. | pending |
 | ezCater | Direct partner API for orders, menus and confirmations, or an approved order aggregator? Fees and commission reporting. | pending |
 | Resy | Partner API for reservations and waitlist into a POS, table status back. | pending |
-| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org. | host received 2026-10-25; access pending (see below) |
+| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org, Mike's own Vultr server (144.202.2.62). | own server, so no partner terms (2026-10-25); access setup pending (see below) |
 | Stripe | Terminal in the restaurant's region, offline mode and incremental authorization support per reader model. | pending |
 
 **Pass.** Every row has a written yes or no (or a named aggregator) by the end of phase 0.
@@ -44,7 +44,14 @@ What the PBX side needs, in order:
    and queue pause can be exercised without touching a live phone.
 4. **Facts to map numbers to locations:** the FreePBX version, the inbound routes (which dialed number belongs
    to which location), and the queue numbers per location.
-5. **Who owns the host.** If the PBX is Mike's own server, no terms are needed, only the setup above. If a
-   vendor manages it, their written yes to manager-interface access is this spike's answer.
+5. **Who owns the host.** Answered 2026-10-25: Mike's own Vultr server, so no terms are needed, only the
+   setup above.
 
-Result: pending the AMI user and the path. The connector itself is phase 3; phase 0 only proves the access.
+**Fastest live check, no ports opened.** `ami.py` is one file with no dependencies beyond the standard
+library (Python 3.11 or newer; FreePBX 17 on Debian 12 ships it, FreePBX 16 on SNG7 does not, so run it from a
+laptop there). Copy it to the server, create the AMI user permitted
+from `127.0.0.1` only, and run the probe against `--host 127.0.0.1`. That proves the user, the rights and the
+events; the tunnel or allow-list comes after, when the connector moves off the box.
+
+Result: own server, no terms needed. Pending the AMI user, the path and a test extension for the live run.
+The connector itself is phase 3; phase 0 only proves the access.

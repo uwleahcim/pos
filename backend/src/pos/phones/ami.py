@@ -9,6 +9,7 @@ user and a network path work before any connector code is written.
     AMI_SECRET=... python -m pos.phones.ami --host freepbx.example.org --user pos tail --location 5551230001=Downtown
 
 The secret comes from an environment variable so it never lands in a shell history or a process list.
+This file stands alone (standard library only, Python 3.11 or newer) so it can be copied to the PBX host and run there.
 """
 
 from __future__ import annotations
