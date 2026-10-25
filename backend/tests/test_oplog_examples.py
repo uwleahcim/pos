@@ -37,8 +37,14 @@ def test_arrival_order_and_duplicates_never_change_the_result(op):
 
 def test_a_void_wins_over_a_concurrent_edit_whichever_came_first(op):
     base = [op("create", at=0), op("add_line", at=1, line_id="L1", item="Sake", qty=1)]
-    edit_then_void = base + [op("set_line", at=5, node="a", line_id="L1", qty=3), op("void_line", at=4, node="b", line_id="L1")]
-    void_then_edit = base + [op("void_line", at=4, node="b", line_id="L1"), op("set_line", at=9, node="a", line_id="L1", qty=3)]
+    edit_then_void = base + [
+        op("set_line", at=5, node="a", line_id="L1", qty=3),
+        op("void_line", at=4, node="b", line_id="L1"),
+    ]
+    void_then_edit = base + [
+        op("void_line", at=4, node="b", line_id="L1"),
+        op("set_line", at=9, node="a", line_id="L1", qty=3),
+    ]
     for ops in (edit_then_void, void_then_edit):
         line = replay(ops).lines["L1"]
         assert line.status == "void"

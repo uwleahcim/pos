@@ -47,7 +47,7 @@ def op_out(op: Op) -> dict[str, Any]:
 
 def create_app(store: OpStore | None = None) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
-    app.state.store = store or OpStore()
+    app.state.store = store if store is not None else OpStore()
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -76,9 +76,7 @@ def create_app(store: OpStore | None = None) -> FastAPI:
         return store.state(order_id).snapshot()
 
     @app.get("/ops")
-    def pull_ops(
-        since: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000)
-    ) -> dict[str, Any]:
+    def pull_ops(since: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000)) -> dict[str, Any]:
         store: OpStore = app.state.store
         ops = store.since(since, limit)
         return {"ops": [op_out(op) for op in ops], "cursor": since + len(ops)}

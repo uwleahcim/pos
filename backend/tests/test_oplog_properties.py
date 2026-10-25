@@ -26,16 +26,31 @@ def ops(draw):
         stamp = HLC(T0 + draw(st.integers(0, 50)), draw(st.integers(0, 3)), node)
         kind = draw(
             st.sampled_from(
-                ["create", "set_field", "add_line", "add_line", "set_line", "set_line", "void_line",
-                 "fire", "close", "reopen", "void_order"]
+                [
+                    "create",
+                    "set_field",
+                    "add_line",
+                    "add_line",
+                    "set_line",
+                    "set_line",
+                    "void_line",
+                    "fire",
+                    "close",
+                    "reopen",
+                    "void_order",
+                ]
             )
         )
         data: dict = {}
         if kind in ("create", "set_field"):
             data = {"table": draw(st.integers(1, 9)), "note": draw(st.sampled_from(["", "rush", "vip"]))}
         elif kind == "add_line":
-            data = {"line_id": draw(line_ids), "item": "x", "qty": draw(st.integers(1, 3)),
-                    "course": draw(st.sampled_from(["apps", "entrees"]))}
+            data = {
+                "line_id": draw(line_ids),
+                "item": "x",
+                "qty": draw(st.integers(1, 3)),
+                "course": draw(st.sampled_from(["apps", "entrees"])),
+            }
         elif kind == "set_line":
             data = {"line_id": draw(line_ids), "qty": draw(st.integers(1, 5))}
         elif kind == "void_line":

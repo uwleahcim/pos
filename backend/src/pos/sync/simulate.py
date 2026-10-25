@@ -192,9 +192,7 @@ def run(
     rng = random.Random(seed)
     sim = SimTime()
     nodes = [Replica("hub", sim.skewed(0))]
-    nodes += [
-        Replica(f"t{i}", sim.skewed(rng.randint(-skew_ms, skew_ms))) for i in range(1, replicas)
-    ]
+    nodes += [Replica(f"t{i}", sim.skewed(rng.randint(-skew_ms, skew_ms))) for i in range(1, replicas)]
     hub, terminals = nodes[0], nodes[1:]
     order_ids = [f"o{j}" for j in range(orders)]
     lossy = Channel(rng, drop=drop, dup=dup, shuffle=True, lose_ack=lose_ack)

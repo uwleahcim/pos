@@ -10,7 +10,14 @@ from .conftest import T0
 
 
 def payload(op_id: str, kind: str, at: int, **data):
-    return {"op_id": op_id, "order_id": "o1", "hlc": str(HLC(T0 + at, 0, "t1")), "device": "t1", "kind": kind, "data": data}
+    return {
+        "op_id": op_id,
+        "order_id": "o1",
+        "hlc": str(HLC(T0 + at, 0, "t1")),
+        "device": "t1",
+        "kind": kind,
+        "data": data,
+    }
 
 
 def test_append_read_and_pull():
