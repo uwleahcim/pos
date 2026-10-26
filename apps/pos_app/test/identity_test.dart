@@ -36,15 +36,18 @@ void main() {
     if (!backendUp) throw http.ClientException('refused', request.url);
     if (request.url.path == '/signin') {
       final pin = (jsonDecode(request.body) as Map)['pin'];
-      if (pin == '1111')
-        return http.Response(jsonEncode({'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'}), 200);
-      if (pin == '0000')
+      if (pin == '1111') {
+        final amy = {'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'};
+        return http.Response(jsonEncode(amy), 200);
+      }
+      if (pin == '0000') {
         return http.Response(
           jsonEncode({
             'detail': {'error': 'unknown_credential'},
           }),
           401,
         );
+      }
       return http.Response(
         jsonEncode({
           'detail': {'error': 'locked', 'seconds': 60},
