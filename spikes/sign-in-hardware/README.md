@@ -20,5 +20,9 @@ posts it to `/events/photos` with the operation id, device and staff id; `GET /e
 and `/events/photos/{id}` returns the picture. Nothing blocks on the photo: no camera, no photo.
 To check on the Mac: sign in as 1111, make an order, then `curl http://172.19.1.179:8000/events/photos`.
 
-**Result.** PIN and event photo: software passed 2026-10-26 (6 backend tests, 3 app tests); the camera
-path needs Mike's run on the Mac and iPad. NFC tags and face signatures wait for the tags and readers.
+**Result.** PIN and event photo: software passed 2026-10-26 (6 backend tests, 3 app tests). Hardware
+check on the Mac passed 2026-10-26: Mike signed in as Amy (1111) on `mac1` against hub 1, created and
+fired an order, and `GET /events/photos` listed one 72 KB JPEG tagged `device=mac1 event=fire staff_id=s1`
+with the fire operation's id. Open point: only the fire photo was listed, not the create-order one, so the
+first capture after sign-in may be lost while the camera warms up (to look at once the iPad and iPhone
+results are in). iPad and iPhone runs pending. NFC tags and face signatures wait for the tags and readers.
