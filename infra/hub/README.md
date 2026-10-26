@@ -148,3 +148,5 @@ and the witness vote. Nothing in this guide depends on it.
 | The API never becomes healthy | The container crashed | `hubctl logs api`; send the last lines to the thread |
 | `pos-hub1.local` does not resolve | The laptop lacks mDNS (Windows without Bonjour) | Use the address from `hubctl status` |
 | Time is not syncing | The hub has no internet and no other time source | Expected offline: the hub keeps its own clock and still serves the network; it corrects itself when the line is back |
+
+The second hub, replication and takeover: see `FAILOVER.md`.

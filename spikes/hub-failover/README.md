@@ -18,3 +18,7 @@ Ubuntu 26.04.1 LTS. `hubctl status` shows `pos-api-1` and `pos-db-1` healthy, `/
 stratum 3 serving the LAN, 207 GB free, CPU at 37 °C. Three script bugs surfaced on the way and are fixed:
 `hubctl` now re-runs itself under sudo, `/etc/os-release` no longer clobbers the hub name, and the image is
 built with plain `docker build` because the compose builder refuses a build context behind a symlink.
+
+Plan and the parts verified so far: `infra/hub/FAILOVER.md` (2026-10-26): streaming replication, a
+standby API that reports `replica` and refuses writes, and promotion were checked on a laptop; Patroni, etcd
+and the physical pulls wait for hub 2 and the Pi.
