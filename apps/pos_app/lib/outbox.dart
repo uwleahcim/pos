@@ -13,8 +13,7 @@ class Hlc {
   Hlc({required String node, int Function()? now}) : this.lazy(node: () => node, now: now);
 
   /// The node is read on every stamp, so a device renamed in settings stamps with its new name at once.
-  Hlc.lazy({required String Function() this._node, int Function()? now})
-    : _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
+  Hlc.lazy({required this._node, int Function()? now}) : _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   final String Function() _node;
   String get node => _node();
