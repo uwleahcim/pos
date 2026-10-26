@@ -64,6 +64,10 @@ mem_mb=$(awk '/MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
 
 log "Hostname $NAME"
 hostnamectl set-hostname "$NAME"
+if [[ -d /etc/cloud/cloud.cfg.d ]]; then
+  # Ubuntu Server's cloud-init puts the installer's hostname back on every boot unless told not to
+  echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-pos-hub.cfg
+fi
 if grep -qE '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
   sed -i -E "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 $NAME/" /etc/hosts
 else

@@ -141,6 +141,7 @@ and the witness vote. Nothing in this guide depends on it.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `hubctl` says permission denied | An old copy of hubctl ran without root | `git -C ~/pos pull` and run the bootstrap again; hubctl now uses sudo itself |
 | Locked out of SSH after the script | Your laptop is not on the LAN the script detected | Log in on the hub's console and run the script again with `--ssh-from` |
 | `docker compose build` fails downloading packages | No internet on the hub, or a proxy | Check `curl -I https://pypi.org` on the hub; run the script again once it works |
 | The API never becomes healthy | The container crashed | `hubctl logs api`; send the last lines to the thread |
