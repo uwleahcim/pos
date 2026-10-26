@@ -11,4 +11,14 @@ backend only compares vectors).
 **Pass.** Tag tap signs in under one second on every device type; face match under one second with no
 false accept across ten enrolled staff; the event photo path captures a 320 px frame on each action.
 
-**Result.** Pending.
+**Software part, done 2026-10-26.** PIN sign-in end to end: the app's PIN pad posts to `/signin`, the backend
+holds salted PIN hashes (`pos.identity.staff`, demo staff or `POS_STAFF`), five misses lock that device
+for a minute, and the signed-in name travels on the `create` operation as `server`. Event photos: the app
+keeps the front camera preview on screen (sign-in page, then a thumbnail in the app bar), takes a low
+resolution JPEG when an order is created, fired, closed, reopened or a line voided, queues it on disk and
+posts it to `/events/photos` with the operation id, device and staff id; `GET /events/photos` lists them
+and `/events/photos/{id}` returns the picture. Nothing blocks on the photo: no camera, no photo.
+To check on the Mac: sign in as 1111, make an order, then `curl http://172.19.1.179:8000/events/photos`.
+
+**Result.** PIN and event photo: software passed 2026-10-26 (6 backend tests, 3 app tests); the camera
+path needs Mike's run on the Mac and iPad. NFC tags and face signatures wait for the tags and readers.

@@ -115,6 +115,13 @@ class PosApi {
 
   Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
 
+  /// Who this PIN belongs to; 401 for a wrong PIN, 423 while the device is locked out.
+  Future<Map<String, dynamic>> signIn({required String device, String? pin, String? tagUid}) =>
+      _post('/signin', {'device': device, 'pin': ?pin, 'tag_uid': ?tagUid});
+
+  /// Stores an event photo; sending the same photo twice is harmless.
+  Future<Map<String, dynamic>> putPhoto(Map<String, dynamic> photo) => _post('/events/photos', photo);
+
   /// Appends operations; returns the op ids the backend had not seen before.
   Future<List<String>> appendOps(String orderId, List<Map<String, dynamic>> ops) async {
     final json = await _post('/orders/$orderId/ops', ops);

@@ -28,6 +28,10 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The POS takes a small photo of the operator when an order is created, fired, closed or voided, for the audit log.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Not used; required by the camera plugin.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

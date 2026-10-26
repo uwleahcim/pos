@@ -4,14 +4,16 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../outbox.dart';
+import '../photos.dart';
 import 'status_bar.dart';
 
 /// One order: its lines as the backend replays them, and the taps that append to it.
 class OrderScreen extends StatefulWidget {
-  const OrderScreen({super.key, required this.api, required this.outbox, required this.orderId});
+  const OrderScreen({super.key, required this.api, required this.outbox, required this.photos, required this.orderId});
 
   final PosApi api;
   final Outbox outbox;
+  final PhotoQueue photos;
   final String orderId;
 
   @override
@@ -44,8 +46,11 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  static const _photographed = {'fire', 'close', 'reopen', 'void_line', 'void_order'};
+
   Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) async {
-    await widget.outbox.add(widget.orderId, kind, data);
+    final opId = await widget.outbox.add(widget.orderId, kind, data);
+    if (_photographed.contains(kind)) unawaited(widget.photos.capture(kind, opId: opId));
     _refresh();
   }
 

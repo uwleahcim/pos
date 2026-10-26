@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../camera.dart';
 import '../outbox.dart';
+import '../photos.dart';
+import '../session.dart';
 import '../settings.dart';
 import 'order_screen.dart';
 import 'settings_screen.dart';
@@ -11,11 +14,22 @@ import 'status_bar.dart';
 
 /// Open orders from the backend, refreshed every two seconds. Phase 1 replaces polling with a push.
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({super.key, required this.api, required this.outbox, required this.settings});
+  const OrdersScreen({
+    super.key,
+    required this.api,
+    required this.outbox,
+    required this.settings,
+    required this.session,
+    required this.camera,
+    required this.photos,
+  });
 
   final PosApi api;
   final Outbox outbox;
   final Settings settings;
+  final Session session;
+  final EventCamera camera;
+  final PhotoQueue photos;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -56,7 +70,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => OrderScreen(api: widget.api, outbox: widget.outbox, orderId: orderId),
+        builder: (_) => OrderScreen(api: widget.api, outbox: widget.outbox, photos: widget.photos, orderId: orderId),
       ),
     );
     _refresh();
@@ -66,8 +80,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Orders · ${widget.settings.device}'),
+        title: Text('Orders · ${widget.session.staff?.name ?? ''} · ${widget.settings.device}'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: SizedBox(
+              width: 64,
+              child: ClipRRect(borderRadius: BorderRadius.circular(6), child: widget.camera.preview()),
+            ),
+          ),
+          IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: widget.session.signOut),
           IconButton(
             tooltip: _showClosed ? 'Hide closed' : 'Show closed',
             icon: Icon(_showClosed ? Icons.visibility_off : Icons.visibility),
@@ -106,8 +128,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         onTap: () async {
                           await Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) =>
-                                  OrderScreen(api: widget.api, outbox: widget.outbox, orderId: order.orderId),
+                              builder: (_) => OrderScreen(
+                                api: widget.api,
+                                outbox: widget.outbox,
+                                photos: widget.photos,
+                                orderId: order.orderId,
+                              ),
                             ),
                           );
                           _refresh();
