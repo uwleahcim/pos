@@ -1,12 +1,12 @@
 # POS app (Flutter)
 
-The terminal app for phase 0: one app for iPad, Android tablet, Windows, Mac, Linux and the web. It is a
+The terminal app for phase 0: one app for Mac, iPad and iPhone (macOS and iOS only, ADR 4). It is a
 screen only. It signs in with a device name, lists orders from the backend, and appends operations to the
 order log. No pricing, tax or menu rule ever lives here; the backend owns every rule.
 
 ```
 flutter pub get
-flutter run -d macos          # or: chrome, linux, windows, an iPad or Android device id
+flutter run -d macos          # or an iPad/iPhone id from `flutter devices`; add --release to keep it installed
 flutter test
 ```
 

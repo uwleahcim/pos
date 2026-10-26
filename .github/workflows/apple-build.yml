@@ -1,0 +1,26 @@
+name: apple-build
+
+# Builds the app for macOS and iOS on a Mac runner. Mac minutes cost ten times Linux minutes, so this runs
+# weekly and on demand rather than on every push; ci.yml covers format, analysis and tests on every push.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 6 * * 1"
+
+jobs:
+  apple:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/pos_app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build macOS
+        run: flutter build macos --release
+      - name: Build iOS (unsigned)
+        run: flutter build ios --release --no-codesign

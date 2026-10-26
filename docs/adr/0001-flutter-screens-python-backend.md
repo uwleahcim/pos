@@ -9,7 +9,7 @@ backend (FastAPI, Pydantic, SQLAlchemy, Alembic) that runs the same container im
 in the cloud.
 
 ## Why
-Flutter is the only mainstream toolkit with iOS, Android, Windows, macOS and Linux as official targets.
+Flutter builds the screens we ship, macOS and iOS (see ADR 4), from one codebase, and could add other platforms later without a rewrite.
 The menu engine design is written in Python terms and needs Python's validation, migration, spreadsheet and
 testing tools. One copy of the rules means one place to test and fix them; a Dart or C copy was rejected
 as a maintenance burden.

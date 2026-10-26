@@ -1,6 +1,6 @@
 # Restaurant POS
 
-A point-of-sale system for a group of full-service restaurants: Flutter apps on every screen, one Python
+A point-of-sale system for a group of full-service restaurants: Flutter apps on every screen (Mac, iPad and iPhone), one Python
 backend that runs on two hubs per location and in two cloud regions, and an append-only order log that
 merges after any disconnect.
 
@@ -13,7 +13,7 @@ merges after any disconnect.
 
 ```
 backend/   Python backend: menu engine, orders and sync, taxes, payments, APIs (FastAPI)
-apps/      Flutter apps: POS, kitchen, admin portal (screens only, no business rules)
+apps/      Flutter apps for macOS and iOS: POS, kitchen, admin portal (screens only, no business rules)
 spikes/    Phase 0 spikes: one folder per question, each with its pass criteria and result
 infra/     Hub install for the mini PCs (infra/hub); hub image and cloud deployment later
 docs/      Architecture, spec, decisions, plans

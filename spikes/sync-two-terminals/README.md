@@ -10,7 +10,7 @@ simulation from the command line.
 
 **On hardware (week 2).** Two tablets running the Flutter app in `apps/pos_app` (orders list, one order,
 settings; operations go through an on-disk outbox that resends on reconnect), hub 1 running the backend.
-Setup: `flutter run` on each tablet, name them `ipad1` and `android1`, backend address
+Setup: `flutter run` on each device, name them `ipad1` and `mac1`, backend address
 `http://172.19.1.179:8000`. Script: open three orders, pull the Wi-Fi on tablet A, edit on both, void a
 line on B that A is changing, fire a course, reconnect, compare the three (`curl http://172.19.1.179:8000/orders`
 is the hub's view).

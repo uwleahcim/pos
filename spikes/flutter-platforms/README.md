@@ -1,13 +1,14 @@
-# Spike: one Flutter app on every device type
+# Spike: one Flutter app on Mac, iPad and iPhone
 
-**Question.** Does one Flutter codebase build and run on an iPad, an Android tablet, a Windows touch
-all-in-one, a Mac, and a Linux mini PC, with a front camera preview and a WebSocket to the backend?
+**Question.** Does one Flutter codebase build and run on a Mac, an iPad and an iPhone, with a front camera
+preview and a live connection to the backend? (Scope narrowed to macOS and iOS on 2026-10-26, ADR 4.)
 
-**Setup.** `apps/pos_app` created with `flutter create` on a developer machine (all five platforms plus
-web). One screen: sign-in placeholder with camera preview, an order list fed by the backend's `/ops` and a
-button that appends an operation.
+**Setup.** `apps/pos_app`, targets macOS and iOS. Orders list, one order and settings screens fed by the
+backend's order log, with an on-disk outbox and failover between backend addresses. The camera preview is
+exercised in the sign-in spike.
 
-**Pass.** The same commit runs on all five device types, the camera preview works on each station type,
-and the app reconnects to the backend after Wi-Fi is cut and restored without being restarted.
+**Pass.** The same commit runs on a Mac, an iPad and an iPhone, and the app reconnects to the backend after
+Wi-Fi is cut and restored without being restarted.
 
-**Result.** Pending.
+**Result.** Mac and iPad: passed 2026-10-26 (same commit, built from one Mac, reconnect proven in the sync
+spike's cable-pull test). iPhone: pending a device; expected to be the iPad build in a different size.

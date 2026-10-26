@@ -74,5 +74,4 @@ jobs:
         run: flutter analyze
       - name: Test
         run: flutter test
-      - name: Build for the web (the one platform a runner can build without a device toolchain)
-        run: flutter build web --release
+      # macOS and iOS builds need a Mac runner (10x minutes): see apple-build.yml, run weekly and on demand.

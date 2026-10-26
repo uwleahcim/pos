@@ -7,7 +7,7 @@ the answer and the date. Status is tracked in the phase 0 plan.
 | --- | --- |
 | `sync-two-terminals` | Do two terminals and a hub merge correctly after pulled cables? |
 | `menu-engine` | Does the Python engine price the worked example from the design and pass its property tests? |
-| `flutter-platforms` | Does one Flutter app run on every device type the restaurant will use? |
+| `flutter-platforms` | Does one Flutter app run on Mac, iPad and iPhone? |
 | `sign-in-hardware` | Do PIN, NFC tags and face signatures work on each station type? |
 | `printing` | Does a kitchen ticket print from the hub, and from the cloud through a terminal relay? |
 | `payments-readers` | Can the POS drive Stripe and GoDaddy readers, including offline sales and pre-authorized tabs? |

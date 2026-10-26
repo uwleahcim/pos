@@ -1,10 +1,10 @@
 # Spike: PIN, NFC and face on each station type
 
-**Question.** On each station type, can the app read an NTAG 424 DNA or DESFire tag (built-in NFC on phones
-and most Android tablets, a USB reader on iPads, Windows, Mac and Linux), and produce a face signature on
-device from the front camera that the backend can match?
+**Question.** On each station type (Mac, iPad, iPhone), can the app read an NTAG 424 DNA or DESFire tag
+(built-in NFC on iPhones, a USB reader on Macs and iPads), and produce a face signature on device from the
+front camera that the backend can match?
 
-**Setup.** Ten tags, one USB NFC reader per desktop platform, the Flutter app from the platforms spike,
+**Setup.** Ten tags, one USB NFC reader for the Mac (and a Lightning or USB-C reader for the iPad), the Flutter app from the platforms spike,
 a backend endpoint that stores and matches signatures (any well-documented on-device face library; the
 backend only compares vectors).
 
