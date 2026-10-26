@@ -24,6 +24,8 @@ from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
 
+from ..sync.pgstore import ReadOnlyError
+
 
 class OpIn(BaseModel):
     op_id: str
@@ -100,7 +102,10 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "cursor": app.state.store.cursor}
+        """`role` is primary (takes orders), replica (reads only, a standby hub) or memory (no database)."""
+        store = app.state.store
+        role = getattr(store, "role", "memory")
+        return {"status": "ok", "cursor": store.cursor, "role": role, "node": os.environ.get("POS_NODE", "")}
 
     @app.post("/orders/{order_id}/ops", status_code=202)
     def append_ops(order_id: str, ops: list[OpIn]) -> dict[str, Any]:
@@ -116,6 +121,9 @@ def create_app(
             accepted = store.append(op.to_op() for op in ops)
         except ClockDriftError as err:
             raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
+        except ReadOnlyError as err:
+            # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
+            raise HTTPException(503, {"error": "read_only"}) from err
         return {"accepted": [op.op_id for op in accepted], "cursor": store.cursor}
 
     @app.get("/orders")

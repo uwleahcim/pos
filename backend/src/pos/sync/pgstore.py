@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from psycopg import errors
 from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -44,14 +45,26 @@ def _row_to_op(row: tuple[Any, ...]) -> Op:
     return Op(op_id=op_id, order_id=order_id, hlc=HLC(wall, counter, node), device=device, kind=kind, data=data)
 
 
+class ReadOnlyError(RuntimeError):
+    """This database is a standby: it serves reads, and writes go to the primary (or wait for a promotion)."""
+
+
 class PgOpStore:
     """Same calls as `OpStore`; the API does not know which one it holds."""
 
     def __init__(self, dsn: str, physical: Callable[[], int] | None = None, *, pool_size: int = 4) -> None:
         self._pool = ConnectionPool(dsn, min_size=1, max_size=pool_size, open=True, kwargs={"row_factory": tuple_row})
         self._physical = physical or (lambda: int(time.time() * 1000))
+        if self.role == "primary":
+            with self._pool.connection() as conn:
+                conn.execute(SCHEMA)
+
+    @property
+    def role(self) -> str:
+        """'primary' when this database accepts writes, 'replica' while it streams from another."""
         with self._pool.connection() as conn:
-            conn.execute(SCHEMA)
+            row = conn.execute("SELECT pg_is_in_recovery()").fetchone()
+        return "replica" if row and row[0] else "primary"
 
     def close(self) -> None:
         self._pool.close()
@@ -79,32 +92,38 @@ class PgOpStore:
             if op.kind not in KINDS:
                 raise ValueError(f"unknown op kind {op.kind!r}")
         accepted: list[Op] = []
-        with self._pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_APPEND_LOCK,))
-            row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM ops").fetchone()
-            seq = int(row[0]) if row else 0
-            for op in batch:
-                seq += 1
-                inserted = conn.execute(
-                    f"INSERT INTO ops (seq, {_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (op_id) DO NOTHING RETURNING seq",
-                    (
-                        seq,
-                        op.op_id,
-                        op.order_id,
-                        op.hlc.wall_ms,
-                        op.hlc.counter,
-                        op.hlc.node,
-                        op.device,
-                        op.kind,
-                        Jsonb(op.data),
-                    ),
-                ).fetchone()
-                if inserted is None:
-                    seq -= 1  # a duplicate: keep `seq` dense
-                    continue
-                accepted.append(op)
+        try:
+            with self._pool.connection() as conn, conn.transaction():
+                self._insert(conn, batch, accepted)
+        except errors.ReadOnlySqlTransaction as err:
+            raise ReadOnlyError("standby database") from err
         return accepted
+
+    def _insert(self, conn: Any, batch: list[Op], accepted: list[Op]) -> None:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (_APPEND_LOCK,))
+        row = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM ops").fetchone()
+        seq = int(row[0]) if row else 0
+        for op in batch:
+            seq += 1
+            inserted = conn.execute(
+                f"INSERT INTO ops (seq, {_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (op_id) DO NOTHING RETURNING seq",
+                (
+                    seq,
+                    op.op_id,
+                    op.order_id,
+                    op.hlc.wall_ms,
+                    op.hlc.counter,
+                    op.hlc.node,
+                    op.device,
+                    op.kind,
+                    Jsonb(op.data),
+                ),
+            ).fetchone()
+            if inserted is None:
+                seq -= 1  # a duplicate: keep `seq` dense
+                continue
+            accepted.append(op)
 
     def since(self, cursor: int, limit: int | None = None) -> list[Op]:
         sql = f"SELECT {_COLUMNS} FROM ops WHERE seq > %s ORDER BY seq"
