@@ -7,7 +7,7 @@
 | GoDaddy Payments | Can a third-party POS drive your readers (sale, tip, refund, pre-auth, incremental, offline)? Developer program, fees. | pending |
 | ezCater | Direct partner API for orders, menus and confirmations, or an approved order aggregator? Fees and commission reporting. | pending |
 | Resy | Partner API for reservations and waitlist into a POS, table status back. | pending |
-| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org, Mike's own Vultr server (144.202.2.62). | own server, no terms; AMI access proven 2026-10-26 from the hub over an SSH tunnel (Asterisk 18.20.2, FreePBX 16, Twilio SIP trunks, extensions 200-210); live call test next |
+| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org, Mike's own Vultr server (144.202.2.62). | **done 2026-10-26.** Own server, no terms. AMI access proven from the hub over an SSH tunnel (Asterisk 18.20.2, FreePBX 16, Twilio SIP trunks, extensions 200-210). Live call seen: Twilio delivers in context `from-pstn-e164-us`, dialed number in E.164, location resolved from the last ten digits. |
 | Stripe | Terminal in the restaurant's region, offline mode and incremental authorization support per reader model. | pending |
 
 **Pass.** Every row has a written yes or no (or a named aggregator) by the end of phase 0.
@@ -56,5 +56,10 @@ laptop there). Copy it to the server, create the AMI user permitted
 from `127.0.0.1` only, and run the probe against `--host 127.0.0.1`. That proves the user, the rights and the
 events; the tunnel or allow-list comes after, when the connector moves off the box.
 
-Result: own server, no terms needed. Pending the AMI user, the path and a test extension for the live run.
-The connector itself is phase 3; phase 0 only proves the access.
+Result (2026-10-26): passed. Own server, no terms needed. The AMI user `pos` exists, the probe ran from hub 1
+through an SSH tunnel to the PBX (`ssh -fN -L 5038:127.0.0.1:5038 root@<pbx>`, then `--host 127.0.0.1`) and
+`tail` printed a live inbound call from the Twilio trunk: context `from-pstn-e164-us`, dialed `+1781729xxxx`,
+caller id present, location `Main` resolved. Facts learned: Asterisk 18.20.2, FreePBX 16 on SNG7 (Python 3.6,
+so the probe runs off-box), trunks `Twilio-US1-North-America-Oregon` and `-Virginia`, PJSIP extensions
+200-210, one queue `default`. Still to collect before phase 3: the other locations' numbers and the queue per
+location, plus a test extension. The permanent path (WireGuard instead of the SSH tunnel) is phase 3 work.
