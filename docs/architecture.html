@@ -185,7 +185,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <p class="eyebrow">Architecture design · draft 5</p>
   <h1>Restaurant POS Architecture</h1>
   <p class="lede">A point of sale for one full-service Chinese restaurant with a sushi bar, a full bar and a catering business today, and a couple dozen locations later. Every location keeps selling when the internet drops, and keeps selling through the cloud when both of its local servers die.</p>
-  <div class="meta"><span>Prepared for Mike</span><span>25 Oct 2026</span><span>Status: for review, no code yet</span></div>
+  <div class="meta"><span>Prepared for Mike</span><span>26 Oct 2026</span><span>Status: phase 0 in progress; draft 5 narrows screens to macOS and iOS</span></div>
 </header>
 
 <section id="summary">
@@ -245,7 +245,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Data:</strong> PostgreSQL on every hub and in the cloud with one schema, so the menu engine's JSONB, arrays and trigram search work unchanged. Cloud Postgres is managed (RDS or Cloud SQL) with point-in-time recovery. Terminals keep only settings and a short queue of operations in flight.</li>
     <li><strong>Transport:</strong> WebSocket for live pushes, HTTPS for bulk sync and admin APIs, mutual TLS with a certificate per device. Remote devices join a location's network over WireGuard through Tailscale (or self-hosted Headscale).</li>
     <li><strong>Cloud:</strong> containers on a managed service (Cloud Run, ECS or Fly.io), object storage for backups, receipts, photos and media.</li>
-    <li><strong>Admin portal:</strong> Flutter web, same widgets as the POS, for owners and managers.</li>
+    <li><strong>Admin portal:</strong> the same Flutter app in a manager role on a Mac (or an iPad), same widgets as the POS, for owners and managers.</li>
   </ul>
 </section>
 
@@ -264,7 +264,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
         <rect class="box hub" x="40" y="62" width="205" height="62" rx="6"/><text class="t" x="54" y="88">Backend</text><text class="s" x="54" y="108">same code as the hubs</text>
         <rect class="box" x="265" y="62" width="205" height="62" rx="6"/><text class="t" x="279" y="88">Menu publisher</text><text class="s" x="279" y="108">numbered snapshots</text>
         <rect class="box" x="490" y="62" width="205" height="62" rx="6"/><text class="t" x="504" y="88">CRM &amp; loyalty</text><text class="s" x="504" y="108">customers across locations</text>
-        <rect class="box" x="715" y="62" width="205" height="62" rx="6"/><text class="t" x="729" y="88">Admin portal</text><text class="s" x="729" y="108">Flutter web</text>
+        <rect class="box" x="715" y="62" width="205" height="62" rx="6"/><text class="t" x="729" y="88">Admin portal</text><text class="s" x="729" y="108">Flutter on a Mac</text>
         <rect class="box" x="40" y="146" width="205" height="62" rx="6"/><text class="t" x="54" y="172">PostgreSQL</text><text class="s" x="54" y="192">replicated across regions</text>
         <rect class="box" x="265" y="146" width="205" height="62" rx="6"/><text class="t" x="279" y="172">Reporting</text><text class="s" x="279" y="192">read replica, analytics</text>
         <rect class="box" x="490" y="146" width="205" height="62" rx="6"/><text class="t" x="504" y="172">Integrations</text><text class="s" x="504" y="192">payments, ezCater, Resy, PBX</text>
@@ -425,7 +425,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Description and image per channel</td><td>A media library on anything (below).</td><td>Mike's requirement.</td></tr>
       <tr><td><code>tax_class</code> is text; the order module applies rates</td><td>Tax class is a small table, a modifier can set it ("heated"), and the order module applies the full model in section 8.</td><td>All continental states.</td></tr>
       <tr><td>Not in the design</td><td>Market-price and open-price variants, minimum quantity on a variant, an age-check flag, alcohol service hours on a category, routing by the station that placed the order, and a waste operation that depletes inventory without a sale.</td><td>Sushi bar, full bar, catering (section 12).</td></tr>
-      <tr><td>HTMX screens</td><td>The same screens in the Flutter web portal.</td><td>One UI toolkit.</td></tr>
+      <tr><td>HTMX screens</td><td>The same screens in the Flutter admin app on a Mac.</td><td>One UI toolkit.</td></tr>
       <tr><td>Open decisions</td><td>Agreed as recommended: one shared ingredient master; lunch, delivery and holiday pricing as menus; half-up rounding per line with tax outside the engine; linked combo pricing later; auto-86 opt-in. Changed: single location, and two languages. Noted: the storefront and driver app the design lists are phase 4.</td><td></td></tr>
     </tbody>
   </table></div>
