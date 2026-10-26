@@ -7,7 +7,7 @@
 | GoDaddy Payments | Can a third-party POS drive your readers (sale, tip, refund, pre-auth, incremental, offline)? Developer program, fees. | pending |
 | ezCater | Direct partner API for orders, menus and confirmations, or an approved order aggregator? Fees and commission reporting. | pending |
 | Resy | Partner API for reservations and waitlist into a POS, table status back. | pending |
-| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org, Mike's own Vultr server (144.202.2.62). | own server, so no partner terms (2026-10-25); access setup pending (see below) |
+| FreePBX / hosting | Access to the Asterisk Manager Interface from the POS cloud; queue control for agents. Host: freepbx.chinasky.org, Mike's own Vultr server (144.202.2.62). | own server, no terms; AMI access proven 2026-10-26 from the hub over an SSH tunnel (Asterisk 18.20.2, FreePBX 16, Twilio SIP trunks, extensions 200-210); live call test next |
 | Stripe | Terminal in the restaurant's region, offline mode and incremental authorization support per reader model. | pending |
 
 **Pass.** Every row has a written yes or no (or a named aggregator) by the end of phase 0.
