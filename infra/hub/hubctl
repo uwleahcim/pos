@@ -32,6 +32,7 @@ case "${1:-status}" in
     ;;
   update)
     git -C "$POS_HOME/src" pull --ff-only
+    install -m 0755 "$POS_HOME/src/infra/hub/hubctl" /usr/local/bin/hubctl
     docker build -t pos-backend:local "$POS_HOME/src/backend"
     compose up -d --remove-orphans
     compose ps
