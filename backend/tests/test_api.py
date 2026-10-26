@@ -34,6 +34,13 @@ def test_append_read_and_pull():
     assert [op["op_id"] for op in pulled["ops"]] == ["b"] and pulled["cursor"] == 2
     assert client.get("/orders/nope").status_code == 404
 
+    client.post("/orders/o2/ops", json=[{**payload("c", "create", 5, table=7), "order_id": "o2"}])
+    client.post("/orders/o2/ops", json=[{**payload("d", "close", 6), "order_id": "o2"}])
+    listed = client.get("/orders").json()
+    assert [o["order_id"] for o in listed["orders"]] == ["o2", "o1"] and listed["cursor"] == 4
+    assert [o["order_id"] for o in client.get("/orders", params={"status": "open"}).json()["orders"]] == ["o1"]
+    assert client.get("/orders", params={"status": "weird"}).status_code == 422
+
 
 def test_bad_ops_are_refused():
     client = TestClient(create_app(OpStore(physical=lambda: T0)))

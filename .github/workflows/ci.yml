@@ -42,3 +42,25 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/health
           docker logs api
+
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/pos_app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Packages
+        run: flutter pub get
+      - name: Format
+        run: dart format -l 120 --set-exit-if-changed lib test
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+      - name: Build for the web (the one platform a runner can build without a device toolchain)
+        run: flutter build web --release

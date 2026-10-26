@@ -8,11 +8,14 @@ simulation of terminals syncing with a hub over a channel that drops, duplicates
 `pytest` runs the worked examples and the property tests; `python -m pos.sync.simulate` runs the
 simulation from the command line.
 
-**On hardware (week 2).** Two tablets running a throwaway Flutter screen that appends operations through
-the API, one laptop running the backend as the hub. Script: open three orders, pull the Wi-Fi on tablet A,
-edit on both, void a line on B that A is changing, fire a course, reconnect, compare.
+**On hardware (week 2).** Two tablets running the Flutter app in `apps/pos_app` (orders list, one order,
+settings; operations go through an on-disk outbox that resends on reconnect), hub 1 running the backend.
+Setup: `flutter run` on each tablet, name them `ipad1` and `android1`, backend address
+`http://172.19.1.179:8000`. Script: open three orders, pull the Wi-Fi on tablet A, edit on both, void a
+line on B that A is changing, fire a course, reconnect, compare the three (`curl http://172.19.1.179:8000/orders`
+is the hub's view).
 
 **Pass.** Both tablets and the hub show identical orders after reconnecting; the simulation converges on
 every seed with 40% drops and 20% duplicates; a change after firing shows as a modify ticket.
 
-**Result.** Software part: in progress (tests passing). Hardware part: pending the devices.
+**Result.** Software part: passed 2026-10-25 (17 tests, simulation converges). App ready 2026-10-26 (7 tests: outbox survives an outage and a restart, failover between addresses, refused ops dropped). Hardware part: pending the tablets and a Mac with the Flutter SDK.

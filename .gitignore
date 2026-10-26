@@ -15,7 +15,6 @@ build/
 **/.flutter-plugins-dependencies
 **/build/
 **/.packages
-**/pubspec.lock
 
 # Local
 .env

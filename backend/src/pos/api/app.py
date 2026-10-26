@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..sync.hlc import HLC
@@ -34,6 +35,9 @@ class OpIn(BaseModel):
         )
 
 
+_NEVER = HLC(0, 0, "")
+
+
 def op_out(op: Op) -> dict[str, Any]:
     return {
         "op_id": op.op_id,
@@ -48,6 +52,8 @@ def op_out(op: Op) -> dict[str, Any]:
 def create_app(store: OpStore | None = None) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
     app.state.store = store if store is not None else OpStore()
+    # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -66,6 +72,16 @@ def create_app(store: OpStore | None = None) -> FastAPI:
         except ClockDriftError as err:
             raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
         return {"accepted": [op.op_id for op in accepted], "cursor": store.cursor}
+
+    @app.get("/orders")
+    def list_orders(status: str | None = Query(None, pattern="^(open|closed|void)$")) -> dict[str, Any]:
+        """Every order the store knows, newest activity first; `status` filters."""
+        store: OpStore = app.state.store
+        states = [store.state(order_id) for order_id in store.order_ids()]
+        if status is not None:
+            states = [state for state in states if state.status == status]
+        states.sort(key=lambda state: state.last or _NEVER, reverse=True)
+        return {"orders": [state.snapshot() for state in states], "cursor": store.cursor}
 
     @app.get("/orders/{order_id}")
     def read_order(order_id: str) -> dict[str, Any]:

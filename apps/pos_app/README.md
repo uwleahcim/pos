@@ -1,10 +1,23 @@
 # POS app (Flutter)
 
-Created in the platforms spike on a developer machine:
+The terminal app for phase 0: one app for iPad, Android tablet, Windows, Mac, Linux and the web. It is a
+screen only. It signs in with a device name, lists orders from the backend, and appends operations to the
+order log. No pricing, tax or menu rule ever lives here; the backend owns every rule.
 
 ```
-flutter create --org com.yourcompany --platforms=ios,android,windows,macos,linux,web pos_app
+flutter pub get
+flutter run -d macos          # or: chrome, linux, windows, an iPad or Android device id
+flutter test
 ```
 
-The app is a screen only: it signs in, shows orders from the backend, and appends operations. No pricing,
-tax or menu rule ever lives here.
+On first start the app asks for the backend addresses. Give it the hub first and the cloud after, one per
+line, for example `http://172.19.1.179:8000`. It talks to the first address that answers and moves down the
+list when one stops answering, then back up when it returns.
+
+Layout:
+
+- `lib/api.dart` the backend client: the three order log calls, with the failover between addresses.
+- `lib/outbox.dart` the in-flight queue: operations are stamped with a hybrid logical clock, kept on disk
+  until the backend accepts them, and resent on reconnect. Duplicates are harmless; the backend ignores them.
+- `lib/settings.dart` device name and backend addresses, saved on the device.
+- `lib/screens/` orders list, one order, settings.
