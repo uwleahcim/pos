@@ -16,7 +16,7 @@ REBOOT_AT="04:30"
 
 usage() {
   sed -n '2,7p' "$0"
-  echo "  --name HUB_NAME        hostname of this hub (pos-hub1)"
+  echo "  --name NAME        hostname of this hub (pos-hub1)"
   echo "  --lan CIDR         the POS network; detected from the default route when omitted"
   echo "  --ssh-from CIDR    where SSH may come from; the LAN when omitted"
   echo "  --admin USER       user added to the docker group; the sudo caller when omitted"
