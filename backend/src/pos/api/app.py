@@ -6,13 +6,18 @@ talking back. Phase 1 puts the store in PostgreSQL and adds WebSocket pushes; th
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ..identity.photos import EventPhoto, PhotoStore
+from ..identity.staff import Directory, Locked, demo_directory
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 
@@ -63,9 +68,33 @@ def default_store() -> OpStore | PgOpStore:
     return OpStore()
 
 
-def create_app(store: OpStore | PgOpStore | None = None) -> FastAPI:
+class SignInIn(BaseModel):
+    device: str
+    pin: str | None = None
+    tag_uid: str | None = None
+    photo_id: str | None = None
+
+
+class PhotoIn(BaseModel):
+    photo_id: str
+    device: str
+    event: str
+    jpeg_b64: str
+    op_id: str | None = None
+    staff_id: str | None = None
+    taken_at: float | None = None
+
+
+def create_app(
+    store: OpStore | PgOpStore | None = None,
+    *,
+    staff: Directory | None = None,
+    photos: PhotoStore | None = None,
+) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
     app.state.store = store if store is not None else default_store()
+    app.state.staff = staff if staff is not None else demo_directory()
+    app.state.photos = photos if photos is not None else PhotoStore()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -112,6 +141,72 @@ def create_app(store: OpStore | PgOpStore | None = None) -> FastAPI:
         store: OpStore | PgOpStore = app.state.store
         ops = store.since(since, limit)
         return {"ops": [op_out(op) for op in ops], "cursor": since + len(ops)}
+
+    @app.post("/signin")
+    def sign_in(body: SignInIn) -> dict[str, Any]:
+        """Who this PIN or tag belongs to. The app shows the name; it never sees the staff list."""
+        directory: Directory = app.state.staff
+        try:
+            if body.pin is not None:
+                found = directory.by_pin(body.pin, device=body.device)
+            elif body.tag_uid is not None:
+                found = directory.by_tag(body.tag_uid, device=body.device)
+            else:
+                raise HTTPException(422, {"error": "no_credential"})
+        except Locked as err:
+            raise HTTPException(423, {"error": "locked", "seconds": round(err.seconds_left)}) from err
+        if found is None:
+            raise HTTPException(401, {"error": "unknown_credential"})
+        return {"staff_id": found.staff_id, "name": found.name, "role": found.role, "method": found.method}
+
+    @app.post("/events/photos", status_code=202)
+    def put_photo(body: PhotoIn) -> dict[str, Any]:
+        try:
+            jpeg = base64.b64decode(body.jpeg_b64, validate=True)
+        except binascii.Error as err:
+            raise HTTPException(422, {"error": "bad_base64"}) from err
+        if not jpeg.startswith(b"\xff\xd8"):
+            raise HTTPException(422, {"error": "not_jpeg"})
+        photo = EventPhoto(
+            photo_id=body.photo_id,
+            device=body.device,
+            op_id=body.op_id,
+            event=body.event,
+            staff_id=body.staff_id,
+            taken_at=body.taken_at or time.time(),
+            jpeg=jpeg,
+        )
+        try:
+            app.state.photos.put(photo)
+        except ValueError as err:
+            raise HTTPException(413, {"error": "too_large"}) from err
+        return {"photo_id": photo.photo_id, "bytes": len(jpeg)}
+
+    @app.get("/events/photos")
+    def list_photos(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+        photos: PhotoStore = app.state.photos
+        return {
+            "photos": [
+                {
+                    "photo_id": p.photo_id,
+                    "device": p.device,
+                    "event": p.event,
+                    "op_id": p.op_id,
+                    "staff_id": p.staff_id,
+                    "taken_at": p.taken_at,
+                    "bytes": len(p.jpeg),
+                }
+                for p in photos.recent(limit)
+            ]
+        }
+
+    @app.get("/events/photos/{photo_id}")
+    def get_photo(photo_id: str) -> Response:
+        """The picture itself. Viewing is a manager action in phase 1; open in phase 0."""
+        photo = app.state.photos.get(photo_id)
+        if photo is None:
+            raise HTTPException(404, "no such photo")
+        return Response(photo.jpeg, media_type="image/jpeg")
 
     return app
 
