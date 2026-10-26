@@ -13,7 +13,7 @@ shape. This guide installs one; it takes about fifteen minutes, most of it downl
 
 ## 1. Operating system
 
-Install Ubuntu Server 24.04 LTS. Download the ISO from ubuntu.com, write it to a USB stick with Rufus or
+Install Ubuntu Server, 24.04 LTS or 26.04 LTS. Download the ISO from ubuntu.com, write it to a USB stick with Rufus or
 balenaEtcher, and boot the mini PC from the stick. In the installer:
 
 - Keep the default "Ubuntu Server" (not minimized).
@@ -26,13 +26,15 @@ balenaEtcher, and boot the mini PC from the stick. In the installer:
 - Skip the featured snaps. Reboot, remove the stick, and log in over SSH from your laptop:
   `ssh mike@pos-hub1.local` (or the address the router shows).
 
-Debian 12 works too; the script checks for Ubuntu 22.04 and 24.04 and Debian 12 and 13.
+Debian 12 or newer works too; the script accepts Ubuntu 22.04 or newer and Debian 12 or newer. Docker comes
+from Docker's own repository when it carries the release, otherwise from the distribution's packages.
 
 ## 2. Get the repository onto the hub
 
 The repository is private, so the hub needs its own read-only key. On the hub:
 
 ```
+sudo apt update && sudo apt install -y git openssh-server
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -C pos-hub1
 cat ~/.ssh/id_ed25519.pub
 ```

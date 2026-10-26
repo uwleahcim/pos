@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn a fresh Ubuntu 24.04 or Debian 12 mini PC into a POS hub.
+# Turn a fresh Ubuntu (22.04 or newer) or Debian (12 or newer) mini PC into a POS hub.
 #
 #   sudo ./infra/hub/bootstrap.sh --name pos-hub1 [--lan 192.168.10.0/24] [--ssh-from 192.168.10.0/24]
 #
@@ -44,9 +44,11 @@ die() { echo "error: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "run with sudo"
 # shellcheck disable=SC1091
 . /etc/os-release
-case "${ID:-}:${VERSION_ID:-}" in
-  ubuntu:22.04 | ubuntu:24.04 | debian:12 | debian:13) ;;
-  *) die "supported: Ubuntu 22.04 or 24.04, Debian 12 or 13 (this is ${PRETTY_NAME:-unknown})" ;;
+major="${VERSION_ID%%.*}"
+case "${ID:-}" in
+  ubuntu) [[ ${major:-0} -ge 22 ]] || die "Ubuntu 22.04 or newer needed (this is ${PRETTY_NAME:-unknown})" ;;
+  debian) [[ ${major:-0} -ge 12 ]] || die "Debian 12 or newer needed (this is ${PRETTY_NAME:-unknown})" ;;
+  *) die "supported: Ubuntu 22.04 or newer, Debian 12 or newer (this is ${PRETTY_NAME:-unknown})" ;;
 esac
 [[ -f "$SRC/backend/pyproject.toml" ]] || die "no repository at $SRC; run from a clone or pass --src"
 
@@ -75,16 +77,24 @@ apt-get install -y -q ca-certificates curl gnupg git jq openssl ufw chrony unatt
   avahi-daemon openssh-server lm-sensors
 
 if ! command -v docker > /dev/null; then
-  log "Docker from its own repository"
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
-  chmod a+r /etc/apt/keyrings/docker.asc
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  # Docker's own repository when it knows this release; otherwise the distribution's packages, which lag
+  # a little but work the same (a brand-new Ubuntu release is not in Docker's repository for a while).
+  if curl -fsSIL --max-time 20 "https://download.docker.com/linux/$ID/dists/$VERSION_CODENAME/Release" > /dev/null 2>&1; then
+    log "Docker from Docker's repository ($VERSION_CODENAME)"
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
 https://download.docker.com/linux/$ID $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
-  apt-get update -q
-  apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    apt-get update -q
+    apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  else
+    log "Docker from the $PRETTY_NAME packages (Docker's repository has no $VERSION_CODENAME yet)"
+    apt-get install -y -q docker.io docker-buildx docker-compose-v2
+  fi
 fi
 systemctl enable --now docker
+docker compose version > /dev/null 2>&1 || die "the docker compose plugin is missing"
 if [[ -n "$ADMIN" ]] && id "$ADMIN" > /dev/null 2>&1; then
   usermod -aG docker "$ADMIN"
 fi
