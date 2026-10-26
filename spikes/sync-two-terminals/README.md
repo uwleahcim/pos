@@ -18,4 +18,10 @@ is the hub's view).
 **Pass.** Both tablets and the hub show identical orders after reconnecting; the simulation converges on
 every seed with 40% drops and 20% duplicates; a change after firing shows as a modify ticket.
 
-**Result.** Software part: passed 2026-10-25 (17 tests, simulation converges). App ready 2026-10-26 (7 tests: outbox survives an outage and a restart, failover between addresses, refused ops dropped). Hardware part: pending the tablets and a Mac with the Flutter SDK.
+**Result: PASSED.** Software part 2026-10-25 (17 tests, simulation converges). Hardware part 2026-10-26: Mike
+ran the app on a Mac (`mac1`) and an iPad (`ipad1`, release build) against hub 1 (order log in PostgreSQL).
+Script as above: table 7 opened on the Mac, fired from the iPad, iPad Wi-Fi off, Fried rice added and Rolls
+voided on the iPad while Soup was added on the Mac, Wi-Fi back on. The hub's replay, identical on both
+screens: Tsingtao 2, Rolls void, Fried rice and Soup present, all three changes marked `modified_after_fire`.
+The iPad's queue showed "2 waiting to send" offline and drained within seconds of reconnecting. Not yet
+covered: the kitchen ticket (printing spike) and a third terminal; both are later spikes, not this one.
