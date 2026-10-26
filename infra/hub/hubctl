@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup
+#   hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|drawer]
 set -euo pipefail
 POS_HOME=/opt/pos
 
@@ -38,6 +38,11 @@ case "${1:-status}" in
     ;;
   restart) compose restart ;;
   psql) compose exec db psql -U pos -d pos ;;
+  print)
+    # hubctl print 172.19.1.162 demo   (kitchen ticket, 80 mm)   |   hubctl print 172.19.1.162 drawer
+    [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|drawer]" >&2; exit 2; }
+    compose exec -T api python -m pos.printing --printer "$2" "${3:-demo}"
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -45,7 +50,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|drawer]" >&2
     exit 2
     ;;
 esac
