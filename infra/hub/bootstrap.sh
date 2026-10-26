@@ -6,7 +6,7 @@
 # Run it from a clone of the repository. It is safe to run again: every step only does what is missing.
 set -euo pipefail
 
-NAME="pos-hub1"
+HUB_NAME="pos-hub1"
 LAN=""
 SSH_FROM=""
 ADMIN="${SUDO_USER:-}"
@@ -16,7 +16,7 @@ REBOOT_AT="04:30"
 
 usage() {
   sed -n '2,7p' "$0"
-  echo "  --name NAME        hostname of this hub (pos-hub1)"
+  echo "  --name HUB_NAME        hostname of this hub (pos-hub1)"
   echo "  --lan CIDR         the POS network; detected from the default route when omitted"
   echo "  --ssh-from CIDR    where SSH may come from; the LAN when omitted"
   echo "  --admin USER       user added to the docker group; the sudo caller when omitted"
@@ -27,7 +27,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --name) NAME="$2"; shift 2 ;;
+    --name) HUB_NAME="$2"; shift 2 ;;
     --lan) LAN="$2"; shift 2 ;;
     --ssh-from) SSH_FROM="$2"; shift 2 ;;
     --admin) ADMIN="$2"; shift 2 ;;
@@ -62,16 +62,16 @@ SSH_FROM="${SSH_FROM:-$LAN}"
 mem_mb=$(awk '/MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
 [[ $mem_mb -ge 3500 ]] || echo "warning: ${mem_mb} MB of RAM; 8 GB is the recommended size" >&2
 
-log "Hostname $NAME"
-hostnamectl set-hostname "$NAME"
+log "Hostname $HUB_NAME"
+hostnamectl set-hostname "$HUB_NAME"
 if [[ -d /etc/cloud/cloud.cfg.d ]]; then
   # Ubuntu Server's cloud-init puts the installer's hostname back on every boot unless told not to
   echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99-pos-hub.cfg
 fi
 if grep -qE '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
-  sed -i -E "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 $NAME/" /etc/hosts
+  sed -i -E "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 $HUB_NAME/" /etc/hosts
 else
-  echo "127.0.1.1 $NAME" >> /etc/hosts
+  echo "127.0.1.1 $HUB_NAME" >> /etc/hosts
 fi
 
 log "Packages"
@@ -139,15 +139,17 @@ install -d -m 0750 "$POS_HOME"
 if [[ ! -f "$POS_HOME/.env" ]]; then
   (
     umask 077
-    printf 'POSTGRES_PASSWORD=%s\nPOS_NODE=%s\n' "$(openssl rand -hex 24)" "$NAME" > "$POS_HOME/.env"
+    printf 'POSTGRES_PASSWORD=%s\nPOS_NODE=%s\n' "$(openssl rand -hex 24)" "$HUB_NAME" > "$POS_HOME/.env"
   )
 fi
+sed -i -E "s/^POS_NODE=.*/POS_NODE=$HUB_NAME/" "$POS_HOME/.env"
 ln -sfn "$SRC" "$POS_HOME/src"
 install -m 0755 "$SRC/infra/hub/hubctl" /usr/local/bin/hubctl
+# Built with docker build, not compose: the new bake builder refuses a build context behind a symlink
+docker build -t pos-backend:local "$SRC/backend"
 compose() {
   docker compose --project-directory "$POS_HOME" -f "$POS_HOME/src/infra/hub/docker-compose.yml" "$@"
 }
-compose build
 compose up -d --remove-orphans
 
 log "Waiting for the API"
@@ -164,8 +166,8 @@ done
 ip=$(hostname -I | awk '{print $1}')
 cat <<DONE
 
-Hub $NAME is up.
-  API:       http://$ip:8000/health   (also http://$NAME.local:8000 on this network)
+Hub $HUB_NAME is up.
+  API:       http://$ip:8000/health   (also http://$HUB_NAME.local:8000 on this network)
   Services:  hubctl status | hubctl logs | hubctl update | hubctl backup
   Secrets:   $POS_HOME/.env (root only)
   Data:      docker volume pos_pos-db
