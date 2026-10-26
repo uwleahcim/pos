@@ -41,7 +41,7 @@ def test_demo_ticket_renders_once_and_the_same_every_time():
     out = decode(first)
     assert out.cuts == 1 and not out.unknown
     assert any("Table 12  4 guests" in t for t in out.text)
-    assert any("2 x Kung Pao Chicken (Pt) [s1]" in t for t in out.text)
+    assert "2 x Kung Pao Chicken" in out.text and "  (Pt) [s1]" in out.text  # wrapped double-width line
     assert any("allergy: peanut" in t for t in out.text)
     assert len(out.images) >= 4  # the Chinese label lines and modifiers
 
