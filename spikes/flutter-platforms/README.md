@@ -10,5 +10,6 @@ exercised in the sign-in spike.
 **Pass.** The same commit runs on a Mac, an iPad and an iPhone, and the app reconnects to the backend after
 Wi-Fi is cut and restored without being restarted.
 
-**Result.** Mac and iPad: passed 2026-10-26 (same commit, built from one Mac, reconnect proven in the sync
-spike's cable-pull test). iPhone: pending a device; expected to be the iPad build in a different size.
+**Result: PASSED 2026-10-26.** The same commit runs on Mike's Mac, iPad and iPhone, all built from the Mac;
+reconnect after a Wi-Fi cut was proven in the sync spike's cable-pull test. The camera preview is checked
+in the sign-in spike.
