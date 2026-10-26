@@ -8,6 +8,7 @@ dependencies = [
   "pydantic>=2.7",
   "uvicorn[standard]>=0.30",
   "openpyxl>=3.1",
+  "psycopg[binary,pool]>=3.2",
 ]
 
 [project.optional-dependencies]

@@ -6,7 +6,8 @@ talking back. Phase 1 puts the store in PostgreSQL and adds WebSocket pushes; th
 
 from __future__ import annotations
 
-from typing import Any
+import os
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
+
+if TYPE_CHECKING:
+    from ..sync.pgstore import PgOpStore
 
 
 class OpIn(BaseModel):
@@ -49,9 +53,19 @@ def op_out(op: Op) -> dict[str, Any]:
     }
 
 
-def create_app(store: OpStore | None = None) -> FastAPI:
+def default_store() -> OpStore | PgOpStore:
+    """PostgreSQL when DATABASE_URL is set (every hub and the cloud), memory otherwise (tests, a laptop)."""
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn:
+        from ..sync.pgstore import PgOpStore
+
+        return PgOpStore(dsn)
+    return OpStore()
+
+
+def create_app(store: OpStore | PgOpStore | None = None) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
-    app.state.store = store if store is not None else OpStore()
+    app.state.store = store if store is not None else default_store()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -61,7 +75,7 @@ def create_app(store: OpStore | None = None) -> FastAPI:
 
     @app.post("/orders/{order_id}/ops", status_code=202)
     def append_ops(order_id: str, ops: list[OpIn]) -> dict[str, Any]:
-        store: OpStore = app.state.store
+        store: OpStore | PgOpStore = app.state.store
         for op in ops:
             if op.order_id != order_id:
                 raise HTTPException(400, f"op {op.op_id} belongs to order {op.order_id}")
@@ -78,7 +92,7 @@ def create_app(store: OpStore | None = None) -> FastAPI:
     @app.get("/orders")
     def list_orders(status: str | None = Query(None, pattern="^(open|closed|void)$")) -> dict[str, Any]:
         """Every order the store knows, newest activity first; `status` filters."""
-        store: OpStore = app.state.store
+        store: OpStore | PgOpStore = app.state.store
         states = [store.state(order_id) for order_id in store.order_ids()]
         if status is not None:
             states = [state for state in states if state.status == status]
@@ -87,7 +101,7 @@ def create_app(store: OpStore | None = None) -> FastAPI:
 
     @app.get("/orders/{order_id}")
     def read_order(order_id: str) -> dict[str, Any]:
-        store: OpStore = app.state.store
+        store: OpStore | PgOpStore = app.state.store
         ops = store.for_order(order_id)
         if not ops:
             raise HTTPException(404, "no such order")
@@ -95,7 +109,7 @@ def create_app(store: OpStore | None = None) -> FastAPI:
 
     @app.get("/ops")
     def pull_ops(since: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000)) -> dict[str, Any]:
-        store: OpStore = app.state.store
+        store: OpStore | PgOpStore = app.state.store
         ops = store.since(since, limit)
         return {"ops": [op_out(op) for op in ops], "cursor": since + len(ops)}
 

@@ -124,8 +124,8 @@ names; the address works everywhere. Run the backend's own test suite against th
 
 ## Phase 0 only
 
-- The order log lives in memory with one API worker, so a restart empties it. Phase 1 moves it into
-  PostgreSQL, which is installed and ready.
+- The order log lives in the hub's PostgreSQL (`ops` table, created on first start), so `hubctl update`
+  and reboots keep every order. `hubctl backup` dumps it; replication to the second hub is the failover spike.
 - Docker publishes its ports past ufw, so the API port is open to whatever can reach the hub. The hub sits
   on the closed POS network; the phase 1 appliance image adds firewall rules Docker respects.
 - No disk encryption, no UPS agent and no monitoring agent yet; they come with the appliance image.

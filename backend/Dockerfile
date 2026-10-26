@@ -15,5 +15,5 @@ USER pos
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
-# One worker on purpose: the phase 0 operation log lives in memory. Phase 1 moves it into PostgreSQL.
+# The operation log lives in PostgreSQL (DATABASE_URL); more workers are safe, one is plenty for a hub.
 CMD ["uvicorn", "pos.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

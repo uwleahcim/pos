@@ -11,6 +11,18 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pos
+          POSTGRES_PASSWORD: pos
+          POSTGRES_DB: pos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pos -d pos" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      POS_TEST_DATABASE_URL: postgresql://pos:pos@localhost:5432/pos
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
