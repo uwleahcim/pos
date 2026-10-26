@@ -111,7 +111,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl restart` | Restart the services |
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
-| `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer) |
+| `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |
 
 ## Ports
 

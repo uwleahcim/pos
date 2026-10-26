@@ -29,4 +29,10 @@ Still to do when the printer arrives: run the three commands above, check the Ch
 then the relay path (the app's relay mode, phase 0 stretch: a `print relay` switch in settings that polls
 the backend for jobs and writes them to the printer).
 
-**Result.** Software part passed 2026-10-26 (11 tests). Hardware part pending the Epson printer and drawer.
+**StarPRNT, added 2026-10-26.** Mike's bench has an Epson TM-T88VII (172.19.1.162) and a Star mC-Print3
+(172.19.1.14). The Star speaks StarPRNT by default, so `star.py` renders the same ticket in Star Line Mode
+(Star alignment and size commands, raster graphics row by row in raster mode, `ESC d` cut, `BEL` drawer);
+`render(..., dialect="star")`, `--dialect star` on the CLI, `hubctl print <ip> demo star` on a hub. Each
+printer record will carry its dialect.
+
+**Result.** Software part passed 2026-10-26 (13 tests). Hardware part in progress on the Epson and the Star.

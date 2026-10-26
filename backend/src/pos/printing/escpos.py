@@ -1,8 +1,11 @@
-"""A small ESC/POS byte builder for Epson TM printers.
+"""A small ESC/POS byte builder for Epson TM printers (and the base for other printer languages).
 
 Plain ASCII goes as text, which every printer renders. Anything else (Chinese, accents, symbols) is drawn
 with a font into a one-bit raster and sent as an image, so the ticket looks the same on every printer
 model whatever code pages it ships with. Lines mix the two freely.
+
+The ticket logic (wrapping, columns, drawing text) lives here; the bytes for each primitive are in the
+`_cmd_*` methods, which `pos.printing.star.StarBuilder` overrides for StarPRNT.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ class Builder:
         self.dots = dots  # 576 for 80 mm paper, 384 for 58 mm
         self.chars = chars_per_line or (48 if dots >= 576 else 32)
         self._font_path = font or find_font()
-        self._parts: list[bytes] = [ESC + b"@"]  # initialize
+        self._parts: list[bytes] = [self._cmd_init()]
 
     def __bytes__(self) -> bytes:
         return b"".join(self._parts)
@@ -68,11 +71,7 @@ class Builder:
             head, tail = _split(text, width)
             self.line(head, bold=bold, big=big, center=center)
             return self.line("  " + tail, bold=bold, big=big, center=center)
-        self._parts.append(ESC + b"a" + (b"\x01" if center else b"\x00"))
-        self._parts.append(ESC + b"E" + (b"\x01" if bold else b"\x00"))
-        self._parts.append(GS + b"!" + (b"\x11" if big else b"\x00"))
-        self._parts.append(text.encode("ascii") + b"\n")
-        self._parts.append(GS + b"!\x00" + ESC + b"E\x00" + ESC + b"a\x00")
+        self._parts.append(self._cmd_text(text, bold=bold, big=big, center=center))
         return self
 
     def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
@@ -85,7 +84,7 @@ class Builder:
         return self.line("-" * self.chars)
 
     def feed(self, lines: int = 1) -> Builder:
-        self._parts.append(ESC + b"d" + bytes([max(0, min(lines, 255))]))
+        self._parts.append(self._cmd_feed(max(0, min(lines, 255))))
         return self
 
     # Images ---------------------------------------------------------------------------------------------
@@ -102,7 +101,7 @@ class Builder:
         return self.image(img)
 
     def image(self, img: Image.Image) -> Builder:
-        """GS v 0 raster: one bit per dot, 1 = black, rows padded to whole bytes, width capped at the paper."""
+        """One bit per dot, 1 = black, rows padded to whole bytes, width capped at the paper."""
         if img.mode != "1":
             img = img.convert("1")
         if img.width > self.dots:
@@ -111,8 +110,7 @@ class Builder:
         padded = Image.new("1", (row_bytes * 8, img.height), 1)
         padded.paste(img, (0, 0))
         data = bytes(255 - b for b in padded.tobytes())  # PIL: 1 = white; printer: 1 = black
-        header = GS + b"v0\x00" + bytes([row_bytes & 0xFF, row_bytes >> 8, img.height & 0xFF, img.height >> 8])
-        self._parts.append(header + data)
+        self._parts.append(self._cmd_raster(row_bytes, img.height, data))
         return self
 
     def _load_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -125,14 +123,55 @@ class Builder:
 
     # Hardware -------------------------------------------------------------------------------------------
     def cut(self, *, feed: int = 4) -> Builder:
-        self._parts.append(GS + b"V\x42" + bytes([feed]))  # partial cut after feeding
+        self._parts.append(self._cmd_cut(feed))
         return self
 
     def drawer_kick(self, pin: int = 0) -> Builder:
-        """ESC p: pulse the cash drawer solenoid (pin 0 = drawer 1, pin 1 = drawer 2)."""
-        self._parts.append(ESC + b"p" + bytes([pin, 25, 250]))
+        """Pulse the cash drawer solenoid (pin 0 = drawer 1, pin 1 = drawer 2)."""
+        self._parts.append(self._cmd_drawer(pin))
         return self
 
     def beep(self, times: int = 2) -> Builder:
-        self._parts.append(ESC + b"B" + bytes([times, 5]))  # TM-m30 and most Epsons; ignored elsewhere
+        self._parts.append(self._cmd_beep(times))
         return self
+
+    # The bytes of each primitive: ESC/POS here, overridden per printer language ---------------------------
+    def _cmd_init(self) -> bytes:
+        return ESC + b"@"
+
+    def _cmd_text(self, text: str, *, bold: bool, big: bool, center: bool) -> bytes:
+        return (
+            ESC
+            + b"a"
+            + (b"\x01" if center else b"\x00")
+            + ESC
+            + b"E"
+            + (b"\x01" if bold else b"\x00")
+            + GS
+            + b"!"
+            + (b"\x11" if big else b"\x00")
+            + text.encode("ascii")
+            + b"\n"
+            + GS
+            + b"!\x00"
+            + ESC
+            + b"E\x00"
+            + ESC
+            + b"a\x00"
+        )
+
+    def _cmd_feed(self, lines: int) -> bytes:
+        return ESC + b"d" + bytes([lines])
+
+    def _cmd_raster(self, row_bytes: int, height: int, data: bytes) -> bytes:
+        """GS v 0: the whole image in one command."""
+        return GS + b"v0\x00" + bytes([row_bytes & 0xFF, row_bytes >> 8, height & 0xFF, height >> 8]) + data
+
+    def _cmd_cut(self, feed: int) -> bytes:
+        return GS + b"V\x42" + bytes([feed])  # partial cut after feeding
+
+    def _cmd_drawer(self, pin: int) -> bytes:
+        return ESC + b"p" + bytes([pin, 25, 250])  # ESC p
+
+    def _cmd_beep(self, times: int) -> bytes:
+        return ESC + b"B" + bytes([times, 5])  # TM-m30 and most Epsons; ignored elsewhere

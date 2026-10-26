@@ -1,4 +1,4 @@
-"""Kitchen tickets and receipts as data, rendered to ESC/POS by `render`.
+"""Kitchen tickets and receipts as data, rendered to ESC/POS or StarPRNT by `render`.
 
 The backend builds a `Ticket` from an order and its routing; the apps never see ESC/POS and never decide
 what a ticket says. A modify ticket is a new ticket with `kind="modify"`, never a silent change.
@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .escpos import Builder
+from .star import StarBuilder
+
+DIALECTS = {"escpos": Builder, "star": StarBuilder}
 
 
 @dataclass(frozen=True)
@@ -39,9 +42,11 @@ class Ticket:
     reprinted_from: str | None = None  # "Wok" on a backup printer's copy
 
 
-def render(ticket: Ticket, *, dots: int = 576, font: str | None = None, beep: bool = True) -> bytes:
-    """The ESC/POS job for one ticket. Deterministic for the same ticket, font and width."""
-    b = Builder(dots=dots, font=font)
+def render(
+    ticket: Ticket, *, dots: int = 576, font: str | None = None, beep: bool = True, dialect: str = "escpos"
+) -> bytes:
+    """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
+    b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
         b.beep(3 if ticket.kind in ("modify", "void") else 1)
     header = {
@@ -76,9 +81,9 @@ def render(ticket: Ticket, *, dots: int = 576, font: str | None = None, beep: bo
     return bytes(b)
 
 
-def drawer_kick(*, pin: int = 0) -> bytes:
+def drawer_kick(*, pin: int = 0, dialect: str = "escpos") -> bytes:
     """A job that only opens the drawer (a cash sale, a no-sale with manager approval)."""
-    return bytes(Builder().drawer_kick(pin))
+    return bytes(DIALECTS[dialect]().drawer_kick(pin))
 
 
 DEMO = Ticket(

@@ -128,3 +128,32 @@ def test_same_job_id_twice_is_one_job():
 def test_font_and_plain_detection():
     assert is_plain("Table 12") and not is_plain("左宗鸡") and not is_plain("café")
     assert find_font() is None or find_font().endswith((".ttc", ".ttf"))
+
+
+def test_star_dialect_uses_star_bytes():
+    from pos.printing.star import RASTER_IN, RASTER_OUT, StarBuilder
+
+    job = render(DEMO, dialect="star")
+    assert job.startswith(b"\x1b@")
+    assert b"\x1b\x1da\x01" in job  # Star centre
+    assert b"\x1bi\x01\x01" in job  # Star double size
+    assert job.count(RASTER_IN) == job.count(RASTER_OUT) >= 4  # one raster block per Chinese line
+    assert b"\x1dv0" not in job and b"\x1dV" not in job  # no Epson raster or cut
+    assert job.endswith(b"\x1bd\x03")  # partial cut
+    assert "左宗鸡".encode() not in job
+    assert render(DEMO, dialect="star") == job
+    assert drawer_kick(dialect="star").endswith(b"\x07")
+    assert bytes(StarBuilder().line("x").beep()) == bytes(StarBuilder().line("x"))  # no buzzer bytes yet
+
+
+def test_star_raster_rows_are_whole():
+    from pos.printing.star import StarBuilder
+
+    job = bytes(StarBuilder(dots=384).line("麻婆豆腐"))
+    body = job.split(b"\x1b*rP0\x00", 1)[1].split(b"\x1b*rB", 1)[0]
+    rows = 0
+    while body:
+        assert body[0:1] == b"b" and body[1] == 48 and body[2] == 0  # 384 dots = 48 bytes a row
+        body = body[51:]
+        rows += 1
+    assert rows > 20
