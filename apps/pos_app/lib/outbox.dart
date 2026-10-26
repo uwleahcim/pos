@@ -10,9 +10,14 @@ import 'settings.dart';
 
 /// A hybrid logical clock stamp, written the way the backend reads it: `wall_ms-counter-node`.
 class Hlc {
-  Hlc({required this.node, int Function()? now}) : _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
+  Hlc({required String node, int Function()? now}) : this.lazy(node: () => node, now: now);
 
-  final String node;
+  /// The node is read on every stamp, so a device renamed in settings stamps with its new name at once.
+  Hlc.lazy({required String Function() this._node, int Function()? now})
+    : _now = now ?? (() => DateTime.now().millisecondsSinceEpoch);
+
+  final String Function() _node;
+  String get node => _node();
   final int Function() _now;
   int _wall = 0;
   int _counter = 0;
@@ -36,7 +41,7 @@ class Hlc {
 class Outbox extends ChangeNotifier {
   Outbox(this.api, this.settings, {this._prefs, Random? random, int Function()? now})
     : _random = random ?? Random(),
-      _clock = Hlc(node: settings.device, now: now);
+      _clock = Hlc.lazy(node: () => settings.device, now: now);
 
   static const _key = 'outbox';
 

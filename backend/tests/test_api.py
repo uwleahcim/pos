@@ -44,6 +44,10 @@ def test_append_read_and_pull():
 
 def test_bad_ops_are_refused():
     client = TestClient(create_app(OpStore(physical=lambda: T0)))
+    nameless = {**payload("n", "create", 0), "device": "", "hlc": str(HLC(T0, 0, ""))}
+    assert client.post("/orders/o1/ops", json=[nameless]).json()["detail"]["error"] == "bad_stamp"
+    other = {**payload("m", "create", 0), "device": "t2"}
+    assert client.post("/orders/o1/ops", json=[other]).json()["detail"]["error"] == "bad_stamp"
     drift = client.post("/orders/o1/ops", json=[payload("z", "create", 10 * 60_000)])
     assert drift.status_code == 422 and drift.json()["detail"]["error"] == "clock_drift"
     assert client.post("/orders/o1/ops", json=[payload("y", "explode", 0)]).status_code == 422

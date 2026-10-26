@@ -66,6 +66,17 @@ void main() {
     expect(clock.next(), '0000000002000-0000-t1');
   });
 
+  test('a device named after the outbox was created stamps with its new name', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final settings = Settings(device: '', endpoints: const [], prefs: prefs);
+    final outbox = Outbox(PosApi(settings), settings, prefs: prefs);
+    await settings.save(device: 'mac1', endpoints: ['http://hub1:8000']);
+    await outbox.add('o1', 'create');
+    expect(outbox.pendingOps.single['hlc'], endsWith('-mac1'));
+    expect(outbox.pendingOps.single['device'], 'mac1');
+  });
+
   test('ops reach the backend and leave the queue', () async {
     final (_, _, outbox, backend) = await harness();
     backend.up['http://hub1:8000'] = true;

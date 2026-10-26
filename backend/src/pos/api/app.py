@@ -67,6 +67,8 @@ def create_app(store: OpStore | None = None) -> FastAPI:
                 raise HTTPException(400, f"op {op.op_id} belongs to order {op.order_id}")
             if op.kind not in KINDS:
                 raise HTTPException(422, {"error": "unknown_kind", "op_id": op.op_id})
+            if not op.device or not op.hlc.endswith(f"-{op.device}"):
+                raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         try:
             accepted = store.append(op.to_op() for op in ops)
         except ClockDriftError as err:
