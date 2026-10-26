@@ -66,7 +66,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final table = await showDialog<String>(context: context, builder: (context) => const _TableDialog());
     if (table == null || !mounted) return;
     final orderId = widget.outbox.newId();
-    await widget.outbox.add(orderId, 'create', {'table': int.tryParse(table) ?? table});
+    final opId = await widget.outbox.add(orderId, 'create', {'table': int.tryParse(table) ?? table});
+    unawaited(widget.photos.capture('create', opId: opId));
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(

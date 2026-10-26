@@ -23,6 +23,5 @@ To check on the Mac: sign in as 1111, make an order, then `curl http://172.19.1.
 **Result.** PIN and event photo: software passed 2026-10-26 (6 backend tests, 3 app tests). Hardware
 check on the Mac passed 2026-10-26: Mike signed in as Amy (1111) on `mac1` against hub 1, created and
 fired an order, and `GET /events/photos` listed one 72 KB JPEG tagged `device=mac1 event=fire staff_id=s1`
-with the fire operation's id. Open point: only the fire photo was listed, not the create-order one, so the
-first capture after sign-in may be lost while the camera warms up (to look at once the iPad and iPhone
-results are in). iPad and iPhone runs pending. NFC tags and face signatures wait for the tags and readers.
+with the fire operation's id. Only the fire photo was listed because the app never snapped on order creation (the order
+list screen skipped the call); fixed the same day, so the next build also photographs `create`. iPad and iPhone runs pending. NFC tags and face signatures wait for the tags and readers.
