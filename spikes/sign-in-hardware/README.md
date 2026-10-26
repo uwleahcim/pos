@@ -24,4 +24,6 @@ To check on the Mac: sign in as 1111, make an order, then `curl http://172.19.1.
 check on the Mac passed 2026-10-26: Mike signed in as Amy (1111) on `mac1` against hub 1, created and
 fired an order, and `GET /events/photos` listed one 72 KB JPEG tagged `device=mac1 event=fire staff_id=s1`
 with the fire operation's id. Only the fire photo was listed because the app never snapped on order creation (the order
-list screen skipped the call); fixed the same day, so the next build also photographs `create`. iPad and iPhone runs pending. NFC tags and face signatures wait for the tags and readers.
+list screen skipped the call); fixed the same day, so the next build also photographs `create`. iPad and iPhone passed minutes later: `ipad1` (Ben, s2, 31 KB) and `iphone1` (Mike, s3, 37 KB) each posted
+their fire photo to the hub. PIN sign-in and the event photo path are PASSED on all three station types.
+NFC tags and face signatures wait for the tags and readers.
