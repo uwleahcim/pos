@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:camera/camera.dart' as cam;
 import 'package:camera_macos/camera_macos.dart' as mac;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show DeviceOrientation;
+import 'package:image/image.dart' as img;
 
 /// The front camera as the app uses it: a live preview widget, and one small frame on demand.
 ///
@@ -111,7 +114,12 @@ class IosCamera extends EventCamera {
         (c) => c.lensDirection == cam.CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      final controller = cam.CameraController(front, cam.ResolutionPreset.low, enableAudio: false);
+      final controller = cam.CameraController(
+        front,
+        cam.ResolutionPreset.low,
+        enableAudio: false,
+        imageFormatGroup: cam.ImageFormatGroup.bgra8888,
+      );
       await controller.initialize();
       _controller = controller;
       _error = null;
@@ -134,13 +142,21 @@ class IosCamera extends EventCamera {
     return cam.CameraPreview(controller);
   }
 
+  Future<Uint8List?>? _snapping;
+
+  /// One frame off the preview stream, encoded here: no shutter sound, no screen flash, unlike
+  /// `takePicture`, which goes through the system photo capture on iOS.
   @override
-  Future<Uint8List?> snap() async {
+  Future<Uint8List?> snap() => _snapping ??= _snap().whenComplete(() => _snapping = null);
+
+  Future<Uint8List?> _snap() async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized || controller.value.isTakingPicture) return null;
+    if (controller == null || !controller.value.isInitialized) return null;
     try {
-      final file = await controller.takePicture();
-      return await file.readAsBytes();
+      final frame = await _oneFrame(controller);
+      if (frame == null) return null;
+      final turn = _rotation(controller);
+      return await compute(encodeFrame, FramePixels.of(frame, turn));
     } catch (err) {
       _error = '$err';
       notifyListeners();
@@ -148,9 +164,71 @@ class IosCamera extends EventCamera {
     }
   }
 
+  /// Start the image stream, keep the first frame, stop the stream again.
+  Future<cam.CameraImage?> _oneFrame(cam.CameraController controller) async {
+    if (controller.value.isStreamingImages) return null;
+    final first = Completer<cam.CameraImage>();
+    await controller.startImageStream((image) {
+      if (!first.isCompleted) first.complete(image);
+    });
+    try {
+      return await first.future.timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      return null;
+    } finally {
+      if (controller.value.isStreamingImages) await controller.stopImageStream();
+    }
+  }
+
+  /// Degrees to turn a raw sensor frame so it is upright for the operator (front camera).
+  static int _rotation(cam.CameraController controller) {
+    final device = switch (controller.value.deviceOrientation) {
+      DeviceOrientation.portraitUp => 0,
+      DeviceOrientation.landscapeLeft => 90,
+      DeviceOrientation.portraitDown => 180,
+      DeviceOrientation.landscapeRight => 270,
+    };
+    return (controller.description.sensorOrientation + device) % 360;
+  }
+
   @override
   void dispose() {
     _controller?.dispose();
     super.dispose();
   }
+}
+
+/// A BGRA frame copied out of the camera image, so it can cross to a worker isolate.
+class FramePixels {
+  final int width;
+  final int height;
+  final int rowStride;
+  final Uint8List bytes;
+  final int rotation;
+
+  FramePixels(this.width, this.height, this.rowStride, this.bytes, this.rotation);
+
+  factory FramePixels.of(cam.CameraImage frame, int rotation) {
+    final plane = frame.planes.first;
+    return FramePixels(frame.width, frame.height, plane.bytesPerRow, Uint8List.fromList(plane.bytes), rotation);
+  }
+}
+
+/// Worker: BGRA pixels to a small JPEG, at most 320 px on the long side.
+Uint8List encodeFrame(FramePixels f) {
+  var image = img.Image.fromBytes(
+    width: f.width,
+    height: f.height,
+    bytes: f.bytes.buffer,
+    bytesOffset: f.bytes.offsetInBytes,
+    rowStride: f.rowStride,
+    numChannels: 4,
+    order: img.ChannelOrder.bgra,
+  );
+  if (f.rotation != 0) image = img.copyRotate(image, angle: f.rotation);
+  final long = image.width > image.height ? image.width : image.height;
+  if (long > 320) {
+    image = image.width >= image.height ? img.copyResize(image, width: 320) : img.copyResize(image, height: 320);
+  }
+  return img.encodeJpg(image, quality: 70);
 }

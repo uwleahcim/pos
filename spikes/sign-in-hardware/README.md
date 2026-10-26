@@ -26,4 +26,7 @@ fired an order, and `GET /events/photos` listed one 72 KB JPEG tagged `device=ma
 with the fire operation's id. Only the fire photo was listed because the app never snapped on order creation (the order
 list screen skipped the call); fixed the same day, so the next build also photographs `create`. iPad and iPhone passed minutes later: `ipad1` (Ben, s2, 31 KB) and `iphone1` (Mike, s3, 37 KB) each posted
 their fire photo to the hub. PIN sign-in and the event photo path are PASSED on all three station types.
-NFC tags and face signatures wait for the tags and readers.
+Mike noticed the iPhone and iPad flashed the screen and played the shutter sound on each
+photo, because the camera plugin's `takePicture` goes through the system photo capture; the app now takes one
+frame off the preview stream and encodes it itself (no sound, no flash; 3 encoder tests). NFC tags and face
+signatures wait for the tags and readers.
