@@ -56,6 +56,12 @@ laptop there). Copy it to the server, create the AMI user permitted
 from `127.0.0.1` only, and run the probe against `--host 127.0.0.1`. That proves the user, the rights and the
 events; the tunnel or allow-list comes after, when the connector moves off the box.
 
+Update, later 2026-10-26: Mike rebuilt the PBX as FreePBX 17 on Debian 12 (Asterisk 22.11.0, manager
+interface 11.0.0) and restored it from backup; the AMI user, trunks and extensions survived. The probe now
+runs on the PBX host itself (`python3 /root/ami.py --host 127.0.0.1 --user pos probe`, Python 3.11 on
+board) and the live call test passed again, same context `from-pstn-e164-us`. Plan for phase 3: the
+connector runs on the PBX host and calls out to the cloud over HTTPS, so nothing inbound is opened.
+
 Result (2026-10-26): passed. Own server, no terms needed. The AMI user `pos` exists, the probe ran from hub 1
 through an SSH tunnel to the PBX (`ssh -fN -L 5038:127.0.0.1:5038 root@<pbx>`, then `--host 127.0.0.1`) and
 `tail` printed a live inbound call from the Twilio trunk: context `from-pstn-e164-us`, dialed `+1781729xxxx`,
