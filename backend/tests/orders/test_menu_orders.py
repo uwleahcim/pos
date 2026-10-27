@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from pos.api.app import create_app
-from pos.menu.service import MenuService
+from pos.menu.service import MenuService, load_definitions
 from pos.printing.service import Printer, PrintService, ticket_for_fire
 from pos.sync.hlc import HLC
 from pos.sync.oplog import OpStore
@@ -33,7 +33,7 @@ def client(printing: PrintService | None = None) -> TestClient:
     return TestClient(
         create_app(
             OpStore(physical=lambda: T0 + 100),
-            menu=MenuService(now=lambda: DINNER),
+            menu=MenuService(load_definitions("restaurant"), now=lambda: DINNER),
             taxes=massachusetts(),
             printing=printing or PrintService([]),
         )

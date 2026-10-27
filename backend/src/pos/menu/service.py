@@ -13,6 +13,7 @@ from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .defs import Definitions
 from .engine import MenuEngine, ResolvedSection, all_problems, flatten_modifiers
@@ -65,28 +66,38 @@ def request_from(data: Mapping[str, Any]) -> LineRequest:
 
 
 def load_definitions(source: str | None = None) -> Definitions:
-    """`POS_MENU`: `restaurant` (the sample full-service menu, default), `example` (the spec's worked
-    example), or a workbook path imported over the sample's categories, stations and modifier groups."""
-    source = source if source is not None else os.environ.get("POS_MENU", "restaurant")
+    """`POS_MENU`: `gloriafood` (the restaurant's own menu from its online-ordering export, the default),
+    `restaurant` (the sample full-service menu), `example` (the spec's worked example), a GloriaFood JSON
+    export path, or a workbook path imported over the sample's categories, stations and modifier groups."""
+    source = source if source is not None else os.environ.get("POS_MENU", "gloriafood")
     from .fixtures.example import build_example
     from .fixtures.restaurant import build_restaurant
+    from .gloriafood import load_gloriafood, load_restaurant_menu, settings_from
 
+    if source in ("", "gloriafood"):
+        return load_restaurant_menu()[0]
     if source == "example":
         return build_example()
-    base = build_restaurant()
-    if source in ("", "restaurant"):
-        return base
+    if source == "restaurant":
+        return build_restaurant()
+    if source.endswith(".json"):
+        return load_gloriafood(source, settings_from())[0]
     from .sheet import import_workbook
 
-    report, defs = import_workbook(base, source, dry_run=False)
+    report, defs = import_workbook(build_restaurant(), source, dry_run=False)
     if not report.ok:
         raise ValueError(f"menu workbook {source}: " + "; ".join(report.errors[:10]))
     return defs
 
 
+def local_now() -> datetime:
+    """The restaurant's wall clock: lunch hours and menu schedules are local times (`POS_TIMEZONE`)."""
+    return datetime.now(ZoneInfo(os.environ.get("POS_TIMEZONE", "America/New_York")))
+
+
 class MenuService:
     def __init__(self, defs: Definitions | None = None, now=None) -> None:
-        self.engine = MenuEngine(defs if defs is not None else load_definitions(), now=now)
+        self.engine = MenuEngine(defs if defs is not None else load_definitions(), now=now or local_now)
 
     @property
     def defs(self) -> Definitions:

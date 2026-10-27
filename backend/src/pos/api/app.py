@@ -141,8 +141,8 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
     return out, refused
 
 
-WARNINGS = frozenset({"allergen_unknown", "allergens_unreviewed"})
-"""Problem codes a line may be sold with; everything else stops the sale."""
+WARNINGS: frozenset[str] = frozenset()
+"""Problem codes a line may still be sold with; none yet, so every problem stops the sale."""
 
 
 def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:

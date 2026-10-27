@@ -163,13 +163,13 @@ class TaxProfile:
         return problems
 
 
-def massachusetts(local_option: bool = True, location: str = "MA") -> TaxProfile:
+def massachusetts(local_option: bool = True, location: str = "Winchester") -> TaxProfile:
     """Massachusetts meals tax: 6.25% state on prepared food and drink, plus the 0.75% local option in towns
-    that adopted it. Alcohol at the table is a meal. Not legal advice: confirm the town before going live."""
+    that adopted it (Winchester has, for 7% in all). Alcohol at the table is a meal. Not legal advice."""
     components = [{"code": "ma_meals", "name": "MA meals tax", "jurisdiction": "Massachusetts", "rate_pct": "6.25"}]
     if local_option:
         components.append(
-            {"code": "ma_local_meals", "name": "Local meals tax", "jurisdiction": location, "rate_pct": "0.75"}
+            {"code": "ma_local_meals", "name": f"{location} meals tax", "jurisdiction": location, "rate_pct": "0.75"}
         )
     return TaxProfile.from_json(
         {
@@ -192,7 +192,7 @@ def massachusetts(local_option: bool = True, location: str = "MA") -> TaxProfile
 
 
 def load_profile(path: str | None = None) -> TaxProfile:
-    """`POS_TAX_PROFILE` names a JSON profile; without one, Massachusetts with the local option."""
+    """`POS_TAX_PROFILE` names a JSON profile; without one, Massachusetts with Winchester's local option."""
     path = path if path is not None else os.environ.get("POS_TAX_PROFILE")
     if path:
         return TaxProfile.from_json(json.loads(Path(path).read_text()))
