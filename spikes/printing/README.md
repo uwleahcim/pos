@@ -39,8 +39,10 @@ printer record will carry its dialect.
 Cause: `send_raw` closed the socket with the printer's unread status bytes, so Linux sent a TCP reset and
 the printer dropped the rest of the job. It now half-closes and drains until the printer hangs up or goes
 quiet; the whole ticket printed after that. Second finding: the printer cut the paper after every Chinese
-line, because leaving raster mode runs the end-of-page action; the raster block now sets `ESC * r E 0` and
-`ESC * r F 0` (no cut, no feed) first. A line-mode `ESC k` variant printed junk on the mC-Print3 and was
-removed. `ascii` prints the demo with no graphics at all, for isolating printer trouble.
+line, because leaving raster mode runs the end-of-page action, and the `ESC * r E 0` / `ESC * r F 0`
+settings did not stop it. So a Star ticket is now one tall image (every line drawn with the font, strips
+stacked, raster mode entered once, the cut at the end from leaving raster mode); a Star job is about 58 KB
+against 21 KB for the mixed form, which the LAN does not notice. A line-mode `ESC k` variant printed junk
+on the mC-Print3 and was removed. `ascii` prints the demo with no graphics, for isolating printer trouble.
 
 **Result.** Software part passed 2026-10-26 (15 tests). Hardware part in progress on the Epson and the Star.

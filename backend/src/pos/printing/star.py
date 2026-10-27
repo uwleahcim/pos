@@ -1,58 +1,96 @@
-"""StarPRNT (Star Line Mode) bytes for Star printers such as the mC-Print3 and TSP series.
+"""StarPRNT bytes for Star printers such as the mC-Print3 and TSP series.
 
-Same ticket logic as ESC/POS (`Builder`), different bytes: Star alignment and size commands, raster
-graphics sent row by row inside raster mode, `ESC d` cuts and `BEL` for the drawer. A Star printer in
-its default mode takes this; in ESC/POS emulation it takes the Epson bytes instead.
+A Star printer in its default mode cuts the paper whenever a raster graphics block ends (an mC-Print3 did,
+whatever the end-of-page settings said), so a Star ticket is one tall image: every line, plain or Chinese,
+is drawn with the font, the strips are stacked, raster mode is entered once, and the cut at the end comes
+from leaving raster mode. The drawer is `BEL` in line mode. In ESC/POS emulation a Star takes the Epson
+bytes instead.
 """
 
 from __future__ import annotations
 
-from .escpos import ESC, Builder
+from PIL import Image, ImageDraw
 
-# Enter raster mode, continuous page, and no end-of-page action (`ESC * r E 0`, `ESC * r F 0`): without
-# those, leaving raster mode cuts the paper, which an mC-Print3 did after every Chinese line.
-RASTER_IN = ESC + b"*rA" + ESC + b"*rP0\x00" + ESC + b"*rE0\x00" + ESC + b"*rF0\x00"
-RASTER_OUT = ESC + b"*rB"  # back to line mode
+from .escpos import ESC, Builder, _split, is_plain
+
+RASTER_IN = ESC + b"*rA" + ESC + b"*rP0\x00"  # enter raster mode, continuous page
+RASTER_OUT = ESC + b"*rB"  # back to line mode; the printer runs its end-of-page action here (cut)
 
 
 class StarBuilder(Builder):
-    def _cmd_init(self) -> bytes:
-        return ESC + b"@"
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._strips: list[Image.Image] = []
+        self._tail: list[bytes] = []  # line mode bytes after the image (drawer, nothing else yet)
 
-    def _cmd_text(self, text: str, *, bold: bool, big: bool, center: bool) -> bytes:
-        return (
-            ESC
-            + b"\x1da"
-            + (b"\x01" if center else b"\x00")  # ESC GS a: 0 left, 1 centre
-            + (ESC + b"E" if bold else ESC + b"F")
-            + ESC
-            + b"i"
-            + (b"\x01\x01" if big else b"\x00\x00")  # ESC i: height, width magnification
-            + text.encode("ascii")
-            + b"\n"
-            + ESC
-            + b"i\x00\x00"
-            + ESC
-            + b"F"
-            + ESC
-            + b"\x1da\x00"
-        )
+    def __bytes__(self) -> bytes:
+        parts = [self._cmd_init()]
+        if self._strips:
+            height = sum(s.height for s in self._strips)
+            page = Image.new("1", (self.dots, height), 1)
+            y = 0
+            for strip in self._strips:
+                page.paste(strip, (0, y))
+                y += strip.height
+            row_bytes = self.dots // 8
+            data = bytes(255 - b for b in page.tobytes())
+            rows = (data[i * row_bytes : (i + 1) * row_bytes] for i in range(height))
+            body = b"".join(b"b" + bytes([row_bytes & 0xFF, row_bytes >> 8]) + row for row in rows)
+            parts.append(RASTER_IN + body + RASTER_OUT)
+        parts.extend(self._tail)
+        return b"".join(parts)
 
-    def _cmd_feed(self, lines: int) -> bytes:
-        return ESC + b"a" + bytes([lines])
+    # Everything printable becomes a strip ------------------------------------------------------------------
+    def line(self, text: str = "", *, bold: bool = False, big: bool = False, center: bool = False) -> Builder:
+        if not text:
+            return self.feed(1)
+        if is_plain(text):
+            width = self.chars // 2 if big else self.chars
+            if len(text) > width:
+                head, tail = _split(text, width)
+                self.line(head, bold=bold, big=big, center=center)
+                return self.line("  " + tail, bold=bold, big=big, center=center)
+        return self.image_line(text, bold=bold, big=big, center=center)
 
-    def _cmd_raster(self, row_bytes: int, height: int, data: bytes) -> bytes:
-        """Raster mode: `b n1 n2 <row>` per row, then leave raster mode so text can follow."""
-        rows = (data[i * row_bytes : (i + 1) * row_bytes] for i in range(height))
-        body = b"".join(b"b" + bytes([row_bytes & 0xFF, row_bytes >> 8]) + row for row in rows)
-        return RASTER_IN + body + RASTER_OUT
+    def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
+        """Left text at the left edge, right text flush right, drawn on one strip."""
+        font = self._load_font(26)
+        strip = Image.new("1", (self.dots, 32), 1)
+        draw = ImageDraw.Draw(strip)
+        stroke = 1 if bold else 0
+        draw.text((2, 3), left, font=font, fill=0, stroke_width=stroke)
+        box = draw.textbbox((0, 0), right, font=font, stroke_width=stroke)
+        draw.text((self.dots - (box[2] - box[0]) - 2, 3), right, font=font, fill=0, stroke_width=stroke)
+        return self.image(strip)
 
-    def _cmd_cut(self, feed: int) -> bytes:
-        return ESC + b"a" + bytes([feed]) + ESC + b"d\x03"  # feed, then partial cut at the cut position
+    def rule(self) -> Builder:
+        strip = Image.new("1", (self.dots, 8), 1)
+        ImageDraw.Draw(strip).line((0, 4, self.dots, 4), fill=0, width=2)
+        return self.image(strip)
 
-    def _cmd_drawer(self, pin: int) -> bytes:
+    def feed(self, lines: int = 1) -> Builder:
+        if lines > 0:
+            self._strips.append(Image.new("1", (self.dots, 30 * lines), 1))
+        return self
+
+    def image(self, img: Image.Image) -> Builder:
+        if img.mode != "1":
+            img = img.convert("1")
+        if img.width != self.dots:
+            fitted = Image.new("1", (self.dots, img.height), 1)
+            fitted.paste(img.crop((0, 0, min(img.width, self.dots), img.height)), (0, 0))
+            img = fitted
+        self._strips.append(img)
+        return self
+
+    # Hardware ----------------------------------------------------------------------------------------------
+    def cut(self, *, feed: int = 4) -> Builder:
+        return self.feed(2)  # leaving raster mode cuts; a little space so the cut clears the last line
+
+    def drawer_kick(self, pin: int = 0) -> Builder:
         # ESC BEL sets the pulse (10 ms units) for drawer 1, BEL fires it; EM fires drawer 2.
-        return ESC + b"\x07\x14\x14" + (b"\x1a" if pin else b"\x07")
+        self._tail.append(ESC + b"\x07\x14\x14" + (b"\x1a" if pin else b"\x07"))
+        return self
 
-    def _cmd_beep(self, times: int) -> bytes:
-        return b""  # the mC-Print3 buzzer is an option; nothing sent until one is on the bench
+    def beep(self, times: int = 2) -> Builder:
+        return self  # the mC-Print3 buzzer is an option; nothing sent until one is on the bench

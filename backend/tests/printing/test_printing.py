@@ -130,33 +130,37 @@ def test_font_and_plain_detection():
     assert find_font() is None or find_font().endswith((".ttc", ".ttf"))
 
 
-def test_star_dialect_uses_star_bytes():
+def test_star_ticket_is_one_raster_block_with_one_cut():
+    from PIL import Image
+
     from pos.printing.star import RASTER_IN, RASTER_OUT, StarBuilder
 
     job = render(DEMO, dialect="star")
-    assert job.startswith(b"\x1b@")
-    assert b"\x1b\x1da\x01" in job  # Star centre
-    assert b"\x1bi\x01\x01" in job  # Star double size
-    assert job.count(RASTER_IN) == job.count(RASTER_OUT) >= 4  # one raster block per Chinese line
-    assert b"\x1dv0" not in job and b"\x1dV" not in job  # no Epson raster or cut
-    assert job.endswith(b"\x1bd\x03")  # partial cut
-    assert "左宗鸡".encode() not in job
+    assert job.startswith(b"\x1b@" + RASTER_IN) and job.endswith(RASTER_OUT)
+    assert job.count(RASTER_IN) == 1 and job.count(RASTER_OUT) == 1  # enter raster mode once: one cut
+    assert "左宗鸡".encode() not in job and b"Kung Pao" not in job  # everything is drawn
     assert render(DEMO, dialect="star") == job
-    assert drawer_kick(dialect="star").endswith(b"\x07")
-    assert bytes(StarBuilder().line("x").beep()) == bytes(StarBuilder().line("x"))  # no buzzer bytes yet
-
-
-def test_star_raster_rows_are_whole():
-    from pos.printing.star import RASTER_IN, RASTER_OUT, StarBuilder
-
-    job = bytes(StarBuilder(dots=384).line("麻婆豆腐"))
-    body = job.split(RASTER_IN, 1)[1].split(RASTER_OUT, 1)[0]
+    body = job[len(b"\x1b@" + RASTER_IN) : -len(RASTER_OUT)]
     rows = 0
     while body:
-        assert body[0:1] == b"b" and body[1] == 48 and body[2] == 0  # 384 dots = 48 bytes a row
-        body = body[51:]
+        assert body[0:1] == b"b" and body[1] == 72 and body[2] == 0  # 576 dots = 72 bytes a row
+        body = body[75:]
         rows += 1
-    assert rows > 20
+    assert 400 < rows < 2000
+    # the drawer is line-mode bytes after the image; a drawer-only job has no raster block at all
+    assert drawer_kick(dialect="star") == b"\x1b@\x1b\x07\x14\x14\x07"
+    assert RASTER_IN not in drawer_kick(dialect="star")
+    assert bytes(StarBuilder().line("x").beep()) == bytes(StarBuilder().line("x"))
+    # columns: something drawn at both edges of the strip
+    strip = bytes(StarBuilder(dots=384).columns("#3412  dine in", "16:42"))
+    rowdata = strip[len(b"\x1b@" + RASTER_IN) : -len(RASTER_OUT)]
+    img = Image.frombytes(
+        "1",
+        (384, len(rowdata) // 51),
+        bytes(255 - b for i in range(0, len(rowdata), 51) for b in rowdata[i + 3 : i + 51]),
+    )
+    cols = [x for x in range(384) if any(img.getpixel((x, y)) == 0 for y in range(img.height))]
+    assert cols[0] < 10 and cols[-1] > 370
 
 
 def test_ascii_demo_has_no_graphics():
@@ -166,11 +170,3 @@ def test_ascii_demo_has_no_graphics():
     assert plain.lines[0].label == "[CJK]" and plain.lines[1].label == "Kung Pao Chicken (Pt)"
     out = decode(render(plain, beep=False))
     assert not out.images and out.cuts == 1 and not out.unknown
-
-
-def test_star_raster_blocks_disable_the_end_of_page_cut():
-    from pos.printing.star import RASTER_IN
-
-    assert b"\x1b*rE0\x00" in RASTER_IN and b"\x1b*rF0\x00" in RASTER_IN
-    job = render(DEMO, dialect="star", beep=False)
-    assert job.count(b"\x1bd\x03") == 1  # one cut, at the end
