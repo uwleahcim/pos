@@ -1,0 +1,467 @@
+{
+ "menus": [
+  {
+   "menu": "dinner",
+   "name": "Dinner",
+   "priority": 0,
+   "sections": [
+    {
+     "section_id": "dinner/apps",
+     "name": "Appetizers",
+     "entries": [
+      {
+       "entry_id": "dinner:1",
+       "number": "1",
+       "item": "EGGROLL",
+       "name": "Egg roll",
+       "second_name": "蛋卷",
+       "variants": [
+        {
+         "variant_id": "EGGROLL:regular",
+         "name": "2 pc",
+         "price": "3.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "egg",
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:2",
+       "number": "2",
+       "item": "SPRINGROLL",
+       "name": "Spring roll",
+       "second_name": "春卷",
+       "variants": [
+        {
+         "variant_id": "SPRINGROLL:regular",
+         "name": "2 pc",
+         "price": "3.25",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:3",
+       "number": "3",
+       "item": "WINGS",
+       "name": "Chicken wings",
+       "second_name": "鸡翅",
+       "variants": [
+        {
+         "variant_id": "WINGS:6pc",
+         "name": "6 pc",
+         "price": "8.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:4",
+       "number": "4",
+       "item": "PUPU",
+       "name": "Pu Pu Platter",
+       "second_name": "宝宝盘",
+       "variants": [
+        {
+         "variant_id": "PUPU:regular",
+         "name": "Regular",
+         "price": "16.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "egg",
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": false
+      }
+     ],
+     "sections": []
+    },
+    {
+     "section_id": "dinner/chefs",
+     "name": "Chef's Specials",
+     "entries": [
+      {
+       "entry_id": "dinner:87",
+       "number": "87",
+       "item": "GTC",
+       "name": "General Tso's Chicken",
+       "second_name": "左宗棠鸡",
+       "variants": [
+        {
+         "variant_id": "GTC:pint",
+         "name": "Pint",
+         "price": "13.95",
+         "price_source": "variant_base",
+         "status": "available"
+        },
+        {
+         "variant_id": "GTC:quart",
+         "name": "Quart",
+         "price": "24.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "soy",
+        "wheat"
+       ],
+       "tags": [
+        "spicy",
+        "popular"
+       ],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:88",
+       "number": "88",
+       "item": "BB",
+       "name": "Beef with Broccoli",
+       "second_name": "芥兰牛",
+       "variants": [
+        {
+         "variant_id": "BB:regular",
+         "name": "Regular",
+         "price": "14.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "soy",
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": true
+      }
+     ],
+     "sections": []
+    },
+    {
+     "section_id": "dinner/combos",
+     "name": "Combination Plates",
+     "entries": [
+      {
+       "entry_id": "dinner:C5",
+       "number": "C5",
+       "item": "C5",
+       "name": "Combination Plate",
+       "second_name": "套餐",
+       "variants": [
+        {
+         "variant_id": "C5:regular",
+         "name": "Regular",
+         "price": "14.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "egg",
+        "soy",
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:40",
+       "number": "40",
+       "item": "PFR",
+       "name": "Pork fried rice",
+       "second_name": "叉烧炒饭",
+       "variants": [
+        {
+         "variant_id": "PFR:regular",
+         "name": "Regular",
+         "price": "9.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [
+        "egg",
+        "soy",
+        "wheat"
+       ],
+       "tags": [],
+       "has_options": false
+      }
+     ],
+     "sections": []
+    },
+    {
+     "section_id": "dinner/sushi",
+     "name": "Sushi bar",
+     "entries": [
+      {
+       "entry_id": "dinner:S1",
+       "number": "S1",
+       "item": "CALROLL",
+       "name": "California roll",
+       "second_name": "加州卷",
+       "variants": [
+        {
+         "variant_id": "CALROLL:roll",
+         "name": "Roll",
+         "price": "8.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:S2",
+       "number": "S2",
+       "item": "SPTUNA",
+       "name": "Spicy tuna roll",
+       "second_name": "辣金枪鱼卷",
+       "variants": [
+        {
+         "variant_id": "SPTUNA:roll",
+         "name": "Roll",
+         "price": "9.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "raw"
+       ],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:S3",
+       "number": "S3",
+       "item": "SALNIG",
+       "name": "Salmon nigiri",
+       "second_name": "三文鱼握寿司",
+       "variants": [
+        {
+         "variant_id": "SALNIG:2pc",
+         "name": "2 pieces",
+         "price": "7.00",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "raw"
+       ],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:S4",
+       "number": "S4",
+       "item": "DRAGON",
+       "name": "Dragon roll",
+       "second_name": "龙卷",
+       "variants": [
+        {
+         "variant_id": "DRAGON:roll",
+         "name": "Roll",
+         "price": "15.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [],
+       "has_options": true
+      }
+     ],
+     "sections": []
+    },
+    {
+     "section_id": "dinner/bar",
+     "name": "Bar",
+     "entries": [
+      {
+       "entry_id": "dinner:B1",
+       "number": "B1",
+       "item": "TSINGTAO",
+       "name": "Tsingtao",
+       "second_name": "青岛啤酒",
+       "variants": [
+        {
+         "variant_id": "TSINGTAO:bottle",
+         "name": "Bottle",
+         "price": "6.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "21+"
+       ],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:B2",
+       "number": "B2",
+       "item": "DRAFT",
+       "name": "House draft",
+       "second_name": "生啤",
+       "variants": [
+        {
+         "variant_id": "DRAFT:pint",
+         "name": "Pint",
+         "price": "7.00",
+         "price_source": "variant_base",
+         "status": "available"
+        },
+        {
+         "variant_id": "DRAFT:pitcher",
+         "name": "Pitcher",
+         "price": "22.00",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "21+"
+       ],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:B3",
+       "number": "B3",
+       "item": "MAITAI",
+       "name": "Mai Tai",
+       "second_name": "迈泰",
+       "variants": [
+        {
+         "variant_id": "MAITAI:glass",
+         "name": "Glass",
+         "price": "12.00",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "21+"
+       ],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:B4",
+       "number": "B4",
+       "item": "SAKE",
+       "name": "House sake",
+       "second_name": "清酒",
+       "variants": [
+        {
+         "variant_id": "SAKE:carafe",
+         "name": "Carafe",
+         "price": "9.00",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "21+"
+       ],
+       "has_options": true
+      },
+      {
+       "entry_id": "dinner:B5",
+       "number": "B5",
+       "item": "WHISKY",
+       "name": "Japanese whisky",
+       "second_name": "日本威士忌",
+       "variants": [
+        {
+         "variant_id": "WHISKY:2oz",
+         "name": "2 oz",
+         "price": "14.00",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [
+        "21+"
+       ],
+       "has_options": true
+      }
+     ],
+     "sections": []
+    },
+    {
+     "section_id": "dinner/drinks",
+     "name": "Soft drinks",
+     "entries": [
+      {
+       "entry_id": "dinner:D1",
+       "number": "D1",
+       "item": "TEA",
+       "name": "Hot tea",
+       "second_name": "热茶",
+       "variants": [
+        {
+         "variant_id": "TEA:pot",
+         "name": "Pot",
+         "price": "2.50",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [],
+       "has_options": false
+      },
+      {
+       "entry_id": "dinner:D2",
+       "number": "D2",
+       "item": "SODA",
+       "name": "Soda",
+       "second_name": "汽水",
+       "variants": [
+        {
+         "variant_id": "SODA:glass",
+         "name": "Glass",
+         "price": "2.95",
+         "price_source": "variant_base",
+         "status": "available"
+        }
+       ],
+       "contains": [],
+       "tags": [],
+       "has_options": false
+      }
+     ],
+     "sections": []
+    }
+   ]
+  }
+ ]
+}

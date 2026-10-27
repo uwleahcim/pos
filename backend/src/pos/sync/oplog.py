@@ -21,7 +21,7 @@ KINDS = frozenset(
     {
         "create",  # data: any order fields
         "set_field",  # data: any order fields
-        "add_line",  # data: line_id, item, qty?, seat?, course?, note?
+        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, request?, priced?
         "set_line",  # data: line_id + any line fields
         "void_line",  # data: line_id, reason?
         "fire",  # data: course ("*" = everything)
@@ -30,7 +30,7 @@ KINDS = frozenset(
         "void_order",  # data: reason?
     }
 )
-ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "ticket_no"})
+ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "server_id", "ticket_no"})
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
 
 
@@ -65,6 +65,7 @@ class Line:
     status: str = "active"  # active | void
     void_reason: str | None = None
     modified_after_fire: bool = False
+    priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
     stamps: dict[str, HLC] = field(default_factory=dict)
 
 
@@ -77,6 +78,7 @@ class OrderState:
     lines: dict[str, Line] = field(default_factory=dict)
     fired: dict[str, HLC] = field(default_factory=dict)  # course -> first fire stamp
     applied: list[str] = field(default_factory=list)  # op ids in replay order
+    first: HLC | None = None  # when the order was opened
     last: HLC | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -95,6 +97,7 @@ class OrderState:
                     "status": line.status,
                     "void_reason": line.void_reason,
                     "modified_after_fire": line.modified_after_fire,
+                    "priced": line.priced,
                 }
                 for line_id, line in sorted(self.lines.items())
             },
@@ -129,6 +132,7 @@ def apply(state: OrderState, op: Op) -> None:
             seat=data.get("seat"),
             course=data.get("course"),
             note=data.get("note", ""),
+            priced=data.get("priced"),
         )
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
         line.modified_after_fire = state._fired_before(line.course)
@@ -174,6 +178,8 @@ def apply(state: OrderState, op: Op) -> None:
         state.status = "void"
 
     state.applied.append(op.op_id)
+    if state.first is None:
+        state.first = op.hlc
     state.last = op.hlc
 
 

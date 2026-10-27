@@ -1,0 +1,54 @@
+{
+ "order_id": "o1",
+ "status": "open",
+ "order_type": "dine_in",
+ "lines": [
+  {
+   "line_id": "L2",
+   "name": "Tsingtao",
+   "qty": 2,
+   "seat": null,
+   "course": null,
+   "unit_price": "6.50",
+   "total": "13.00",
+   "modifiers": [],
+   "tax_class": "alcohol"
+  },
+  {
+   "line_id": "L1",
+   "name": "General Tso's Chicken (Quart)",
+   "qty": 1,
+   "seat": 1,
+   "course": null,
+   "unit_price": "25.95",
+   "total": "25.95",
+   "modifiers": [
+    "Brown rice"
+   ],
+   "tax_class": "prepared_food"
+  }
+ ],
+ "subtotal": "38.95",
+ "tax_lines": [
+  {
+   "component": "ma_meals",
+   "name": "MA meals tax",
+   "jurisdiction": "Massachusetts",
+   "rate_pct": "6.25",
+   "base": "38.95",
+   "amount": "2.43"
+  },
+  {
+   "component": "ma_local_meals",
+   "name": "Local meals tax",
+   "jurisdiction": "MA",
+   "rate_pct": "0.75",
+   "base": "38.95",
+   "amount": "0.29"
+  }
+ ],
+ "tax": "2.72",
+ "total": "41.67",
+ "unpriced": [],
+ "tax_rate_pct": "7.00"
+}

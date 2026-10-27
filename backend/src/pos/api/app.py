@@ -11,19 +11,24 @@ import binascii
 import os
 import time
 from dataclasses import replace
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.staff import Directory, Locked, demo_directory
+from ..menu.service import MenuService
+from ..orders.check import check_for
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
+from ..tax import TaxProfile, load_profile
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -105,6 +110,50 @@ class TestPrintIn(BaseModel):
     printer: str
 
 
+class AvailabilityIn(BaseModel):
+    target_id: str = Field(description="a variant id (one size) or an option id")
+    status: str = Field(pattern="^(available|sold_out)$")
+    by: str | None = None
+    reason: str | None = None
+
+
+class PriceIn(BaseModel):
+    variant_id: str
+    entry_id: str | None = None
+    selections: list[dict[str, Any]] = Field(default_factory=list)
+    components: list[dict[str, Any]] = Field(default_factory=list)
+    notes: str | None = None
+
+
+def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
+    """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
+    dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
+    choice missing, an 86'd dish, an unknown id) is left out and reported with its problems; the rest of
+    the batch is kept, so a terminal's outbox never loses good operations behind a bad one."""
+    out: list[Op] = []
+    refused: list[dict[str, Any]] = []
+    for op in ops:
+        if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
+            data = {k: v for k, v in op.data.items() if k != "priced"}
+            try:
+                priced = menu.priced(data["request"])
+                blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
+            except (KeyError, ValueError, TypeError) as err:
+                blocking = [{"code": "bad_request", "message": str(err)}]
+            if blocking:
+                refused.append({"op_id": op.op_id, "error": "invalid_line", "problems": blocking})
+                continue
+            data["priced"] = priced
+            data["item"] = priced["name"]
+            op = replace(op, data=data)
+        out.append(op)
+    return out, refused
+
+
+WARNINGS: frozenset[str] = frozenset()
+"""Problem codes a line may still be sold with; none yet, so every problem stops the sale."""
+
+
 def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {
         "job_id": job.job_id,
@@ -127,8 +176,14 @@ def create_app(
     staff: Directory | None = None,
     photos: PhotoStore | None = None,
     printing: PrintService | None = None,
+    menu: MenuService | None = None,
+    taxes: TaxProfile | None = None,
+    floor: FloorPlan | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
+    app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
+    app.state.menu = menu if menu is not None else MenuService()
+    app.state.taxes = taxes if taxes is not None else load_profile()
+    app.state.floor = floor if floor is not None else load_floor()
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
@@ -155,8 +210,9 @@ def create_app(
                 raise HTTPException(422, {"error": "unknown_kind", "op_id": op.op_id})
             if not op.device or not op.hlc.endswith(f"-{op.device}"):
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
+        fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
         try:
-            accepted = store.append(op.to_op() for op in ops)
+            accepted = store.append(fresh)
         except ClockDriftError as err:
             raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
         except ReadOnlyError as err:
@@ -168,6 +224,7 @@ def create_app(
             "accepted": [op.op_id for op in accepted],
             "cursor": store.cursor,
             "print_jobs": [j.job_id for j in jobs],
+            "refused": refused,
         }
 
     @app.get("/orders")
@@ -187,6 +244,67 @@ def create_app(
         if not ops:
             raise HTTPException(404, "no such order")
         return store.state(order_id).snapshot()
+
+    @app.get("/orders/{order_id}/check")
+    def read_check(order_id: str) -> dict[str, Any]:
+        """What the table owes: priced lines, subtotal, tax lines by jurisdiction, total."""
+        store: OpStore | PgOpStore = app.state.store
+        if not store.for_order(order_id):
+            raise HTTPException(404, "no such order")
+        return check_for(store.state(order_id), app.state.taxes)
+
+    @app.get("/floor")
+    def read_floor() -> dict[str, Any]:
+        """The floor plan with the open checks on each table, for the floor map."""
+        store: OpStore | PgOpStore = app.state.store
+        states = [store.state(order_id) for order_id in store.order_ids()]
+        open_states = [s for s in states if s.status == "open"]
+        totals = {s.order_id: Decimal(check_for(s, app.state.taxes)["total"]) for s in open_states}
+        plan: FloorPlan = app.state.floor
+        return {**plan.as_json(), "status": table_status(open_states, totals), "cursor": store.cursor}
+
+    # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
+    @app.get("/menu")
+    def read_menu(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        return {"menus": menu.menus(channel, locale)}
+
+    @app.get("/menu/items/{item_id}")
+    def read_item(item_id: str, entry: str | None = None, locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        if item_id not in menu.defs.items:
+            raise HTTPException(404, "no such item")
+        return menu.item(item_id, entry, locale)
+
+    @app.get("/menu/search")
+    def search_menu(q: str, channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        return {"hits": menu.search(q, channel, locale)}
+
+    @app.get("/menu/86")
+    def eighty_sixed() -> dict[str, Any]:
+        """What the kitchen is out of right now: the 86 board."""
+        menu: MenuService = app.state.menu
+        return {"items": menu.eighty_sixed()}
+
+    @app.post("/menu/86")
+    def set_86(body: AvailabilityIn) -> dict[str, Any]:
+        """86 a size or an option (`sold_out`), or bring it back (`available`). Kept on this hub until the
+        next restart; the cloud copy joins with slice 7."""
+        menu: MenuService = app.state.menu
+        if body.target_id not in menu.defs.variants and body.target_id not in menu.defs.options:
+            raise HTTPException(404, {"error": "unknown_id", "id": body.target_id})
+        menu.engine.set_availability(body.target_id, body.status, reason=body.reason, by=body.by)
+        return {"items": menu.eighty_sixed()}
+
+    @app.post("/menu/price")
+    def price_line(body: PriceIn) -> dict[str, Any]:
+        """A preview of one configured line, so the screen can show the price before adding it."""
+        menu: MenuService = app.state.menu
+        try:
+            return menu.priced(body.model_dump())
+        except KeyError as err:
+            raise HTTPException(404, {"error": "unknown_id", "id": str(err)}) from err
 
     @app.get("/ops")
     def pull_ops(since: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000)) -> dict[str, Any]:

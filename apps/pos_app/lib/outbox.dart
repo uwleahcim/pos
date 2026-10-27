@@ -96,7 +96,8 @@ class Outbox extends ChangeNotifier {
       final orderId = _pending.first['order_id'] as String;
       final batch = _pending.takeWhile((op) => op['order_id'] == orderId).toList();
       try {
-        await api.appendOps(orderId, batch);
+        final result = await api.appendOps(orderId, batch);
+        if (result.refused.isNotEmpty) lastRefusal = result.refused.values.first;
       } on ApiException catch (err) {
         if (err.status != null && err.status! < 500) {
           // The backend read it and refused it; keeping it would block everything behind it.
@@ -115,7 +116,13 @@ class Outbox extends ChangeNotifier {
     }
   }
 
+  /// Why the backend last refused an operation, until the operator dismisses it.
   String? lastRefusal;
+
+  void clearRefusal() {
+    lastRefusal = null;
+    notifyListeners();
+  }
 
   Future<void> _persist() async {
     final prefs = _prefs ?? await SharedPreferences.getInstance();

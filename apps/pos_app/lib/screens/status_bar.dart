@@ -20,6 +20,27 @@ class StatusBar extends StatelessWidget {
         final online = conn.isOnline;
         final text = online ? 'connected to ${conn.endpoint}' : (conn.error ?? 'connecting');
         final pending = outbox.pending;
+        final refusal = outbox.lastRefusal;
+        if (refusal != null) {
+          return Material(
+            color: scheme.errorContainer,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+              child: Row(
+                children: [
+                  const Icon(Icons.block, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('Not added: $refusal', maxLines: 2, overflow: TextOverflow.ellipsis)),
+                  IconButton(
+                    tooltip: 'Dismiss',
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: outbox.clearRefusal,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         return Material(
           color: online ? scheme.surfaceContainerHighest : scheme.errorContainer,
           child: Padding(
