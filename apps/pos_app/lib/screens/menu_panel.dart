@@ -7,11 +7,24 @@ import '../menu.dart';
 
 /// A line the operator configured: what to send in `add_line`.
 class ChosenLine {
-  const ChosenLine({required this.name, required this.request, this.qty = 1, this.note = ''});
+  const ChosenLine({
+    required this.name,
+    required this.request,
+    this.qty = 1,
+    this.note = '',
+    this.unitPrice,
+    this.modifiers = const [],
+    this.itemId,
+  });
   final String name;
   final LineRequest request;
   final int qty;
   final String note;
+
+  /// The price of one as the menu showed it, so the check can show the line before the hub prices it.
+  final String? unitPrice;
+  final List<String> modifiers;
+  final String? itemId;
 }
 
 /// The menu as buttons: sections across the top, dishes in a grid, a search box. A dish with nothing to ask
@@ -90,6 +103,8 @@ class _MenuPanelState extends State<MenuPanel> {
         ChosenLine(
           name: entry.name,
           request: LineRequest(variantId: entry.variants.first.variantId, entryId: entry.entryId),
+          unitPrice: entry.variants.first.price,
+          itemId: entry.item,
         ),
       );
       return;
@@ -311,6 +326,13 @@ class _ItemSheetState extends State<ItemSheet> {
     _reprice();
   }
 
+  /// The choices that differ from the menu's defaults, as the check lists them.
+  List<String> get _picked => [
+    for (final g in _detail?.groups ?? const <GroupDetail>[])
+      for (final o in g.options)
+        if (!o.isDefault && (_request.selections[g.groupId] ?? const []).contains(o.optionId)) o.name,
+  ];
+
   String get _lineName {
     final variant = widget.entry.variants.firstWhere((v) => v.variantId == _request.variantId);
     return widget.entry.variants.length > 1 ? '${widget.entry.name} (${variant.name})' : widget.entry.name;
@@ -401,9 +423,17 @@ class _ItemSheetState extends State<ItemSheet> {
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
           onPressed: priced != null && priced.ok
-              ? () =>
-                    Navigator.of(context)
-                        .pop(ChosenLine(name: _lineName, request: _request, qty: _qty, note: _note.text.trim()))
+              ? () => Navigator.of(context).pop(
+                  ChosenLine(
+                    name: _lineName,
+                    request: _request,
+                    qty: _qty,
+                    note: _note.text.trim(),
+                    unitPrice: priced.unitPrice,
+                    modifiers: _picked,
+                    itemId: widget.entry.item,
+                  ),
+                )
               : null,
           child: Text(widget.initial == null ? 'Add' : 'Update'),
         ),

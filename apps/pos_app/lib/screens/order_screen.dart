@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../floor.dart';
+import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../photos.dart';
@@ -32,8 +33,10 @@ class OrderScreen extends StatefulWidget {
 }
 
 class _OrderScreenState extends State<OrderScreen> {
-  Order? _order;
-  Check? _check;
+  Order? _read; // what the backend last returned
+  Check? _readCheck;
+  final _local = <String, LocalLine>{}; // line id -> what this screen knew when it added the line
+  bool _reading = false;
   Timer? _timer;
   int? _seat; // null: for the table, shared
   late String _course = widget.courses.length > 1 ? widget.courses[1].id : widget.courses.first.id;
@@ -42,28 +45,51 @@ class _OrderScreenState extends State<OrderScreen> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+    widget.outbox.addListener(_onOutbox);
     _refresh();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    widget.outbox.removeListener(_onOutbox);
     super.dispose();
   }
 
+  /// A tap queued or the hub accepted something: redraw now, and read back once nothing is left to send.
+  void _onOutbox() {
+    if (!mounted) return;
+    setState(() {});
+    final waiting = widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId);
+    if (!waiting && widget.outbox.localOps(widget.orderId).isNotEmpty) _refresh();
+  }
+
   Future<void> _refresh() async {
+    if (_reading) return;
+    _reading = true;
+    final mark = widget.outbox.readMark;
     try {
       final order = await widget.api.order(widget.orderId);
       final check = await widget.api.check(widget.orderId);
+      widget.outbox.seen(widget.orderId, mark);
       if (mounted) {
         setState(() {
-          _order = order;
-          _check = check;
+          _read = order;
+          _readCheck = check;
         });
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
+    } finally {
+      _reading = false;
     }
+  }
+
+  /// The order as it stands on this screen: the last read plus this device's operations not yet in it.
+  Order? get _order {
+    final local = widget.outbox.localOps(widget.orderId);
+    final base = _read ?? (local.isEmpty ? null : Order.empty(widget.orderId));
+    return base == null ? null : withLocalOps(base, local);
   }
 
   static const _photographed = {'fire', 'close', 'reopen', 'void_line', 'void_order'};
@@ -75,18 +101,26 @@ class _OrderScreenState extends State<OrderScreen> {
     final ids = await widget.outbox.addAll(widget.orderId, ops);
     final i = ops.indexWhere((op) => _photographed.contains(op.$1));
     if (i >= 0) unawaited(widget.photos.capture(ops[i].$1, opId: ids[i]));
-    _refresh();
   }
 
-  Map<String, dynamic> _lineData(ChosenLine line, {required int? seat, required String? course}) => {
-    'line_id': widget.outbox.newId(),
-    'item': line.name,
-    'qty': line.qty,
-    'seat': ?seat,
-    'course': ?course,
-    if (line.note.isNotEmpty) 'note': line.note,
-    'request': line.request.toJson(),
-  };
+  Map<String, dynamic> _lineData(ChosenLine line, {required int? seat, required String? course}) {
+    final id = widget.outbox.newId();
+    _local[id] = LocalLine(
+      unitPrice: line.unitPrice,
+      modifiers: line.modifiers,
+      itemId: line.itemId,
+      entryId: line.request.entryId,
+    );
+    return {
+      'line_id': id,
+      'item': line.name,
+      'qty': line.qty,
+      'seat': ?seat,
+      'course': ?course,
+      if (line.note.isNotEmpty) 'note': line.note,
+      'request': line.request.toJson(),
+    };
+  }
 
   Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
 
@@ -114,13 +148,15 @@ class _OrderScreenState extends State<OrderScreen> {
   /// Reopens a line's choices. The changed dish replaces the old one: an unfired line just comes off, a
   /// fired one is voided and the new one fired with it, so the kitchen gets both on one ticket.
   Future<void> _edit(Line line) async {
-    if (!line.canEdit) {
+    final itemId = line.itemId ?? _local[line.lineId]?.itemId;
+    final entryId = line.entryId ?? _local[line.lineId]?.entryId;
+    if (!line.isActive || line.request == null || itemId == null) {
       _say('This line has no menu choices to change. Remove it and add it again.');
       return;
     }
     final ItemDetail detail;
     try {
-      detail = await widget.api.item(line.itemId!, entryId: line.entryId);
+      detail = await widget.api.item(itemId, entryId: entryId);
     } on ApiException catch (err) {
       _say('Could not open the dish: $err');
       return;
@@ -130,7 +166,7 @@ class _OrderScreenState extends State<OrderScreen> {
       context: context,
       builder: (_) => ItemSheet(
         api: widget.api,
-        entry: MenuEntry.fromDetail(detail, entryId: line.entryId),
+        entry: MenuEntry.fromDetail(detail, entryId: entryId),
         initial: ChosenLine(name: line.item, request: line.request!, qty: line.qty, note: line.note),
         warning: line.fired ? 'Already sent to the kitchen: updating voids it and fires the new one.' : null,
       ),
@@ -146,10 +182,11 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   Widget build(BuildContext context) {
     final order = _order;
+    final check = order == null ? null : estimateCheck(_readCheck, order, _local);
     final open = order?.isOpen ?? true;
     final ticket = _TicketPanel(
       order: order,
-      check: _check,
+      check: check,
       open: open,
       courses: widget.courses,
       onRemove: _remove,
@@ -215,7 +252,7 @@ class _OrderScreenState extends State<OrderScreen> {
                     children: [
                       TabBar(
                         tabs: [
-                          Tab(text: 'Check ${_check == null ? '' : '\$${_check!.total}'}'),
+                          Tab(text: 'Check ${check == null ? '' : '\$${check.total}'}'),
                           const Tab(text: 'Menu'),
                         ],
                       ),
@@ -300,6 +337,11 @@ class _TicketPanel extends StatelessWidget {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            if (line.pending)
+                              const Padding(
+                                padding: EdgeInsets.only(right: 4),
+                                child: Icon(Icons.cloud_upload_outlined, size: 14),
+                              ),
                             if (priced != null) Text(priced.total),
                             if (open && line.isActive)
                               IconButton(
@@ -325,7 +367,7 @@ class _TicketPanel extends StatelessWidget {
                 children: [
                   _TotalRow('Subtotal', check.subtotal),
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
-                  _TotalRow('Total', check.total, strong: true),
+                  _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
                 ],
               ),
             ),

@@ -306,6 +306,7 @@ class Check {
     required this.tax,
     required this.taxRatePct,
     required this.total,
+    this.estimated = false,
   });
 
   factory Check.fromJson(Map<String, dynamic> json) => Check(
@@ -323,6 +324,9 @@ class Check {
   final String tax;
   final String taxRatePct; // the combined rate, e.g. 7.00: customers see one tax line
   final String total;
+
+  /// Worked out on this device for lines the backend has not priced yet; replaced by its next answer.
+  final bool estimated;
 
   CheckLine? line(String lineId) {
     for (final l in lines) {
