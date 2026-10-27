@@ -23,8 +23,10 @@ def payload(op_id: str, kind: str, at: int, **data):
 def test_append_read_and_pull():
     client = TestClient(create_app(OpStore(physical=lambda: T0 + 100)))
     ops = [payload("a", "create", 0, table=4), payload("b", "add_line", 1, line_id="L1", item="Tsingtao", qty=2)]
-    assert client.post("/orders/o1/ops", json=ops).json() == {"accepted": ["a", "b"], "cursor": 2}
-    assert client.post("/orders/o1/ops", json=ops).json() == {"accepted": [], "cursor": 2}
+    first = client.post("/orders/o1/ops", json=ops).json()
+    assert (first["accepted"], first["cursor"], first["print_jobs"]) == (["a", "b"], 2, [])
+    second = client.post("/orders/o1/ops", json=ops).json()
+    assert (second["accepted"], second["cursor"]) == ([], 2)
 
     order = client.get("/orders/o1").json()
     assert order["fields"] == {"table": 4}

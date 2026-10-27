@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star]
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star]
 set -euo pipefail
 POS_HOME=/opt/pos
 
@@ -39,6 +39,14 @@ case "${1:-status}" in
     ;;
   restart) compose restart ;;
   psql) compose exec db psql -U pos -d pos ;;
+  printers)
+    # hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star   (empty string clears)
+    [[ $# -ge 2 ]] || { echo "usage: hubctl printers name=host[:port][/escpos|star],..." >&2; exit 2; }
+    sed -i -E '/^POS_PRINTERS=/d' "$POS_HOME/.env"
+    printf 'POS_PRINTERS=%s\n' "$2" >> "$POS_HOME/.env"
+    compose up -d api
+    echo "POS_PRINTERS=$2"
+    ;;
   print)
     # hubctl print 172.19.1.162 demo   (kitchen ticket, 80 mm)   |   hubctl print 172.19.1.162 drawer
     [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer] [escpos|star]" >&2; exit 2; }
@@ -51,7 +59,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star]" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star]" >&2
     exit 2
     ;;
 esac

@@ -4,6 +4,7 @@ import 'api.dart';
 import 'camera.dart';
 import 'outbox.dart';
 import 'photos.dart';
+import 'print_relay.dart';
 import 'screens/orders_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
@@ -20,7 +21,18 @@ Future<void> main() async {
   final camera = EventCamera.forPlatform();
   final photos = PhotoQueue(api, settings, camera, session);
   await photos.restore();
-  runApp(PosApp(settings: settings, api: api, outbox: outbox, session: session, camera: camera, photos: photos));
+  final relay = PrintRelay(api, settings)..bind();
+  runApp(
+    PosApp(
+      settings: settings,
+      api: api,
+      outbox: outbox,
+      session: session,
+      camera: camera,
+      photos: photos,
+      relay: relay,
+    ),
+  );
 }
 
 class PosApp extends StatelessWidget {
@@ -32,6 +44,7 @@ class PosApp extends StatelessWidget {
     required this.session,
     required this.camera,
     required this.photos,
+    required this.relay,
   });
 
   final Settings settings;
@@ -40,6 +53,7 @@ class PosApp extends StatelessWidget {
   final Session session;
   final EventCamera camera;
   final PhotoQueue photos;
+  final PrintRelay relay;
 
   @override
   Widget build(BuildContext context) {
@@ -55,8 +69,11 @@ class PosApp extends StatelessWidget {
               session: session,
               settings: settings,
               camera: camera,
-              onSettings: () =>
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => SettingsScreen(settings: settings))),
+              onSettings: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(settings: settings, api: api, relay: relay),
+                ),
+              ),
             );
           }
           return OrdersScreen(
@@ -66,6 +83,7 @@ class PosApp extends StatelessWidget {
             session: session,
             camera: camera,
             photos: photos,
+            relay: relay,
           );
         },
       ),

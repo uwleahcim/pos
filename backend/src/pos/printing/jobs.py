@@ -78,6 +78,10 @@ class JobStore:
     def get(self, job_id: str) -> PrintJob | None:
         return self._jobs.get(job_id)
 
+    def all(self) -> list[PrintJob]:
+        with self._lock:
+            return list(self._jobs.values())
+
     def pending(self, printers: list[str] | None = None) -> list[PrintJob]:
         """Jobs nobody is printing right now: queued, or leased to a relay that went quiet."""
         with self._lock:

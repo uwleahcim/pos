@@ -95,7 +95,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 
 | What | Where |
 | --- | --- |
-| Secrets (database password, node name) | `/opt/pos/.env`, readable by root only |
+| Secrets (database password, node name) and `POS_PRINTERS` | `/opt/pos/.env`, readable by root only |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -111,6 +111,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl restart` | Restart the services |
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
+| `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star` | Set the printers a fired order prints to (writes `POS_PRINTERS` to `.env`, restarts the API) |
 | `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |
 
 ## Ports

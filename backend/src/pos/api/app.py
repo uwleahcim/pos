@@ -10,6 +10,7 @@ import base64
 import binascii
 import os
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
@@ -18,6 +19,9 @@ from pydantic import BaseModel, Field
 
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.staff import Directory, Locked, demo_directory
+from ..printing.jobs import PrintJob
+from ..printing.service import PrintService
+from ..printing.ticket import DEMO
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 
@@ -87,16 +91,50 @@ class PhotoIn(BaseModel):
     taken_at: float | None = None
 
 
+class ClaimIn(BaseModel):
+    relay: str
+    printers: list[str]
+
+
+class ReportIn(BaseModel):
+    by: str
+    error: str | None = None
+
+
+class TestPrintIn(BaseModel):
+    printer: str
+
+
+def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "job_id": job.job_id,
+        "printer": job.printer,
+        "status": job.status,
+        "attempts": job.attempts,
+        "bytes": len(job.data),
+        "leased_to": job.leased_to,
+        "done_by": job.done_by,
+        "last_error": job.last_error,
+    }
+    if with_data:
+        out["data_b64"] = base64.b64encode(job.data).decode("ascii")
+    return out
+
+
 def create_app(
     store: OpStore | PgOpStore | None = None,
     *,
     staff: Directory | None = None,
     photos: PhotoStore | None = None,
+    printing: PrintService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
+    app.state.printing = printing if printing is not None else PrintService.from_env()
+    if printing is None:
+        app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -124,7 +162,13 @@ def create_app(
         except ReadOnlyError as err:
             # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
             raise HTTPException(503, {"error": "read_only"}) from err
-        return {"accepted": [op.op_id for op in accepted], "cursor": store.cursor}
+        printing: PrintService = app.state.printing
+        jobs = printing.on_ops(store.state, list(accepted))
+        return {
+            "accepted": [op.op_id for op in accepted],
+            "cursor": store.cursor,
+            "print_jobs": [j.job_id for j in jobs],
+        }
 
     @app.get("/orders")
     def list_orders(status: str | None = Query(None, pattern="^(open|closed|void)$")) -> dict[str, Any]:
@@ -215,6 +259,54 @@ def create_app(
         if photo is None:
             raise HTTPException(404, "no such photo")
         return Response(photo.jpeg, media_type="image/jpeg")
+
+    # Printing: the hub prints its own jobs; a terminal in relay mode claims what is left ------------------
+    @app.get("/print/printers")
+    def list_printers() -> dict[str, Any]:
+        printing: PrintService = app.state.printing
+        return {
+            "printers": [{"name": p.name, "address": p.address, "dialect": p.dialect} for p in printing.printers],
+            "direct": printing.direct,
+        }
+
+    @app.get("/print/jobs")
+    def list_jobs(status: str | None = Query(None, pattern="^(queued|leased|done|failed)$")) -> dict[str, Any]:
+        printing: PrintService = app.state.printing
+        jobs = sorted(printing.store.all(), key=lambda j: j.created, reverse=True)
+        if status is not None:
+            jobs = [j for j in jobs if j.status == status]
+        return {"jobs": [job_out(j) for j in jobs[:200]]}
+
+    @app.post("/print/jobs/claim")
+    def claim_job(body: ClaimIn) -> dict[str, Any]:
+        """A relay asks for one job for a printer it can reach; the bytes come with it."""
+        printing: PrintService = app.state.printing
+        job = printing.store.claim(body.printers, body.relay)
+        return {"job": job_out(job, with_data=True) if job else None}
+
+    @app.post("/print/jobs/{job_id}/done")
+    def job_done(job_id: str, body: ReportIn) -> dict[str, Any]:
+        printing: PrintService = app.state.printing
+        if printing.store.get(job_id) is None:
+            raise HTTPException(404, "no such job")
+        return job_out(printing.store.done(job_id, body.by))
+
+    @app.post("/print/jobs/{job_id}/failed")
+    def job_failed(job_id: str, body: ReportIn) -> dict[str, Any]:
+        printing: PrintService = app.state.printing
+        if printing.store.get(job_id) is None:
+            raise HTTPException(404, "no such job")
+        return job_out(printing.store.failed(job_id, body.by, body.error or "relay failed"))
+
+    @app.post("/print/test", status_code=202)
+    def test_print(body: TestPrintIn) -> dict[str, Any]:
+        """The demo ticket to a configured printer, by name: the settings screen's test button."""
+        printing: PrintService = app.state.printing
+        printer = printing.printer(body.printer)
+        if printer is None:
+            raise HTTPException(404, {"error": "no_such_printer", "printers": [p.name for p in printing.printers]})
+        job = printing.queue(replace(DEMO, station=printer.name), printer)
+        return job_out(job)
 
     return app
 

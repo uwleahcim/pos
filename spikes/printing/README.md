@@ -45,6 +45,16 @@ stacked, raster mode entered once, the cut at the end from leaving raster mode);
 against 21 KB for the mixed form, which the LAN does not notice. A line-mode `ESC k` variant printed junk
 on the mC-Print3 and was removed. `ascii` prints the demo with no graphics, for isolating printer trouble.
 
+**Tickets from orders and the relay path, 2026-10-27.** The hub now prints for real: `POS_PRINTERS`
+(set with `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`) names the printers, and every
+`fire` the backend accepts becomes one kitchen ticket per printer (active lines of the fired course, table,
+server, seats, notes), queued and written to the printer in the background, retried every 3 s while it
+fails. The cloud runs with `POS_PRINT_DIRECT=0` and leaves jobs in the queue. The app has a "Print relay"
+switch in settings: a terminal with it on claims queued jobs for the printers the backend lists, writes
+the bytes to the printer over the LAN and reports done or failed (`lib/print_relay.dart`, 4 tests), and a
+"Test print on every printer" button (`POST /print/test`). Endpoints: `GET /print/printers`,
+`GET /print/jobs`, `POST /print/jobs/claim`, `POST /print/jobs/{id}/done|failed`, `POST /print/test`.
+
 **Result.** PASSED 2026-10-27. Software 2026-10-26 (14 tests); hardware 2026-10-27 on Mike's bench: the Epson
 TM-T88VII (ESC/POS) and the Star mC-Print3 (StarPRNT) both print the demo ticket with readable Chinese,
 cut once, and kick the drawer, driven from hub 1 over the LAN. Stretch item left: the app's relay mode.

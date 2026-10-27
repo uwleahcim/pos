@@ -128,6 +128,21 @@ class PosApi {
     return List<String>.from(json['accepted'] as List);
   }
 
+  /// The printers the backend knows: name, address, dialect.
+  Future<List<Map<String, dynamic>>> printers() async =>
+      ((await _get('/print/printers'))['printers'] as List).cast<Map<String, dynamic>>();
+
+  /// One queued print job for a printer in `printers`, with its bytes, or null when there is none.
+  Future<Map<String, dynamic>?> claimPrintJob({required String relay, required List<String> printers}) async =>
+      (await _post('/print/jobs/claim', {'relay': relay, 'printers': printers}))['job'] as Map<String, dynamic>?;
+
+  Future<void> printJobDone(String jobId, {required String by}) => _post('/print/jobs/$jobId/done', {'by': by});
+
+  Future<void> printJobFailed(String jobId, {required String by, required String error}) =>
+      _post('/print/jobs/$jobId/failed', {'by': by, 'error': error});
+
+  Future<Map<String, dynamic>> testPrint(String printer) => _post('/print/test', {'printer': printer});
+
   Future<Map<String, dynamic>> _get(String path, {Map<String, String>? query}) =>
       _withFailover((base) => _client.get(Uri.parse('$base$path').replace(queryParameters: query)));
 

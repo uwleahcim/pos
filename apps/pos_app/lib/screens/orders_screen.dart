@@ -6,6 +6,7 @@ import '../api.dart';
 import '../camera.dart';
 import '../outbox.dart';
 import '../photos.dart';
+import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
 import 'order_screen.dart';
@@ -22,6 +23,7 @@ class OrdersScreen extends StatefulWidget {
     required this.session,
     required this.camera,
     required this.photos,
+    this.relay,
   });
 
   final PosApi api;
@@ -30,6 +32,7 @@ class OrdersScreen extends StatefulWidget {
   final Session session;
   final EventCamera camera;
   final PhotoQueue photos;
+  final PrintRelay? relay;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -102,9 +105,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.settings),
-            onPressed: () =>
-                Navigator.of(context)
-                    .push(MaterialPageRoute(builder: (_) => SettingsScreen(settings: widget.settings))),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SettingsScreen(settings: widget.settings, api: widget.api, relay: widget.relay),
+              ),
+            ),
           ),
         ],
       ),

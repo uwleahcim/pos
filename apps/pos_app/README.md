@@ -32,6 +32,6 @@ Layout:
 - `lib/settings.dart` device name and backend addresses, saved on the device.
 - `lib/session.dart` who is signed in; `lib/camera.dart` the front camera on macOS and iOS; `lib/photos.dart` the
   event photo queue.
-- `lib/session.dart` who is signed in; `lib/camera.dart` the front camera on macOS and iOS; `lib/photos.dart` the
-  event photo queue.
+- `lib/print_relay.dart` the print relay: with the switch on in settings, this terminal claims queued print
+  jobs from the backend and writes them to the printers on the LAN when the hub cannot.
 - `lib/screens/` orders list, one order, settings.

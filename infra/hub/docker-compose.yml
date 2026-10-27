@@ -28,6 +28,9 @@ services:
     environment:
       POS_NODE: ${POS_NODE:-hub}
       DATABASE_URL: postgresql://pos:${POSTGRES_PASSWORD}@db:5432/pos
+      # Printers this hub drives, name=host[:port][/dialect], e.g. kitchen=172.19.1.162/escpos,bar=172.19.1.14/star
+      POS_PRINTERS: ${POS_PRINTERS:-}
+      POS_PRINT_DIRECT: "1"
     ports:
       - "8000:8000"
     depends_on:
