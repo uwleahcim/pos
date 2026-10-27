@@ -4,16 +4,19 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../camera.dart';
+import '../floor.dart';
 import '../outbox.dart';
 import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
+import 'floor_view.dart';
 import 'order_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 
-/// Open orders from the backend, refreshed every two seconds. Phase 1 replaces polling with a push.
+/// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
+/// Both refresh every two seconds; a later slice replaces polling with a push.
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({
     super.key,
@@ -41,6 +44,8 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> {
   List<Order> _orders = const [];
   bool _showClosed = false;
+  bool _floor = true;
+  final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
 
   @override
@@ -66,18 +71,77 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   Future<void> _newOrder() async {
-    final table = await showDialog<String>(context: context, builder: (context) => const _TableDialog());
-    if (table == null || !mounted) return;
+    final name = await showDialog<String>(context: context, builder: (context) => const _TableDialog());
+    if (name == null || !mounted) return;
+    await _create({'order_type': 'takeout', if (name.isNotEmpty) 'note': name});
+  }
+
+  /// Opens a new check with these fields, stamped with the signed-in server, and shows it.
+  Future<void> _create(Map<String, dynamic> fields, {List<Course> courses = Course.defaults}) async {
+    final staff = widget.session.staff;
     final orderId = widget.outbox.newId();
-    final opId = await widget.outbox.add(orderId, 'create', {'table': int.tryParse(table) ?? table});
+    final opId = await widget.outbox.add(orderId, 'create', {
+      ...fields,
+      if (staff != null) 'server': staff.name,
+      if (staff != null) 'server_id': staff.staffId,
+    });
     unawaited(widget.photos.capture('create', opId: opId));
     if (!mounted) return;
+    await _open(orderId, courses: courses);
+  }
+
+  Future<void> _open(String orderId, {List<Course> courses = Course.defaults}) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => OrderScreen(api: widget.api, outbox: widget.outbox, photos: widget.photos, orderId: orderId),
+        builder: (_) => OrderScreen(
+          api: widget.api,
+          outbox: widget.outbox,
+          photos: widget.photos,
+          orderId: orderId,
+          courses: courses,
+        ),
       ),
     );
     _refresh();
+    _floorKey.currentState?.refresh();
+  }
+
+  /// A free table seats a party; a busy one opens its check, or asks which one when it has several.
+  Future<void> _onTable(FloorPlan plan, TableSpot table) async {
+    final checks = plan.checksAt(table.id);
+    if (checks.length == 1) return _open(checks.single.orderId, courses: plan.courses);
+    if (checks.length > 1) {
+      final picked = await showModalBottomSheet<String>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final c in checks)
+                ListTile(
+                  title: Text('${table.label} · ${c.guests ?? '?'} guests · ${c.server ?? ''}'),
+                  subtitle: Text('${c.items} items · ${c.total ?? ''}'),
+                  onTap: () => Navigator.of(context).pop(c.orderId),
+                ),
+              ListTile(
+                leading: const Icon(Icons.add),
+                title: const Text('New check at this table'),
+                onTap: () => Navigator.of(context).pop(''),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (picked == null || !mounted) return;
+      if (picked.isNotEmpty) return _open(picked, courses: plan.courses);
+    }
+    if (!mounted) return;
+    final guests = await showDialog<int>(
+      context: context,
+      builder: (_) => _GuestsDialog(table: table),
+    );
+    if (guests == null || !mounted) return;
+    await _create({'table': table.id, 'guests': guests, 'order_type': 'dine_in'}, courses: plan.courses);
   }
 
   @override
@@ -94,6 +158,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
           ),
           IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: widget.session.signOut),
+          IconButton(
+            tooltip: _floor ? 'List of checks' : 'Floor map',
+            icon: Icon(_floor ? Icons.list_alt : Icons.table_restaurant),
+            onPressed: () => setState(() => _floor = !_floor),
+          ),
           IconButton(
             tooltip: _showClosed ? 'Hide closed' : 'Show closed',
             icon: Icon(_showClosed ? Icons.visibility_off : Icons.visibility),
@@ -117,7 +186,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
         children: [
           StatusBar(api: widget.api, outbox: widget.outbox),
           Expanded(
-            child: _orders.isEmpty
+            child: _floor
+                ? FloorView(key: _floorKey, api: widget.api, onTable: _onTable)
+                : _orders.isEmpty
                 ? const Center(child: Text('No open orders. Tap + to start one.'))
                 : ListView.separated(
                     itemCount: _orders.length,
@@ -128,22 +199,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       final items = lines.fold<int>(0, (n, l) => n + l.qty);
                       return ListTile(
                         leading: CircleAvatar(child: Text(order.table.isEmpty ? '?' : order.table)),
-                        title: Text('Table ${order.table}'),
+                        title: Text(
+                          order.table.isEmpty ? 'To go ${order.fields['note'] ?? ''}' : 'Table ${order.table}',
+                        ),
                         subtitle: Text('$items items · ${order.status}${order.isFired ? ' · fired' : ''}'),
                         trailing: const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => OrderScreen(
-                                api: widget.api,
-                                outbox: widget.outbox,
-                                photos: widget.photos,
-                                orderId: order.orderId,
-                              ),
-                            ),
-                          );
-                          _refresh();
-                        },
+                        onTap: () => _open(order.orderId),
                       );
                     },
                   ),
@@ -153,7 +214,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _newOrder,
         icon: const Icon(Icons.add),
-        label: const Text('New order'),
+        label: const Text('To go'),
       ),
     );
   }
@@ -178,17 +239,47 @@ class _TableDialogState extends State<_TableDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('New order'),
+      title: const Text('To-go order'),
       content: TextField(
         controller: _controller,
         autofocus: true,
-        decoration: const InputDecoration(labelText: 'Table'),
-        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(labelText: 'Name for the order (optional)'),
         onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(onPressed: () => Navigator.of(context).pop(_controller.text.trim()), child: const Text('Start')),
+      ],
+    );
+  }
+}
+
+class _GuestsDialog extends StatefulWidget {
+  const _GuestsDialog({required this.table});
+  final TableSpot table;
+
+  @override
+  State<_GuestsDialog> createState() => _GuestsDialogState();
+}
+
+class _GuestsDialogState extends State<_GuestsDialog> {
+  late int _guests = widget.table.kind == 'counter' ? 1 : widget.table.seats;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Seat ${widget.table.label}'),
+      content: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(onPressed: _guests > 1 ? () => setState(() => _guests--) : null, icon: const Icon(Icons.remove)),
+          Text('$_guests guests', style: Theme.of(context).textTheme.titleLarge),
+          IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.of(context).pop(_guests), child: const Text('Seat')),
       ],
     );
   }

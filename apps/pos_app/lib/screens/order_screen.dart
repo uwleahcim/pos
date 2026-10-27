@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../floor.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../photos.dart';
@@ -11,12 +12,20 @@ import 'status_bar.dart';
 
 /// One order: its check as the backend prices it, and the menu whose taps append to it.
 class OrderScreen extends StatefulWidget {
-  const OrderScreen({super.key, required this.api, required this.outbox, required this.photos, required this.orderId});
+  const OrderScreen({
+    super.key,
+    required this.api,
+    required this.outbox,
+    required this.photos,
+    required this.orderId,
+    this.courses = Course.defaults,
+  });
 
   final PosApi api;
   final Outbox outbox;
   final PhotoQueue photos;
   final String orderId;
+  final List<Course> courses;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -26,6 +35,8 @@ class _OrderScreenState extends State<OrderScreen> {
   Order? _order;
   Check? _check;
   Timer? _timer;
+  int? _seat; // null: for the table, shared
+  late String _course = widget.courses.length > 1 ? widget.courses[1].id : widget.courses.first.id;
 
   @override
   void initState() {
@@ -67,9 +78,13 @@ class _OrderScreenState extends State<OrderScreen> {
     'line_id': widget.outbox.newId(),
     'item': line.name,
     'qty': line.qty,
+    'seat': ?_seat,
+    'course': _course,
     if (line.note.isNotEmpty) 'note': line.note,
     'request': line.request.toJson(),
   });
+
+  Future<void> _fire(String course) => _append('fire', {'course': course});
 
   @override
   Widget build(BuildContext context) {
@@ -79,21 +94,31 @@ class _OrderScreenState extends State<OrderScreen> {
       order: order,
       check: _check,
       open: open,
+      courses: widget.courses,
       onVoid: (line) => _append('void_line', {'line_id': line.lineId}),
     );
     final menu = open
-        ? MenuPanel(api: widget.api, onChosen: _add)
+        ? Column(
+            children: [
+              _SeatCourseBar(
+                guests: (order?.fields['guests'] as int?) ?? 0,
+                seat: _seat,
+                course: _course,
+                courses: widget.courses,
+                onSeat: (seat) => setState(() => _seat = seat),
+                onCourse: (course) => setState(() => _course = course),
+              ),
+              Expanded(
+                child: MenuPanel(api: widget.api, onChosen: _add),
+              ),
+            ],
+          )
         : const Center(child: Text('This check is closed. Reopen it to add items.'));
     return Scaffold(
       appBar: AppBar(
         title: Text(order == null ? 'Order' : 'Table ${order.table} · ${order.status}'),
         actions: [
-          if (order != null && open)
-            TextButton.icon(
-              onPressed: () => _append('fire', {'course': '*'}),
-              icon: const Icon(Icons.local_fire_department),
-              label: Text(order.isFired ? 'Fire again' : 'Fire'),
-            ),
+          if (order != null && open) _FireMenu(order: order, courses: widget.courses, onFire: _fire),
           if (order != null && open)
             TextButton.icon(
               onPressed: () => _append('close'),
@@ -151,11 +176,18 @@ class _OrderScreenState extends State<OrderScreen> {
 
 /// The lines on the check with their prices, and the totals the backend computed.
 class _TicketPanel extends StatelessWidget {
-  const _TicketPanel({required this.order, required this.check, required this.open, required this.onVoid});
+  const _TicketPanel({
+    required this.order,
+    required this.check,
+    required this.open,
+    required this.courses,
+    required this.onVoid,
+  });
 
   final Order? order;
   final Check? check;
   final bool open;
+  final List<Course> courses;
   final ValueChanged<Line> onVoid;
 
   @override
@@ -170,40 +202,55 @@ class _TicketPanel extends StatelessWidget {
         Expanded(
           child: ListView(
             children: [
-              for (final line in order.lines)
-                Builder(
-                  builder: (context) {
-                    final priced = check?.line(line.lineId);
-                    return ListTile(
-                      dense: true,
-                      leading: Text('${line.qty}×', style: theme.textTheme.titleMedium),
-                      title: Text(
-                        priced?.name ?? line.item,
-                        style: line.isVoid ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
-                      ),
-                      subtitle: Text(
-                        [
-                          ...?priced?.modifiers,
-                          if (line.isVoid) 'void',
-                          if (line.modifiedAfterFire) 'changed after fire',
-                          if (line.note.isNotEmpty) line.note,
-                        ].join(' · '),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (priced != null) Text(priced.total),
-                          if (open && !line.isVoid)
-                            IconButton(
-                              tooltip: 'Void line',
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => onVoid(line),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+              for (final group in _byCourse(order)) ...[
+                _CourseHeader(name: group.$1, state: group.$2),
+                for (final line in group.$3)
+                  Builder(
+                    builder: (context) {
+                      final priced = check?.line(line.lineId);
+                      return ListTile(
+                        dense: true,
+                        leading: SizedBox(
+                          width: 44,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text('${line.qty}×', style: theme.textTheme.titleMedium),
+                              Text(
+                                line.seat == null ? 'table' : 'seat ${line.seat}',
+                                style: theme.textTheme.labelSmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        title: Text(
+                          priced?.name ?? line.item,
+                          style: line.isVoid ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
+                        ),
+                        subtitle: Text(
+                          [
+                            ...?priced?.modifiers,
+                            if (line.isVoid) 'void',
+                            if (line.modifiedAfterFire) 'changed after fire',
+                            if (line.note.isNotEmpty) line.note,
+                          ].join(' · '),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (priced != null) Text(priced.total),
+                            if (open && !line.isVoid)
+                              IconButton(
+                                tooltip: 'Void line',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => onVoid(line),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+              ],
             ],
           ),
         ),
@@ -222,6 +269,163 @@ class _TicketPanel extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+extension on _TicketPanel {
+  /// Lines grouped by course in service order: (course name, held | fired, lines sorted by seat).
+  List<(String, String, List<Line>)> _byCourse(Order order) {
+    final known = [for (final c in courses) c.id];
+    final ids = {for (final l in order.lines) l.course ?? ''}.toList()
+      ..sort((a, b) {
+        final ia = known.indexOf(a), ib = known.indexOf(b);
+        return (ia < 0 ? 99 : ia).compareTo(ib < 0 ? 99 : ib);
+      });
+    return [
+      for (final id in ids)
+        (
+          courses.where((c) => c.id == id).firstOrNull?.name ?? (id.isEmpty ? 'No course' : id),
+          order.fired.containsKey(id) || order.fired.containsKey('*') ? 'fired' : 'held',
+          order.lines.where((l) => (l.course ?? '') == id).toList()
+            ..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
+        ),
+    ];
+  }
+}
+
+class _CourseHeader extends StatelessWidget {
+  const _CourseHeader({required this.name, required this.state});
+  final String name;
+  final String state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fired = state == 'fired';
+    return Container(
+      color: theme.colorScheme.surfaceContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Text(name, style: theme.textTheme.titleSmall),
+          const Spacer(),
+          Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 16),
+          const SizedBox(width: 4),
+          Text(fired ? 'fired' : 'held', style: theme.textTheme.labelMedium),
+        ],
+      ),
+    );
+  }
+}
+
+/// Which seat and course the next dish goes to. Seats run to the party size, plus one more on demand.
+class _SeatCourseBar extends StatefulWidget {
+  const _SeatCourseBar({
+    required this.guests,
+    required this.seat,
+    required this.course,
+    required this.courses,
+    required this.onSeat,
+    required this.onCourse,
+  });
+
+  final int guests;
+  final int? seat;
+  final String course;
+  final List<Course> courses;
+  final ValueChanged<int?> onSeat;
+  final ValueChanged<String> onCourse;
+
+  @override
+  State<_SeatCourseBar> createState() => _SeatCourseBarState();
+}
+
+class _SeatCourseBarState extends State<_SeatCourseBar> {
+  int _extra = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final seats = widget.guests + _extra;
+    Widget chip(String label, bool selected, VoidCallback onTap) => Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                const Text('Seat  '),
+                chip('Table', widget.seat == null, () => widget.onSeat(null)),
+                for (var i = 1; i <= seats; i++) chip('$i', widget.seat == i, () => widget.onSeat(i)),
+                IconButton(
+                  tooltip: 'Add a seat',
+                  icon: const Icon(Icons.add_circle_outline),
+                  onPressed: () {
+                    setState(() => _extra++);
+                    widget.onSeat(widget.guests + _extra);
+                  },
+                ),
+              ],
+            ),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                const Text('Course  '),
+                for (final c in widget.courses) chip(c.name, widget.course == c.id, () => widget.onCourse(c.id)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fire one held course, or everything at once.
+class _FireMenu extends StatelessWidget {
+  const _FireMenu({required this.order, required this.courses, required this.onFire});
+
+  final Order order;
+  final List<Course> courses;
+  final ValueChanged<String> onFire;
+
+  @override
+  Widget build(BuildContext context) {
+    final withLines = {for (final l in order.activeLines) l.course ?? ''};
+    final held = [
+      for (final c in courses)
+        if (withLines.contains(c.id) && !order.fired.containsKey(c.id) && !order.fired.containsKey('*')) c,
+    ];
+    return PopupMenuButton<String>(
+      tooltip: 'Fire',
+      onSelected: onFire,
+      itemBuilder: (_) => [
+        for (final c in held) PopupMenuItem(value: c.id, child: Text('Fire ${c.name}')),
+        const PopupMenuItem(value: '*', child: Text('Fire everything')),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            const Icon(Icons.local_fire_department),
+            const SizedBox(width: 4),
+            Text(held.isEmpty ? 'Fire' : 'Fire (${held.length} held)'),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -74,6 +74,15 @@ class _MenuPanelState extends State<MenuPanel> {
     ];
   }
 
+  /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
+  Future<void> _eightySix(MenuEntry entry) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _EightySixDialog(api: widget.api, entry: entry),
+    );
+    await _load();
+  }
+
   Future<void> _tap(MenuEntry entry) async {
     if (!entry.available) return;
     if (entry.quickAdd) {
@@ -152,7 +161,9 @@ class _MenuPanelState extends State<MenuPanel> {
             padding: const EdgeInsets.all(8),
             mainAxisSpacing: 8,
             crossAxisSpacing: 8,
-            children: [for (final e in shown) _EntryButton(entry: e, onTap: () => _tap(e))],
+            children: [
+              for (final e in shown) _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+            ],
           ),
         ),
       ],
@@ -161,10 +172,11 @@ class _MenuPanelState extends State<MenuPanel> {
 }
 
 class _EntryButton extends StatelessWidget {
-  const _EntryButton({required this.entry, required this.onTap});
+  const _EntryButton({required this.entry, required this.onTap, required this.onLongPress});
 
   final MenuEntry entry;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -176,6 +188,7 @@ class _EntryButton extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: available ? onTap : null,
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Column(
@@ -379,6 +392,49 @@ class _ItemSheetState extends State<ItemSheet> {
           child: const Text('Add'),
         ),
       ],
+    );
+  }
+}
+
+class _EightySixDialog extends StatefulWidget {
+  const _EightySixDialog({required this.api, required this.entry});
+  final PosApi api;
+  final MenuEntry entry;
+
+  @override
+  State<_EightySixDialog> createState() => _EightySixDialogState();
+}
+
+class _EightySixDialogState extends State<_EightySixDialog> {
+  late final Map<String, bool> _out = {for (final v in widget.entry.variants) v.variantId: !v.available};
+  String? _error;
+
+  Future<void> _set(String variantId, bool out) async {
+    try {
+      await widget.api.set86(variantId, soldOut: out);
+      setState(() => _out[variantId] = out);
+    } on ApiException catch (err) {
+      setState(() => _error = err.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('86 ${widget.entry.name}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final v in widget.entry.variants)
+            SwitchListTile(
+              title: Text(widget.entry.variants.length > 1 ? v.name : 'Sold out'),
+              value: _out[v.variantId] ?? false,
+              onChanged: (out) => _set(v.variantId, out),
+            ),
+          if (_error != null) Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ],
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
     );
   }
 }

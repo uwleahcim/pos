@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'floor.dart';
 import 'menu.dart';
 import 'settings.dart';
 
@@ -121,6 +122,13 @@ class PosApi {
   }
 
   Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
+
+  /// The floor plan with every table's open checks.
+  Future<FloorPlan> floor() async => FloorPlan.fromJson(await _get('/floor'));
+
+  /// 86 a size or option (`sold_out`), or bring it back (`available`).
+  Future<void> set86(String targetId, {required bool soldOut, String? by}) =>
+      _post('/menu/86', {'target_id': targetId, 'status': soldOut ? 'sold_out' : 'available', 'by': ?by});
 
   Future<Check> check(String orderId) async => Check.fromJson(await _get('/orders/$orderId/check'));
 
