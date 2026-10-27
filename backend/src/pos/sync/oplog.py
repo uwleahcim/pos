@@ -30,7 +30,7 @@ KINDS = frozenset(
         "void_order",  # data: reason?
     }
 )
-ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "ticket_no"})
+ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "server_id", "ticket_no"})
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
 
 
@@ -78,6 +78,7 @@ class OrderState:
     lines: dict[str, Line] = field(default_factory=dict)
     fired: dict[str, HLC] = field(default_factory=dict)  # course -> first fire stamp
     applied: list[str] = field(default_factory=list)  # op ids in replay order
+    first: HLC | None = None  # when the order was opened
     last: HLC | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -177,6 +178,8 @@ def apply(state: OrderState, op: Op) -> None:
         state.status = "void"
 
     state.applied.append(op.op_id)
+    if state.first is None:
+        state.first = op.hlc
     state.last = op.hlc
 
 

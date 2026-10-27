@@ -152,6 +152,23 @@ class MenuService:
     def search(self, query: str, channel: str = "pos", locale: str = "en") -> list[dict[str, Any]]:
         return [asdict(h) for h in self.engine.search(query, channel, locale=locale)]
 
+    def eighty_sixed(self) -> list[dict[str, Any]]:
+        out = []
+        loc = self.defs.localizer
+        for target, state in sorted(self.engine.availability.items()):
+            if self.engine.status_of(target) == "available":
+                continue
+            variant = self.defs.variants.get(target)
+            option = self.defs.options.get(target)
+            if variant is not None:
+                name = loc.text(self.defs.items[variant.item].names, "en")
+                if len(self.defs.variants_of(variant.item)) > 1:
+                    name += f" ({loc.text(variant.names, 'en')})"
+            else:
+                name = loc.text(option.names, "en") if option else target
+            out.append({"target_id": target, "name": name, "status": state.status, "by": state.set_by})
+        return out
+
     # --- pricing -------------------------------------------------------------------------------
 
     def resolve(self, request: Mapping[str, Any], at: datetime | None = None) -> ResolvedLine:

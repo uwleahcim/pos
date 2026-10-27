@@ -11,12 +11,14 @@ import binascii
 import os
 import time
 from dataclasses import replace
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.staff import Directory, Locked, demo_directory
 from ..menu.service import MenuService
@@ -108,6 +110,13 @@ class TestPrintIn(BaseModel):
     printer: str
 
 
+class AvailabilityIn(BaseModel):
+    target_id: str = Field(description="a variant id (one size) or an option id")
+    status: str = Field(pattern="^(available|sold_out)$")
+    by: str | None = None
+    reason: str | None = None
+
+
 class PriceIn(BaseModel):
     variant_id: str
     entry_id: str | None = None
@@ -169,10 +178,12 @@ def create_app(
     printing: PrintService | None = None,
     menu: MenuService | None = None,
     taxes: TaxProfile | None = None,
+    floor: FloorPlan | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else MenuService()
     app.state.taxes = taxes if taxes is not None else load_profile()
+    app.state.floor = floor if floor is not None else load_floor()
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
@@ -242,6 +253,16 @@ def create_app(
             raise HTTPException(404, "no such order")
         return check_for(store.state(order_id), app.state.taxes)
 
+    @app.get("/floor")
+    def read_floor() -> dict[str, Any]:
+        """The floor plan with the open checks on each table, for the floor map."""
+        store: OpStore | PgOpStore = app.state.store
+        states = [store.state(order_id) for order_id in store.order_ids()]
+        open_states = [s for s in states if s.status == "open"]
+        totals = {s.order_id: Decimal(check_for(s, app.state.taxes)["total"]) for s in open_states}
+        plan: FloorPlan = app.state.floor
+        return {**plan.as_json(), "status": table_status(open_states, totals), "cursor": store.cursor}
+
     # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
     @app.get("/menu")
     def read_menu(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
@@ -259,6 +280,22 @@ def create_app(
     def search_menu(q: str, channel: str = "pos", locale: str = "en") -> dict[str, Any]:
         menu: MenuService = app.state.menu
         return {"hits": menu.search(q, channel, locale)}
+
+    @app.get("/menu/86")
+    def eighty_sixed() -> dict[str, Any]:
+        """What the kitchen is out of right now: the 86 board."""
+        menu: MenuService = app.state.menu
+        return {"items": menu.eighty_sixed()}
+
+    @app.post("/menu/86")
+    def set_86(body: AvailabilityIn) -> dict[str, Any]:
+        """86 a size or an option (`sold_out`), or bring it back (`available`). Kept on this hub until the
+        next restart; the cloud copy joins with slice 7."""
+        menu: MenuService = app.state.menu
+        if body.target_id not in menu.defs.variants and body.target_id not in menu.defs.options:
+            raise HTTPException(404, {"error": "unknown_id", "id": body.target_id})
+        menu.engine.set_availability(body.target_id, body.status, reason=body.reason, by=body.by)
+        return {"items": menu.eighty_sixed()}
 
     @app.post("/menu/price")
     def price_line(body: PriceIn) -> dict[str, Any]:
