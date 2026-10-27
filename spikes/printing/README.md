@@ -45,4 +45,6 @@ stacked, raster mode entered once, the cut at the end from leaving raster mode);
 against 21 KB for the mixed form, which the LAN does not notice. A line-mode `ESC k` variant printed junk
 on the mC-Print3 and was removed. `ascii` prints the demo with no graphics, for isolating printer trouble.
 
-**Result.** Software part passed 2026-10-26 (15 tests). Hardware part in progress on the Epson and the Star.
+**Result.** PASSED 2026-10-27. Software 2026-10-26 (14 tests); hardware 2026-10-27 on Mike's bench: the Epson
+TM-T88VII (ESC/POS) and the Star mC-Print3 (StarPRNT) both print the demo ticket with readable Chinese,
+cut once, and kick the drawer, driven from hub 1 over the LAN. Stretch item left: the app's relay mode.
