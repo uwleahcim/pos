@@ -4,7 +4,7 @@
  "rooms": [
   {
    "id": "D",
-   "name": "Dining room D",
+   "name": "Dining room C & D",
    "x": 160,
    "y": 60,
    "w": 420,
@@ -81,8 +81,8 @@
    "kind": "table"
   },
   {
-   "id": "D5a",
-   "label": "D5a",
+   "id": "D5",
+   "label": "D5",
    "room": "D",
    "x": 207,
    "y": 268,
@@ -94,8 +94,8 @@
    "kind": "table"
   },
   {
-   "id": "D5b",
-   "label": "D5b",
+   "id": "C1",
+   "label": "C1",
    "room": "D",
    "x": 541,
    "y": 299,
@@ -146,8 +146,8 @@
    "kind": "table"
   },
   {
-   "id": "D5c",
-   "label": "D5c",
+   "id": "C5",
+   "label": "C5",
    "room": "D",
    "x": 312,
    "y": 546,
@@ -159,8 +159,8 @@
    "kind": "table"
   },
   {
-   "id": "D5d",
-   "label": "D5d",
+   "id": "C4",
+   "label": "C4",
    "room": "D",
    "x": 435,
    "y": 553,
@@ -172,8 +172,8 @@
    "kind": "table"
   },
   {
-   "id": "D5e",
-   "label": "D5e",
+   "id": "C2",
+   "label": "C2",
    "room": "D",
    "x": 541,
    "y": 559,
@@ -185,8 +185,8 @@
    "kind": "table"
   },
   {
-   "id": "D5f",
-   "label": "D5f",
+   "id": "C6",
+   "label": "C6",
    "room": "D",
    "x": 207,
    "y": 592,
@@ -198,8 +198,8 @@
    "kind": "table"
   },
   {
-   "id": "D5g",
-   "label": "D5g",
+   "id": "C3",
+   "label": "C3",
    "room": "D",
    "x": 281,
    "y": 732,
