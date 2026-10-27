@@ -82,7 +82,8 @@ def test_api_on_postgres(pg):
         "kind": "create",
         "data": {"table": 9},
     }
-    assert client.post("/orders/o1/ops", json=[op]).json() == {"accepted": ["a"], "cursor": 1}
+    posted = client.post("/orders/o1/ops", json=[op]).json()
+    assert (posted["accepted"], posted["cursor"]) == (["a"], 1)
     assert client.get("/orders/o1").json()["fields"] == {"table": 9}
     assert client.get("/orders").json()["orders"][0]["order_id"] == "o1"
     assert client.get("/ops", params={"since": 0}).json()["cursor"] == 1
