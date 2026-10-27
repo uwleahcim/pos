@@ -6,13 +6,19 @@ what a ticket says. A modify ticket is a new ticket with `kind="modify"`, never 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 
 from .escpos import Builder
 from .star import StarBuilder
 
-DIALECTS = {"escpos": Builder, "star": StarBuilder}
+DIALECTS: dict[str, Callable[..., Builder]] = {
+    "escpos": Builder,
+    "star": StarBuilder,
+    "star-column": partial(StarBuilder, graphics="column"),
+}
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,19 @@ def render(
 def drawer_kick(*, pin: int = 0, dialect: str = "escpos") -> bytes:
     """A job that only opens the drawer (a cash sale, a no-sale with manager approval)."""
     return bytes(DIALECTS[dialect]().drawer_kick(pin))
+
+
+def ascii_only(ticket: Ticket) -> Ticket:
+    """The same ticket with every non-ASCII label replaced, to test a printer without graphics."""
+
+    def plain(text: str) -> str:
+        return text if all(32 <= ord(ch) < 127 for ch in text) else "[CJK]"
+
+    lines = tuple(
+        replace(line, label=plain(line.label), modifiers=tuple(plain(m) for m in line.modifiers), note=plain(line.note))
+        for line in ticket.lines
+    )
+    return replace(ticket, lines=lines)
 
 
 DEMO = Ticket(

@@ -23,6 +23,7 @@ class FakePrinter:
             except OSError:
                 return
             with conn:
+                conn.sendall(b"\x00\x00\x00\x00")  # status bytes, unasked, like a Star on port 9100
                 chunks = []
                 while chunk := conn.recv(65536):
                     chunks.append(chunk)

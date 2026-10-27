@@ -34,11 +34,27 @@ class PrintJob:
     last_error: str | None = None
 
 
-def send_raw(printer: str, data: bytes, *, timeout: float = 4.0) -> None:
-    """Write the job to the printer's raw port. Raises OSError when the printer cannot be reached."""
+def send_raw(printer: str, data: bytes, *, timeout: float = 4.0, linger: float = 2.0) -> None:
+    """Write the job to the printer's raw port. Raises OSError when the printer cannot be reached.
+
+    Printers answer on this port with status bytes (Star sends them unasked). Closing a socket that still
+    holds unread input makes the kernel send a reset instead of an orderly close, and a printer that sees
+    the reset may drop what it has not printed yet, stuck mid-command. So: send, say we are done writing,
+    then read and discard whatever comes back until the printer hangs up or goes quiet.
+    """
     host, _, port = printer.partition(":")
     with socket.create_connection((host, int(port or PRINTER_PORT)), timeout=timeout) as sock:
         sock.sendall(data)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            return
+        sock.settimeout(linger)
+        try:
+            while sock.recv(4096):
+                pass
+        except OSError:
+            pass  # quiet for `linger` seconds, or the printer closed first: either way the job is delivered
 
 
 class JobStore:

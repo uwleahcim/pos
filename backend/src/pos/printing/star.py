@@ -14,6 +14,14 @@ RASTER_OUT = ESC + b"*rB"  # back to line mode
 
 
 class StarBuilder(Builder):
+    """`graphics`: "raster" (raster mode, `b` rows) or "column" (line mode `ESC k` 24-dot bands)."""
+
+    def __init__(self, *, graphics: str = "raster", **kwargs) -> None:
+        super().__init__(**kwargs)
+        if graphics not in ("raster", "column"):
+            raise ValueError(graphics)
+        self.graphics = graphics
+
     def _cmd_init(self) -> bytes:
         return ESC + b"@"
 
@@ -40,10 +48,29 @@ class StarBuilder(Builder):
         return ESC + b"a" + bytes([lines])
 
     def _cmd_raster(self, row_bytes: int, height: int, data: bytes) -> bytes:
-        """Raster mode: `b n1 n2 <row>` per row, then leave raster mode so text can follow."""
+        if self.graphics == "column":
+            return self._column_bands(row_bytes, height, data)
+        # Raster mode: `b n1 n2 <row>` per row, then leave raster mode so text can follow.
         rows = (data[i * row_bytes : (i + 1) * row_bytes] for i in range(height))
         body = b"".join(b"b" + bytes([row_bytes & 0xFF, row_bytes >> 8]) + row for row in rows)
         return RASTER_IN + body + RASTER_OUT
+
+    @staticmethod
+    def _column_bands(row_bytes: int, height: int, data: bytes) -> bytes:
+        """Line mode `ESC k n1 n2 <3 bytes per column>`: 24-dot tall bands at 3 mm line spacing."""
+        width = row_bytes * 8
+        bands = []
+        for top in range(0, height, 24):
+            cols = bytearray(width * 3)
+            for y in range(top, min(top + 24, height)):
+                row = data[y * row_bytes : (y + 1) * row_bytes]
+                bit = 0x80 >> ((y - top) % 8)
+                byte = (y - top) // 8
+                for x in range(width):
+                    if row[x >> 3] & (0x80 >> (x & 7)):
+                        cols[x * 3 + byte] |= bit
+            bands.append(ESC + b"k" + bytes([width & 0xFF, width >> 8]) + bytes(cols) + b"\n")
+        return ESC + b"0" + b"".join(bands) + ESC + b"z\x01"  # 3 mm spacing for the bands, 4 mm after
 
     def _cmd_cut(self, feed: int) -> bytes:
         return ESC + b"a" + bytes([feed]) + ESC + b"d\x03"  # feed, then partial cut at the cut position
