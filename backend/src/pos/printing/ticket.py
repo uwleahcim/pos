@@ -68,13 +68,15 @@ def render(
         b.line(f"Course: {ticket.course}")
     b.rule()
     for line in ticket.lines:
+        # A void is printed white on black, the dish and its choices, so nobody cooks it by mistake.
         prefix = "VOID " if line.void else ("CHG  " if line.changed else "")
         seat = f" [s{line.seat}]" if line.seat else ""
-        b.line(f"{prefix}{line.qty} x {line.label}{seat}", big=True, bold=line.void or line.changed)
+        inv = line.void
+        b.line(f"{prefix}{line.qty} x {line.label}{seat}", big=True, bold=line.void or line.changed, invert=inv)
         for mod in line.modifiers:
-            b.line(f"    + {mod}")
+            b.line(f"    + {mod}", invert=inv)
         if line.note:
-            b.line(f"    ** {line.note} **", bold=True)
+            b.line(f"    ** {line.note} **", bold=True, invert=inv)
     b.rule()
     b.line(f"{ticket.order_id[-8:]}  {ticket.at.strftime('%Y-%m-%d %H:%M:%S')}")
     b.feed(2).cut()

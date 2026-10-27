@@ -44,6 +44,16 @@ class MenuEntry {
         .toList(),
   );
 
+  /// A line's dish when only its item is known (reopening a line from an order).
+  factory MenuEntry.fromDetail(ItemDetail detail, {String? entryId}) => MenuEntry(
+    entryId: entryId ?? '',
+    item: detail.item,
+    name: detail.name,
+    secondName: detail.secondName,
+    hasOptions: true,
+    variants: detail.variants,
+  );
+
   final String entryId;
   final String item;
   final String name;
@@ -186,6 +196,29 @@ class ItemDetail {
 class LineRequest {
   LineRequest({required this.variantId, this.entryId, Map<String, List<String>>? selections, this.notes})
     : selections = selections ?? {};
+
+  factory LineRequest.fromJson(Map<String, dynamic> json) {
+    final selections = <String, List<String>>{};
+    for (final s in json['selections'] as List? ?? const []) {
+      final m = s as Map<String, dynamic>;
+      selections.putIfAbsent(m['group_id'] as String, () => []).add(m['option_id'] as String);
+    }
+    return LineRequest(
+      variantId: json['variant_id'] as String,
+      entryId: json['entry_id'] as String?,
+      selections: selections,
+      notes: json['notes'] as String?,
+    );
+  }
+
+  LineRequest copy() => LineRequest(
+    variantId: variantId,
+    entryId: entryId,
+    selections: {
+      for (final e in selections.entries) e.key: [...e.value],
+    },
+    notes: notes,
+  );
 
   String variantId;
   final String? entryId;

@@ -47,7 +47,7 @@ def test_a_void_wins_over_a_concurrent_edit_whichever_came_first(op):
     ]
     for ops in (edit_then_void, void_then_edit):
         line = replay(ops).lines["L1"]
-        assert line.status == "void"
+        assert line.status == "removed"  # never fired: it just comes off
 
 
 def test_order_fields_are_last_writer_wins_by_clock(op):

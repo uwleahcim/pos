@@ -1,4 +1,5 @@
-"""Tickets from orders: a `fire` turns into one job per kitchen printer, delivered by the hub or a relay.
+"""Tickets from orders: a `fire` or a void of a sent line turns into one job per kitchen printer, delivered
+by the hub or a relay.
 
 Printers come from `POS_PRINTERS`, e.g. `kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`
 (name=host[:port][/dialect]). A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the
@@ -16,7 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..sync.oplog import Op, OrderState
+from ..sync.oplog import Line, Op, OrderState, replay
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
 from .ticket import DIALECTS, Ticket, TicketLine, render
@@ -45,6 +46,78 @@ def printers_from_env(value: str | None = None) -> list[Printer]:
     return [Printer.parse(spec) for spec in raw.split(",") if spec.strip()]
 
 
+def kitchen_changes(before: OrderState | None, after: OrderState) -> tuple[list[Line], list[Line]]:
+    """What the kitchen must hear about between two replays of an order: lines sent for the first time,
+    and lines it already had that are now off the order (a void, or the old half of a change)."""
+    sent, voided = [], []
+    for line_id, line in after.lines.items():
+        was = before.lines.get(line_id) if before is not None else None
+        if line.active and line.fired_at is not None and (was is None or was.fired_at is None):
+            sent.append(line)
+        elif not line.active and was is not None and was.active and was.fired_at is not None:
+            voided.append(line)
+    return sent, voided
+
+
+def ticket_for(
+    state: OrderState,
+    sent: list[Line],
+    voided: list[Line] | None = None,
+    *,
+    station: str,
+    ticket_no: int,
+    routes: Callable[[str | None], bool] | None = None,
+    course: str | None = None,
+) -> Ticket | None:
+    """One station's ticket: voided lines first, printed in reverse, then the lines being sent.
+    `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
+    every line does."""
+    lines = [*_ticket_lines(voided or [], routes, void=True), *_ticket_lines(sent, routes, void=False)]
+    if not lines:
+        return None
+    voids = sum(line.void for line in lines)
+    kind = "new" if not voids else "void" if voids == len(lines) else "modify"
+    if course is None:
+        courses = {line.course for line in sent}
+        course = courses.pop() if len(courses) == 1 else None
+    fields = state.fields
+    return Ticket(
+        station=station,
+        kind=kind,
+        order_id=state.order_id,
+        ticket_no=ticket_no,
+        table=str(fields.get("table", "")),
+        lines=tuple(lines),
+        server=str(fields.get("server", "")),
+        order_type=str(fields.get("order_type", "dine in")),
+        guests=fields.get("guests"),
+        course=course,
+    )
+
+
+def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None, *, void: bool) -> list[TicketLine]:
+    out = []
+    for line in lines:
+        kitchen = (line.priced or {}).get("kitchen")
+        if not kitchen:  # a line typed on the phase 0 demo screen
+            kitchen = [{"qty": 1, "label": line.item, "labels": []}]
+        for k in kitchen:
+            if routes is not None and not routes(k.get("station")):
+                continue
+            out.append(
+                TicketLine(
+                    qty=line.qty * int(k.get("qty", 1)),
+                    label=str(k.get("label") or line.item),
+                    modifiers=tuple(k.get("labels", ())),
+                    note=line.note,
+                    seat=line.seat,
+                    void=void,
+                    changed=not void and line.modified_after_fire,
+                )
+            )
+    return out
+
+
 def ticket_for_fire(
     state: OrderState,
     op: Op,
@@ -53,43 +126,20 @@ def ticket_for_fire(
     ticket_no: int,
     routes: Callable[[str | None], bool] | None = None,
 ) -> Ticket | None:
-    """The lines a `fire` sends to the kitchen: active lines of the fired course (`*` = every course).
-    `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
-    every line does."""
+    """The lines one `fire` sends: active lines of the fired course (`*` = every course) that no earlier
+    fire sent. `state` may be replayed with or without the fire itself."""
     course = op.data.get("course", "*")
-    lines = []
-    for line in state.lines.values():
-        if line.status != "active" or not (course == "*" or line.course == course):
-            continue
-        kitchen = (line.priced or {}).get("kitchen")
-        if not kitchen:  # a line typed on the phase 0 demo screen
-            kitchen = [{"qty": 1, "label": line.item, "labels": []}]
-        for k in kitchen:
-            if routes is not None and not routes(k.get("station")):
-                continue
-            lines.append(
-                TicketLine(
-                    qty=line.qty * int(k.get("qty", 1)),
-                    label=str(k.get("label") or line.item),
-                    modifiers=tuple(k.get("labels", ())),
-                    note=line.note,
-                    seat=line.seat,
-                    changed=line.modified_after_fire,
-                )
-            )
-    if not lines:
-        return None
-    fields = state.fields
-    return Ticket(
+    lines = [
+        line
+        for line in state.lines.values()
+        if line.active and (course == "*" or line.course == course) and line.fired_at in (None, op.hlc)
+    ]
+    return ticket_for(
+        state,
+        lines,
         station=station,
-        kind="new",
-        order_id=state.order_id,
         ticket_no=ticket_no,
-        table=str(fields.get("table", "")),
-        lines=tuple(lines),
-        server=str(fields.get("server", "")),
-        order_type=str(fields.get("order_type", "dine in")),
-        guests=fields.get("guests"),
+        routes=routes,
         course=None if course == "*" else course,
     )
 
@@ -121,26 +171,44 @@ class PrintService:
     def printer(self, name: str) -> Printer | None:
         return next((p for p in self.printers if p.name == name), None)
 
-    def on_ops(self, state_of: Callable[[str], OrderState], ops: list[Op]) -> list[PrintJob]:
-        """Called after operations are stored: every accepted `fire` becomes tickets."""
+    def on_ops(self, ops_of: Callable[[str], list[Op]], ops: list[Op]) -> list[PrintJob]:
+        """Called after operations are stored. Each order's tickets come from comparing the order before and
+        after this batch, so a fire prints only lines not sent yet, a void of a sent line prints at once,
+        and a change (void plus a new line plus a fire, sent together) prints as one ticket."""
+        if not self.printers:
+            return []
         jobs: list[PrintJob] = []
+        by_order: dict[str, list[Op]] = {}
         for op in ops:
-            if op.kind == "fire" and self.printers:
-                jobs.extend(self.fire(state_of(op.order_id), op))
+            by_order.setdefault(op.order_id, []).append(op)
+        for order_id, batch in by_order.items():
+            new = {op.op_id for op in batch}
+            everything = ops_of(order_id)
+            before = replay([op for op in everything if op.op_id not in new], order_id)
+            after = replay(everything, order_id)
+            sent, voided = kitchen_changes(before, after)
+            if sent or voided:
+                key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
+                jobs.extend(self.send(after, sent, voided, key=key.op_id))
         return jobs
 
-    def fire(self, state: OrderState, op: Op) -> list[PrintJob]:
+    def send(self, state: OrderState, sent: list[Line], voided: list[Line], *, key: str) -> list[PrintJob]:
         with self._lock:
             ticket_no = next(self._tickets)
         jobs = []
         named = {p.name for p in self.printers}
         for i, printer in enumerate(self.printers):
-            ticket = ticket_for_fire(
-                state, op, station=printer.name, ticket_no=ticket_no, routes=self._routes(printer, i == 0, named)
+            ticket = ticket_for(
+                state,
+                sent,
+                voided,
+                station=printer.name,
+                ticket_no=ticket_no,
+                routes=self._routes(printer, i == 0, named),
             )
             if ticket is None:
                 continue
-            jobs.append(self.queue(ticket, printer, job_id=f"{op.op_id}:{printer.name}"))
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.name}"))
         return jobs
 
     @staticmethod

@@ -95,10 +95,9 @@ def table_status(orders: Iterable[OrderState], totals: dict[str, Decimal] | None
         table = state.fields.get("table")
         if table in (None, ""):
             continue
-        active = [line for line in state.lines.values() if line.status == "active"]
-        courses = {line.course or "" for line in active}
-        fired = set(state.fired)
-        held = sorted(c for c in courses if "*" not in fired and c not in fired and c != "")
+        active = [line for line in state.lines.values() if line.active]
+        fired = {line.course or "" for line in active if line.fired_at is not None}
+        held = sorted({line.course or "" for line in active if line.fired_at is None})
         out.setdefault(str(table), []).append(
             {
                 "order_id": state.order_id,

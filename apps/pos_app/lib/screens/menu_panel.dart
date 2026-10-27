@@ -221,11 +221,16 @@ class _EntryButton extends StatelessWidget {
 }
 
 /// Size, choices, quantity and a note for one dish, with the backend's price shown as they change.
+/// With [initial] it reopens a line already on the order, to change it.
 class ItemSheet extends StatefulWidget {
-  const ItemSheet({super.key, required this.api, required this.entry});
+  const ItemSheet({super.key, required this.api, required this.entry, this.initial, this.warning});
 
   final PosApi api;
   final MenuEntry entry;
+  final ChosenLine? initial;
+
+  /// Shown above the buttons, e.g. that changing a fired dish voids it.
+  final String? warning;
 
   @override
   State<ItemSheet> createState() => _ItemSheetState();
@@ -235,16 +240,21 @@ class _ItemSheetState extends State<ItemSheet> {
   ItemDetail? _detail;
   late final LineRequest _request;
   Priced? _priced;
-  int _qty = 1;
-  final _note = TextEditingController();
+  late int _qty = widget.initial?.qty ?? 1;
+  late final _note = TextEditingController(text: widget.initial?.note ?? '');
   Timer? _debounce;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    final first = widget.entry.variants.firstWhere((v) => v.available, orElse: () => widget.entry.variants.first);
-    _request = LineRequest(variantId: first.variantId, entryId: widget.entry.entryId);
+    final initial = widget.initial;
+    if (initial != null) {
+      _request = initial.request.copy();
+    } else {
+      final first = widget.entry.variants.firstWhere((v) => v.available, orElse: () => widget.entry.variants.first);
+      _request = LineRequest(variantId: first.variantId, entryId: widget.entry.entryId);
+    }
     _load();
   }
 
@@ -257,8 +267,9 @@ class _ItemSheetState extends State<ItemSheet> {
 
   Future<void> _load() async {
     try {
-      final detail = await widget.api.item(widget.entry.item, entryId: widget.entry.entryId);
-      for (final g in detail.groups) {
+      final entryId = widget.entry.entryId.isEmpty ? null : widget.entry.entryId;
+      final detail = await widget.api.item(widget.entry.item, entryId: entryId);
+      for (final g in widget.initial == null ? detail.groups : const <GroupDetail>[]) {
         final defaults = [
           for (final o in g.options)
             if (o.isDefault && o.available) o.optionId,
@@ -377,6 +388,11 @@ class _ItemSheetState extends State<ItemSheet> {
                     ),
                     if (priced != null && !priced.ok)
                       for (final p in priced.problems) Text(p, style: TextStyle(color: theme.colorScheme.error)),
+                    if (widget.warning != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(widget.warning!, style: TextStyle(color: theme.colorScheme.error)),
+                      ),
                   ],
                 ),
               ),
@@ -389,7 +405,7 @@ class _ItemSheetState extends State<ItemSheet> {
                     Navigator.of(context)
                         .pop(ChosenLine(name: _lineName, request: _request, qty: _qty, note: _note.text.trim()))
               : null,
-          child: const Text('Add'),
+          child: Text(widget.initial == null ? 'Add' : 'Update'),
         ),
       ],
     );

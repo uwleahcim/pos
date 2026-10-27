@@ -68,23 +68,80 @@ class _OrderScreenState extends State<OrderScreen> {
 
   static const _photographed = {'fire', 'close', 'reopen', 'void_line', 'void_order'};
 
-  Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) async {
-    final opId = await widget.outbox.add(widget.orderId, kind, data);
-    if (_photographed.contains(kind)) unawaited(widget.photos.capture(kind, opId: opId));
+  Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) => _appendAll([(kind, data)]);
+
+  /// Operations that belong together go in one batch, so the kitchen gets one ticket for a change.
+  Future<void> _appendAll(List<(String, Map<String, dynamic>)> ops) async {
+    final ids = await widget.outbox.addAll(widget.orderId, ops);
+    final i = ops.indexWhere((op) => _photographed.contains(op.$1));
+    if (i >= 0) unawaited(widget.photos.capture(ops[i].$1, opId: ids[i]));
     _refresh();
   }
 
-  Future<void> _add(ChosenLine line) => _append('add_line', {
+  Map<String, dynamic> _lineData(ChosenLine line, {required int? seat, required String? course}) => {
     'line_id': widget.outbox.newId(),
     'item': line.name,
     'qty': line.qty,
-    'seat': ?_seat,
-    'course': _course,
+    'seat': ?seat,
+    'course': ?course,
     if (line.note.isNotEmpty) 'note': line.note,
     'request': line.request.toJson(),
-  });
+  };
+
+  Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
 
   Future<void> _fire(String course) => _append('fire', {'course': course});
+
+  void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+
+  /// Before the kitchen has it a line just comes off. After, it is a void, and a VOID ticket prints.
+  Future<void> _remove(Line line) async {
+    if (!line.fired) return _append('void_line', {'line_id': line.lineId});
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Void ${line.item}?'),
+        content: const Text('It has gone to the kitchen. A VOID ticket prints so they stop making it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Void')),
+        ],
+      ),
+    );
+    if (ok == true) await _append('void_line', {'line_id': line.lineId, 'reason': 'void'});
+  }
+
+  /// Reopens a line's choices. The changed dish replaces the old one: an unfired line just comes off, a
+  /// fired one is voided and the new one fired with it, so the kitchen gets both on one ticket.
+  Future<void> _edit(Line line) async {
+    if (!line.canEdit) {
+      _say('This line has no menu choices to change. Remove it and add it again.');
+      return;
+    }
+    final ItemDetail detail;
+    try {
+      detail = await widget.api.item(line.itemId!, entryId: line.entryId);
+    } on ApiException catch (err) {
+      _say('Could not open the dish: $err');
+      return;
+    }
+    if (!mounted) return;
+    final chosen = await showDialog<ChosenLine>(
+      context: context,
+      builder: (_) => ItemSheet(
+        api: widget.api,
+        entry: MenuEntry.fromDetail(detail, entryId: line.entryId),
+        initial: ChosenLine(name: line.item, request: line.request!, qty: line.qty, note: line.note),
+        warning: line.fired ? 'Already sent to the kitchen: updating voids it and fires the new one.' : null,
+      ),
+    );
+    if (chosen == null) return;
+    await _appendAll([
+      ('void_line', {'line_id': line.lineId, 'reason': 'changed'}),
+      ('add_line', _lineData(chosen, seat: line.seat, course: line.course)),
+      if (line.fired) ('fire', {'course': line.course ?? '*'}),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +152,8 @@ class _OrderScreenState extends State<OrderScreen> {
       check: _check,
       open: open,
       courses: widget.courses,
-      onVoid: (line) => _append('void_line', {'line_id': line.lineId}),
+      onRemove: _remove,
+      onEdit: _edit,
     );
     final menu = open
         ? Column(
@@ -181,21 +239,23 @@ class _TicketPanel extends StatelessWidget {
     required this.check,
     required this.open,
     required this.courses,
-    required this.onVoid,
+    required this.onRemove,
+    required this.onEdit,
   });
 
   final Order? order;
   final Check? check;
   final bool open;
   final List<Course> courses;
-  final ValueChanged<Line> onVoid;
+  final ValueChanged<Line> onRemove;
+  final ValueChanged<Line> onEdit;
 
   @override
   Widget build(BuildContext context) {
     final order = this.order;
     final theme = Theme.of(context);
     if (order == null) return const Center(child: CircularProgressIndicator());
-    if (order.lines.isEmpty) return const Center(child: Text('Nothing ordered yet.'));
+    if (order.shownLines.isEmpty) return const Center(child: Text('Nothing ordered yet.'));
     final check = this.check;
     return Column(
       children: [
@@ -210,6 +270,7 @@ class _TicketPanel extends StatelessWidget {
                       final priced = check?.line(line.lineId);
                       return ListTile(
                         dense: true,
+                        onTap: open && line.isActive ? () => onEdit(line) : null,
                         leading: SizedBox(
                           width: 44,
                           child: Column(
@@ -231,7 +292,8 @@ class _TicketPanel extends StatelessWidget {
                           [
                             ...?priced?.modifiers,
                             if (line.isVoid) 'void',
-                            if (line.modifiedAfterFire) 'changed after fire',
+                            if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
+                            if (line.isActive && line.modifiedAfterFire) 'added after fire',
                             if (line.note.isNotEmpty) line.note,
                           ].join(' · '),
                         ),
@@ -239,11 +301,11 @@ class _TicketPanel extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (priced != null) Text(priced.total),
-                            if (open && !line.isVoid)
+                            if (open && line.isActive)
                               IconButton(
-                                tooltip: 'Void line',
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () => onVoid(line),
+                                tooltip: line.fired ? 'Void (sent to the kitchen)' : 'Remove',
+                                icon: Icon(line.fired ? Icons.block : Icons.delete_outline),
+                                onPressed: () => onRemove(line),
                               ),
                           ],
                         ),
@@ -274,23 +336,30 @@ class _TicketPanel extends StatelessWidget {
 }
 
 extension on _TicketPanel {
-  /// Lines grouped by course in service order: (course name, held | fired, lines sorted by seat).
+  /// Lines grouped by course in service order: (course name, held | fired | "N to fire", lines by seat).
   List<(String, String, List<Line>)> _byCourse(Order order) {
     final known = [for (final c in courses) c.id];
-    final ids = {for (final l in order.lines) l.course ?? ''}.toList()
+    final shown = order.shownLines;
+    final ids = {for (final l in shown) l.course ?? ''}.toList()
       ..sort((a, b) {
         final ia = known.indexOf(a), ib = known.indexOf(b);
         return (ia < 0 ? 99 : ia).compareTo(ib < 0 ? 99 : ib);
       });
-    return [
-      for (final id in ids)
-        (
-          courses.where((c) => c.id == id).firstOrNull?.name ?? (id.isEmpty ? 'No course' : id),
-          order.fired.containsKey(id) || order.fired.containsKey('*') ? 'fired' : 'held',
-          order.lines.where((l) => (l.course ?? '') == id).toList()
-            ..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
-        ),
-    ];
+    String state(List<Line> lines) {
+      final active = lines.where((l) => l.isActive);
+      final waiting = active.where((l) => !l.fired).length;
+      if (waiting == 0) return 'fired';
+      return waiting == active.length ? 'held' : '$waiting to fire';
+    }
+
+    (String, String, List<Line>) group(String id) {
+      final lines = shown.where((l) => (l.course ?? '') == id).toList()
+        ..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0));
+      final name = courses.where((c) => c.id == id).firstOrNull?.name ?? (id.isEmpty ? 'No course' : id);
+      return (name, state(lines), lines);
+    }
+
+    return [for (final id in ids) group(id)];
   }
 }
 
@@ -312,7 +381,7 @@ class _CourseHeader extends StatelessWidget {
           const Spacer(),
           Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 16),
           const SizedBox(width: 4),
-          Text(fired ? 'fired' : 'held', style: theme.textTheme.labelMedium),
+          Text(state, style: theme.textTheme.labelMedium),
         ],
       ),
     );
@@ -404,10 +473,10 @@ class _FireMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final withLines = {for (final l in order.activeLines) l.course ?? ''};
+    final waiting = order.heldCourses;
     final held = [
       for (final c in courses)
-        if (withLines.contains(c.id) && !order.fired.containsKey(c.id) && !order.fired.containsKey('*')) c,
+        if (waiting.contains(c.id)) c,
     ];
     return PopupMenuButton<String>(
       tooltip: 'Fire',

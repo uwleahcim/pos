@@ -23,8 +23,8 @@ KINDS = frozenset(
         "set_field",  # data: any order fields
         "add_line",  # data: line_id, item, qty?, seat?, course?, note?, request?, priced?
         "set_line",  # data: line_id + any line fields
-        "void_line",  # data: line_id, reason?
-        "fire",  # data: course ("*" = everything)
+        "void_line",  # data: line_id, reason? (removes a line the kitchen has not seen, voids one it has)
+        "fire",  # data: course ("*" = everything); sends that course's lines not yet sent
         "close",
         "reopen",
         "void_order",  # data: reason?
@@ -62,11 +62,17 @@ class Line:
     seat: int | None = None
     course: str | None = None
     note: str = ""
-    status: str = "active"  # active | void
+    status: str = "active"  # active | removed (taken off before the kitchen saw it) | void (after)
     void_reason: str | None = None
     modified_after_fire: bool = False
+    request: dict[str, Any] | None = None  # what the operator chose, so a screen can reopen the choices
     priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
+    fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
+
+    @property
+    def active(self) -> bool:
+        return self.status == "active"
 
 
 @dataclass
@@ -97,6 +103,8 @@ class OrderState:
                     "status": line.status,
                     "void_reason": line.void_reason,
                     "modified_after_fire": line.modified_after_fire,
+                    "fired": line.fired_at is not None,
+                    "request": line.request,
                     "priced": line.priced,
                 }
                 for line_id, line in sorted(self.lines.items())
@@ -132,6 +140,7 @@ def apply(state: OrderState, op: Op) -> None:
             seat=data.get("seat"),
             course=data.get("course"),
             note=data.get("note", ""),
+            request=data.get("request"),
             priced=data.get("priced"),
         )
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
@@ -140,7 +149,7 @@ def apply(state: OrderState, op: Op) -> None:
 
     elif kind == "set_line":
         line = state.lines.get(data["line_id"])
-        if line is None or line.status == "void":
+        if line is None or not line.active:
             return  # unknown line, or a void: a void always wins
         was_fired = state._fired_before(line.course)
         for name in LINE_FIELDS:
@@ -156,15 +165,20 @@ def apply(state: OrderState, op: Op) -> None:
         if line is None:
             line = Line(line_id=line_id, item=data.get("item", ""))
             state.lines[line_id] = line
-        if line.status != "void":
-            line.status = "void"
+        if line.active:
+            # Before the kitchen has it, a line just comes off the order (still in the log for the audit);
+            # once it has been sent it is a void, which the kitchen is told about.
+            line.status = "void" if line.fired_at is not None else "removed"
             line.void_reason = data.get("reason")
-            if state._fired_before(line.course):
+            if line.fired_at is not None:
                 line.modified_after_fire = True
 
     elif kind == "fire":
         course = data.get("course", "*")
         state.fired.setdefault(course, op.hlc)
+        for line in state.lines.values():
+            if line.active and line.fired_at is None and (course == "*" or line.course == course):
+                line.fired_at = op.hlc
 
     elif kind == "close":
         if state.status != "void":

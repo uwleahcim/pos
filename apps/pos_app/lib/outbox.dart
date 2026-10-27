@@ -69,20 +69,29 @@ class Outbox extends ChangeNotifier {
   }
 
   /// Stamps and queues one operation, then tries to send everything queued. Returns the op id.
-  Future<String> add(String orderId, String kind, [Map<String, dynamic> data = const {}]) async {
-    final op = {
-      'op_id': newId(),
-      'order_id': orderId,
-      'hlc': _clock.next(),
-      'device': settings.device,
-      'kind': kind,
-      'data': data,
-    };
-    _pending.add(op);
+  Future<String> add(String orderId, String kind, [Map<String, dynamic> data = const {}]) async =>
+      (await addAll(orderId, [(kind, data)])).single;
+
+  /// Stamps and queues several operations that belong together (a change: void, add, fire), so they reach
+  /// the backend in one batch and the kitchen gets one ticket. Returns the op ids.
+  Future<List<String>> addAll(String orderId, List<(String, Map<String, dynamic>)> ops) async {
+    final ids = <String>[];
+    for (final (kind, data) in ops) {
+      final op = {
+        'op_id': newId(),
+        'order_id': orderId,
+        'hlc': _clock.next(),
+        'device': settings.device,
+        'kind': kind,
+        'data': data,
+      };
+      _pending.add(op);
+      ids.add(op['op_id'] as String);
+    }
     await _persist();
     notifyListeners();
     unawaited(flush());
-    return op['op_id'] as String;
+    return ids;
   }
 
   /// Sends queued operations in order, one order at a time, stopping at the first failure to reach a backend.

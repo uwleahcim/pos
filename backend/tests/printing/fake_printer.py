@@ -42,6 +42,7 @@ class Decoded:
     cuts: int = 0
     drawer_pulses: int = 0
     beeps: int = 0
+    inverted: list[str] = field(default_factory=list)  # text printed white on black (GS B 1)
     unknown: list[bytes] = field(default_factory=list)
 
 
@@ -49,11 +50,15 @@ def decode(data: bytes) -> Decoded:
     out = Decoded()
     i = 0
     text = bytearray()
+    reverse = False
 
     def flush() -> None:
         nonlocal text
         if text:
-            out.text.extend(text.decode("ascii").split("\n"))
+            lines = text.decode("ascii").split("\n")
+            out.text.extend(lines)
+            if reverse:
+                out.inverted.extend(t.strip() for t in lines if t.strip())
             text = bytearray()
 
     while i < len(data):
@@ -78,6 +83,10 @@ def decode(data: bytes) -> Decoded:
         elif b == 0x1D:  # GS
             cmd = data[i + 1 : i + 2]
             if cmd == b"!":
+                i += 3
+            elif cmd == b"B":
+                flush()
+                reverse = data[i + 2] == 1
                 i += 3
             elif cmd == b"V":
                 flush()

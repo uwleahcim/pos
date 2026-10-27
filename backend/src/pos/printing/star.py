@@ -41,16 +41,18 @@ class StarBuilder(Builder):
         return b"".join(parts)
 
     # Everything printable becomes a strip ------------------------------------------------------------------
-    def line(self, text: str = "", *, bold: bool = False, big: bool = False, center: bool = False) -> Builder:
+    def line(
+        self, text: str = "", *, bold: bool = False, big: bool = False, center: bool = False, invert: bool = False
+    ) -> Builder:
         if not text:
             return self.feed(1)
         if is_plain(text):
             width = self.chars // 2 if big else self.chars
             if len(text) > width:
                 head, tail = _split(text, width)
-                self.line(head, bold=bold, big=big, center=center)
-                return self.line("  " + tail, bold=bold, big=big, center=center)
-        return self.image_line(text, bold=bold, big=big, center=center)
+                self.line(head, bold=bold, big=big, center=center, invert=invert)
+                return self.line("  " + tail, bold=bold, big=big, center=center, invert=invert)
+        return self.image_line(text, bold=bold, big=big, center=center, invert=invert)
 
     def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
         """Left text at the left edge, right text flush right, drawn on one strip."""

@@ -19,6 +19,10 @@ class Line {
     this.course,
     this.note = '',
     this.modifiedAfterFire = false,
+    this.fired = false,
+    this.request,
+    this.itemId,
+    this.entryId,
   });
 
   factory Line.fromJson(String lineId, Map<String, dynamic> json) => Line(
@@ -30,6 +34,10 @@ class Line {
     course: json['course'] as String?,
     note: json['note'] as String? ?? '',
     modifiedAfterFire: json['modified_after_fire'] as bool? ?? false,
+    fired: json['fired'] as bool? ?? false,
+    request: json['request'] == null ? null : LineRequest.fromJson(json['request'] as Map<String, dynamic>),
+    itemId: (json['priced'] as Map?)?['item'] as String?,
+    entryId: (json['priced'] as Map?)?['entry_id'] as String?,
   );
 
   final String lineId;
@@ -41,7 +49,20 @@ class Line {
   final String note;
   final bool modifiedAfterFire;
 
+  /// Sent to the kitchen. Until then a line can simply come off; after, taking it off is a void.
+  final bool fired;
+
+  /// What was chosen, so the options sheet can reopen with it; null on a phase 0 typed line.
+  final LineRequest? request;
+  final String? itemId;
+  final String? entryId;
+
+  bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
+
+  /// Taken off before it was fired: gone from the screen, kept only in the log.
+  bool get isRemoved => status == 'removed';
+  bool get canEdit => isActive && request != null && itemId != null;
 }
 
 /// An order as the backend replays it. The app never computes this itself.
@@ -76,7 +97,16 @@ class Order {
   String get table => fields['table']?.toString() ?? '';
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
-  List<Line> get activeLines => lines.where((l) => !l.isVoid).toList();
+  List<Line> get activeLines => lines.where((l) => l.isActive).toList();
+
+  /// What the check panel lists: active lines and voids, not lines removed before they were fired.
+  List<Line> get shownLines => lines.where((l) => !l.isRemoved).toList();
+
+  /// Courses with a line not sent yet.
+  Set<String> get heldCourses => {
+    for (final l in activeLines)
+      if (!l.fired) l.course ?? '',
+  };
 }
 
 class AppendResult {

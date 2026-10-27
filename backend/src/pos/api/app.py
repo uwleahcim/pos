@@ -219,7 +219,7 @@ def create_app(
             # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
             raise HTTPException(503, {"error": "read_only"}) from err
         printing: PrintService = app.state.printing
-        jobs = printing.on_ops(store.state, list(accepted))
+        jobs = printing.on_ops(store.for_order, list(accepted))
         return {
             "accepted": [op.op_id for op in accepted],
             "cursor": store.cursor,
