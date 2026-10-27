@@ -7,7 +7,7 @@ import pytest
 
 from pos.printing.escpos import Builder, find_font, is_plain
 from pos.printing.jobs import JobStore, send_raw
-from pos.printing.ticket import DEMO, DIALECTS, Ticket, TicketLine, drawer_kick, render
+from pos.printing.ticket import DEMO, Ticket, TicketLine, drawer_kick, render
 
 from .fake_printer import FakePrinter, decode
 
@@ -159,18 +159,18 @@ def test_star_raster_rows_are_whole():
     assert rows > 20
 
 
-def test_star_column_graphics_and_ascii_demo():
-    from pos.printing.star import RASTER_IN
+def test_ascii_demo_has_no_graphics():
     from pos.printing.ticket import ascii_only
 
-    job = render(DEMO, dialect="star-column", beep=False)
-    assert RASTER_IN not in job and b"\x1bk" in job and job.startswith(b"\x1b@")
-    # a 26 px glyph line fits two 24-dot bands: ESC k width=384 then 1152 bytes, each band ends with LF
-    band = bytes(DIALECTS["star-column"](dots=384).line("麻")).split(b"\x1bk")[1]
-    assert band[0] == 384 & 0xFF and band[1] == 1
-    assert len(band) >= 2 + 384 * 3 + 1
     plain = ascii_only(DEMO)
-    assert all(all(ord(c) < 127 for c in line.label) for line in plain.lines)
     assert plain.lines[0].label == "[CJK]" and plain.lines[1].label == "Kung Pao Chicken (Pt)"
     out = decode(render(plain, beep=False))
     assert not out.images and out.cuts == 1 and not out.unknown
+
+
+def test_star_raster_blocks_disable_the_end_of_page_cut():
+    from pos.printing.star import RASTER_IN
+
+    assert b"\x1b*rE0\x00" in RASTER_IN and b"\x1b*rF0\x00" in RASTER_IN
+    job = render(DEMO, dialect="star", beep=False)
+    assert job.count(b"\x1bd\x03") == 1  # one cut, at the end

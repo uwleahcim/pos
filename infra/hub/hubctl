@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star|star-column]
+#   hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star]
 set -euo pipefail
 POS_HOME=/opt/pos
 
@@ -41,7 +41,7 @@ case "${1:-status}" in
   psql) compose exec db psql -U pos -d pos ;;
   print)
     # hubctl print 172.19.1.162 demo   (kitchen ticket, 80 mm)   |   hubctl print 172.19.1.162 drawer
-    [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer] [escpos|star|star-column]" >&2; exit 2; }
+    [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer] [escpos|star]" >&2; exit 2; }
     compose exec -T api python -m pos.printing --printer "$2" --dialect "${4:-escpos}" "${3:-demo}"
     ;;
   backup)
@@ -51,7 +51,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star|star-column]" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | print <printer-ip> [demo|ascii|drawer] [escpos|star]" >&2
     exit 2
     ;;
 esac

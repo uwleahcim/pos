@@ -6,19 +6,13 @@ what a ticket says. A modify ticket is a new ticket with `kind="modify"`, never 
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import partial
 
 from .escpos import Builder
 from .star import StarBuilder
 
-DIALECTS: dict[str, Callable[..., Builder]] = {
-    "escpos": Builder,
-    "star": StarBuilder,
-    "star-column": partial(StarBuilder, graphics="column"),
-}
+DIALECTS: dict[str, type[Builder]] = {"escpos": Builder, "star": StarBuilder}
 
 
 @dataclass(frozen=True)

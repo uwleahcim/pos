@@ -4,7 +4,6 @@ python -m pos.printing --printer 172.19.1.50 demo        # kitchen ticket with C
 python -m pos.printing --printer 172.19.1.50 drawer      # open the cash drawer
 python -m pos.printing --printer 172.19.1.14 --dialect star demo   # a Star printer in StarPRNT mode
 python -m pos.printing --printer 172.19.1.14 --dialect star ascii  # same, no graphics (isolates printer hangs)
-python -m pos.printing --printer 172.19.1.14 --dialect star-column demo  # Star line-mode bit images, not raster mode
 python -m pos.printing --dots 384 --out ticket.bin demo  # 58 mm paper, bytes to a file
 """
 

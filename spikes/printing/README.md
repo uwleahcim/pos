@@ -35,11 +35,12 @@ the backend for jobs and writes them to the printer).
 `render(..., dialect="star")`, `--dialect star` on the CLI, `hubctl print <ip> demo star` on a hub. Each
 printer record will carry its dialect.
 
-**Star stalls, 2026-10-27.** Mike's mC-Print3 stopped mid-ticket and needed a power cycle. Two changes:
-`send_raw` now ends the connection cleanly (half-close, then read and drop the printer's status bytes until
-it hangs up or goes quiet) because closing with unread input sends a TCP reset that a printer may answer by
-dropping the rest of the job; and two ways to isolate the graphics path: `ascii` prints the demo with no
-graphics at all, `--dialect star-column` draws the Chinese with line-mode `ESC k` 24-dot bands instead of
-raster mode. Run on the hub: `hubctl print 172.19.1.14 ascii star`, `... demo star`, `... demo star-column`.
+**Star on the bench, 2026-10-27.** Mike's mC-Print3 first stopped mid-ticket and needed a power cycle.
+Cause: `send_raw` closed the socket with the printer's unread status bytes, so Linux sent a TCP reset and
+the printer dropped the rest of the job. It now half-closes and drains until the printer hangs up or goes
+quiet; the whole ticket printed after that. Second finding: the printer cut the paper after every Chinese
+line, because leaving raster mode runs the end-of-page action; the raster block now sets `ESC * r E 0` and
+`ESC * r F 0` (no cut, no feed) first. A line-mode `ESC k` variant printed junk on the mC-Print3 and was
+removed. `ascii` prints the demo with no graphics at all, for isolating printer trouble.
 
 **Result.** Software part passed 2026-10-26 (15 tests). Hardware part in progress on the Epson and the Star.
