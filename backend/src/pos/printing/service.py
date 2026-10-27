@@ -48,17 +48,24 @@ def printers_from_env(value: str | None = None) -> list[Printer]:
 def ticket_for_fire(state: OrderState, op: Op, *, station: str, ticket_no: int) -> Ticket | None:
     """The lines a `fire` sends to the kitchen: active lines of the fired course (`*` = every course)."""
     course = op.data.get("course", "*")
-    lines = [
-        TicketLine(
-            qty=line.qty,
-            label=line.item,
-            note=line.note,
-            seat=line.seat,
-            changed=line.modified_after_fire,
-        )
-        for line in state.lines.values()
-        if line.status == "active" and (course == "*" or line.course == course)
-    ]
+    lines = []
+    for line in state.lines.values():
+        if line.status != "active" or not (course == "*" or line.course == course):
+            continue
+        kitchen = (line.priced or {}).get("kitchen")
+        if not kitchen:  # a line typed on the phase 0 demo screen
+            kitchen = [{"qty": 1, "label": line.item, "labels": []}]
+        for k in kitchen:
+            lines.append(
+                TicketLine(
+                    qty=line.qty * int(k.get("qty", 1)),
+                    label=str(k.get("label") or line.item),
+                    modifiers=tuple(k.get("labels", ())),
+                    note=line.note,
+                    seat=line.seat,
+                    changed=line.modified_after_fire,
+                )
+            )
     if not lines:
         return None
     fields = state.fields

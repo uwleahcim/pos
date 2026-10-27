@@ -19,11 +19,14 @@ from pydantic import BaseModel, Field
 
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.staff import Directory, Locked, demo_directory
+from ..menu.service import MenuService
+from ..orders.check import check_for
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
+from ..tax import TaxProfile, load_profile
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -105,6 +108,40 @@ class TestPrintIn(BaseModel):
     printer: str
 
 
+class PriceIn(BaseModel):
+    variant_id: str
+    entry_id: str | None = None
+    selections: list[dict[str, Any]] = Field(default_factory=list)
+    components: list[dict[str, Any]] = Field(default_factory=list)
+    notes: str | None = None
+
+
+def price_lines(menu: MenuService, ops: list[Op]) -> list[Op]:
+    """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
+    dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
+    choice missing, an 86'd dish) raises `ValueError` with the problems."""
+    out = []
+    for op in ops:
+        if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
+            data = {k: v for k, v in op.data.items() if k != "priced"}
+            try:
+                priced = menu.priced(data["request"])
+            except KeyError as err:
+                raise ValueError(op.op_id, [{"code": "unknown", "message": f"unknown menu id {err}"}]) from err
+            blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
+            if blocking:
+                raise ValueError(op.op_id, blocking)
+            data["priced"] = priced
+            data["item"] = priced["name"]
+            op = replace(op, data=data)
+        out.append(op)
+    return out
+
+
+WARNINGS = frozenset({"allergen_unknown", "allergens_unreviewed"})
+"""Problem codes a line may be sold with; everything else stops the sale."""
+
+
 def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {
         "job_id": job.job_id,
@@ -127,8 +164,12 @@ def create_app(
     staff: Directory | None = None,
     photos: PhotoStore | None = None,
     printing: PrintService | None = None,
+    menu: MenuService | None = None,
+    taxes: TaxProfile | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="POS backend", version="0.0.1 (phase 0)")
+    app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
+    app.state.menu = menu if menu is not None else MenuService()
+    app.state.taxes = taxes if taxes is not None else load_profile()
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
@@ -155,8 +196,14 @@ def create_app(
                 raise HTTPException(422, {"error": "unknown_kind", "op_id": op.op_id})
             if not op.device or not op.hlc.endswith(f"-{op.device}"):
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
+        fresh = [op.to_op() for op in ops if op.op_id not in store]
         try:
-            accepted = store.append(op.to_op() for op in ops)
+            fresh = price_lines(app.state.menu, fresh)
+        except ValueError as err:
+            op_id, problems = err.args
+            raise HTTPException(422, {"error": "invalid_line", "op_id": op_id, "problems": problems}) from err
+        try:
+            accepted = store.append(fresh)
         except ClockDriftError as err:
             raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
         except ReadOnlyError as err:
@@ -187,6 +234,41 @@ def create_app(
         if not ops:
             raise HTTPException(404, "no such order")
         return store.state(order_id).snapshot()
+
+    @app.get("/orders/{order_id}/check")
+    def read_check(order_id: str) -> dict[str, Any]:
+        """What the table owes: priced lines, subtotal, tax lines by jurisdiction, total."""
+        store: OpStore | PgOpStore = app.state.store
+        if not store.for_order(order_id):
+            raise HTTPException(404, "no such order")
+        return check_for(store.state(order_id), app.state.taxes)
+
+    # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
+    @app.get("/menu")
+    def read_menu(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        return {"menus": menu.menus(channel, locale)}
+
+    @app.get("/menu/items/{item_id}")
+    def read_item(item_id: str, entry: str | None = None, locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        if item_id not in menu.defs.items:
+            raise HTTPException(404, "no such item")
+        return menu.item(item_id, entry, locale)
+
+    @app.get("/menu/search")
+    def search_menu(q: str, channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        menu: MenuService = app.state.menu
+        return {"hits": menu.search(q, channel, locale)}
+
+    @app.post("/menu/price")
+    def price_line(body: PriceIn) -> dict[str, Any]:
+        """A preview of one configured line, so the screen can show the price before adding it."""
+        menu: MenuService = app.state.menu
+        try:
+            return menu.priced(body.model_dump())
+        except KeyError as err:
+            raise HTTPException(404, {"error": "unknown_id", "id": str(err)}) from err
 
     @app.get("/ops")
     def pull_ops(since: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000)) -> dict[str, Any]:

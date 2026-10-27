@@ -21,7 +21,7 @@ KINDS = frozenset(
     {
         "create",  # data: any order fields
         "set_field",  # data: any order fields
-        "add_line",  # data: line_id, item, qty?, seat?, course?, note?
+        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, request?, priced?
         "set_line",  # data: line_id + any line fields
         "void_line",  # data: line_id, reason?
         "fire",  # data: course ("*" = everything)
@@ -65,6 +65,7 @@ class Line:
     status: str = "active"  # active | void
     void_reason: str | None = None
     modified_after_fire: bool = False
+    priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
     stamps: dict[str, HLC] = field(default_factory=dict)
 
 
@@ -95,6 +96,7 @@ class OrderState:
                     "status": line.status,
                     "void_reason": line.void_reason,
                     "modified_after_fire": line.modified_after_fire,
+                    "priced": line.priced,
                 }
                 for line_id, line in sorted(self.lines.items())
             },
@@ -129,6 +131,7 @@ def apply(state: OrderState, op: Op) -> None:
             seat=data.get("seat"),
             course=data.get("course"),
             note=data.get("note", ""),
+            priced=data.get("priced"),
         )
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
         line.modified_after_fire = state._fired_before(line.course)
