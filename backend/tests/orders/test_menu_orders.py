@@ -118,9 +118,9 @@ def test_lines_are_priced_by_the_hub_and_the_check_adds_up():
     assert c.get("/orders/nope/check").status_code == 404
 
 
-def test_a_line_missing_a_required_choice_is_refused():
+def test_a_line_the_menu_refuses_is_left_out_and_the_rest_kept():
     c = client()
-    no_rice = {
+    two_rices = {
         "variant_id": "GTC:quart",
         "entry_id": "dinner:87",
         "selections": [
@@ -128,13 +128,22 @@ def test_a_line_missing_a_required_choice_is_refused():
             {"group_id": "rice", "option_id": "rice:brown"},
         ],
     }
-    refused = c.post("/orders/o1/ops", json=[payload("a", "add_line", 0, line_id="L1", item="?", request=no_rice)])
-    assert refused.status_code == 422 and refused.json()["detail"]["error"] == "invalid_line"
-    unknown = c.post(
-        "/orders/o1/ops", json=[payload("b", "add_line", 0, line_id="L1", item="?", request={"variant_id": "NOPE:x"})]
-    )
-    assert unknown.status_code == 422
-    assert c.get("/orders/o1").status_code == 404  # nothing was stored
+    ops = [
+        payload("a", "create", 0, table="5"),
+        payload("b", "add_line", 1, line_id="L1", item="?", request=two_rices),
+        payload("c", "add_line", 2, line_id="L2", item="?", request={"variant_id": "NOPE:x"}),
+        payload("d", "add_line", 3, line_id="L3", item="?", request={"selections": []}),
+        payload("e", "add_line", 4, line_id="L4", item="?", request={"variant_id": "TEA:pot"}),
+    ]
+    body = c.post("/orders/o1/ops", json=ops).json()
+    assert body["accepted"] == ["a", "e"]
+    assert [(r["op_id"], r["error"]) for r in body["refused"]] == [
+        ("b", "invalid_line"),
+        ("c", "invalid_line"),
+        ("d", "invalid_line"),
+    ]
+    assert body["refused"][1]["problems"][0]["code"] == "unknown_variant"
+    assert list(c.get("/orders/o1").json()["lines"]) == ["L4"]
 
 
 def test_fire_prints_kitchen_labels_with_modifiers():

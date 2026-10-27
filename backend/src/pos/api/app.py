@@ -116,26 +116,29 @@ class PriceIn(BaseModel):
     notes: str | None = None
 
 
-def price_lines(menu: MenuService, ops: list[Op]) -> list[Op]:
+def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
     """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
     dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
-    choice missing, an 86'd dish) raises `ValueError` with the problems."""
-    out = []
+    choice missing, an 86'd dish, an unknown id) is left out and reported with its problems; the rest of
+    the batch is kept, so a terminal's outbox never loses good operations behind a bad one."""
+    out: list[Op] = []
+    refused: list[dict[str, Any]] = []
     for op in ops:
         if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
             data = {k: v for k, v in op.data.items() if k != "priced"}
             try:
                 priced = menu.priced(data["request"])
-            except KeyError as err:
-                raise ValueError(op.op_id, [{"code": "unknown", "message": f"unknown menu id {err}"}]) from err
-            blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
+                blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
+            except (KeyError, ValueError, TypeError) as err:
+                blocking = [{"code": "bad_request", "message": str(err)}]
             if blocking:
-                raise ValueError(op.op_id, blocking)
+                refused.append({"op_id": op.op_id, "error": "invalid_line", "problems": blocking})
+                continue
             data["priced"] = priced
             data["item"] = priced["name"]
             op = replace(op, data=data)
         out.append(op)
-    return out
+    return out, refused
 
 
 WARNINGS = frozenset({"allergen_unknown", "allergens_unreviewed"})
@@ -196,12 +199,7 @@ def create_app(
                 raise HTTPException(422, {"error": "unknown_kind", "op_id": op.op_id})
             if not op.device or not op.hlc.endswith(f"-{op.device}"):
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
-        fresh = [op.to_op() for op in ops if op.op_id not in store]
-        try:
-            fresh = price_lines(app.state.menu, fresh)
-        except ValueError as err:
-            op_id, problems = err.args
-            raise HTTPException(422, {"error": "invalid_line", "op_id": op_id, "problems": problems}) from err
+        fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
         try:
             accepted = store.append(fresh)
         except ClockDriftError as err:
@@ -215,6 +213,7 @@ def create_app(
             "accepted": [op.op_id for op in accepted],
             "cursor": store.cursor,
             "print_jobs": [j.job_id for j in jobs],
+            "refused": refused,
         }
 
     @app.get("/orders")
