@@ -62,16 +62,21 @@ class Builder:
         return b"".join(self._parts)
 
     # Text ------------------------------------------------------------------------------------------------
-    def line(self, text: str = "", *, bold: bool = False, big: bool = False, center: bool = False) -> Builder:
-        """One line. Plain ASCII as text; anything else as an image at the same size."""
+    def line(
+        self, text: str = "", *, bold: bool = False, big: bool = False, center: bool = False, invert: bool = False
+    ) -> Builder:
+        """One line. Plain ASCII as text; anything else as an image at the same size. `invert` prints white
+        on a black bar across the paper (a void)."""
         if text and not is_plain(text):
-            return self.image_line(text, bold=bold, big=big, center=center)
+            return self.image_line(text, bold=bold, big=big, center=center, invert=invert)
         width = self.chars // 2 if big else self.chars
         if len(text) > width:  # wrap long plain lines ourselves so a double-width line never splits a word
             head, tail = _split(text, width)
-            self.line(head, bold=bold, big=big, center=center)
-            return self.line("  " + tail, bold=bold, big=big, center=center)
-        self._parts.append(self._cmd_text(text, bold=bold, big=big, center=center))
+            self.line(head, bold=bold, big=big, center=center, invert=invert)
+            return self.line("  " + tail, bold=bold, big=big, center=center, invert=invert)
+        if invert:
+            text = text.center(width) if center else text.ljust(width)
+        self._parts.append(self._cmd_text(text, bold=bold, big=big, center=center, invert=invert))
         return self
 
     def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
@@ -88,16 +93,20 @@ class Builder:
         return self
 
     # Images ---------------------------------------------------------------------------------------------
-    def image_line(self, text: str, *, bold: bool = False, big: bool = False, center: bool = False) -> Builder:
+    def image_line(
+        self, text: str, *, bold: bool = False, big: bool = False, center: bool = False, invert: bool = False
+    ) -> Builder:
         size = 48 if big else 26
         font = self._load_font(size)
         probe = Image.new("1", (1, 1), 1)
         box = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font, stroke_width=1 if bold else 0)
         width = min(self.dots, box[2] - box[0] + 4)
         height = box[3] - box[1] + 6
-        img = Image.new("1", (self.dots, height), 1)
+        paper, ink = (0, 1) if invert else (1, 0)
+        img = Image.new("1", (self.dots, height), paper)
         x = (self.dots - width) // 2 if center else 0
-        ImageDraw.Draw(img).text((x + 2 - box[0], 3 - box[1]), text, font=font, fill=0, stroke_width=1 if bold else 0)
+        stroke = 1 if bold else 0
+        ImageDraw.Draw(img).text((x + 2 - box[0], 3 - box[1]), text, font=font, fill=ink, stroke_width=stroke)
         return self.image(img)
 
     def image(self, img: Image.Image) -> Builder:
@@ -139,9 +148,10 @@ class Builder:
     def _cmd_init(self) -> bytes:
         return ESC + b"@"
 
-    def _cmd_text(self, text: str, *, bold: bool, big: bool, center: bool) -> bytes:
+    def _cmd_text(self, text: str, *, bold: bool, big: bool, center: bool, invert: bool = False) -> bytes:
         return (
-            ESC
+            (GS + b"B\x01" if invert else b"")  # white on black
+            + ESC
             + b"a"
             + (b"\x01" if center else b"\x00")
             + ESC
@@ -158,6 +168,7 @@ class Builder:
             + b"E\x00"
             + ESC
             + b"a\x00"
+            + (GS + b"B\x00" if invert else b"")
         )
 
     def _cmd_feed(self, lines: int) -> bytes:

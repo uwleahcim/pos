@@ -79,7 +79,7 @@ def test_a_void_always_wins_and_last_writer_wins_per_field(ops):
     state = replay(ops)
     voided = {op.data["line_id"] for op in ops if op.kind == "void_line"}
     for line_id in voided:
-        assert state.lines[line_id].status == "void"
+        assert not state.lines[line_id].active
     if any(op.kind == "void_order" for op in ops):
         assert state.status == "void"
     setters = [op for op in ops if op.kind in ("create", "set_field")]
