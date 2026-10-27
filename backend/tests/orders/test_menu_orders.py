@@ -188,3 +188,11 @@ def test_fired_lines_go_to_their_station_printer_and_the_rest_to_the_first():
     assert [t.label for t in kitchen.lines] == ["左宗鸡 (Qt)", "加州卷"]  # wok and sushi: no printer of their own
     assert [(t.qty, t.label) for t in bar.lines] == [(2, "Tsingtao")]
     assert sorted(j.job_id for j in printing.store.all()) == ["e:bar", "e:kitchen"]
+
+
+def test_an_empty_check_still_names_its_tax_rates():
+    c = client()
+    c.post("/orders/o1/ops", json=[payload("a", "create", 0, table="12", order_type="dine_in")])
+    check = c.get("/orders/o1/check").json()
+    assert (check["subtotal"], check["tax"], check["tax_rate_pct"]) == ("0", "0.00", "7.00")
+    assert [t["rate_pct"] for t in check["tax_lines"]] == ["6.25", "0.75"]

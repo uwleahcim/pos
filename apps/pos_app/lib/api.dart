@@ -23,6 +23,7 @@ class Line {
     this.request,
     this.itemId,
     this.entryId,
+    this.pending = false,
   });
 
   factory Line.fromJson(String lineId, Map<String, dynamic> json) => Line(
@@ -63,9 +64,29 @@ class Line {
   /// Taken off before it was fired: gone from the screen, kept only in the log.
   bool get isRemoved => status == 'removed';
   bool get canEdit => isActive && request != null && itemId != null;
+
+  /// Shown from this device's own operations; the backend has not confirmed it yet.
+  final bool pending;
+
+  Line copyWith({String? status, bool? fired, bool? pending}) => Line(
+    lineId: lineId,
+    item: item,
+    qty: qty,
+    status: status ?? this.status,
+    seat: seat,
+    course: course,
+    note: note,
+    modifiedAfterFire: modifiedAfterFire,
+    fired: fired ?? this.fired,
+    request: request,
+    itemId: itemId,
+    entryId: entryId,
+    pending: pending ?? this.pending,
+  );
 }
 
-/// An order as the backend replays it. The app never computes this itself.
+/// An order as the backend replays it. A screen only lays its own unconfirmed operations over it
+/// (see local_order.dart) so taps show at once; the backend's replay stays the authority.
 class Order {
   const Order({
     required this.orderId,
@@ -74,6 +95,9 @@ class Order {
     required this.lines,
     required this.fired,
   });
+
+  /// A check the backend has not heard of yet (its create is still on the way).
+  const Order.empty(this.orderId) : status = 'open', fields = const {}, lines = const [], fired = const {};
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries

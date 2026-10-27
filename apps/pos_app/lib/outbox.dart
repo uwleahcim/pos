@@ -50,6 +50,8 @@ class Outbox extends ChangeNotifier {
   final Random _random;
   final Hlc _clock;
   final List<Map<String, dynamic>> _pending = [];
+  final List<(int, Map<String, dynamic>)> _accepted = []; // (acceptance number, op) until a read shows it
+  int _acceptances = 0;
   Future<void>? _inflight;
   Timer? _retry;
 
@@ -107,6 +109,10 @@ class Outbox extends ChangeNotifier {
       try {
         final result = await api.appendOps(orderId, batch);
         if (result.refused.isNotEmpty) lastRefusal = result.refused.values.first;
+        _acceptances++;
+        for (final op in batch) {
+          if (!result.refused.containsKey(op['op_id'])) _accepted.add((_acceptances, op));
+        }
       } on ApiException catch (err) {
         if (err.status != null && err.status! < 500) {
           // The backend read it and refused it; keeping it would block everything behind it.
@@ -124,6 +130,22 @@ class Outbox extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// This device's operations on one order that a read from the backend may not show yet: everything still
+  /// queued, and what was accepted after the last read began. A screen lays them over what it read.
+  List<Map<String, dynamic>> localOps(String orderId) => [
+    for (final (_, op) in _accepted)
+      if (op['order_id'] == orderId) op,
+    for (final op in _pending)
+      if (op['order_id'] == orderId) op,
+  ];
+
+  /// Call before reading an order; pass the result to [seen] once the read is back.
+  int get readMark => _acceptances;
+
+  /// A read that began at [mark] shows every operation accepted before it, so those stop being local.
+  void seen(String orderId, int mark) =>
+      _accepted.removeWhere((entry) => entry.$1 <= mark && entry.$2['order_id'] == orderId);
 
   /// Why the backend last refused an operation, until the operator dismisses it.
   String? lastRefusal;

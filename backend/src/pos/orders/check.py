@@ -47,7 +47,8 @@ def check_for(state: OrderState, taxes: TaxProfile, on: date | None = None) -> d
                 "tax_class": priced.get("tax_class"),
             }
         )
-    tax_lines = taxes.compute(taxable, order_type, on)
+    # An empty check still names its tax lines (at 0.00), so a terminal knows the rates for its own estimate.
+    tax_lines = taxes.compute(taxable or [TaxableLine("", "default", ZERO)], order_type, on)
     tax = sum((t.amount for t in tax_lines), ZERO)
     return {
         "order_id": state.order_id,

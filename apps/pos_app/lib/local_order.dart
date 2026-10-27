@@ -1,0 +1,144 @@
+/// The order as this screen should show it right now: what the backend last returned, with this device's
+/// own operations that it may not show yet laid on top. Taps show at once; the outbox sends them in the
+/// background, and the next read from the backend replaces the guess with the real thing.
+///
+/// The rules mirror the backend's replay (pos.sync.oplog) for the operations a terminal sends. Only the
+/// backend prices lines and computes tax: the totals here are an estimate, marked as such, until it answers.
+library;
+
+import 'api.dart';
+import 'menu.dart';
+
+/// What the screen knew about a line it added: the price the menu showed, the choices picked, and the dish,
+/// so the line can be shown priced and reopened before the backend has answered.
+class LocalLine {
+  const LocalLine({this.unitPrice, this.modifiers = const [], this.itemId, this.entryId});
+  final String? unitPrice;
+  final List<String> modifiers;
+  final String? itemId;
+  final String? entryId;
+}
+
+Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
+  if (ops.isEmpty) return order;
+  var status = order.status;
+  final fields = {...order.fields};
+  final lines = {for (final l in order.lines) l.lineId: l};
+  for (final op in ops) {
+    final data = (op['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+    switch (op['kind']) {
+      case 'create' || 'set_field':
+        fields.addAll(data);
+      case 'add_line':
+        final id = data['line_id'] as String;
+        if (lines.containsKey(id)) continue; // the backend has it already
+        final request = data['request'];
+        lines[id] = Line(
+          lineId: id,
+          item: data['item'] as String? ?? '',
+          qty: data['qty'] as int? ?? 1,
+          status: 'active',
+          seat: data['seat'] as int?,
+          course: data['course'] as String?,
+          note: data['note'] as String? ?? '',
+          request: request is Map ? LineRequest.fromJson(request.cast<String, dynamic>()) : null,
+          pending: true,
+        );
+      case 'void_line':
+        final line = lines[data['line_id']];
+        if (line != null && line.isActive) {
+          lines[line.lineId] = line.copyWith(status: line.fired ? 'void' : 'removed', pending: true);
+        }
+      case 'fire':
+        final course = data['course'] as String? ?? '*';
+        for (final line in lines.values.toList()) {
+          if (line.isActive && !line.fired && (course == '*' || line.course == course)) {
+            lines[line.lineId] = line.copyWith(fired: true, pending: true);
+          }
+        }
+      case 'close':
+        if (status != 'void') status = 'closed';
+      case 'reopen':
+        if (status == 'closed') status = 'open';
+      case 'void_order':
+        status = 'void';
+    }
+  }
+  return Order(
+    orderId: order.orderId,
+    status: status,
+    fields: fields,
+    lines: lines.values.toList(),
+    fired: order.fired,
+  );
+}
+
+/// The backend's check, adjusted for lines this screen added or took off since: `estimated` until the backend
+/// has priced them. Tax uses the backend's own rates and rounding (half up, per component, on the check).
+Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
+  final active = order.activeLines;
+  final known = {for (final l in check?.lines ?? const <CheckLine>[]) l.lineId: l};
+  final changed =
+      active.any((l) => !known.containsKey(l.lineId)) || known.keys.any((id) => !active.any((l) => l.lineId == id));
+  if (check != null && !changed) return check;
+
+  final lines = <CheckLine>[];
+  var subtotal = 0;
+  for (final line in active) {
+    final priced = known[line.lineId];
+    if (priced != null) {
+      lines.add(priced);
+      subtotal += cents(priced.total);
+      continue;
+    }
+    final price = local[line.lineId]?.unitPrice;
+    if (price == null) continue; // added on another device: its price comes with the next read
+    final total = cents(price) * line.qty;
+    subtotal += total;
+    lines.add(
+      CheckLine(
+        lineId: line.lineId,
+        name: line.item,
+        qty: line.qty,
+        total: money(total),
+        seat: line.seat,
+        modifiers: local[line.lineId]!.modifiers,
+      ),
+    );
+  }
+  final rates = [for (final t in check?.taxLines ?? const <TaxLine>[]) t.ratePct];
+  if (rates.isEmpty && (check?.taxRatePct ?? '').isNotEmpty) rates.add(check!.taxRatePct);
+  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(subtotal, rate));
+  return Check(
+    lines: lines,
+    subtotal: money(subtotal),
+    taxLines: check?.taxLines ?? const [],
+    tax: money(tax),
+    taxRatePct: check?.taxRatePct ?? '',
+    total: money(subtotal + tax),
+    estimated: true,
+  );
+}
+
+/// "17.95" -> 1795.
+int cents(String amount) {
+  final negative = amount.startsWith('-');
+  final parts = amount.replaceFirst('-', '').split('.');
+  final whole = int.tryParse(parts[0]) ?? 0;
+  final frac = parts.length > 1 ? int.tryParse(parts[1].padRight(2, '0').substring(0, 2)) ?? 0 : 0;
+  final value = whole * 100 + frac;
+  return negative ? -value : value;
+}
+
+/// 1795 -> "17.95".
+String money(int cents) {
+  final sign = cents < 0 ? '-' : '';
+  final abs = cents.abs();
+  return '$sign${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}';
+}
+
+/// `rate` percent of `amount` cents, rounded half up: "6.25" of 1795 -> 112.
+int _percentOf(int amount, String rate) {
+  final basisPoints = cents(rate); // 6.25 % -> 625
+  return (amount * basisPoints + 5000) ~/ 10000;
+}
