@@ -147,10 +147,10 @@ def test_star_dialect_uses_star_bytes():
 
 
 def test_star_raster_rows_are_whole():
-    from pos.printing.star import StarBuilder
+    from pos.printing.star import RASTER_IN, RASTER_OUT, StarBuilder
 
     job = bytes(StarBuilder(dots=384).line("麻婆豆腐"))
-    body = job.split(b"\x1b*rP0\x00", 1)[1].split(b"\x1b*rB", 1)[0]
+    body = job.split(RASTER_IN, 1)[1].split(RASTER_OUT, 1)[0]
     rows = 0
     while body:
         assert body[0:1] == b"b" and body[1] == 48 and body[2] == 0  # 384 dots = 48 bytes a row
