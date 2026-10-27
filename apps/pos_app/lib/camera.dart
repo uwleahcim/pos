@@ -139,7 +139,18 @@ class IosCamera extends EventCamera {
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    return cam.CameraPreview(controller);
+    // The preview keeps the sensor's aspect ratio and is cropped to the box it is given, never stretched.
+    final value = controller.value;
+    final orientation = value.lockedCaptureOrientation ?? value.deviceOrientation;
+    final landscape = orientation == DeviceOrientation.landscapeLeft || orientation == DeviceOrientation.landscapeRight;
+    final ratio = landscape ? value.aspectRatio : 1 / value.aspectRatio;
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(width: 100 * ratio, height: 100, child: cam.CameraPreview(controller)),
+      ),
+    );
   }
 
   Future<Uint8List?>? _snapping;

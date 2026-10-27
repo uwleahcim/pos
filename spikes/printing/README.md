@@ -55,6 +55,9 @@ the bytes to the printer over the LAN and reports done or failed (`lib/print_rel
 "Test print on every printer" button (`POST /print/test`). Endpoints: `GET /print/printers`,
 `GET /print/jobs`, `POST /print/jobs/claim`, `POST /print/jobs/{id}/done|failed`, `POST /print/test`.
 
+Checked on the bench 2026-10-27: with `POS_PRINTERS` set on hub 1, Fire from the Mac app printed the order
+on both the Epson and the Star.
+
 **Result.** PASSED 2026-10-27. Software 2026-10-26 (14 tests); hardware 2026-10-27 on Mike's bench: the Epson
 TM-T88VII (ESC/POS) and the Star mC-Print3 (StarPRNT) both print the demo ticket with readable Chinese,
 cut once, and kick the drawer, driven from hub 1 over the LAN. Stretch item left: the app's relay mode.
