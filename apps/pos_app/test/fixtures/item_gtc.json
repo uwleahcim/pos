@@ -1,0 +1,156 @@
+{
+ "item": "GTC",
+ "name": "General Tso's Chicken",
+ "kind": "standard",
+ "variants": [
+  {
+   "variant_id": "GTC:pint",
+   "name": "Pint",
+   "price": "13.95",
+   "price_source": "variant_base",
+   "status": "available"
+  },
+  {
+   "variant_id": "GTC:quart",
+   "name": "Quart",
+   "price": "24.95",
+   "price_source": "variant_base",
+   "status": "available"
+  }
+ ],
+ "groups": [
+  {
+   "group_id": "spice",
+   "name": "Spice level",
+   "min_select": 0,
+   "max_select": 1,
+   "free_count": 0,
+   "allow_quantity": false,
+   "options": [
+    {
+     "option_id": "spice:mild",
+     "name": "Mild",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "少辣"
+    },
+    {
+     "option_id": "spice:medium",
+     "name": "Medium",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": true,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": null
+    },
+    {
+     "option_id": "spice:extra",
+     "name": "Extra spicy",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "加辣"
+    }
+   ]
+  },
+  {
+   "group_id": "rice",
+   "name": "Choice of rice",
+   "min_select": 1,
+   "max_select": 1,
+   "free_count": 0,
+   "allow_quantity": false,
+   "options": [
+    {
+     "option_id": "rice:white",
+     "name": "White rice",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": true,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": null
+    },
+    {
+     "option_id": "rice:brown",
+     "name": "Brown rice",
+     "price": "1.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "糙米"
+    },
+    {
+     "option_id": "rice:none",
+     "name": "No rice",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "不要饭"
+    }
+   ]
+  },
+  {
+   "group_id": "addons",
+   "name": "Add-ons",
+   "min_select": 0,
+   "max_select": null,
+   "free_count": 0,
+   "allow_quantity": true,
+   "options": [
+    {
+     "option_id": "addons:shrimp",
+     "name": "Add shrimp",
+     "price": "4.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "加虾"
+    },
+    {
+     "option_id": "addons:sauce",
+     "name": "Extra sauce",
+     "price": "0.50",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "多汁"
+    },
+    {
+     "option_id": "addons:nomsg",
+     "name": "No MSG",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "不要味精"
+    },
+    {
+     "option_id": "addons:sauceside",
+     "name": "Sauce on side",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": null,
+     "status": "available",
+     "kitchen_label": "汁另放"
+    }
+   ]
+  }
+ ],
+ "tax_class": "prepared_food",
+ "station": "wok",
+ "second_name": "左宗棠鸡"
+}

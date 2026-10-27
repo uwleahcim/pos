@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'menu.dart';
 import 'settings.dart';
 
 /// One line of an order, exactly as the backend reports it.
@@ -77,6 +78,12 @@ class Order {
   List<Line> get activeLines => lines.where((l) => !l.isVoid).toList();
 }
 
+class AppendResult {
+  const AppendResult({required this.accepted, this.refused = const {}});
+  final List<String> accepted;
+  final Map<String, String> refused; // op id -> why
+}
+
 /// What the status bar shows: which address answers, or none.
 class Connection {
   const Connection({this.endpoint, this.error});
@@ -115,6 +122,20 @@ class PosApi {
 
   Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
 
+  Future<Check> check(String orderId) async => Check.fromJson(await _get('/orders/$orderId/check'));
+
+  /// The menus open now on this channel, in the given language.
+  Future<List<Menu>> menus({String channel = 'pos', String locale = 'en'}) async {
+    final json = await _get('/menu', query: {'channel': channel, 'locale': locale});
+    return (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
+  }
+
+  Future<ItemDetail> item(String itemId, {String? entryId, String locale = 'en'}) async =>
+      ItemDetail.fromJson(await _get('/menu/items/$itemId', query: {'entry': ?entryId, 'locale': locale}));
+
+  /// The backend's price for a configured line, before it is added.
+  Future<Priced> price(LineRequest request) async => Priced.fromJson(await _post('/menu/price', request.toJson()));
+
   /// Who this PIN belongs to; 401 for a wrong PIN, 423 while the device is locked out.
   Future<Map<String, dynamic>> signIn({required String device, String? pin, String? tagUid}) =>
       _post('/signin', {'device': device, 'pin': ?pin, 'tag_uid': ?tagUid});
@@ -122,10 +143,19 @@ class PosApi {
   /// Stores an event photo; sending the same photo twice is harmless.
   Future<Map<String, dynamic>> putPhoto(Map<String, dynamic> photo) => _post('/events/photos', photo);
 
-  /// Appends operations; returns the op ids the backend had not seen before.
-  Future<List<String>> appendOps(String orderId, List<Map<String, dynamic>> ops) async {
+  /// Appends operations; returns the op ids the backend had not seen before and the ones it refused
+  /// (a line the menu would not sell), each with the reason.
+  Future<AppendResult> appendOps(String orderId, List<Map<String, dynamic>> ops) async {
     final json = await _post('/orders/$orderId/ops', ops);
-    return List<String>.from(json['accepted'] as List);
+    return AppendResult(
+      accepted: List<String>.from(json['accepted'] as List),
+      refused: {
+        for (final r in json['refused'] as List? ?? const [])
+          (r as Map<String, dynamic>)['op_id'] as String: [
+            for (final p in r['problems'] as List? ?? const []) (p as Map<String, dynamic>)['message'] as String? ?? '',
+          ].join('; '),
+      },
+    );
   }
 
   /// The printers the backend knows: name, address, dialect.
