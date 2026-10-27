@@ -184,6 +184,7 @@ class MenuService:
         if variant is not None and len(self.defs.variants_of(variant.item)) > 1:
             name = f"{name} ({loc.text(line.variant_names, 'en')})"
         return {
+            "item": variant.item if variant is not None else None,
             "variant_id": line.variant_id,
             "entry_id": line.menu_entry_id,
             "names": dict(line.names),
