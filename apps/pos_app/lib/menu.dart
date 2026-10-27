@@ -263,13 +263,15 @@ class TaxLine {
   final String amount;
 }
 
-/// What the table owes, as the backend adds it up.
+/// What the table owes, as the backend adds it up. `taxLines` split the tax by jurisdiction for the back
+/// office; screens and receipts show the single `tax` line.
 class Check {
   const Check({
     required this.lines,
     required this.subtotal,
     required this.taxLines,
     required this.tax,
+    required this.taxRatePct,
     required this.total,
   });
 
@@ -278,6 +280,7 @@ class Check {
     subtotal: json['subtotal'] as String? ?? '0.00',
     taxLines: (json['tax_lines'] as List? ?? const []).map((t) => TaxLine.fromJson(t as Map<String, dynamic>)).toList(),
     tax: json['tax'] as String? ?? '0.00',
+    taxRatePct: json['tax_rate_pct'] as String? ?? '',
     total: json['total'] as String? ?? '0.00',
   );
 
@@ -285,6 +288,7 @@ class Check {
   final String subtotal;
   final List<TaxLine> taxLines;
   final String tax;
+  final String taxRatePct; // the combined rate, e.g. 7.00: customers see one tax line
   final String total;
 
   CheckLine? line(String lineId) {

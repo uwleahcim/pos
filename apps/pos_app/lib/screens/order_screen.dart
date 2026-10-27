@@ -215,7 +215,7 @@ class _TicketPanel extends StatelessWidget {
               child: Column(
                 children: [
                   _TotalRow('Subtotal', check.subtotal),
-                  for (final t in check.taxLines) _TotalRow('${t.name} ${t.ratePct}%', t.amount),
+                  _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   _TotalRow('Total', check.total, strong: true),
                 ],
               ),
@@ -224,6 +224,13 @@ class _TicketPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 7.00 -> 7, 6.25 -> 6.25.
+String _rate(String pct) {
+  final value = double.tryParse(pct);
+  if (value == null) return pct;
+  return value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
 }
 
 class _TotalRow extends StatelessWidget {

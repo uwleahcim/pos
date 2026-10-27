@@ -56,6 +56,7 @@ void main() {
     expect(check.lines.map((l) => l.lineId), ['L2', 'L1']);
     expect(check.line('L1')!.total, '25.95');
     expect(check.taxLines.map((t) => t.ratePct), ['6.25', '0.75']);
+    expect(check.taxRatePct, '7.00');
     expect(check.total, '41.67');
   });
 

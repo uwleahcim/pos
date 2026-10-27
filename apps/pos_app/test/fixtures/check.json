@@ -49,5 +49,6 @@
  ],
  "tax": "2.72",
  "total": "41.67",
- "unpriced": []
+ "unpriced": [],
+ "tax_rate_pct": "7.00"
 }

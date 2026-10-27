@@ -57,6 +57,8 @@ def check_for(state: OrderState, taxes: TaxProfile, on: date | None = None) -> d
         "subtotal": str(subtotal),
         "tax_lines": [t.as_json() for t in tax_lines],
         "tax": str(tax),
+        # customers see one tax line; the split by jurisdiction is for the back office
+        "tax_rate_pct": str(sum((t.rate_pct for t in tax_lines), ZERO)),
         "total": str(subtotal + tax),
         "unpriced": unpriced,
     }

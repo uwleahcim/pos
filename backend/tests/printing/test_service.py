@@ -68,26 +68,26 @@ def wait_for(predicate, seconds: float = 3.0) -> None:
         time.sleep(0.02)
 
 
-def test_hub_prints_on_fire_to_every_printer():
+def test_hub_prints_on_fire_and_unrouted_lines_go_to_the_first_printer():
     epson, star = FakePrinter(), FakePrinter()
     try:
         service = PrintService([Printer("kitchen", epson.address), Printer("bar", star.address, "star")])
         client = TestClient(create_app(OpStore(physical=lambda: T0 + 100), printing=service))
         assert client.post("/orders/o1/ops", json=[payload(o) for o in ORDER]).json()["print_jobs"] == []
         fired = client.post("/orders/o1/ops", json=[payload(op("f", "fire", 5, course="*"))]).json()
-        assert fired["print_jobs"] == ["f:kitchen", "f:bar"]
-        wait_for(lambda: len(epson.jobs) == 1 and len(star.jobs) == 1)
+        assert fired["print_jobs"] == ["f:kitchen"]  # typed lines carry no station: the first printer
+        wait_for(lambda: len(epson.jobs) == 1)
         out = decode(epson.jobs[0])
         assert out.text[0] == "KITCHEN" and any("Table 12  4 guests" in t for t in out.text)
         assert "2 x Kung Pao Chicken" in out.text and out.cuts == 1
-        assert star.jobs[0].startswith(b"\x1b@\x1b*rA")
+        assert star.jobs == []
         wait_for(lambda: all(j["status"] == "done" for j in client.get("/print/jobs").json()["jobs"]))
         jobs = client.get("/print/jobs").json()["jobs"]
         assert {j["done_by"] for j in jobs} == {"hub"}
         # the same fire sent again (a retry from the terminal) is one job, not two
         again = client.post("/orders/o1/ops", json=[payload(op("f", "fire", 5, course="*"))]).json()
         assert again["accepted"] == [] and again["print_jobs"] == []
-        assert len(client.get("/print/jobs").json()["jobs"]) == 2
+        assert len(client.get("/print/jobs").json()["jobs"]) == 1
     finally:
         epson.close()
         star.close()

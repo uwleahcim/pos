@@ -107,7 +107,7 @@ def test_lines_are_priced_by_the_hub_and_the_check_adds_up():
         ("ma_meals", "2.97"),  # 6.25% of 47.45 = 2.965625
         ("ma_local_meals", "0.36"),  # 0.75% = 0.355875
     ]
-    assert (check["tax"], check["total"]) == ("3.33", "50.78")
+    assert (check["tax"], check["tax_rate_pct"], check["total"]) == ("3.33", "7.00", "50.78")
 
     c.post(
         "/orders/o1/ops",
@@ -161,3 +161,30 @@ def test_fire_prints_kitchen_labels_with_modifiers():
     store = c.app.state.store
     ticket = ticket_for_fire(store.state("o1"), store.for_order("o1")[-1], station="kitchen", ticket_no=1)
     assert [(t.qty, t.label, t.modifiers) for t in ticket.lines] == [(1, "左宗鸡 (Qt)", ("加辣", "糙米"))]
+
+
+def test_fired_lines_go_to_their_station_printer_and_the_rest_to_the_first():
+    printing = PrintService([Printer("kitchen", "10.0.0.9"), Printer("bar", "10.0.0.10")], direct=False)
+    c = client(printing)
+    c.post(
+        "/orders/o1/ops",
+        json=[
+            payload("a", "create", 0, table="12"),
+            payload("b", "add_line", 1, line_id="L1", item="?", request=GTC_QUART),
+            payload("c", "add_line", 2, line_id="L2", item="?", qty=2, request={"variant_id": "TSINGTAO:bottle"}),
+            payload("d", "add_line", 3, line_id="L3", item="?", request={"variant_id": "CALROLL:roll"}),
+            payload("e", "fire", 4, course="*"),
+        ],
+    )
+    store = c.app.state.store
+    fire = store.for_order("o1")[-1]
+    named = {"kitchen", "bar"}
+    kitchen, bar = (
+        ticket_for_fire(
+            store.state("o1"), fire, station=p.name, ticket_no=1, routes=PrintService._routes(p, i == 0, named)
+        )
+        for i, p in enumerate(printing.printers)
+    )
+    assert [t.label for t in kitchen.lines] == ["左宗鸡 (Qt)", "加州卷"]  # wok and sushi: no printer of their own
+    assert [(t.qty, t.label) for t in bar.lines] == [(2, "Tsingtao")]
+    assert sorted(j.job_id for j in printing.store.all()) == ["e:bar", "e:kitchen"]

@@ -45,8 +45,17 @@ def printers_from_env(value: str | None = None) -> list[Printer]:
     return [Printer.parse(spec) for spec in raw.split(",") if spec.strip()]
 
 
-def ticket_for_fire(state: OrderState, op: Op, *, station: str, ticket_no: int) -> Ticket | None:
-    """The lines a `fire` sends to the kitchen: active lines of the fired course (`*` = every course)."""
+def ticket_for_fire(
+    state: OrderState,
+    op: Op,
+    *,
+    station: str,
+    ticket_no: int,
+    routes: Callable[[str | None], bool] | None = None,
+) -> Ticket | None:
+    """The lines a `fire` sends to the kitchen: active lines of the fired course (`*` = every course).
+    `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
+    every line does."""
     course = op.data.get("course", "*")
     lines = []
     for line in state.lines.values():
@@ -56,6 +65,8 @@ def ticket_for_fire(state: OrderState, op: Op, *, station: str, ticket_no: int) 
         if not kitchen:  # a line typed on the phase 0 demo screen
             kitchen = [{"qty": 1, "label": line.item, "labels": []}]
         for k in kitchen:
+            if routes is not None and not routes(k.get("station")):
+                continue
             lines.append(
                 TicketLine(
                     qty=line.qty * int(k.get("qty", 1)),
@@ -122,12 +133,25 @@ class PrintService:
         with self._lock:
             ticket_no = next(self._tickets)
         jobs = []
-        for printer in self.printers:
-            ticket = ticket_for_fire(state, op, station=printer.name, ticket_no=ticket_no)
+        named = {p.name for p in self.printers}
+        for i, printer in enumerate(self.printers):
+            ticket = ticket_for_fire(
+                state, op, station=printer.name, ticket_no=ticket_no, routes=self._routes(printer, i == 0, named)
+            )
             if ticket is None:
                 continue
             jobs.append(self.queue(ticket, printer, job_id=f"{op.op_id}:{printer.name}"))
         return jobs
+
+    @staticmethod
+    def _routes(printer: Printer, first: bool, named: set[str]) -> Callable[[str | None], bool]:
+        """A printer named after a station takes that station's lines; the first printer also takes every
+        station without a printer of its own, so nothing fired is ever left unprinted."""
+
+        def takes(station: str | None) -> bool:
+            return station == printer.name or (first and station not in named)
+
+        return takes
 
     def queue(self, ticket: Ticket, printer: Printer, *, job_id: str | None = None) -> PrintJob:
         data = render(ticket, dots=self._dots, font=self._font, dialect=printer.dialect)
