@@ -19,10 +19,11 @@ Ben 2222, Mike 9999, or `POS_STAFF` on the backend). The camera thumbnail in the
 that a small photo is taken when an order is created, fired, closed, reopened or a line is voided; the
 photos queue on disk like the operations and go to the backend when it answers.
 
-Sign-in is a PIN pad with the front camera beside it; the backend checks the PIN (demo staff: Amy 1111,
-Ben 2222, Mike 9999, or `POS_STAFF` on the backend). The camera thumbnail in the orders screen is the sign
-that a small photo is taken when an order is created, fired, closed, reopened or a line is voided; the
-photos queue on disk like the operations and go to the backend when it answers.
+A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
+every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,
+its sizes and prices, where it sits on the menus and its option groups. Option groups and categories edit
+the same way. Save sends only what changed; the backend checks the whole menu and either saves it or says
+what is wrong. Screens showing the menu ask every five seconds whether it changed and reload when it has.
 
 Layout:
 
@@ -34,4 +35,5 @@ Layout:
   event photo queue.
 - `lib/print_relay.dart` the print relay: with the switch on in settings, this terminal claims queued print
   jobs from the backend and writes them to the printers on the LAN when the hub cannot.
-- `lib/screens/` orders list, one order, settings.
+- `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.
+- `lib/screens/` orders list, one order, settings, the menu editor.

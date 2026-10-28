@@ -108,4 +108,45 @@ void main() {
     expect(chosen.length, 2);
     expect(chosen.last.request.variantId, 'GTC:pint');
   });
+
+  testWidgets('a saved menu reaches the screen without reopening it', (tester) async {
+    var revision = 3;
+    var reads = 0;
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/menu/revision':
+            return http.Response(jsonEncode({'revision': revision}), 200);
+          case '/menu':
+            reads++;
+            final menu = fixture('menu');
+            final first = (((menu['menus'] as List)[0]['sections'] as List)[0]['entries'] as List)[0] as Map;
+            if (revision > 3) first['name'] = 'Egg roll (new recipe)';
+            return http.Response.bytes(utf8.encode(jsonEncode({...menu, 'revision': revision})), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: (_) {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Egg roll'), findsOneWidget);
+
+    await tester.pump(MenuPanelCheck.every); // nothing saved: one cheap check, no reload
+    await tester.pumpAndSettle();
+    expect(reads, 1);
+
+    revision = 4; // a manager saves
+    await tester.pump(MenuPanelCheck.every);
+    await tester.pumpAndSettle();
+    expect(reads, 2);
+    expect(find.text('Egg roll (new recipe)'), findsOneWidget);
+  });
 }

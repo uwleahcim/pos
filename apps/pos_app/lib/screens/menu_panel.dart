@@ -29,6 +29,13 @@ class ChosenLine {
 
 /// The menu as buttons: sections across the top, dishes in a grid, a search box. A dish with nothing to ask
 /// is added with one tap; anything else opens [ItemSheet].
+/// How often a menu on screen asks whether it changed, and how long one read is kept at most: lunch ends
+/// and dinner starts without anyone saving anything.
+abstract final class MenuPanelCheck {
+  static const every = Duration(seconds: 5);
+  static const reload = Duration(minutes: 5);
+}
+
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen});
 
@@ -43,31 +50,49 @@ class _MenuPanelState extends State<MenuPanel> {
   List<Menu>? _menus;
   String? _error;
   int _section = 0;
+  int? _revision;
+  DateTime _loadedAt = DateTime(0);
+  Timer? _watch;
   final _search = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
+    _watch = Timer.periodic(MenuPanelCheck.every, (_) => _check());
   }
 
   @override
   void dispose() {
+    _watch?.cancel();
     _search.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     try {
-      final menus = await widget.api.menus();
+      final (revision, menus) = await widget.api.menus();
       if (mounted) {
         setState(() {
           _menus = menus;
+          _revision = revision;
+          _loadedAt = DateTime.now();
           _error = null;
         });
       }
     } on ApiException catch (err) {
       if (mounted) setState(() => _error = err.toString());
+    }
+  }
+
+  /// A manager saved the menu (or the hour changed the menus open): read it again, keeping the section.
+  Future<void> _check() async {
+    if (_menus == null) return _load();
+    if (DateTime.now().difference(_loadedAt) >= MenuPanelCheck.reload) return _load();
+    try {
+      if (await widget.api.menuRevision() != _revision) await _load();
+    } on ApiException {
+      // offline: keep showing the menu already here; the status bar says why
     }
   }
 

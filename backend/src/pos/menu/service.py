@@ -8,17 +8,21 @@ kitchen text it was sold at, whatever the menu says later.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from .defs import Definitions
+from .defs import Definitions, StaleMenu
 from .engine import MenuEngine, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
 from .resolved import ResolvedLine
+
+if TYPE_CHECKING:
+    from .store import MenuStore
 
 
 def _plain(value: Any) -> Any:
@@ -96,8 +100,70 @@ def local_now() -> datetime:
 
 
 class MenuService:
-    def __init__(self, defs: Definitions | None = None, now=None) -> None:
-        self.engine = MenuEngine(defs if defs is not None else load_definitions(), now=now or local_now)
+    """The menu the hub sells from. With a `store` (every hub and the cloud) the menu lives in PostgreSQL:
+    an empty database is seeded once from `POS_MENU` (the GloriaFood export by default), and from then on
+    the database is the menu. `refresh` picks up a change saved by the editor or another hub."""
+
+    REFRESH_SECONDS = 2.0
+
+    def __init__(self, defs: Definitions | None = None, now=None, store: MenuStore | None = None) -> None:
+        self.store = store
+        self._now = now or local_now
+        self.revision = 0
+        self._checked = 0.0
+        if store is not None:
+            if store.role == "primary" and store.is_empty():
+                store.save(defs if defs is not None else load_definitions(), actor="import")
+            defs = store.load()
+            self.revision = store.revision()
+        self.engine = MenuEngine(defs if defs is not None else load_definitions(), now=self._now)
+        if store is not None:
+            self.engine.availability = store.availability()
+
+    def refresh(self, *, force: bool = False) -> bool:
+        """Reload from the store when its revision moved; checked at most every REFRESH_SECONDS."""
+        if self.store is None:
+            return False
+        now = time.monotonic()
+        if not force and now - self._checked < self.REFRESH_SECONDS:
+            return False
+        self._checked = now
+        revision = self.store.revision()
+        if revision == self.revision:
+            return False
+        engine = MenuEngine(self.store.load(self.defs.localizer), now=self._now)
+        engine.availability = self.store.availability()
+        self.engine, self.revision = engine, revision
+        return True
+
+    def set_availability(
+        self, target_id: str, status: str, *, reason: str | None = None, by: str | None = None
+    ) -> None:
+        """86 a size or an option, or bring it back; stored, so a restart keeps the board."""
+        self.engine.set_availability(target_id, status, reason=reason, by=by)
+        if self.store is not None:
+            self.store.set_availability(self.engine.availability.get(target_id), target_id)
+
+    def save(self, defs: Definitions, *, actor: str, expect: int | None = None) -> dict[str, int]:
+        """Sell from `defs` from now on: stored (with the audit log) when there is a store, so every hub
+        picks it up. `expect` refuses the save (StaleMenu) if someone else saved since that revision."""
+        if self.store is None:
+            if expect is not None and expect != self.revision:
+                raise StaleMenu(expect, self.revision)
+            engine = MenuEngine(defs, now=self._now)
+            engine.availability = {
+                k: v for k, v in self.engine.availability.items() if k in defs.variants or k in defs.options
+            }
+            self.engine, self.revision = engine, self.revision + 1
+            return {"revision": self.revision}
+        result = self.store.save(defs, actor=actor, expect=expect)
+        self.refresh(force=True)
+        return {
+            "revision": result.revision,
+            "inserted": result.inserted,
+            "updated": result.updated,
+            "deleted": result.deleted,
+        }
 
     @property
     def defs(self) -> Definitions:

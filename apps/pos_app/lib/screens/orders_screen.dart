@@ -11,6 +11,7 @@ import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
 import 'floor_view.dart';
+import 'menu_editor.dart';
 import 'order_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
@@ -171,6 +172,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
               _refresh();
             }),
           ),
+          if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
+            IconButton(
+              tooltip: 'Menu editor',
+              icon: const Icon(Icons.edit_note),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MenuEditorScreen(api: widget.api, settings: widget.settings),
+                ),
+              ),
+            ),
           IconButton(
             tooltip: 'Settings',
             icon: const Icon(Icons.settings),
