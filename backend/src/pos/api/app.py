@@ -286,6 +286,13 @@ def create_app(
         menu.refresh()
         return {"menus": menu.menus(channel, locale), "revision": menu.revision}
 
+    @app.get("/menu/revision")
+    def menu_revision() -> dict[str, Any]:
+        """What a terminal polls to know when to reload its menu: the revision moves on every save."""
+        menu: MenuService = app.state.menu
+        menu.refresh()
+        return {"revision": menu.revision}
+
     @app.get("/menu/items/{item_id}")
     def read_item(item_id: str, entry: str | None = None, locale: str = "en") -> dict[str, Any]:
         menu: MenuService = app.state.menu

@@ -148,9 +148,12 @@ class Connection {
 }
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.status});
+  ApiException(this.message, {this.status, this.detail});
   final String message;
   final int? status;
+
+  /// The backend's `detail` object, when it sent one: the menu editor lists its `errors`.
+  final Map<String, dynamic>? detail;
   @override
   String toString() => status == null ? message : '$message ($status)';
 }
@@ -186,11 +189,15 @@ class PosApi {
 
   Future<Check> check(String orderId) async => Check.fromJson(await _get('/orders/$orderId/check'));
 
-  /// The menus open now on this channel, in the given language.
-  Future<List<Menu>> menus({String channel = 'pos', String locale = 'en'}) async {
+  /// The menus open now on this channel, in the given language, and the revision they were read at.
+  Future<(int, List<Menu>)> menus({String channel = 'pos', String locale = 'en'}) async {
     final json = await _get('/menu', query: {'channel': channel, 'locale': locale});
-    return (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
+    final menus = (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
+    return (json['revision'] as int? ?? 0, menus);
   }
+
+  /// Moves whenever a manager saves the menu: a screen showing the menu reloads when it does.
+  Future<int> menuRevision() async => (await _get('/menu/revision'))['revision'] as int? ?? 0;
 
   Future<ItemDetail> item(String itemId, {String? entryId, String locale = 'en'}) async =>
       ItemDetail.fromJson(await _get('/menu/items/$itemId', query: {'entry': ?entryId, 'locale': locale}));
@@ -235,16 +242,56 @@ class PosApi {
 
   Future<Map<String, dynamic>> testPrint(String printer) => _post('/print/test', {'printer': printer});
 
-  Future<Map<String, dynamic>> _get(String path, {Map<String, String>? query}) =>
-      _withFailover((base) => _client.get(Uri.parse('$base$path').replace(queryParameters: query)));
+  // Menu editor: a manager's PIN buys a token for an hour; every other call carries it. -----------------
 
-  Future<Map<String, dynamic>> _post(String path, Object body) => _withFailover(
-    (base) => _client.post(
-      Uri.parse('$base$path'),
-      headers: const {'content-type': 'application/json'},
-      body: jsonEncode(body),
-    ),
+  /// A token for the menu editor; 403 when the PIN is not a manager's.
+  Future<Map<String, dynamic>> adminSession({required String device, required String pin}) =>
+      _post('/admin/session', {'device': device, 'pin': pin});
+
+  /// The whole menu by kind, its revision, and what the backend's checks find.
+  Future<Map<String, dynamic>> adminMenu(String token) =>
+      _get('/admin/menu', headers: _bearer(token), timeout: const Duration(seconds: 15));
+
+  /// Saves changes made from `revision`; 409 when someone saved since, 422 with `errors` when the menu
+  /// would break. `dryRun` only checks.
+  Future<Map<String, dynamic>> saveMenu(
+    String token,
+    List<Map<String, dynamic>> changes, {
+    required int revision,
+    bool dryRun = false,
+  }) => _post(
+    '/admin/menu/changes',
+    {'changes': changes, 'revision': revision, 'dry_run': dryRun},
+    headers: _bearer(token),
+    timeout: const Duration(seconds: 15),
   );
+
+  /// Who changed what, newest first.
+  Future<List<Map<String, dynamic>>> menuAudit(String token, {int limit = 100}) async =>
+      ((await _get('/admin/menu/audit', query: {'limit': '$limit'}, headers: _bearer(token)))['changes'] as List)
+          .cast<Map<String, dynamic>>();
+
+  static Map<String, String> _bearer(String token) => {'authorization': 'Bearer $token'};
+
+  Future<Map<String, dynamic>> _get(
+    String path, {
+    Map<String, String>? query,
+    Map<String, String>? headers,
+    Duration? timeout,
+  }) => _withFailover(
+    (base) => _client.get(Uri.parse('$base$path').replace(queryParameters: query), headers: headers),
+    timeout: timeout,
+  );
+
+  Future<Map<String, dynamic>> _post(String path, Object body, {Map<String, String>? headers, Duration? timeout}) =>
+      _withFailover(
+        (base) => _client.post(
+          Uri.parse('$base$path'),
+          headers: {'content-type': 'application/json', ...?headers},
+          body: jsonEncode(body),
+        ),
+        timeout: timeout,
+      );
 
   List<String> _candidates() {
     final configured = settings.endpoints;
@@ -253,11 +300,14 @@ class PosApi {
     return [current, ...configured.where((e) => e != current)];
   }
 
-  Future<Map<String, dynamic>> _withFailover(Future<http.Response> Function(String base) send) async {
+  Future<Map<String, dynamic>> _withFailover(
+    Future<http.Response> Function(String base) send, {
+    Duration? timeout,
+  }) async {
     Object? lastError;
     for (final base in _candidates()) {
       try {
-        final response = await send(base).timeout(timeout);
+        final response = await send(base).timeout(timeout ?? this.timeout);
         if (response.statusCode >= 500) {
           lastError = ApiException('server error at $base', status: response.statusCode);
           continue;
@@ -265,7 +315,12 @@ class PosApi {
         if (connection.value.endpoint != base) connection.value = Connection(endpoint: base);
         final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
         if (response.statusCode >= 400) {
-          throw ApiException(_detail(decoded), status: response.statusCode);
+          final detail = decoded is Map ? decoded['detail'] : null;
+          throw ApiException(
+            _detail(decoded),
+            status: response.statusCode,
+            detail: detail is Map ? detail.cast<String, dynamic>() : null,
+          );
         }
         return decoded as Map<String, dynamic>;
       } on ApiException {

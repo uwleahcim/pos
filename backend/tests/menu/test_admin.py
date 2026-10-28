@@ -156,6 +156,7 @@ def test_the_editor_reads_changes_and_the_terminals_see_it(client):
     saved = client.post("/admin/menu/changes", json={"changes": change, "revision": rev}, headers=auth).json()
     assert saved["revision"] == rev + 1
     assert client.get("/menu").json()["revision"] == rev + 1
+    assert client.get("/menu/revision").json() == {"revision": rev + 1}  # what terminals poll
     assert client.post("/menu/price", json={"variant_id": "GTC:quart"}).json()["unit_price"] == "25.95"
 
     # a second editor still holding the old revision is told to reload, not allowed to overwrite
