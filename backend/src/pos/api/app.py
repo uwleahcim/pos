@@ -79,6 +79,16 @@ def default_store() -> OpStore | PgOpStore:
     return OpStore()
 
 
+def default_menu() -> MenuService:
+    """The menu in PostgreSQL when DATABASE_URL is set (seeded once from POS_MENU), else from POS_MENU alone."""
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn:
+        from ..menu.store import MenuStore
+
+        return MenuService(store=MenuStore(dsn))
+    return MenuService()
+
+
 class SignInIn(BaseModel):
     device: str
     pin: str | None = None
@@ -181,7 +191,7 @@ def create_app(
     floor: FloorPlan | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
-    app.state.menu = menu if menu is not None else MenuService()
+    app.state.menu = menu if menu is not None else default_menu()
     app.state.taxes = taxes if taxes is not None else load_profile()
     app.state.floor = floor if floor is not None else load_floor()
     app.state.store = store if store is not None else default_store()
@@ -210,6 +220,7 @@ def create_app(
                 raise HTTPException(422, {"error": "unknown_kind", "op_id": op.op_id})
             if not op.device or not op.hlc.endswith(f"-{op.device}"):
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
+        app.state.menu.refresh()
         fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
         try:
             accepted = store.append(fresh)
@@ -266,12 +277,15 @@ def create_app(
     # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
     @app.get("/menu")
     def read_menu(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        """The menus open now for a channel. `revision` moves whenever the menu is edited."""
         menu: MenuService = app.state.menu
-        return {"menus": menu.menus(channel, locale)}
+        menu.refresh()
+        return {"menus": menu.menus(channel, locale), "revision": menu.revision}
 
     @app.get("/menu/items/{item_id}")
     def read_item(item_id: str, entry: str | None = None, locale: str = "en") -> dict[str, Any]:
         menu: MenuService = app.state.menu
+        menu.refresh()
         if item_id not in menu.defs.items:
             raise HTTPException(404, "no such item")
         return menu.item(item_id, entry, locale)
@@ -289,18 +303,19 @@ def create_app(
 
     @app.post("/menu/86")
     def set_86(body: AvailabilityIn) -> dict[str, Any]:
-        """86 a size or an option (`sold_out`), or bring it back (`available`). Kept on this hub until the
-        next restart; the cloud copy joins with slice 7."""
+        """86 a size or an option (`sold_out`), or bring it back (`available`). Stored with the menu, so a
+        restart keeps the board."""
         menu: MenuService = app.state.menu
         if body.target_id not in menu.defs.variants and body.target_id not in menu.defs.options:
             raise HTTPException(404, {"error": "unknown_id", "id": body.target_id})
-        menu.engine.set_availability(body.target_id, body.status, reason=body.reason, by=body.by)
+        menu.set_availability(body.target_id, body.status, reason=body.reason, by=body.by)
         return {"items": menu.eighty_sixed()}
 
     @app.post("/menu/price")
     def price_line(body: PriceIn) -> dict[str, Any]:
         """A preview of one configured line, so the screen can show the price before adding it."""
         menu: MenuService = app.state.menu
+        menu.refresh()
         try:
             return menu.priced(body.model_dump())
         except KeyError as err:
