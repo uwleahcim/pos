@@ -46,6 +46,7 @@ from .defs import (
     Option,
     Recipe,
     Section,
+    StaleMenu,
     Station,
     Unit,
     Variant,
@@ -424,13 +425,18 @@ class MenuStore:
 
     # --- writing --------------------------------------------------------------------------------
 
-    def save(self, defs: Definitions, *, actor: str | None = None) -> SaveResult:
+    def save(self, defs: Definitions, *, actor: str | None = None, expect: int | None = None) -> SaveResult:
         """Make the stored menu equal `defs`, in one transaction: rows are inserted, updated or deleted
-        only where they differ, ids are kept, and each change is written to the audit log."""
+        only where they differ, ids are kept, and each change is written to the audit log. With `expect`,
+        the save is refused (StaleMenu) unless the menu is still at that revision."""
         _check_ids(defs)
         with self._pool.connection() as conn, conn.transaction():
             conn.execute("SET CONSTRAINTS ALL DEFERRED")
             conn.execute("SELECT pg_advisory_xact_lock(7032)")  # one menu writer at a time
+            if expect is not None:
+                current = conn.execute("SELECT COALESCE(MAX(id), 0) AS rev FROM audit_log").fetchone()
+                if int(current["rev"]) != expect:
+                    raise StaleMenu(expect, int(current["rev"]))
             existing = {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in ORDER}  # noqa: S608
             ids = _Ids()
             _remember(existing, ids)

@@ -31,6 +31,9 @@ services:
       # Printers this hub drives, name=host[:port][/dialect], e.g. kitchen=172.19.1.162/escpos,bar=172.19.1.14/star
       POS_PRINTERS: ${POS_PRINTERS:-}
       POS_PRINT_DIRECT: "1"
+      # Signs managers' menu-editor sessions; give both hubs and the cloud the same value so a session
+      # survives a failover. Empty: each restart asks for the PIN again.
+      POS_SECRET: ${POS_SECRET:-}
     ports:
       - "8000:8000"
     depends_on:

@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from .defs import Definitions
+from .defs import Definitions, StaleMenu
 from .engine import MenuEngine, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
 from .resolved import ResolvedLine
@@ -143,6 +143,27 @@ class MenuService:
         self.engine.set_availability(target_id, status, reason=reason, by=by)
         if self.store is not None:
             self.store.set_availability(self.engine.availability.get(target_id), target_id)
+
+    def save(self, defs: Definitions, *, actor: str, expect: int | None = None) -> dict[str, int]:
+        """Sell from `defs` from now on: stored (with the audit log) when there is a store, so every hub
+        picks it up. `expect` refuses the save (StaleMenu) if someone else saved since that revision."""
+        if self.store is None:
+            if expect is not None and expect != self.revision:
+                raise StaleMenu(expect, self.revision)
+            engine = MenuEngine(defs, now=self._now)
+            engine.availability = {
+                k: v for k, v in self.engine.availability.items() if k in defs.variants or k in defs.options
+            }
+            self.engine, self.revision = engine, self.revision + 1
+            return {"revision": self.revision}
+        result = self.store.save(defs, actor=actor, expect=expect)
+        self.refresh(force=True)
+        return {
+            "revision": result.revision,
+            "inserted": result.inserted,
+            "updated": result.updated,
+            "deleted": result.deleted,
+        }
 
     @property
     def defs(self) -> Definitions:

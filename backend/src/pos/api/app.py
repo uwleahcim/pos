@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.staff import Directory, Locked, demo_directory
+from ..identity.tokens import Tokens
 from ..menu.service import MenuService
 from ..orders.check import check_for
 from ..printing.jobs import PrintJob
@@ -29,6 +30,7 @@ from ..printing.ticket import DEMO
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 from ..tax import TaxProfile, load_profile
+from .menu_admin import add_menu_admin
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -189,6 +191,7 @@ def create_app(
     menu: MenuService | None = None,
     taxes: TaxProfile | None = None,
     floor: FloorPlan | None = None,
+    tokens: Tokens | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else default_menu()
@@ -198,6 +201,7 @@ def create_app(
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
     app.state.printing = printing if printing is not None else PrintService.from_env()
+    app.state.tokens = tokens
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -441,6 +445,7 @@ def create_app(
         job = printing.queue(replace(DEMO, station=printer.name), printer)
         return job_out(job)
 
+    add_menu_admin(app)
     return app
 
 

@@ -29,6 +29,14 @@ class UnitError(ValueError):
     """A recipe uses a unit the ingredient cannot convert."""
 
 
+class StaleMenu(Exception):
+    """Someone else saved the menu since the editor read it."""
+
+    def __init__(self, expected: int, current: int) -> None:
+        super().__init__(f"the menu is at revision {current}, not {expected}")
+        self.expected, self.current = expected, current
+
+
 @dataclass(frozen=True)
 class Unit:
     code: str
