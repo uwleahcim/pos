@@ -182,10 +182,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <main>
 <header class="doc">
-  <p class="eyebrow">Architecture design · draft 5</p>
+  <p class="eyebrow">Architecture design · draft 6</p>
   <h1>Restaurant POS Architecture</h1>
   <p class="lede">A point of sale for one full-service Chinese restaurant with a sushi bar, a full bar and a catering business today, and a couple dozen locations later. Every location keeps selling when the internet drops, and keeps selling through the cloud when both of its local servers die.</p>
-  <div class="meta"><span>Prepared for Mike</span><span>26 Oct 2026</span><span>Status: phase 0 in progress; draft 5 narrows screens to macOS and iOS</span></div>
+  <div class="meta"><span>Prepared for Mike</span><span>29 Oct 2026</span><span>Status: phase 1 in progress; draft 6 brings Android screens back next to macOS and iOS</span></div>
 </header>
 
 <section id="summary">
@@ -199,7 +199,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Everything else is data.</strong> Menus, taxes, languages, roles, routing and integrations are rows with effective dates, set per location in the admin portal. Opening in a new state or adding a provider is setup, not code.</li>
   </ol>
   <div class="decisions">
-    <div class="decision"><span class="k">Apps</span><span class="v">Flutter, screens only</span><span class="why">One codebase for macOS and iOS: Macs and iPads at the stations, iPhones and iPads in hand, Macs or iPads on the kitchen walls, and the admin portal on a Mac. Decided 26 Oct 2026, narrowing the earlier any-device plan.</span></div>
+    <div class="decision"><span class="k">Apps</span><span class="v">Flutter, screens only</span><span class="why">One codebase for macOS, iOS and Android: Macs, iPads or Android tablets at the stations, iPhones, iPads or Android handhelds in hand, Macs, iPads or Android tablets on the kitchen walls, and the admin portal on a Mac. Apple-only from 26 Oct 2026; Android added back 29 Oct 2026 (ADR 5).</span></div>
     <div class="decision"><span class="k">Backend</span><span class="v">Python, FastAPI</span><span class="why">Menu engine, orders, taxes, payments and sync. Same code on hubs and cloud.</span></div>
     <div class="decision"><span class="k">Storage</span><span class="v">PostgreSQL everywhere</span><span class="why">One schema, replicated between the two hubs and between two cloud regions.</span></div>
     <div class="decision"><span class="k">Sync</span><span class="v">Operation log, hybrid clocks</span><span class="why">Orders merge without loss; a few rules settle true conflicts.</span></div>
@@ -231,11 +231,11 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="stack">
   <h2><span class="n">2</span>Stack</h2>
-  <p>Screens are Apple devices only, macOS and iOS, a scope decision taken on 26 Oct 2026 to keep one hardware family, one device-management system and one signing pipeline. Flutter builds both from one codebase with documentation among the best of any framework, and keeps the door open to other platforms later without a rewrite. Python with FastAPI fits the menu engine design as written and has the strongest tools for validation, migrations, spreadsheet import, testing and reporting. The split is strict: the app renders and collects, the backend prices, validates, routes and records.</p>
+  <p>Screens are Apple devices (macOS and iOS) and Android phones and tablets. Windows, Linux and web screens stay out of scope. Android came back on 29 Oct 2026 for cheaper tablets and handhelds, built-in NFC and Android kitchen displays; the price is a second device-management system and an Android device in every hardware test. Flutter builds all three from one codebase with documentation among the best of any framework, and keeps the door open to other platforms later without a rewrite. Python with FastAPI fits the menu engine design as written and has the strongest tools for validation, migrations, spreadsheet import, testing and reporting. The split is strict: the app renders and collects, the backend prices, validates, routes and records.</p>
   <div class="scroll"><table class="wide">
     <thead><tr><th>Option</th><th>Platforms</th><th>For</th><th>Against</th></tr></thead>
     <tbody>
-      <tr><td>Flutter apps + Python backend <span class="pick">chosen</span></td><td>macOS and iOS official (Android, Windows, Linux and web available later)</td><td>One UI codebase, fast touch UI, strong docs. FastAPI, Pydantic, SQLAlchemy, Alembic, a large hiring pool, and the menu design used as written.</td><td>Two languages. Terminals need a hub or the cloud, which the redundancy covers. Some payment SDKs need thin native plugins.</td></tr>
+      <tr><td>Flutter apps + Python backend <span class="pick">chosen</span></td><td>macOS, iOS and Android official (Windows, Linux and web available later)</td><td>One UI codebase, fast touch UI, strong docs. FastAPI, Pydantic, SQLAlchemy, Alembic, a large hiring pool, and the menu design used as written.</td><td>Two languages. Terminals need a hub or the cloud, which the redundancy covers. Some payment SDKs need thin native plugins.</td></tr>
       <tr><td>React Native + Node</td><td>iOS official; macOS via Microsoft</td><td>Huge ecosystem, TypeScript end to end.</td><td>macOS trails iOS; desktop tooling thinner than Flutter's.</td></tr>
       <tr><td>Kotlin Multiplatform + Compose</td><td>iOS and macOS (desktop via JVM)</td><td>Shared logic, native performance.</td><td>Smaller UI community, desktop ships a JVM, fewer POS libraries.</td></tr>
     </tbody>
@@ -280,8 +280,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
         <path class="wire fallback" d="M455,506 V406" marker-end="url(#ahf)"/>
         <text class="wl fb" x="462" y="462">print relay</text><text class="wl fb" x="462" y="476">if hubs down</text>
 
-        <rect class="box" x="40" y="540" width="200" height="64" rx="6"/><text class="t" x="54" y="566">Fixed stations</text><text class="s" x="54" y="586">Mac / iPad</text>
-        <rect class="box" x="270" y="540" width="200" height="64" rx="6"/><text class="t" x="284" y="566">Handhelds</text><text class="s" x="284" y="586">iPhone / iPad, Wi-Fi</text>
+        <rect class="box" x="40" y="540" width="200" height="64" rx="6"/><text class="t" x="54" y="566">Fixed stations</text><text class="s" x="54" y="586">Mac / iPad / Android</text>
+        <rect class="box" x="270" y="540" width="200" height="64" rx="6"/><text class="t" x="284" y="566">Handhelds</text><text class="s" x="284" y="586">iPhone / Android, Wi-Fi</text>
         <rect class="box" x="500" y="540" width="200" height="64" rx="6"/><text class="t" x="514" y="566">Kitchen &amp; bar screens</text><text class="s" x="514" y="586">per station, expo</text>
         <path class="wire" d="M140,540 V506 H600 V540 M370,540 V506"/>
         <line class="wire" x1="190" y1="506" x2="190" y2="470" marker-end="url(#ah)" marker-start="url(#ah)"/>
@@ -506,7 +506,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <thead><tr><th>Method</th><th>How</th><th>Where</th><th>Notes</th></tr></thead>
     <tbody>
       <tr><td>PIN</td><td>4 to 6 digits, stored hashed; five wrong tries lock it for a minute.</td><td>Every device</td><td>Always available.</td></tr>
-      <tr><td>NFC tag</td><td>A fob, card or sticker tapped on the device. Built-in reader on iPhones; a USB reader (about $30) on Macs. iPads have no NFC reader, so an iPad station uses a USB reader, face or PIN.</td><td>iPhones, Macs with a reader</td><td>Uncopyable tags (NTAG 424 DNA or DESFire), $1 to $3 each.</td></tr>
+      <tr><td>NFC tag</td><td>A fob, card or sticker tapped on the device. Built-in reader on iPhones and most Android phones and tablets; a USB reader (about $30) on Macs. iPads have no NFC reader, so an iPad station uses a USB reader, face or PIN.</td><td>iPhones, Macs with a reader</td><td>Uncopyable tags (NTAG 424 DNA or DESFire), $1 to $3 each.</td></tr>
       <tr><td>Face</td><td>The front camera turns the face into a numeric signature on the device; only the signature goes to the backend, which matches it against the location's enrolled staff. Under a second, hands free.</td><td>Any device with a front camera or USB webcam</td><td>Identification among staff, not a lock against a determined impostor; liveness checks help but are not perfect.</td></tr>
     </tbody>
   </table></div>
@@ -617,7 +617,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Delivery marketplaces (DoorDash, Uber Eats), own storefront</td><td>Orders in, menus with channel pricing out, on the ezCater adapter pattern.</td><td>4</td></tr>
       <tr><td>Text and email</td><td>Payment links, receipts, waitlist paging, marketing with consent, alerts, through a messaging provider.</td><td>1</td></tr>
       <tr><td>Tax rate service (Stripe Tax, Avalara, TaxJar)</td><td>Rate lookups by address and suggested updates; never in the sale path.</td><td>3</td></tr>
-      <tr><td>Device management</td><td>Apple Business Manager for every screen device (Macs, iPads, iPhones); a signed release feed for hubs.</td><td>2</td></tr>
+      <tr><td>Device management</td><td>Apple Business Manager for Macs, iPads and iPhones; Android Enterprise (zero-touch) for Android devices; a signed release feed for hubs.</td><td>2</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -655,10 +655,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <ul>
     <li><strong>Hubs:</strong> two fanless mini PCs (8 GB RAM, SSD, Linux), each on its own small UPS in different spots, about $300 to $500 each, plus a small witness device (a Raspberry Pi) for failover votes.</li>
     <li><strong>Printers:</strong> Ethernet ESC/POS printers (Epson TM series or compatible) with reserved IP addresses, one per kitchen station plus a backup, a receipt printer with cash drawer at each register. USB-only printers do not fit, since nothing could reach them when their host is down.</li>
-    <li><strong>Fixed stations:</strong> iPads on stands, or a Mac mini with a touch screen, with the front camera (or a USB webcam) and a USB NFC reader.</li>
-    <li><strong>Handhelds:</strong> iPhones or iPad minis with a paired card reader for pay at the table; iPhones read NFC tags on their own.</li>
+    <li><strong>Fixed stations:</strong> iPads or Android tablets on stands, or a Mac mini with a touch screen, with the front camera (or a USB webcam) and a USB NFC reader.</li>
+    <li><strong>Handhelds:</strong> iPhones, iPad minis or Android handhelds with a paired card reader for pay at the table; iPhones and most Android handhelds read NFC tags on their own.</li>
     <li><strong>NFC tags:</strong> fobs, cards or phone stickers (NTAG 424 DNA or DESFire), $1 to $3 each.</li>
-    <li><strong>Kitchen and bar screens (KDS):</strong> iPads in wall mounts, or a Mac mini driving a large display, one per station plus expo.</li>
+    <li><strong>Kitchen and bar screens (KDS):</strong> iPads or Android tablets in wall mounts, or a Mac mini driving a large display, one per station plus expo.</li>
     <li><strong>Card readers:</strong> one from each provider you want to route between at the stations where it matters, or one default reader everywhere with the others as backup.</li>
     <li><strong>Network:</strong> a separate POS network, wired for hubs, stations and printers, Wi-Fi for handhelds, a cellular backup on the router. At 20 terminals a busy Friday is a few thousand operations an hour, well within one small hub.</li>
   </ul>

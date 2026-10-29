@@ -1,6 +1,6 @@
 # ADR 4: Screen devices are macOS and iOS only
 
-Date: 2026-10-26 · Status: accepted (Mike)
+Date: 2026-10-26 · Status: partly superseded by ADR 5 (Android screens are back, 2026-10-29)
 
 ## Decision
 Every screen the restaurant uses runs on an Apple device: Macs and iPads at fixed stations, iPhones and iPads

@@ -24,7 +24,7 @@ abstract class EventCamera extends ChangeNotifier {
   static EventCamera forPlatform() {
     if (kIsWeb) return NoCamera();
     if (Platform.isMacOS) return MacCamera();
-    if (Platform.isIOS) return IosCamera();
+    if (Platform.isIOS || Platform.isAndroid) return PhoneCamera();
     return NoCamera();
   }
 }
@@ -89,8 +89,12 @@ class MacCamera extends EventCamera {
   }
 }
 
-/// iOS through the camera plugin: the front camera at the lowest preset (about 320 px).
-class IosCamera extends EventCamera {
+/// iOS and Android through the camera plugin: the front camera at the lowest preset (about 320 px).
+class PhoneCamera extends EventCamera {
+  /// iOS takes the photo off the preview stream (its still capture plays a shutter sound and flashes the
+  /// screen); Android's still capture is silent, so it takes an ordinary picture.
+  final bool fromStream = Platform.isIOS;
+
   cam.CameraController? _controller;
   Future<void>? _starting;
   String? _error;
@@ -118,7 +122,7 @@ class IosCamera extends EventCamera {
         front,
         cam.ResolutionPreset.low,
         enableAudio: false,
-        imageFormatGroup: cam.ImageFormatGroup.bgra8888,
+        imageFormatGroup: fromStream ? cam.ImageFormatGroup.bgra8888 : null,
       );
       await controller.initialize();
       _controller = controller;
@@ -164,6 +168,10 @@ class IosCamera extends EventCamera {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return null;
     try {
+      if (!fromStream) {
+        final photo = await controller.takePicture();
+        return await compute(shrinkJpeg, await photo.readAsBytes());
+      }
       final frame = await _oneFrame(controller);
       if (frame == null) return null;
       final turn = _rotation(controller);
@@ -225,6 +233,13 @@ class FramePixels {
   }
 }
 
+/// Worker: a camera JPEG (Android) turned upright and made small like the iOS frames.
+Uint8List shrinkJpeg(Uint8List jpeg) {
+  final decoded = img.decodeJpg(jpeg);
+  if (decoded == null) return jpeg;
+  return _small(img.bakeOrientation(decoded));
+}
+
 /// Worker: BGRA pixels to a small JPEG, at most 320 px on the long side.
 Uint8List encodeFrame(FramePixels f) {
   var image = img.Image.fromBytes(
@@ -237,6 +252,10 @@ Uint8List encodeFrame(FramePixels f) {
     order: img.ChannelOrder.bgra,
   );
   if (f.rotation != 0) image = img.copyRotate(image, angle: f.rotation);
+  return _small(image);
+}
+
+Uint8List _small(img.Image image) {
   final long = image.width > image.height ? image.width : image.height;
   if (long > 320) {
     image = image.width >= image.height ? img.copyResize(image, width: 320) : img.copyResize(image, height: 320);
