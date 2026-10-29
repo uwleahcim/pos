@@ -137,6 +137,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Appetizers'));
+    await tester.pumpAndSettle();
     expect(find.text('Egg roll'), findsOneWidget);
 
     await tester.pump(MenuPanelCheck.every); // nothing saved: one cheap check, no reload
@@ -147,6 +149,6 @@ void main() {
     await tester.pump(MenuPanelCheck.every);
     await tester.pumpAndSettle();
     expect(reads, 2);
-    expect(find.text('Egg roll (new recipe)'), findsOneWidget);
+    expect(find.text('Egg roll (new recipe)'), findsOneWidget); // and still in the category it had open
   });
 }

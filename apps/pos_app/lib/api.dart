@@ -68,14 +68,14 @@ class Line {
   /// Shown from this device's own operations; the backend has not confirmed it yet.
   final bool pending;
 
-  Line copyWith({String? status, bool? fired, bool? pending}) => Line(
+  Line copyWith({String? status, bool? fired, bool? pending, int? qty, String? note}) => Line(
     lineId: lineId,
     item: item,
-    qty: qty,
+    qty: qty ?? this.qty,
     status: status ?? this.status,
     seat: seat,
     course: course,
-    note: note,
+    note: note ?? this.note,
     modifiedAfterFire: modifiedAfterFire,
     fired: fired ?? this.fired,
     request: request,

@@ -44,6 +44,11 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           request: request is Map ? LineRequest.fromJson(request.cast<String, dynamic>()) : null,
           pending: true,
         );
+      case 'set_line':
+        final line = lines[data['line_id']];
+        if (line != null && line.isActive) {
+          lines[line.lineId] = line.copyWith(qty: data['qty'] as int?, note: data['note'] as String?, pending: true);
+        }
       case 'void_line':
         final line = lines[data['line_id']];
         if (line != null && line.isActive) {
@@ -79,7 +84,7 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   final active = order.activeLines;
   final known = {for (final l in check?.lines ?? const <CheckLine>[]) l.lineId: l};
   final changed =
-      active.any((l) => !known.containsKey(l.lineId)) || known.keys.any((id) => !active.any((l) => l.lineId == id));
+      active.any((l) => known[l.lineId]?.qty != l.qty) || known.keys.any((id) => !active.any((l) => l.lineId == id));
   if (check != null && !changed) return check;
 
   final lines = <CheckLine>[];
@@ -87,8 +92,12 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   for (final line in active) {
     final priced = known[line.lineId];
     if (priced != null) {
-      lines.add(priced);
-      subtotal += cents(priced.total);
+      // the backend's price for one, times the quantity on this screen
+      final total = priced.qty == line.qty || priced.qty == 0
+          ? cents(priced.total)
+          : cents(priced.total) ~/ priced.qty * line.qty;
+      lines.add(priced.qty == line.qty ? priced : priced.withQty(line.qty, money(total)));
+      subtotal += total;
       continue;
     }
     final price = local[line.lineId]?.unitPrice;

@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../floor.dart';
+import '../line_ops.dart';
 import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../photos.dart';
+import 'compact.dart';
 import 'menu_panel.dart';
 import 'status_bar.dart';
 
@@ -128,21 +130,55 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
-  /// Before the kitchen has it a line just comes off. After, it is a void, and a VOID ticket prints.
-  Future<void> _remove(Line line) async {
-    if (!line.fired) return _append('void_line', {'line_id': line.lineId});
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Void ${line.item}?'),
-        content: const Text('It has gone to the kitchen. A VOID ticket prints so they stop making it.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Void')),
-        ],
-      ),
+  /// Makes a line hold `qty` of its dish: one more from a tap on the quantity, one fewer from a tap on the
+  /// bin, any number typed after holding the quantity, none after holding the bin. Before the kitchen has the
+  /// line it simply changes. After, more is a new line of the extra, held until fired like any new dish; fewer
+  /// or none voids it (and sends the rest again), so a VOID ticket prints and the operator confirms first.
+  Future<void> _setQty(Line line, int qty) async {
+    final change = qtyChange(line, qty, newId: widget.outbox.newId);
+    if (change.isEmpty) return;
+    if (change.voidsFired) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(qty == 0 ? 'Void ${line.item}?' : 'Void ${line.item} and send $qty again?'),
+          content: Text(
+            qty == 0
+                ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
+                : 'It has gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for $qty.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Void')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    final copy = change.newLineId;
+    if (copy != null) _local[copy] = _localFor(line);
+    await _appendAll(change.ops);
+  }
+
+  /// What this screen knows of a line, to price a copy of it before the backend does.
+  LocalLine _localFor(Line line) {
+    final known = _local[line.lineId];
+    if (known != null) return known;
+    final priced = _readCheck?.line(line.lineId);
+    return LocalLine(
+      unitPrice: priced == null || priced.qty == 0 ? null : money(cents(priced.total) ~/ priced.qty),
+      modifiers: priced?.modifiers ?? const [],
+      itemId: line.itemId,
+      entryId: line.entryId,
     );
-    if (ok == true) await _append('void_line', {'line_id': line.lineId, 'reason': 'void'});
+  }
+
+  Future<void> _typeQty(Line line) async {
+    final qty = await showDialog<int>(
+      context: context,
+      builder: (_) => _QtyDialog(name: line.item, qty: line.qty),
+    );
+    if (qty != null) await _setQty(line, qty);
   }
 
   /// Reopens a line's choices. The changed dish replaces the old one: an unfired line just comes off, a
@@ -189,8 +225,9 @@ class _OrderScreenState extends State<OrderScreen> {
       check: check,
       open: open,
       courses: widget.courses,
-      onRemove: _remove,
       onEdit: _edit,
+      onQty: _setQty,
+      onTypeQty: _typeQty,
     );
     final menu = open
         ? Column(
@@ -213,24 +250,14 @@ class _OrderScreenState extends State<OrderScreen> {
       appBar: AppBar(
         title: Text(order == null ? 'Order' : 'Table ${order.table} · ${order.status}'),
         actions: [
+          StatusIcon(api: widget.api, outbox: widget.outbox),
           if (order != null && open) _FireMenu(order: order, courses: widget.courses, onFire: _fire),
-          if (order != null && open)
-            TextButton.icon(
-              onPressed: () => _append('close'),
-              icon: const Icon(Icons.check),
-              label: const Text('Close'),
-            ),
-          if (order != null && order.status == 'closed')
-            TextButton.icon(
-              onPressed: () => _append('reopen'),
-              icon: const Icon(Icons.undo),
-              label: const Text('Reopen'),
-            ),
+          if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
+          if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
         ],
       ),
       body: Column(
         children: [
-          StatusBar(api: widget.api, outbox: widget.outbox),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -276,16 +303,18 @@ class _TicketPanel extends StatelessWidget {
     required this.check,
     required this.open,
     required this.courses,
-    required this.onRemove,
     required this.onEdit,
+    required this.onQty,
+    required this.onTypeQty,
   });
 
   final Order? order;
   final Check? check;
   final bool open;
   final List<Course> courses;
-  final ValueChanged<Line> onRemove;
   final ValueChanged<Line> onEdit;
+  final void Function(Line line, int qty) onQty;
+  final ValueChanged<Line> onTypeQty;
 
   @override
   Widget build(BuildContext context) {
@@ -305,20 +334,30 @@ class _TicketPanel extends StatelessWidget {
                   Builder(
                     builder: (context) {
                       final priced = check?.line(line.lineId);
+                      final changeable = open && line.isActive;
                       return ListTile(
                         dense: true,
-                        onTap: open && line.isActive ? () => onEdit(line) : null,
-                        leading: SizedBox(
-                          width: 44,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('${line.qty}×', style: theme.textTheme.titleMedium),
-                              Text(
-                                line.seat == null ? 'table' : 'seat ${line.seat}',
-                                style: theme.textTheme.labelSmall,
+                        onTap: changeable ? () => onEdit(line) : null,
+                        leading: _Hold(
+                          key: ValueKey('qty-${line.lineId}'),
+                          tooltip: 'Tap for one more, hold to type how many',
+                          onTap: changeable ? () => onQty(line, line.qty + 1) : null,
+                          onLongPress: changeable ? () => onTypeQty(line) : null,
+                          child: SizedBox(
+                            width: 44,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text('${line.qty}×', style: theme.textTheme.titleMedium),
+                                  Text(
+                                    line.seat == null ? 'table' : 'seat ${line.seat}',
+                                    style: theme.textTheme.labelSmall,
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
                         title: Text(
@@ -343,11 +382,18 @@ class _TicketPanel extends StatelessWidget {
                                 child: Icon(Icons.cloud_upload_outlined, size: 14),
                               ),
                             if (priced != null) Text(priced.total),
-                            if (open && line.isActive)
-                              IconButton(
-                                tooltip: line.fired ? 'Void (sent to the kitchen)' : 'Remove',
-                                icon: Icon(line.fired ? Icons.block : Icons.delete_outline),
-                                onPressed: () => onRemove(line),
+                            if (changeable)
+                              _Hold(
+                                key: ValueKey('bin-${line.lineId}'),
+                                tooltip: line.qty > 1
+                                    ? 'Tap for one fewer, hold to take them all off'
+                                    : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
+                                onTap: () => onQty(line, line.qty - 1),
+                                onLongPress: () => onQty(line, 0),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Icon(line.fired ? Icons.block : Icons.delete_outline),
+                                ),
                               ),
                           ],
                         ),
@@ -402,6 +448,92 @@ extension on _TicketPanel {
     }
 
     return [for (final id in ids) group(id)];
+  }
+}
+
+/// An app bar button: icon and label, or the icon alone on a phone.
+class _Action extends StatelessWidget {
+  const _Action(this.label, this.icon, this.onPressed);
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => compact(context)
+      ? IconButton(tooltip: label, onPressed: onPressed, icon: Icon(icon))
+      : TextButton.icon(onPressed: onPressed, icon: Icon(icon), label: Text(label));
+}
+
+/// A tap target that also answers holding it down, which an [IconButton] does not.
+class _Hold extends StatelessWidget {
+  const _Hold({super.key, required this.tooltip, required this.onTap, required this.onLongPress, required this.child});
+
+  final String tooltip;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onTap == null && onLongPress == null) return child;
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(seconds: 1),
+      child: InkResponse(onTap: onTap, onLongPress: onLongPress, radius: 24, child: child),
+    );
+  }
+}
+
+/// How many of a dish, typed. Zero takes the line off.
+class _QtyDialog extends StatefulWidget {
+  const _QtyDialog({required this.name, required this.qty});
+
+  final String name;
+  final int qty;
+
+  @override
+  State<_QtyDialog> createState() => _QtyDialogState();
+}
+
+class _QtyDialogState extends State<_QtyDialog> {
+  late final _text = TextEditingController(text: '${widget.qty}')
+    ..selection = TextSelection(baseOffset: 0, extentOffset: '${widget.qty}'.length);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  int? get _qty {
+    final qty = int.tryParse(_text.text.trim());
+    return qty == null || qty < 0 || qty > 999 ? null : qty;
+  }
+
+  void _done() {
+    final qty = _qty;
+    if (qty != null) Navigator.of(context).pop(qty);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('How many ${widget.name}?'),
+      content: TextField(
+        key: const ValueKey('qty-field'),
+        controller: _text,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(helperText: '0 takes it off the check'),
+        onChanged: (_) => setState(() {}),
+        onSubmitted: (_) => _done(),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: _qty == null ? null : _done, child: const Text('Set')),
+      ],
+    );
   }
 }
 
@@ -467,40 +599,33 @@ class _SeatCourseBarState extends State<_SeatCourseBar> {
         visualDensity: VisualDensity.compact,
       ),
     );
+    final seatChips = [
+      const Text('Seat  '),
+      chip('Table', widget.seat == null, () => widget.onSeat(null)),
+      for (var i = 1; i <= seats; i++) chip('$i', widget.seat == i, () => widget.onSeat(i)),
+      IconButton(
+        tooltip: 'Add a seat',
+        icon: const Icon(Icons.add_circle_outline),
+        onPressed: () {
+          setState(() => _extra++);
+          widget.onSeat(widget.guests + _extra);
+        },
+      ),
+    ];
+    final courseChips = [
+      const Text('Course  '),
+      for (final c in widget.courses) chip(c.name, widget.course == c.id, () => widget.onCourse(c.id)),
+    ];
+    Widget row(List<Widget> children) => SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: children),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                const Text('Seat  '),
-                chip('Table', widget.seat == null, () => widget.onSeat(null)),
-                for (var i = 1; i <= seats; i++) chip('$i', widget.seat == i, () => widget.onSeat(i)),
-                IconButton(
-                  tooltip: 'Add a seat',
-                  icon: const Icon(Icons.add_circle_outline),
-                  onPressed: () {
-                    setState(() => _extra++);
-                    widget.onSeat(widget.guests + _extra);
-                  },
-                ),
-              ],
-            ),
-          ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                const Text('Course  '),
-                for (final c in widget.courses) chip(c.name, widget.course == c.id, () => widget.onCourse(c.id)),
-              ],
-            ),
-          ),
-        ],
-      ),
+      child: compact(context)
+          // a phone: both on one line that scrolls, to leave the screen to the menu
+          ? row([...seatChips, const SizedBox(width: 8), ...courseChips])
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [row(seatChips), row(courseChips)]),
     );
   }
 }
@@ -529,13 +654,19 @@ class _FireMenu extends StatelessWidget {
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          children: [
-            const Icon(Icons.local_fire_department),
-            const SizedBox(width: 4),
-            Text(held.isEmpty ? 'Fire' : 'Fire (${held.length} held)'),
-          ],
-        ),
+        child: compact(context)
+            ? Badge(
+                isLabelVisible: held.isNotEmpty,
+                label: Text('${held.length}'),
+                child: const Icon(Icons.local_fire_department),
+              )
+            : Row(
+                children: [
+                  const Icon(Icons.local_fire_department),
+                  const SizedBox(width: 4),
+                  Text(held.isEmpty ? 'Fire' : 'Fire (${held.length} held)'),
+                ],
+              ),
       ),
     );
   }
