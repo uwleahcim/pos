@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../menu.dart';
 import 'drill_down.dart';
+import 'reflow.dart';
 
 /// A line the operator configured: what to send in `add_line`.
 class ChosenLine {
@@ -53,7 +54,7 @@ class _MenuPanelState extends State<MenuPanel> {
   List<Menu>? _menus;
   String? _error;
   var _path = <String>[]; // the open categories, outermost first, by section id
-  final _origins = <String, Alignment>{}; // open path -> where the button that opened it sits
+  final _reflow = ReflowGroup();
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
@@ -127,38 +128,20 @@ class _MenuPanelState extends State<MenuPanel> {
     ];
   }
 
-  /// Opens `section` at `depth`; its dishes grow out of `tile`, the button that opened them.
-  void _openAt(int depth, MenuSection section, BuildContext tile) => setState(() {
-    _path = [..._path.take(depth), section.sectionId];
-    _origins[_path.join('/')] = _originOf(tile);
-    _search.clear();
-  });
-
-  /// Where `tile` sits in the panel, as the point a level grows out of and shrinks back into.
-  Alignment _originOf(BuildContext tile) {
-    final box = tile.findRenderObject() as RenderBox?;
-    final panel = context.findRenderObject() as RenderBox?;
-    if (box == null || panel == null || !box.hasSize || !panel.hasSize || panel.size.isEmpty) {
-      return Alignment.topCenter;
-    }
-    final c = panel.globalToLocal(box.localToGlobal(box.size.center(Offset.zero)));
-    return Alignment(c.dx / panel.size.width * 2 - 1, c.dy / panel.size.height * 2 - 1);
+  /// Opens `section` at `depth`. The categories on screen travel to their places in the strip (see
+  /// [Reflow]) and its dishes fade in under them.
+  void _openAt(int depth, MenuSection section) {
+    _reflow.snapshot();
+    setState(() {
+      _path = [..._path.take(depth), section.sectionId];
+      _search.clear();
+    });
   }
 
-  /// A level opening grows out of the button that opened it and fades in; closing, it shrinks back into
-  /// it. The categories under it just fade.
-  Widget _transition(Widget child, Animation<double> animation) {
-    final level = (child.key as ValueKey<String>?)?.value ?? '';
-    final faded = FadeTransition(opacity: animation, child: child);
-    if (level.isEmpty) return faded;
-    return ScaleTransition(
-      scale: Tween(begin: 0.8, end: 1.0).animate(animation),
-      alignment: _origins[level] ?? Alignment.topCenter,
-      child: faded,
-    );
+  void _close() {
+    _reflow.snapshot();
+    setState(() => _path = _path.take(_open.length - 1).toList());
   }
-
-  void _close() => setState(() => _path = _path.take(_open.length - 1).toList());
 
   /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
   Future<void> _eightySix(MenuEntry entry) async {
@@ -198,8 +181,18 @@ class _MenuPanelState extends State<MenuPanel> {
         crossAxisSpacing: 8,
         physics: DrillDown.physics,
         children: [
-          for (final s in sections) _SectionButton(section: s, onTap: (tile) => _openAt(depth, s, tile)),
-          for (final e in entries) _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+          for (final s in sections)
+            Reflow(
+              id: 's:${s.sectionId}',
+              group: _reflow,
+              child: _SectionButton(section: s, onTap: () => _openAt(depth, s)),
+            ),
+          for (final e in entries)
+            Reflow(
+              id: 'e:${e.entryId}:${e.item}',
+              group: _reflow,
+              child: _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+            ),
         ],
       );
 
@@ -218,23 +211,10 @@ class _MenuPanelState extends State<MenuPanel> {
               ),
       );
     }
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: _transition,
-      layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
-      child: _level(),
-    );
-  }
-
-  /// The categories, or the open one, keyed by its path so a change animates.
-  Widget _level() {
     final open = _open;
     if (open.isEmpty) {
       final searching = _search.text.trim().isNotEmpty;
       return Column(
-        key: const ValueKey(''),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -274,7 +254,8 @@ class _MenuPanelState extends State<MenuPanel> {
         sections: siblings,
         selected: here,
         onBack: _close,
-        onTap: (s, chip) => s == here ? _close() : _openAt(depth, s, chip),
+        reflow: _reflow,
+        onTap: (s) => s == here ? _close() : _openAt(depth, s),
       ),
       child: _grid(sections: here.sections, entries: here.entries, depth: open.length),
     );
@@ -283,12 +264,19 @@ class _MenuPanelState extends State<MenuPanel> {
 
 /// The categories of one level, shrunk to a row above the open one.
 class _Strip extends StatelessWidget {
-  const _Strip({required this.sections, required this.selected, required this.onBack, required this.onTap});
+  const _Strip({
+    required this.sections,
+    required this.selected,
+    required this.reflow,
+    required this.onBack,
+    required this.onTap,
+  });
 
   final List<MenuSection> sections;
   final MenuSection selected;
+  final ReflowGroup reflow;
   final VoidCallback onBack;
-  final void Function(MenuSection section, BuildContext chip) onTap;
+  final ValueChanged<MenuSection> onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +298,11 @@ class _Strip extends StatelessWidget {
                 for (final s in sections)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-                    child: _StripChip(section: s, selected: s == selected, onTap: (chip) => onTap(s, chip)),
+                    child: Reflow(
+                      id: 's:${s.sectionId}',
+                      group: reflow,
+                      child: _StripChip(section: s, selected: s == selected, onTap: () => onTap(s)),
+                    ),
                   ),
               ],
             ),
@@ -327,7 +319,7 @@ class _StripChip extends StatefulWidget {
 
   final MenuSection section;
   final bool selected;
-  final ValueChanged<BuildContext> onTap;
+  final VoidCallback onTap;
 
   @override
   State<_StripChip> createState() => _StripChipState();
@@ -348,7 +340,7 @@ class _StripChipState extends State<_StripChip> {
   Widget build(BuildContext context) => ChoiceChip(
     label: Text(widget.section.name),
     selected: widget.selected,
-    onSelected: (_) => widget.onTap(context),
+    onSelected: (_) => widget.onTap(),
     visualDensity: VisualDensity.compact,
   );
 }
@@ -357,7 +349,7 @@ class _SectionButton extends StatelessWidget {
   const _SectionButton({required this.section, required this.onTap});
 
   final MenuSection section;
-  final ValueChanged<BuildContext> onTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -368,7 +360,7 @@ class _SectionButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () => onTap(context),
+        onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Column(

@@ -14,6 +14,7 @@ import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
+import 'package:pos_app/screens/reflow.dart';
 import 'package:pos_app/screens/status_bar.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -153,8 +154,19 @@ void main() {
     expect(find.text('Appetizers'), findsOneWidget);
     expect(find.text('Egg roll'), findsNothing);
 
+    // the categories travel into the strip rather than the screen swapping at once
+    final tile = tester.getCenter(find.text("Chef's Specials"));
     await tester.tap(find.text('Appetizers'));
+    await tester.pump(); // the new layout, with the travelling copies
+    await tester.pump(); // their first frame
+    await tester.pump(Reflow.duration ~/ 2);
+    final halfway = [
+      for (final e in find.text("Chef's Specials").evaluate()) tester.getCenter(find.byWidget(e.widget)).dy,
+    ];
     await tester.pumpAndSettle();
+    final chip = tester.getCenter(find.text("Chef's Specials"));
+    expect(chip.dy, lessThan(tile.dy));
+    expect(halfway.any((y) => y < tile.dy - 4 && y > chip.dy + 4), isTrue);
     expect(find.text('Egg roll'), findsOneWidget);
     expect(find.byType(ChoiceChip), findsWidgets); // the categories, shrunk to a strip
     expect(find.byType(TextField), findsNothing);
@@ -320,14 +332,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // a category grows out of its button rather than appearing at once
     await tester.tap(find.text('Bar'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    final growing = tester.widget<ScaleTransition>(
-      find.ancestor(of: find.text('Tsingtao'), matching: find.byType(ScaleTransition)).first,
-    );
-    expect(growing.scale.value, inExclusiveRange(0.8, 1.0));
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(ChoiceChip, '1')); // after the 30 on seat 1: the bottom of the check
