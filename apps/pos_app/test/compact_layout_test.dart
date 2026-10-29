@@ -229,9 +229,12 @@ void main() {
     final egg = find.byKey(const ValueKey('qty-L1'));
     final eggBin = find.byKey(const ValueKey('bin-L1'));
 
+    final name = tester.getTopLeft(find.text('Egg roll'));
     await tester.tap(egg);
     await tester.pumpAndSettle();
     expect(sent().last, op('set_line', {'line_id': 'L1', 'qty': 2}));
+    expect(find.byKey(const ValueKey('sending-L1')), findsOneWidget); // waiting to send, on the far left
+    expect(tester.getTopLeft(find.text('Egg roll')), name); // and nothing else moved
     expect(find.descendant(of: egg, matching: find.text('2×')), findsOneWidget);
     expect(find.text('5.00'), findsOneWidget);
 
@@ -273,6 +276,83 @@ void main() {
     expect(find.byTooltip('Close'), findsOneWidget);
     expect(find.text('Seat  '), findsOneWidget);
     expect(tester.getTopLeft(find.text('Course  ')).dy, tester.getTopLeft(find.text('Seat  ')).dy);
+
+    await tester.pumpWidget(const SizedBox());
+    outbox.dispose();
+    photos.dispose();
+  });
+
+  testWidgets('the check scrolls to the dish just added; seats come off from the end once empty', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final settings = Settings(device: 't1', endpoints: ['http://hub:8000'], prefs: prefs);
+    // all on seat 1, in the course a new dish goes to
+    final lines = {for (var i = 1; i <= 30; i++) 'L$i': line('Dish $i', 1, course: '1')};
+    final api = PosApi(
+      settings,
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/orders/o1':
+            return json({
+              'order_id': 'o1',
+              'fields': {'table': 'A1', 'guests': 3},
+              'lines': lines,
+            });
+          case '/orders/o1/check':
+            return json({'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
+          case '/menu':
+            return json(fixture('menu'));
+          case '/orders/o1/ops':
+            return http.Response('down', 503);
+        }
+        return json({'revision': 0});
+      }),
+    );
+    final outbox = Outbox(api, settings, prefs: prefs);
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+    List<(String, Map)> sent() => [for (final op in outbox.pendingOps) (op['kind'] as String, op['data'] as Map)];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OrderScreen(api: api, outbox: outbox, photos: photos, orderId: 'o1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // a category grows out of its button rather than appearing at once
+    await tester.tap(find.text('Bar'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final growing = tester.widget<ScaleTransition>(
+      find.ancestor(of: find.text('Tsingtao'), matching: find.byType(ScaleTransition)).first,
+    );
+    expect(growing.scale.value, inExclusiveRange(0.8, 1.0));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ChoiceChip, '1')); // after the 30 on seat 1: the bottom of the check
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tsingtao'));
+    await tester.pumpAndSettle();
+    final added = find.text('Tsingtao').first; // the check line, left of the menu
+    expect(tester.getRect(added).bottom, lessThan(800));
+    expect(tester.getRect(added).left, lessThan(380));
+
+    // three seats; the last two are empty and come off, seat 1 has dishes and stays
+    expect(find.widgetWithText(ChoiceChip, '3'), findsOneWidget);
+    await tester.tap(find.byTooltip('Remove seat 3'));
+    await tester.pumpAndSettle();
+    expect(sent().last, op('set_field', {'guests': 2}));
+    expect(find.widgetWithText(ChoiceChip, '3'), findsNothing);
+    await tester.tap(find.byTooltip('Remove seat 2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Remove seat 1'));
+    await tester.pumpAndSettle();
+    expect(sent().last, op('set_field', {'guests': 1}));
+    expect(find.text('Seat 1 still has 31 dishes. Take them off first.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Add a seat'));
+    await tester.pumpAndSettle();
+    expect(sent().last, op('set_field', {'guests': 2}));
 
     await tester.pumpWidget(const SizedBox());
     outbox.dispose();

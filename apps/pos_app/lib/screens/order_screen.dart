@@ -38,6 +38,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Order? _read; // what the backend last returned
   Check? _readCheck;
   final _local = <String, LocalLine>{}; // line id -> what this screen knew when it added the line
+  String? _lastAdded; // the check scrolls to it
   bool _reading = false;
   Timer? _timer;
   int? _seat; // null: for the table, shared
@@ -107,6 +108,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Map<String, dynamic> _lineData(ChosenLine line, {required int? seat, required String? course}) {
     final id = widget.outbox.newId();
+    _lastAdded = id;
     _local[id] = LocalLine(
       unitPrice: line.unitPrice,
       modifiers: line.modifiers,
@@ -156,7 +158,10 @@ class _OrderScreenState extends State<OrderScreen> {
       if (ok != true) return;
     }
     final copy = change.newLineId;
-    if (copy != null) _local[copy] = _localFor(line);
+    if (copy != null) {
+      _local[copy] = _localFor(line);
+      _lastAdded = copy;
+    }
     await _appendAll(change.ops);
   }
 
@@ -215,16 +220,51 @@ class _OrderScreenState extends State<OrderScreen> {
     ]);
   }
 
+  /// The party size, or more when a dish is on a higher seat.
+  int _seats(Order? order) {
+    var seats = (order?.fields['guests'] as int?) ?? 0;
+    for (final line in order?.activeLines ?? const <Line>[]) {
+      if ((line.seat ?? 0) > seats) seats = line.seat!;
+    }
+    return seats;
+  }
+
+  /// Seats are the order's party size, so every screen on the order shows the same ones. A seat comes off
+  /// only from the end, and only once its dishes are off it or moved.
+  Future<void> _setSeats(Order? order, int seats) async {
+    if (order == null || seats < 0) return;
+    final current = _seats(order);
+    if (seats < current) {
+      final left = order.activeLines.where((l) => l.seat == current).length;
+      if (left > 0) {
+        _say(
+          'Seat $current still has ${left == 1 ? 'a dish' : '$left dishes'}. Take ${left == 1 ? 'it' : 'them'} off first.',
+        );
+        return;
+      }
+    }
+    setState(() {
+      if (seats > current) {
+        _seat = seats;
+      } else if ((_seat ?? 0) > seats) {
+        _seat = seats == 0 ? null : seats;
+      }
+    });
+    await _append('set_field', {'guests': seats});
+  }
+
   @override
   Widget build(BuildContext context) {
     final order = _order;
     final check = order == null ? null : estimateCheck(_readCheck, order, _local);
     final open = order?.isOpen ?? true;
+    final seats = _seats(order);
     final ticket = _TicketPanel(
       order: order,
       check: check,
       open: open,
       courses: widget.courses,
+      lastAdded: _lastAdded,
       onEdit: _edit,
       onQty: _setQty,
       onTypeQty: _typeQty,
@@ -233,11 +273,13 @@ class _OrderScreenState extends State<OrderScreen> {
         ? Column(
             children: [
               _SeatCourseBar(
-                guests: (order?.fields['guests'] as int?) ?? 0,
+                seats: seats,
                 seat: _seat,
                 course: _course,
                 courses: widget.courses,
                 onSeat: (seat) => setState(() => _seat = seat),
+                onAddSeat: () => _setSeats(order, seats + 1),
+                onRemoveSeat: () => _setSeats(order, seats - 1),
                 onCourse: (course) => setState(() => _course = course),
               ),
               Expanded(
@@ -296,13 +338,15 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 }
 
-/// The lines on the check with their prices, and the totals the backend computed.
-class _TicketPanel extends StatelessWidget {
+/// The lines on the check with their prices, and the totals the backend computed. The line added last
+/// scrolls into view, so the operator sees what the last tap did.
+class _TicketPanel extends StatefulWidget {
   const _TicketPanel({
     required this.order,
     required this.check,
     required this.open,
     required this.courses,
+    required this.lastAdded,
     required this.onEdit,
     required this.onQty,
     required this.onTypeQty,
@@ -312,96 +356,157 @@ class _TicketPanel extends StatelessWidget {
   final Check? check;
   final bool open;
   final List<Course> courses;
+  final String? lastAdded;
   final ValueChanged<Line> onEdit;
   final void Function(Line line, int qty) onQty;
   final ValueChanged<Line> onTypeQty;
 
   @override
+  State<_TicketPanel> createState() => _TicketPanelState();
+}
+
+class _TicketPanelState extends State<_TicketPanel> {
+  final _keys = <String, GlobalKey>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _showLastAdded(); // the phone's Check tab opens on it too
+  }
+
+  @override
+  void didUpdateWidget(_TicketPanel old) {
+    super.didUpdateWidget(old);
+    if (widget.lastAdded != old.lastAdded) _showLastAdded();
+  }
+
+  void _showLastAdded() {
+    final id = widget.lastAdded;
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final line = _keys[id]?.currentContext;
+      if (!mounted || line == null) return;
+      Scrollable.ensureVisible(
+        line,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final order = this.order;
+    final order = widget.order;
+    final open = widget.open;
+    final onEdit = widget.onEdit;
+    final onQty = widget.onQty;
+    final onTypeQty = widget.onTypeQty;
     final theme = Theme.of(context);
     if (order == null) return const Center(child: CircularProgressIndicator());
     if (order.shownLines.isEmpty) return const Center(child: Text('Nothing ordered yet.'));
-    final check = this.check;
+    final shown = {for (final l in order.shownLines) l.lineId};
+    _keys.removeWhere((id, _) => !shown.contains(id));
+    final check = widget.check;
     return Column(
       children: [
         Expanded(
-          child: ListView(
-            children: [
-              for (final group in _byCourse(order)) ...[
-                _CourseHeader(name: group.$1, state: group.$2),
-                for (final line in group.$3)
-                  Builder(
-                    builder: (context) {
-                      final priced = check?.line(line.lineId);
-                      final changeable = open && line.isActive;
-                      return ListTile(
-                        dense: true,
-                        onTap: changeable ? () => onEdit(line) : null,
-                        leading: _Hold(
-                          key: ValueKey('qty-${line.lineId}'),
-                          tooltip: 'Tap for one more, hold to type how many',
-                          onTap: changeable ? () => onQty(line, line.qty + 1) : null,
-                          onLongPress: changeable ? () => onTypeQty(line) : null,
-                          child: SizedBox(
-                            width: 44,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text('${line.qty}×', style: theme.textTheme.titleMedium),
-                                  Text(
-                                    line.seat == null ? 'table' : 'seat ${line.seat}',
-                                    style: theme.textTheme.labelSmall,
+          // not a lazy list: a check is short, and the line added last must exist to scroll to it
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                for (final group in widget._byCourse(order)) ...[
+                  _CourseHeader(name: group.$1, state: group.$2),
+                  for (final line in group.$3)
+                    Builder(
+                      builder: (context) {
+                        final priced = check?.line(line.lineId);
+                        final changeable = open && line.isActive;
+                        return ListTile(
+                          key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
+                          dense: true,
+                          onTap: changeable ? () => onEdit(line) : null,
+                          leading: _Hold(
+                            key: ValueKey('qty-${line.lineId}'),
+                            tooltip: 'Tap for one more, hold to type how many',
+                            onTap: changeable ? () => onQty(line, line.qty + 1) : null,
+                            onLongPress: changeable ? () => onTypeQty(line) : null,
+                            // the sync mark has its own fixed slot on the far left, so nothing moves when it shows
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 14,
+                                  child: line.pending
+                                      ? Icon(
+                                          Icons.cloud_upload_outlined,
+                                          key: ValueKey('sending-${line.lineId}'),
+                                          size: 12,
+                                          color: theme.colorScheme.onSurfaceVariant,
+                                        )
+                                      : null,
+                                ),
+                                SizedBox(
+                                  width: 40,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text('${line.qty}×', style: theme.textTheme.titleMedium),
+                                        Text(
+                                          line.seat == null ? 'table' : 'seat ${line.seat}',
+                                          style: theme.textTheme.labelSmall,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                        title: Text(
-                          priced?.name ?? line.item,
-                          style: line.isVoid ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
-                        ),
-                        subtitle: Text(
-                          [
-                            ...?priced?.modifiers,
-                            if (line.isVoid) 'void',
-                            if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
-                            if (line.isActive && line.modifiedAfterFire) 'added after fire',
-                            if (line.note.isNotEmpty) line.note,
-                          ].join(' · '),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (line.pending)
-                              const Padding(
-                                padding: EdgeInsets.only(right: 4),
-                                child: Icon(Icons.cloud_upload_outlined, size: 14),
+                          title: Text(
+                            priced?.name ?? line.item,
+                            style: line.isVoid ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
+                          ),
+                          subtitle: Text(
+                            [
+                              ...?priced?.modifiers,
+                              if (line.isVoid) 'void',
+                              if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
+                              if (line.isActive && line.modifiedAfterFire) 'added after fire',
+                              if (line.note.isNotEmpty) line.note,
+                            ].join(' · '),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // a fixed width, so a longer price does not push the name onto another line
+                              SizedBox(
+                                width: 60,
+                                child: Text(priced?.total ?? '', textAlign: TextAlign.end, maxLines: 1),
                               ),
-                            if (priced != null) Text(priced.total),
-                            if (changeable)
-                              _Hold(
-                                key: ValueKey('bin-${line.lineId}'),
-                                tooltip: line.qty > 1
-                                    ? 'Tap for one fewer, hold to take them all off'
-                                    : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
-                                onTap: () => onQty(line, line.qty - 1),
-                                onLongPress: () => onQty(line, 0),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: Icon(line.fired ? Icons.block : Icons.delete_outline),
+                              if (changeable)
+                                _Hold(
+                                  key: ValueKey('bin-${line.lineId}'),
+                                  tooltip: line.qty > 1
+                                      ? 'Tap for one fewer, hold to take them all off'
+                                      : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
+                                  onTap: () => onQty(line, line.qty - 1),
+                                  onLongPress: () => onQty(line, 0),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10),
+                                    child: Icon(line.fired ? Icons.block : Icons.delete_outline),
+                                  ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         if (check != null)
@@ -562,34 +667,31 @@ class _CourseHeader extends StatelessWidget {
   }
 }
 
-/// Which seat and course the next dish goes to. Seats run to the party size, plus one more on demand.
-class _SeatCourseBar extends StatefulWidget {
+/// Which seat and course the next dish goes to, and the seats at the table: + adds one, − takes the last
+/// one away once nothing is on it.
+class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
-    required this.guests,
+    required this.seats,
     required this.seat,
     required this.course,
     required this.courses,
     required this.onSeat,
+    required this.onAddSeat,
+    required this.onRemoveSeat,
     required this.onCourse,
   });
 
-  final int guests;
+  final int seats;
   final int? seat;
   final String course;
   final List<Course> courses;
   final ValueChanged<int?> onSeat;
+  final VoidCallback onAddSeat;
+  final VoidCallback onRemoveSeat;
   final ValueChanged<String> onCourse;
 
   @override
-  State<_SeatCourseBar> createState() => _SeatCourseBarState();
-}
-
-class _SeatCourseBarState extends State<_SeatCourseBar> {
-  int _extra = 0;
-
-  @override
   Widget build(BuildContext context) {
-    final seats = widget.guests + _extra;
     Widget chip(String label, bool selected, VoidCallback onTap) => Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ChoiceChip(
@@ -601,20 +703,24 @@ class _SeatCourseBarState extends State<_SeatCourseBar> {
     );
     final seatChips = [
       const Text('Seat  '),
-      chip('Table', widget.seat == null, () => widget.onSeat(null)),
-      for (var i = 1; i <= seats; i++) chip('$i', widget.seat == i, () => widget.onSeat(i)),
+      chip('Table', seat == null, () => onSeat(null)),
+      for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i)),
+      IconButton(
+        tooltip: 'Remove seat $seats',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.remove_circle_outline),
+        onPressed: seats > 0 ? onRemoveSeat : null,
+      ),
       IconButton(
         tooltip: 'Add a seat',
+        visualDensity: VisualDensity.compact,
         icon: const Icon(Icons.add_circle_outline),
-        onPressed: () {
-          setState(() => _extra++);
-          widget.onSeat(widget.guests + _extra);
-        },
+        onPressed: onAddSeat,
       ),
     ];
     final courseChips = [
       const Text('Course  '),
-      for (final c in widget.courses) chip(c.name, widget.course == c.id, () => widget.onCourse(c.id)),
+      for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
     ];
     Widget row(List<Widget> children) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
