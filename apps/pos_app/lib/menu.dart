@@ -280,6 +280,9 @@ class CheckLine {
   final String total;
   final int? seat;
   final List<String> modifiers;
+
+  CheckLine withQty(int qty, String total) =>
+      CheckLine(lineId: lineId, name: name, qty: qty, total: total, seat: seat, modifiers: modifiers);
 }
 
 class TaxLine {

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../menu.dart';
+import 'drill_down.dart';
 
 /// A line the operator configured: what to send in `add_line`.
 class ChosenLine {
@@ -27,8 +28,6 @@ class ChosenLine {
   final String? itemId;
 }
 
-/// The menu as buttons: sections across the top, dishes in a grid, a search box. A dish with nothing to ask
-/// is added with one tap; anything else opens [ItemSheet].
 /// How often a menu on screen asks whether it changed, and how long one read is kept at most: lunch ends
 /// and dinner starts without anyone saving anything.
 abstract final class MenuPanelCheck {
@@ -36,6 +35,10 @@ abstract final class MenuPanelCheck {
   static const reload = Duration(minutes: 5);
 }
 
+/// The menu as buttons. It opens on its categories; a category opens its dishes and shrinks the categories
+/// to a strip on top, and pulling down at the top of the dishes goes back (see [DrillDown]). A category with
+/// subcategories opens the same way, one level at a time. A dish with nothing to ask is added with one tap;
+/// anything else opens [ItemSheet]. The search box on the categories finds dishes in all of them.
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen});
 
@@ -49,7 +52,7 @@ class MenuPanel extends StatefulWidget {
 class _MenuPanelState extends State<MenuPanel> {
   List<Menu>? _menus;
   String? _error;
-  int _section = 0;
+  var _path = <String>[]; // the open categories, outermost first, by section id
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
@@ -85,25 +88,36 @@ class _MenuPanelState extends State<MenuPanel> {
     }
   }
 
-  /// A manager saved the menu (or the hour changed the menus open): read it again, keeping the section.
+  /// A manager saved the menu (or the hour changed the menus open): read it again, keeping the open category.
   Future<void> _check() async {
     if (_menus == null) return _load();
     if (DateTime.now().difference(_loadedAt) >= MenuPanelCheck.reload) return _load();
     try {
       if (await widget.api.menuRevision() != _revision) await _load();
     } on ApiException {
-      // offline: keep showing the menu already here; the status bar says why
+      // offline: keep showing the menu already here; the status icon says why
     }
   }
 
   List<MenuSection> get _sections => [for (final m in _menus ?? const <Menu>[]) ...m.sections];
 
-  List<MenuEntry> get _shown {
+  /// The open categories, as far as the menu still has them: a category a manager removed closes.
+  List<MenuSection> get _open {
+    final open = <MenuSection>[];
+    var level = _sections;
+    for (final id in _path) {
+      final s = level.where((s) => s.sectionId == id).firstOrNull;
+      if (s == null) break;
+      open.add(s);
+      level = s.sections;
+    }
+    return open;
+  }
+
+  List<MenuEntry> get _found {
     final q = _search.text.trim().toLowerCase();
-    final sections = _sections;
-    if (q.isEmpty) return sections.isEmpty ? const [] : sections[_section.clamp(0, sections.length - 1)].allEntries;
     return [
-      for (final s in sections)
+      for (final s in _sections)
         for (final e in s.allEntries)
           if (e.number?.toLowerCase() == q ||
               e.name.toLowerCase().contains(q) ||
@@ -111,6 +125,13 @@ class _MenuPanelState extends State<MenuPanel> {
             e,
     ];
   }
+
+  void _openAt(int depth, MenuSection section) => setState(() {
+    _path = [..._path.take(depth), section.sectionId];
+    _search.clear();
+  });
+
+  void _close() => setState(() => _path = _path.take(_open.length - 1).toList());
 
   /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
   Future<void> _eightySix(MenuEntry entry) async {
@@ -141,6 +162,20 @@ class _MenuPanelState extends State<MenuPanel> {
     if (chosen != null) widget.onChosen(chosen);
   }
 
+  Widget _grid({required List<MenuSection> sections, required List<MenuEntry> entries, required int depth}) =>
+      GridView.extent(
+        maxCrossAxisExtent: 180,
+        childAspectRatio: 1.35,
+        padding: const EdgeInsets.all(8),
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        physics: DrillDown.physics,
+        children: [
+          for (final s in sections) _SectionButton(section: s, onTap: () => _openAt(depth, s)),
+          for (final e in entries) _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
     if (_menus == null) {
@@ -156,57 +191,174 @@ class _MenuPanelState extends State<MenuPanel> {
               ),
       );
     }
-    final sections = _sections;
-    final shown = _shown;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: TextField(
-            controller: _search,
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Number or name',
-              isDense: true,
-              border: OutlineInputBorder(),
+    final open = _open;
+    if (open.isEmpty) {
+      final searching = _search.text.trim().isNotEmpty;
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: TextField(
+              controller: _search,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: searching
+                    ? IconButton(
+                        tooltip: 'Clear',
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(_search.clear),
+                      )
+                    : null,
+                hintText: 'Number or name',
+                isDense: true,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {}),
             ),
-            onChanged: (_) => setState(() {}),
           ),
-        ),
-        SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            children: [
-              for (var i = 0; i < sections.length; i++)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                  child: ChoiceChip(
-                    label: Text(sections[i].name),
-                    selected: _search.text.isEmpty && i == _section,
-                    onSelected: (_) => setState(() {
-                      _section = i;
-                      _search.clear();
-                    }),
+          Expanded(
+            child: searching
+                ? _grid(sections: const [], entries: _found, depth: 0)
+                : _grid(sections: _sections, entries: const [], depth: 0),
+          ),
+        ],
+      );
+    }
+    final depth = open.length - 1;
+    final here = open.last;
+    final siblings = depth == 0 ? _sections : open[depth - 1].sections;
+    return DrillDown(
+      key: ValueKey(_path.take(open.length).join('/')),
+      onClose: _close,
+      header: _Strip(
+        sections: siblings,
+        selected: here,
+        onBack: _close,
+        onTap: (s) => s == here ? _close() : _openAt(depth, s),
+      ),
+      child: _grid(sections: here.sections, entries: here.entries, depth: open.length),
+    );
+  }
+}
+
+/// The categories of one level, shrunk to a row above the open one.
+class _Strip extends StatelessWidget {
+  const _Strip({required this.sections, required this.selected, required this.onBack, required this.onTap});
+
+  final List<MenuSection> sections;
+  final MenuSection selected;
+  final VoidCallback onBack;
+  final ValueChanged<MenuSection> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 44,
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('menu-back'),
+            tooltip: 'Back to the categories',
+            icon: const Icon(Icons.expand_less),
+            onPressed: onBack,
+          ),
+          Expanded(
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 8),
+              children: [
+                for (final s in sections)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+                    child: _StripChip(section: s, selected: s == selected, onTap: () => onTap(s)),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-        ),
-        Expanded(
-          child: GridView.extent(
-            maxCrossAxisExtent: 180,
-            childAspectRatio: 1.35,
-            padding: const EdgeInsets.all(8),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
+        ],
+      ),
+    );
+  }
+}
+
+/// Scrolls itself into view when it is the open one, so the strip shows where the operator is.
+class _StripChip extends StatefulWidget {
+  const _StripChip({required this.section, required this.selected, required this.onTap});
+
+  final MenuSection section;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_StripChip> createState() => _StripChipState();
+}
+
+class _StripChipState extends State<_StripChip> {
+  @override
+  void initState() {
+    super.initState();
+    if (widget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Scrollable.ensureVisible(context, alignment: 0.5);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ChoiceChip(
+    label: Text(widget.section.name),
+    selected: widget.selected,
+    onSelected: (_) => widget.onTap(),
+    visualDensity: VisualDensity.compact,
+  );
+}
+
+class _SectionButton extends StatelessWidget {
+  const _SectionButton({required this.section, required this.onTap});
+
+  final MenuSection section;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final count = section.allEntries.length;
+    return Material(
+      color: theme.colorScheme.tertiaryContainer,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final e in shown) _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+              Expanded(
+                child: Text(
+                  section.name,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onTertiaryContainer),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      count == 1 ? '1 dish' : '$count dishes',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onTertiaryContainer),
+                ],
+              ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -236,21 +388,42 @@ class _EntryButton extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  if (entry.number != null) Text(entry.number!, style: theme.textTheme.labelMedium),
-                  const Spacer(),
+                  Expanded(
+                    child: Text(
+                      entry.number ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      style: theme.textTheme.labelMedium,
+                    ),
+                  ),
                   Text(available ? entry.priceLabel : '86', style: theme.textTheme.labelLarge),
                 ],
               ),
               const SizedBox(height: 4),
-              Text(
-                entry.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall?.copyWith(decoration: available ? null : TextDecoration.lineThrough),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        entry.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          decoration: available ? null : TextDecoration.lineThrough,
+                        ),
+                      ),
+                    ),
+                    if (entry.secondName != null)
+                      Text(
+                        entry.secondName!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                  ],
+                ),
               ),
-              if (entry.secondName != null)
-                Text(entry.secondName!, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
-              const Spacer(),
               if (!entry.quickAdd) Icon(Icons.tune, size: 14, color: theme.colorScheme.onSecondaryContainer),
             ],
           ),

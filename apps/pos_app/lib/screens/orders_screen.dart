@@ -10,6 +10,7 @@ import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
+import 'compact.dart';
 import 'floor_view.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
@@ -147,55 +148,77 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final small = compact(context);
+    final more = <(String, IconData, VoidCallback)>[
+      ('Sign out', Icons.logout, widget.session.signOut),
+      (
+        _showClosed ? 'Hide closed' : 'Show closed',
+        _showClosed ? Icons.visibility_off : Icons.visibility,
+        () => setState(() {
+          _showClosed = !_showClosed;
+          _refresh();
+        }),
+      ),
+      if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
+        (
+          'Menu editor',
+          Icons.edit_note,
+          () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MenuEditorScreen(api: widget.api, settings: widget.settings),
+            ),
+          ),
+        ),
+      (
+        'Settings',
+        Icons.settings,
+        () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SettingsScreen(settings: widget.settings, api: widget.api, relay: widget.relay),
+          ),
+        ),
+      ),
+    ];
     return Scaffold(
       appBar: AppBar(
-        title: Text('Orders · ${widget.session.staff?.name ?? ''} · ${widget.settings.device}'),
+        title: Text(
+          small
+              ? widget.session.staff?.name ?? 'Orders'
+              : 'Orders · ${widget.session.staff?.name ?? ''} · ${widget.settings.device}',
+        ),
         actions: [
+          StatusIcon(api: widget.api, outbox: widget.outbox),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: SizedBox(
-              width: 64,
+              width: small ? 40 : 64,
               child: ClipRRect(borderRadius: BorderRadius.circular(6), child: widget.camera.preview()),
             ),
           ),
-          IconButton(tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: widget.session.signOut),
           IconButton(
             tooltip: _floor ? 'List of checks' : 'Floor map',
             icon: Icon(_floor ? Icons.list_alt : Icons.table_restaurant),
             onPressed: () => setState(() => _floor = !_floor),
           ),
-          IconButton(
-            tooltip: _showClosed ? 'Hide closed' : 'Show closed',
-            icon: Icon(_showClosed ? Icons.visibility_off : Icons.visibility),
-            onPressed: () => setState(() {
-              _showClosed = !_showClosed;
-              _refresh();
-            }),
-          ),
-          if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
-            IconButton(
-              tooltip: 'Menu editor',
-              icon: const Icon(Icons.edit_note),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => MenuEditorScreen(api: widget.api, settings: widget.settings),
-                ),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => SettingsScreen(settings: widget.settings, api: widget.api, relay: widget.relay),
-              ),
-            ),
-          ),
+          if (small)
+            // a phone: the rest go in one menu, so the title still fits
+            PopupMenuButton<VoidCallback>(
+              tooltip: 'More',
+              onSelected: (action) => action(),
+              itemBuilder: (_) => [
+                for (final (label, icon, action) in more)
+                  PopupMenuItem(
+                    value: action,
+                    child: ListTile(leading: Icon(icon), title: Text(label), contentPadding: EdgeInsets.zero),
+                  ),
+              ],
+            )
+          else
+            for (final (label, icon, action) in more) IconButton(tooltip: label, icon: Icon(icon), onPressed: action),
         ],
       ),
       body: Column(
         children: [
-          StatusBar(api: widget.api, outbox: widget.outbox),
           Expanded(
             child: _floor
                 ? FloorView(key: _floorKey, api: widget.api, onTable: _onTable)
