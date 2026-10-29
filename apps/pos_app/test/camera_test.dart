@@ -41,4 +41,10 @@ void main() {
     final decoded = img.decodeJpg(encodeFrame(FramePixels(w, h, stride, Uint8List(stride * h), 0)))!;
     expect((decoded.width, decoded.height), (320, 240));
   });
+
+  test("an Android picture is turned upright by its EXIF and shrunk to 320 px", () {
+    final photo = img.Image(width: 640, height: 480)..exif.imageIfd.orientation = 6; // taken sideways
+    final decoded = img.decodeJpg(shrinkJpeg(img.encodeJpg(photo)))!;
+    expect((decoded.width, decoded.height), (240, 320));
+  });
 }

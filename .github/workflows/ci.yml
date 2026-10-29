@@ -78,3 +78,24 @@ jobs:
       - name: Test
         run: flutter test
       # macOS and iOS builds need a Mac runner (10x minutes): see apple-build.yml, run weekly and on demand.
+      # Android builds in the android job below.
+
+  android:
+    # Linux runners carry the Android SDK, so the Android build runs on every push at Linux prices.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/pos_app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build Android (debug-signed APK)
+        run: flutter build apk --release
