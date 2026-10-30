@@ -156,7 +156,11 @@ void main() {
     expect(find.text('Appetizers'), findsOneWidget);
     expect(find.text('Egg roll'), findsNothing);
 
-    // the categories travel into the strip rather than the screen swapping at once
+    // Category buttons keep the exact same size when collapsed, and the categories section only
+    // collapses by as many rows as the opened category's items need.
+    Finder categoryTile(String label) =>
+        find.ancestor(of: find.text(label), matching: find.byType(PressableScale)).first;
+    final initialTileSize = tester.getSize(categoryTile("Chef's Specials"));
     final tile = tester.getCenter(find.text("Chef's Specials"));
     await tester.tap(find.text('Appetizers'));
     await tester.pump(); // the new layout, with the travelling copies
@@ -166,16 +170,27 @@ void main() {
       for (final e in find.text("Chef's Specials").evaluate()) tester.getCenter(find.byWidget(e.widget)).dy,
     ];
     await tester.pumpAndSettle();
-    final chip = tester.getCenter(find.text("Chef's Specials"));
-    expect(chip.dy, lessThan(tile.dy));
-    expect(halfway.any((y) => y < tile.dy - 4 && y > chip.dy + 4), isTrue);
+    final after = tester.getCenter(find.text("Chef's Specials"));
+    expect(after.dy, lessThan(tile.dy));
+    expect(halfway.any((y) => y < tile.dy - 4 && y > after.dy + 4), isTrue);
+    expect(tester.getSize(categoryTile("Chef's Specials")), initialTileSize);
     expect(find.text('Egg roll'), findsOneWidget);
-    expect(find.byType(ChoiceChip), findsWidgets); // the categories, shrunk to a strip
+    expect(find.text('Pu Pu Platter'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
+    final twoRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
 
-    await tester.drag(find.text('Egg roll'), const Offset(0, 300));
+    // Chef's Specials only needs 1 row of items (2 dishes), so categories collapse by 1 row less
+    await tester.tap(find.text("Chef's Specials"));
     await tester.pumpAndSettle();
-    expect(find.text('Egg roll'), findsNothing);
+    expect(tester.getSize(categoryTile("Chef's Specials")), initialTileSize);
+    final oneRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
+    expect(oneRowCategoriesHeight, greaterThan(twoRowCategoriesHeight + 100));
+    expect(find.text("General Tso's Chicken"), findsOneWidget);
+    expect(find.text('Beef with Broccoli'), findsOneWidget);
+
+    await tester.drag(find.text("General Tso's Chicken"), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(find.text("General Tso's Chicken"), findsNothing);
     expect(find.byType(TextField), findsOneWidget);
 
     // nested: Bar opens on its subcategory and its own dishes; Beer opens one more level

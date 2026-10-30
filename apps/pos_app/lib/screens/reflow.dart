@@ -61,6 +61,11 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
       if (old.group._live[old.id] == this) old.group._live.remove(old.id);
       widget.group._live[widget.id] = this;
     }
+    if (widget.group._changing) {
+      _land();
+      _controller.reset();
+      _arrive();
+    }
   }
 
   @override
