@@ -16,6 +16,7 @@ import 'menu_editor.dart';
 import 'order_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
+import 'theme.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
 /// Both refresh every two seconds; a later slice replaces polling with a push.
@@ -94,7 +95,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Future<void> _open(String orderId, {List<Course> courses = Course.defaults}) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
+      PosPageRoute(
         builder: (_) => OrderScreen(
           api: widget.api,
           outbox: widget.outbox,
@@ -115,22 +116,31 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (checks.length > 1) {
       final picked = await showModalBottomSheet<String>(
         context: context,
+        showDragHandle: true,
         builder: (context) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final c in checks)
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final c in checks)
+                  ListTile(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    leading: CircleAvatar(child: Text(table.label)),
+                    title: Text('${table.label} · ${c.guests ?? '?'} guests · ${c.server ?? ''}'),
+                    subtitle: Text('${c.items} items · ${c.total ?? ''}'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).pop(c.orderId),
+                  ),
+                const Divider(height: 12),
                 ListTile(
-                  title: Text('${table.label} · ${c.guests ?? '?'} guests · ${c.server ?? ''}'),
-                  subtitle: Text('${c.items} items · ${c.total ?? ''}'),
-                  onTap: () => Navigator.of(context).pop(c.orderId),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  leading: const Icon(Icons.add_circle_outline),
+                  title: const Text('New check at this table'),
+                  onTap: () => Navigator.of(context).pop(''),
                 ),
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: const Text('New check at this table'),
-                onTap: () => Navigator.of(context).pop(''),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -148,6 +158,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final posColors = PosColors.of(context);
     final small = compact(context);
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
@@ -164,7 +177,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           'Menu editor',
           Icons.edit_note,
           () => Navigator.of(context).push(
-            MaterialPageRoute(
+            PosPageRoute(
               builder: (_) => MenuEditorScreen(api: widget.api, settings: widget.settings),
             ),
           ),
@@ -173,7 +186,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         'Settings',
         Icons.settings,
         () => Navigator.of(context).push(
-          MaterialPageRoute(
+          PosPageRoute(
             builder: (_) => SettingsScreen(settings: widget.settings, api: widget.api, relay: widget.relay),
           ),
         ),
@@ -189,15 +202,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
         actions: [
           StatusIcon(api: widget.api, outbox: widget.outbox),
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: SizedBox(
-              width: small ? 40 : 64,
-              child: ClipRRect(borderRadius: BorderRadius.circular(6), child: widget.camera.preview()),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: Container(
+              width: small ? 40 : 60,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: ClipRRect(borderRadius: BorderRadius.circular(7), child: widget.camera.preview()),
             ),
           ),
           IconButton(
             tooltip: _floor ? 'List of checks' : 'Floor map',
-            icon: Icon(_floor ? Icons.list_alt : Icons.table_restaurant),
+            icon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: Icon(
+                _floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded,
+                key: ValueKey(_floor),
+              ),
+            ),
             onPressed: () => setState(() => _floor = !_floor),
           ),
           if (small)
@@ -220,34 +243,77 @@ class _OrdersScreenState extends State<OrdersScreen> {
       body: Column(
         children: [
           Expanded(
-            child: _floor
-                ? FloorView(key: _floorKey, api: widget.api, onTable: _onTable)
-                : _orders.isEmpty
-                ? const Center(child: Text('No open orders. Tap + to start one.'))
-                : ListView.separated(
-                    itemCount: _orders.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, i) {
-                      final order = _orders[i];
-                      final lines = order.activeLines;
-                      final items = lines.fold<int>(0, (n, l) => n + l.qty);
-                      return ListTile(
-                        leading: CircleAvatar(child: Text(order.table.isEmpty ? '?' : order.table)),
-                        title: Text(
-                          order.table.isEmpty ? 'To go ${order.fields['note'] ?? ''}' : 'Table ${order.table}',
-                        ),
-                        subtitle: Text('$items items · ${order.status}${order.isFired ? ' · fired' : ''}'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _open(order.orderId),
-                      );
-                    },
-                  ),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: _floor
+                  ? FloorView(key: _floorKey, api: widget.api, onTable: _onTable)
+                  : _orders.isEmpty
+                  ? Center(
+                      key: const ValueKey('empty-orders'),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerLow,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.receipt_long_outlined, size: 36, color: scheme.outline),
+                          ),
+                          const SizedBox(height: 14),
+                          const Text('No open orders. Tap + to start one.'),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      key: const ValueKey('orders-list'),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+                      itemCount: _orders.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, i) {
+                        final order = _orders[i];
+                        final lines = order.activeLines;
+                        final items = lines.fold<int>(0, (n, l) => n + l.qty);
+                        final isTakeout = order.table.isEmpty;
+                        return PressableScale(
+                          pressedScale: 0.985,
+                          child: Card(
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              leading: CircleAvatar(
+                                backgroundColor: order.isFired ? posColors.fired : scheme.primaryContainer,
+                                foregroundColor: order.isFired ? posColors.firedText : scheme.onPrimaryContainer,
+                                child: Text(
+                                  isTakeout ? '?' : order.table,
+                                  style: const TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                              title: Text(
+                                isTakeout ? 'To go ${order.fields['note'] ?? ''}' : 'Table ${order.table}',
+                                style: theme.textTheme.titleMedium,
+                              ),
+                              subtitle: Text(
+                                '$items items · ${order.status}${order.isFired ? ' · fired' : ''}',
+                                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => _open(order.orderId),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _newOrder,
-        icon: const Icon(Icons.add),
+        icon: const Icon(Icons.shopping_bag_outlined),
         label: const Text('To go'),
       ),
     );
@@ -277,7 +343,10 @@ class _TableDialogState extends State<_TableDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
-        decoration: const InputDecoration(labelText: 'Name for the order (optional)'),
+        decoration: const InputDecoration(
+          labelText: 'Name for the order (optional)',
+          prefixIcon: Icon(Icons.person_outline),
+        ),
         onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
       ),
       actions: [
@@ -301,14 +370,51 @@ class _GuestsDialogState extends State<_GuestsDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return AlertDialog(
       title: Text('Seat ${widget.table.label}'),
-      content: Row(
+      content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(onPressed: _guests > 1 ? () => setState(() => _guests--) : null, icon: const Icon(Icons.remove)),
-          Text('$_guests guests', style: Theme.of(context).textTheme.titleLarge),
-          IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: _guests > 1 ? () => setState(() => _guests--) : null,
+                  icon: const Icon(Icons.remove),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    '$_guests guests',
+                    style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                  ),
+                ),
+                IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final preset in const [1, 2, 4, 6, 8])
+                ActionChip(
+                  label: Text('$preset'),
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor: _guests == preset ? scheme.primaryContainer : null,
+                  onPressed: () => setState(() => _guests = preset),
+                ),
+            ],
+          ),
         ],
       ),
       actions: [

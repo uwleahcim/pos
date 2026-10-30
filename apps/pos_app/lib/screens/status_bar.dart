@@ -68,7 +68,10 @@ class _StatusIconState extends State<StatusIcon> {
             isLabelVisible: refused || pending > 0,
             backgroundColor: refused ? scheme.error : scheme.secondary,
             label: Text(refused ? '!' : '$pending'),
-            child: Icon(icon, color: color),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: Icon(icon, key: ValueKey(icon), color: color),
+            ),
           ),
         );
       },
@@ -81,38 +84,54 @@ class _StatusIconState extends State<StatusIcon> {
     builder: (context) => ListenableBuilder(
       listenable: Listenable.merge([widget.api.connection, widget.outbox]),
       builder: (context, _) {
+        final scheme = Theme.of(context).colorScheme;
         final conn = widget.api.connection.value;
         final outbox = widget.outbox;
         final refusal = outbox.lastRefusal;
         final endpoints = widget.api.settings.endpoints;
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ListTile(
-                  leading: Icon(conn.isOnline ? Icons.cloud_done_outlined : Icons.cloud_off),
-                  title: Text(conn.isOnline ? 'Connected to ${conn.endpoint}' : 'Not connected'),
-                  subtitle: conn.isOnline ? null : Text(conn.error ?? 'connecting'),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.outbox_outlined),
-                  title: Text(outbox.pending == 0 ? 'Everything is sent' : '${outbox.pending} waiting to send'),
-                  subtitle: outbox.pending == 0 ? null : const Text('They go as soon as a backend answers.'),
-                ),
-                if (refusal != null)
-                  ListTile(
-                    leading: Icon(Icons.block, color: Theme.of(context).colorScheme.error),
-                    title: Text('Not added: $refusal'),
-                    trailing: TextButton(onPressed: outbox.clearRefusal, child: const Text('Dismiss')),
+                Card(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: Icon(
+                          conn.isOnline ? Icons.cloud_done_outlined : Icons.cloud_off,
+                          color: conn.isOnline ? scheme.primary : scheme.error,
+                        ),
+                        title: Text(conn.isOnline ? 'Connected to ${conn.endpoint}' : 'Not connected'),
+                        subtitle: conn.isOnline ? null : Text(conn.error ?? 'connecting'),
+                      ),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.outbox_outlined),
+                        title: Text(outbox.pending == 0 ? 'Everything is sent' : '${outbox.pending} waiting to send'),
+                        subtitle: outbox.pending == 0 ? null : const Text('They go as soon as a backend answers.'),
+                      ),
+                      if (refusal != null) ...[
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: Icon(Icons.block, color: scheme.error),
+                          title: Text('Not added: $refusal'),
+                          trailing: TextButton(onPressed: outbox.clearRefusal, child: const Text('Dismiss')),
+                        ),
+                      ],
+                      if (endpoints.length > 1) ...[
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.swap_vert),
+                          title: const Text('Backends, in failover order'),
+                          subtitle: Text(endpoints.join('\n')),
+                        ),
+                      ],
+                    ],
                   ),
-                if (endpoints.length > 1)
-                  ListTile(
-                    leading: const Icon(Icons.swap_vert),
-                    title: const Text('Backends, in failover order'),
-                    subtitle: Text(endpoints.join('\n')),
-                  ),
+                ),
               ],
             ),
           ),

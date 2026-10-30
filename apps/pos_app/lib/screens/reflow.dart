@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// Moves elements to their new places when a layout changes, instead of swapping the screen at once: a
@@ -106,14 +108,19 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: _t,
     child: widget.child,
-    builder: (context, child) => Opacity(
-      opacity: switch (_mode) {
-        _Mode.still => 1,
-        _Mode.moving => 0,
-        _Mode.fading => _t.value,
-      },
-      child: child,
-    ),
+    builder: (context, child) {
+      final v = _t.value;
+      return Opacity(
+        opacity: switch (_mode) {
+          _Mode.still => 1,
+          _Mode.moving => 0,
+          _Mode.fading => v,
+        },
+        child: _mode == _Mode.fading
+            ? Transform.scale(scale: 0.94 + 0.06 * v, child: child)
+            : child,
+      );
+    },
   );
 }
 
@@ -136,6 +143,7 @@ class _Flight extends StatelessWidget {
       final (start, before) = from;
       final end = to._rect() ?? start;
       final t = to._t.value;
+      final lift = math.sin(t * math.pi);
       final box = overlay.context.findRenderObject() as RenderBox?;
       final origin = box == null ? Offset.zero : box.localToGlobal(Offset.zero);
       Widget look(Widget child, Size size, double opacity) => Opacity(
@@ -148,11 +156,23 @@ class _Flight extends StatelessWidget {
       return Positioned.fromRect(
         rect: Rect.lerp(start, end, t)!.shift(-origin),
         child: IgnorePointer(
-          child: Material(
-            type: MaterialType.transparency,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [look(before, start.size, 1 - t), look(to.widget.child, end.size, t)],
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12 * lift),
+                  blurRadius: 12 * lift,
+                  offset: Offset(0, 4 * lift),
+                ),
+              ],
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [look(before, start.size, 1 - t), look(to.widget.child, end.size, t)],
+              ),
             ),
           ),
         ),

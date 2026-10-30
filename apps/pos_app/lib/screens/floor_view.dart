@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../floor.dart';
+import 'theme.dart';
 
 /// The restaurant's floor as drawn on its plan: tables coloured by what is happening at them, a room picker,
 /// and a tap that opens the table's check (or seats a new party).
@@ -49,6 +50,9 @@ class FloorViewState extends State<FloorView> {
   Widget build(BuildContext context) {
     final plan = _plan;
     if (plan == null) return const Center(child: CircularProgressIndicator());
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final posColors = PosColors.of(context);
     final rooms = plan.rooms;
     final room = rooms.where((r) => r.id == _room).firstOrNull;
     final shown = plan.tables.where((t) => room == null || t.room == room.id).toList();
@@ -60,15 +64,19 @@ class FloorViewState extends State<FloorView> {
     final busy = plan.status.length;
     return Column(
       children: [
-        SizedBox(
-          height: 48,
+        Container(
+          height: 54,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLowest,
+            border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+          ),
           child: ListView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
               for (final r in [null, ...rooms])
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                   child: ChoiceChip(
                     label: Text(r?.name ?? 'Whole floor'),
                     selected: _room == r?.id,
@@ -78,42 +86,77 @@ class FloorViewState extends State<FloorView> {
               Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('$busy of ${plan.tables.length} tables open'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: scheme.outlineVariant),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: busy > 0 ? posColors.firedBorder : scheme.outline,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '$busy of ${plan.tables.length} tables open',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontFeatures: PosTheme.tabular,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
         ),
         Expanded(
-          child: InteractiveViewer(
-            maxScale: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: FittedBox(
-                child: SizedBox(
-                  width: right - left,
-                  height: bottom - top,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      if (room == null)
-                        for (final r in rooms)
-                          Positioned(
-                            left: r.x - left,
-                            top: r.y - top,
-                            width: r.w,
-                            height: r.h,
-                            child: _RoomOutline(name: r.name),
-                          ),
-                      for (final t in shown)
-                        _TablePositioned(
-                          table: t,
-                          left: left,
-                          top: top,
-                          checks: plan.checksAt(t.id),
-                          onTap: () => widget.onTable(plan, t),
-                        ),
-                    ],
+          child: ColoredBox(
+            color: posColors.floorCanvas,
+            child: CustomPaint(
+              painter: _FloorGridPainter(color: posColors.floorGridDot),
+              child: InteractiveViewer(
+                maxScale: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: FittedBox(
+                    child: SizedBox(
+                      width: right - left,
+                      height: bottom - top,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          if (room == null)
+                            for (final r in rooms)
+                              Positioned(
+                                left: r.x - left,
+                                top: r.y - top,
+                                width: r.w,
+                                height: r.h,
+                                child: _RoomOutline(name: r.name),
+                              ),
+                          for (final t in shown)
+                            _TablePositioned(
+                              key: ValueKey(t.id),
+                              table: t,
+                              left: left,
+                              top: top,
+                              checks: plan.checksAt(t.id),
+                              onTap: () => widget.onTable(plan, t),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -126,6 +169,27 @@ class FloorViewState extends State<FloorView> {
   }
 }
 
+class _FloorGridPainter extends CustomPainter {
+  const _FloorGridPainter({required this.color});
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    const step = 28.0;
+    for (double x = step / 2; x < size.width; x += step) {
+      for (double y = step / 2; y < size.height; y += step) {
+        canvas.drawCircle(Offset(x, y), 1.1, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_FloorGridPainter old) => old.color != color;
+}
+
 class _RoomOutline extends StatelessWidget {
   const _RoomOutline({required this.name});
   final String name;
@@ -133,16 +197,34 @@ class _RoomOutline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final posColors = PosColors.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: Border.all(color: scheme.outlineVariant, width: 2),
-        borderRadius: BorderRadius.circular(8),
+        color: posColors.roomFill,
+        border: Border.all(color: posColors.roomBorder, width: 1.8),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Align(
         alignment: Alignment.bottomRight,
         child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Text(name, style: TextStyle(fontSize: 22, color: scheme.outline)),
+          padding: const EdgeInsets.all(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: posColors.roomBorder.withValues(alpha: 0.6)),
+            ),
+            child: Text(
+              name,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -157,8 +239,16 @@ Color stageColor(ColorScheme scheme, String? stage) => switch (stage) {
   _ => scheme.surfaceContainerHighest,
 };
 
+(Color fill, Color border, Color text) _stageStyle(PosColors colors, String? stage) => switch (stage) {
+  'seated' => (colors.seated, colors.seatedBorder, colors.seatedText),
+  'waiting' => (colors.waiting, colors.waitingBorder, colors.waitingText),
+  'fired' => (colors.fired, colors.firedBorder, colors.firedText),
+  _ => (colors.freeTable, colors.freeTableBorder, colors.freeTableText),
+};
+
 class _TablePositioned extends StatelessWidget {
   const _TablePositioned({
+    super.key,
     required this.table,
     required this.left,
     required this.top,
@@ -175,11 +265,19 @@ class _TablePositioned extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final posColors = PosColors.of(context);
     final w = math.max(table.w, _minSide), h = math.max(table.h, _minSide);
     final check = checks.firstOrNull;
     final minutes = check?.minutesOpen(DateTime.now());
-    final color = stageColor(scheme, check?.stage);
+    final (fill, border, textColor) = _stageStyle(posColors, check?.stage);
+    final radius = BorderRadius.circular(table.kind == 'booth' ? 12 : 8);
+    final shape = table.round
+        ? CircleBorder(side: BorderSide(color: border, width: check == null ? 1.5 : 2.2))
+        : RoundedRectangleBorder(
+            borderRadius: radius,
+            side: BorderSide(color: border, width: check == null ? 1.5 : 2.2),
+          );
+
     return Positioned(
       left: table.x - w / 2 - left,
       top: table.y - h / 2 - top,
@@ -187,31 +285,66 @@ class _TablePositioned extends StatelessWidget {
       height: h,
       child: Transform.rotate(
         angle: table.rotation * math.pi / 180,
-        child: Material(
-          color: color,
-          shape: table.round
-              ? const CircleBorder()
-              : RoundedRectangleBorder(borderRadius: BorderRadius.circular(table.kind == 'booth' ? 10 : 4)),
-          elevation: check == null ? 0 : 2,
-          child: InkWell(
-            customBorder: table.round ? const CircleBorder() : null,
-            onTap: onTap,
-            child: Transform.rotate(
-              angle: -table.rotation * math.pi / 180,
-              child: Center(
-                child: FittedBox(
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(table.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        if (check != null)
-                          Text(
-                            '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                      ],
+        child: PressableScale(
+          pressedScale: 0.93,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            decoration: ShapeDecoration(
+              color: fill,
+              shape: shape,
+              shadows: [
+                BoxShadow(
+                  color: check == null ? Colors.black.withValues(alpha: 0.04) : border.withValues(alpha: 0.22),
+                  blurRadius: check == null ? 4 : 10,
+                  offset: Offset(0, check == null ? 2 : 3),
+                ),
+              ],
+            ),
+            child: Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                customBorder: table.round ? const CircleBorder() : RoundedRectangleBorder(borderRadius: radius),
+                onTap: onTap,
+                child: Transform.rotate(
+                  angle: -table.rotation * math.pi / 180,
+                  child: Center(
+                    child: FittedBox(
+                      child: Padding(
+                        padding: const EdgeInsets.all(3),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              table.label,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                color: textColor,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            if (check != null)
+                              Container(
+                                margin: const EdgeInsets.only(top: 1),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                                decoration: BoxDecoration(
+                                  color: border.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: textColor,
+                                    fontFeatures: PosTheme.tabular,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -229,24 +362,42 @@ class _Legend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    Widget dot(String? stage, String label) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(color: stageColor(scheme, stage), shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 4),
-          Text(label),
-        ],
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final posColors = PosColors.of(context);
+    Widget dot(String? stage, String label) {
+      final (fill, border, _) = _stageStyle(posColors, stage);
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 13,
+              height: 13,
+              decoration: BoxDecoration(
+                color: fill,
+                shape: BoxShape.circle,
+                border: Border.all(color: border, width: 2),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
       ),
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Wrap(
         alignment: WrapAlignment.center,
         children: [

@@ -59,53 +59,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: Text(widget.firstRun ? 'Set up this terminal' : 'Settings')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            controller: _device,
-            decoration: const InputDecoration(
-              labelText: 'Device name',
-              helperText: 'Letters and digits, unique per terminal, e.g. bar1 or ipad3',
-            ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: _device,
+                        decoration: const InputDecoration(
+                          labelText: 'Device name',
+                          helperText: 'Letters and digits, unique per terminal, e.g. bar1 or ipad3',
+                          prefixIcon: Icon(Icons.devices_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: _endpoints,
+                        minLines: 3,
+                        maxLines: 6,
+                        decoration: const InputDecoration(
+                          labelText: 'Backend addresses, one per line, in failover order',
+                          helperText: 'Hub first, then the standby hub, then the cloud. e.g. http://172.19.1.179:8000',
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        value: _relay,
+                        onChanged: (v) => setState(() => _relay = v),
+                        title: const Text('Print relay'),
+                        subtitle: Text(
+                          widget.relay == null
+                              ? 'This terminal prints queued tickets when the hub cannot reach the printers'
+                              : 'Printed ${widget.relay!.printed}, failed ${widget.relay!.failed}'
+                                    '${widget.relay!.lastError == null ? '' : ' · ${widget.relay!.lastError}'}',
+                        ),
+                      ),
+                      if (widget.api != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _testPrint,
+                                icon: const Icon(Icons.print_outlined),
+                                label: const Text('Test print on every printer'),
+                              ),
+                              if (_printMessage != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 10),
+                                  child: Text(
+                                    _printMessage!,
+                                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(onPressed: _save, child: const Text('Save')),
+            ],
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _endpoints,
-            minLines: 3,
-            maxLines: 6,
-            decoration: const InputDecoration(
-              labelText: 'Backend addresses, one per line, in failover order',
-              helperText: 'Hub first, then the standby hub, then the cloud. e.g. http://172.19.1.179:8000',
-              alignLabelWithHint: true,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SwitchListTile(
-            value: _relay,
-            onChanged: (v) => setState(() => _relay = v),
-            title: const Text('Print relay'),
-            subtitle: Text(
-              widget.relay == null
-                  ? 'This terminal prints queued tickets when the hub cannot reach the printers'
-                  : 'Printed ${widget.relay!.printed}, failed ${widget.relay!.failed}'
-                        '${widget.relay!.lastError == null ? '' : ' · ${widget.relay!.lastError}'}',
-            ),
-          ),
-          if (widget.api != null) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _testPrint,
-              icon: const Icon(Icons.print),
-              label: const Text('Test print on every printer'),
-            ),
-            if (_printMessage != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_printMessage!)),
-          ],
-          const SizedBox(height: 24),
-          FilledButton(onPressed: _save, child: const Text('Save')),
-        ],
+        ),
       ),
     );
   }

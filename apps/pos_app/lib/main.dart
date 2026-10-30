@@ -8,6 +8,7 @@ import 'print_relay.dart';
 import 'screens/orders_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
+import 'screens/theme.dart';
 import 'session.dart';
 import 'settings.dart';
 
@@ -59,31 +60,48 @@ class PosApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'POS',
-      theme: ThemeData(colorSchemeSeed: const Color(0xFFB3261E), useMaterial3: true),
+      debugShowCheckedModeBanner: false,
+      theme: PosTheme.light(),
+      darkTheme: PosTheme.dark(),
       home: ListenableBuilder(
         listenable: Listenable.merge([settings, session]),
         builder: (context, _) {
-          if (!settings.isConfigured) return SettingsScreen(settings: settings, firstRun: true);
-          if (!session.signedIn) {
-            return SignInScreen(
+          final Widget screen;
+          if (!settings.isConfigured) {
+            screen = SettingsScreen(
+              key: const ValueKey('first-run-settings'),
+              settings: settings,
+              firstRun: true,
+            );
+          } else if (!session.signedIn) {
+            screen = SignInScreen(
+              key: const ValueKey('sign-in'),
               session: session,
               settings: settings,
               camera: camera,
               onSettings: () => Navigator.of(context).push(
-                MaterialPageRoute(
+                PosPageRoute(
                   builder: (_) => SettingsScreen(settings: settings, api: api, relay: relay),
                 ),
               ),
             );
+          } else {
+            screen = OrdersScreen(
+              key: const ValueKey('orders'),
+              api: api,
+              outbox: outbox,
+              settings: settings,
+              session: session,
+              camera: camera,
+              photos: photos,
+              relay: relay,
+            );
           }
-          return OrdersScreen(
-            api: api,
-            outbox: outbox,
-            settings: settings,
-            session: session,
-            camera: camera,
-            photos: photos,
-            relay: relay,
+          return AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: screen,
           );
         },
       ),

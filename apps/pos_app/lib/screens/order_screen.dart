@@ -12,6 +12,7 @@ import '../photos.dart';
 import 'compact.dart';
 import 'menu_panel.dart';
 import 'status_bar.dart';
+import 'theme.dart';
 
 /// One order: its check as the backend prices it, and the menu whose taps append to it.
 class OrderScreen extends StatefulWidget {
@@ -151,7 +152,14 @@ class _OrderScreenState extends State<OrderScreen> {
           ),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
-            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Void')),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Void'),
+            ),
           ],
         ),
       );
@@ -255,6 +263,7 @@ class _OrderScreenState extends State<OrderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final order = _order;
     final check = order == null ? null : estimateCheck(_readCheck, order, _local);
     final open = order?.isOpen ?? true;
@@ -287,7 +296,16 @@ class _OrderScreenState extends State<OrderScreen> {
               ),
             ],
           )
-        : const Center(child: Text('This check is closed. Reopen it to add items.'));
+        : Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_outline_rounded, size: 36, color: scheme.outline),
+                const SizedBox(height: 12),
+                const Text('This check is closed. Reopen it to add items.'),
+              ],
+            ),
+          );
     return Scaffold(
       appBar: AppBar(
         title: Text(order == null ? 'Order' : 'Table ${order.table} · ${order.status}'),
@@ -388,8 +406,8 @@ class _TicketPanelState extends State<_TicketPanel> {
       if (!mounted || line == null) return;
       Scrollable.ensureVisible(
         line,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
         alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
       );
     });
@@ -403,127 +421,202 @@ class _TicketPanelState extends State<_TicketPanel> {
     final onQty = widget.onQty;
     final onTypeQty = widget.onTypeQty;
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final posColors = PosColors.of(context);
     if (order == null) return const Center(child: CircularProgressIndicator());
-    if (order.shownLines.isEmpty) return const Center(child: Text('Nothing ordered yet.'));
+    if (order.shownLines.isEmpty) {
+      return Material(
+        color: posColors.checkPaper,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.receipt_outlined, size: 34, color: scheme.outline),
+              const SizedBox(height: 10),
+              const Text('Nothing ordered yet.'),
+            ],
+          ),
+        ),
+      );
+    }
     final shown = {for (final l in order.shownLines) l.lineId};
     _keys.removeWhere((id, _) => !shown.contains(id));
     final check = widget.check;
-    return Column(
-      children: [
-        Expanded(
-          // not a lazy list: a check is short, and the line added last must exist to scroll to it
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                for (final group in widget._byCourse(order)) ...[
-                  _CourseHeader(name: group.$1, state: group.$2),
-                  for (final line in group.$3)
-                    Builder(
-                      builder: (context) {
-                        final priced = check?.line(line.lineId);
-                        final changeable = open && line.isActive;
-                        return ListTile(
-                          key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
-                          dense: true,
-                          onTap: changeable ? () => onEdit(line) : null,
-                          leading: _Hold(
-                            key: ValueKey('qty-${line.lineId}'),
-                            tooltip: 'Tap for one more, hold to type how many',
-                            onTap: changeable ? () => onQty(line, line.qty + 1) : null,
-                            onLongPress: changeable ? () => onTypeQty(line) : null,
-                            // the sync mark has its own fixed slot on the far left, so nothing moves when it shows
-                            child: Row(
+    return Material(
+      color: posColors.checkPaper,
+      child: Column(
+        children: [
+          Expanded(
+            // not a lazy list: a check is short, and the line added last must exist to scroll to it
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final group in widget._byCourse(order)) ...[
+                    _CourseHeader(name: group.$1, state: group.$2),
+                    for (final line in group.$3)
+                      Builder(
+                        builder: (context) {
+                          final priced = check?.line(line.lineId);
+                          final changeable = open && line.isActive;
+                          final isLatest = line.lineId == widget.lastAdded;
+                          final tile = ListTile(
+                            key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
+                            dense: true,
+                            onTap: changeable ? () => onEdit(line) : null,
+                            leading: _Hold(
+                              key: ValueKey('qty-${line.lineId}'),
+                              tooltip: 'Tap for one more, hold to type how many',
+                              onTap: changeable ? () => onQty(line, line.qty + 1) : null,
+                              onLongPress: changeable ? () => onTypeQty(line) : null,
+                              // the sync mark has its own fixed slot on the far left, so nothing moves when it shows
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    child: line.pending
+                                        ? Icon(
+                                            Icons.cloud_upload_outlined,
+                                            key: ValueKey('sending-${line.lineId}'),
+                                            size: 12,
+                                            color: scheme.primary,
+                                          )
+                                        : null,
+                                  ),
+                                  SizedBox(
+                                    width: 40,
+                                    height: 34,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: line.isVoid
+                                            ? scheme.surfaceContainerHighest
+                                            : scheme.surfaceContainer,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(color: scheme.outlineVariant),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Text(
+                                                '${line.qty}×',
+                                                style: theme.textTheme.titleMedium?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                  fontFeatures: PosTheme.tabular,
+                                                ),
+                                              ),
+                                              Text(
+                                                line.seat == null ? 'table' : 'seat ${line.seat}',
+                                                style: theme.textTheme.labelSmall?.copyWith(
+                                                  color: scheme.onSurfaceVariant,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            title: Text(
+                              priced?.name ?? line.item,
+                              style: line.isVoid
+                                  ? TextStyle(
+                                      decoration: TextDecoration.lineThrough,
+                                      color: scheme.onSurfaceVariant,
+                                    )
+                                  : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(
+                              [
+                                ...?priced?.modifiers,
+                                if (line.isVoid) 'void',
+                                if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
+                                if (line.isActive && line.modifiedAfterFire) 'added after fire',
+                                if (line.note.isNotEmpty) line.note,
+                              ].join(' · '),
+                              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                            ),
+                            trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                // a fixed width, so a longer price does not push the name onto another line
                                 SizedBox(
-                                  width: 14,
-                                  child: line.pending
-                                      ? Icon(
-                                          Icons.cloud_upload_outlined,
-                                          key: ValueKey('sending-${line.lineId}'),
-                                          size: 12,
-                                          color: theme.colorScheme.onSurfaceVariant,
-                                        )
-                                      : null,
-                                ),
-                                SizedBox(
-                                  width: 40,
-                                  child: FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Text('${line.qty}×', style: theme.textTheme.titleMedium),
-                                        Text(
-                                          line.seat == null ? 'table' : 'seat ${line.seat}',
-                                          style: theme.textTheme.labelSmall,
-                                        ),
-                                      ],
+                                  width: 60,
+                                  child: Text(
+                                    priced?.total ?? '',
+                                    textAlign: TextAlign.end,
+                                    maxLines: 1,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      fontFeatures: PosTheme.tabular,
                                     ),
                                   ),
                                 ),
+                                if (changeable)
+                                  _Hold(
+                                    key: ValueKey('bin-${line.lineId}'),
+                                    tooltip: line.qty > 1
+                                        ? 'Tap for one fewer, hold to take them all off'
+                                        : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
+                                    onTap: () => onQty(line, line.qty - 1),
+                                    onLongPress: () => onQty(line, 0),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(10),
+                                      child: Icon(
+                                        line.fired ? Icons.block : Icons.delete_outline,
+                                        size: 20,
+                                        color: line.fired ? scheme.error : scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
-                          ),
-                          title: Text(
-                            priced?.name ?? line.item,
-                            style: line.isVoid ? const TextStyle(decoration: TextDecoration.lineThrough) : null,
-                          ),
-                          subtitle: Text(
-                            [
-                              ...?priced?.modifiers,
-                              if (line.isVoid) 'void',
-                              if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
-                              if (line.isActive && line.modifiedAfterFire) 'added after fire',
-                              if (line.note.isNotEmpty) line.note,
-                            ].join(' · '),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // a fixed width, so a longer price does not push the name onto another line
-                              SizedBox(
-                                width: 60,
-                                child: Text(priced?.total ?? '', textAlign: TextAlign.end, maxLines: 1),
-                              ),
-                              if (changeable)
-                                _Hold(
-                                  key: ValueKey('bin-${line.lineId}'),
-                                  tooltip: line.qty > 1
-                                      ? 'Tap for one fewer, hold to take them all off'
-                                      : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
-                                  onTap: () => onQty(line, line.qty - 1),
-                                  onLongPress: () => onQty(line, 0),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(10),
-                                    child: Icon(line.fired ? Icons.block : Icons.delete_outline),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        if (check != null)
-          Material(
-            color: theme.colorScheme.surfaceContainerHigh,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: Column(
-                children: [
-                  _TotalRow('Subtotal', check.subtotal),
-                  _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
-                  _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
+                          );
+                          if (!isLatest) return tile;
+                          return TweenAnimationBuilder<Color?>(
+                            key: ValueKey('flash-${line.lineId}'),
+                            tween: ColorTween(begin: posColors.highlightFlash, end: posColors.checkPaper),
+                            duration: const Duration(milliseconds: 650),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, color, child) =>
+                                Material(color: color ?? posColors.checkPaper, child: child),
+                            child: tile,
+                          );
+                        },
+                      ),
+                  ],
                 ],
               ),
             ),
           ),
-      ],
+          if (check != null)
+            Container(
+              decoration: BoxDecoration(
+                color: posColors.checkFooter,
+                border: Border(top: BorderSide(color: scheme.outlineVariant, width: 1.5)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+              child: Column(
+                children: [
+                  _TotalRow('Subtotal', check.subtotal),
+                  const SizedBox(height: 2),
+                  _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 6),
+                    child: Divider(height: 1),
+                  ),
+                  _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -650,17 +743,53 @@ class _CourseHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final posColors = PosColors.of(context);
     final fired = state == 'fired';
+    final badgeBg = fired ? posColors.fired : posColors.waiting;
+    final badgeFg = fired ? posColors.firedText : posColors.waitingText;
+    final badgeBorder = fired ? posColors.firedBorder : posColors.waitingBorder;
     return Container(
-      color: theme.colorScheme.surfaceContainer,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: posColors.checkHeader,
+        border: Border.symmetric(
+          horizontal: BorderSide(color: theme.colorScheme.outlineVariant, width: 0.7),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [
-          Text(name, style: theme.textTheme.titleSmall),
+          Text(
+            name,
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
           const Spacer(),
-          Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 16),
-          const SizedBox(width: 4),
-          Text(state, style: theme.textTheme.labelMedium),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: badgeBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: badgeBorder.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  fired ? Icons.local_fire_department : Icons.pause_circle_outline,
+                  size: 14,
+                  color: badgeFg,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  state,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: badgeFg,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -692,6 +821,7 @@ class _SeatCourseBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     Widget chip(String label, bool selected, VoidCallback onTap) => Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ChoiceChip(
@@ -726,8 +856,13 @@ class _SeatCourseBar extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       child: Row(children: children),
     );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: compact(context)
           // a phone: both on one line that scrolls, to leave the screen to the menu
           ? row([...seatChips, const SizedBox(width: 8), ...courseChips])
@@ -746,6 +881,7 @@ class _FireMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final posColors = PosColors.of(context);
     final waiting = order.heldCourses;
     final held = [
       for (final c in courses)
@@ -755,23 +891,51 @@ class _FireMenu extends StatelessWidget {
       tooltip: 'Fire',
       onSelected: onFire,
       itemBuilder: (_) => [
-        for (final c in held) PopupMenuItem(value: c.id, child: Text('Fire ${c.name}')),
+        for (final c in held)
+          PopupMenuItem(
+            value: c.id,
+            child: Row(
+              children: [
+                Icon(Icons.local_fire_department, size: 18, color: posColors.waitingBorder),
+                const SizedBox(width: 8),
+                Text('Fire ${c.name}'),
+              ],
+            ),
+          ),
         const PopupMenuItem(value: '*', child: Text('Fire everything')),
       ],
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: compact(context)
             ? Badge(
                 isLabelVisible: held.isNotEmpty,
                 label: Text('${held.length}'),
                 child: const Icon(Icons.local_fire_department),
               )
-            : Row(
-                children: [
-                  const Icon(Icons.local_fire_department),
-                  const SizedBox(width: 4),
-                  Text(held.isEmpty ? 'Fire' : 'Fire (${held.length} held)'),
-                ],
+            : AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: held.isNotEmpty ? posColors.waiting : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  border: held.isNotEmpty ? Border.all(color: posColors.waitingBorder.withValues(alpha: 0.6)) : null,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.local_fire_department,
+                      size: 18,
+                      color: held.isNotEmpty ? posColors.waitingText : null,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      held.isEmpty ? 'Fire' : 'Fire (${held.length} held)',
+                      style: held.isNotEmpty
+                          ? TextStyle(color: posColors.waitingText, fontWeight: FontWeight.w700)
+                          : null,
+                    ),
+                  ],
+                ),
               ),
       ),
     );
@@ -794,12 +958,18 @@ class _TotalRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = strong ? Theme.of(context).textTheme.titleMedium : Theme.of(context).textTheme.bodyMedium;
+    final theme = Theme.of(context);
+    final baseStyle = strong
+        ? theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)
+        : theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     return Row(
       children: [
-        Text(label, style: style),
+        Text(label, style: baseStyle),
         const Spacer(),
-        Text(amount, style: style),
+        Text(
+          amount,
+          style: baseStyle?.copyWith(fontFeatures: PosTheme.tabular),
+        ),
       ],
     );
   }

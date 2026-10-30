@@ -351,6 +351,8 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   }
 
   Widget _list(MenuCatalog catalog) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final q = _query.toLowerCase();
     bool matches(Map<String, dynamic> row) =>
         q.isEmpty ||
@@ -362,12 +364,23 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         final items = catalog.itemsIn(category['code'] as String).where(matches).toList();
         if (items.isEmpty && q.isNotEmpty) continue;
         tiles.add(
-          ListTile(
-            dense: true,
-            title: Text(nameOf(category).toUpperCase(), style: Theme.of(context).textTheme.labelLarge),
-            trailing: const Icon(Icons.tune, size: 18),
-            selected: _selected?.kind == 'category' && _selected?.key == category['code'],
-            onTap: () => setState(() => _selected = _Selection('category', category['code'] as String)),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ListTile(
+              dense: true,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
+              title: Text(
+                nameOf(category).toUpperCase(),
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.primary,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              trailing: const Icon(Icons.tune, size: 18),
+              selected: _selected?.kind == 'category' && _selected?.key == category['code'],
+              onTap: () => setState(() => _selected = _Selection('category', category['code'] as String)),
+            ),
           ),
         );
         for (final item in items) {
@@ -376,8 +389,15 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
           tiles.add(
             ListTile(
               dense: true,
-              contentPadding: const EdgeInsets.only(left: 32, right: 16),
-              title: Text(nameOf(item), style: item['active'] == false ? const TextStyle(color: Colors.grey) : null),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
+              contentPadding: const EdgeInsets.only(left: 28, right: 14),
+              title: Text(
+                nameOf(item),
+                style: item['active'] == false
+                    ? TextStyle(color: scheme.outline, decoration: TextDecoration.lineThrough)
+                    : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
               subtitle: Text(
                 [
                   if (nameOf(item, 'zh') != nameOf(item)) nameOf(item, 'zh'),
@@ -385,7 +405,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
                 ].join(' · '),
               ),
               trailing: catalog.isChanged('item', key) || sizes.any((v) => catalog.isChanged('variant', v['id']))
-                  ? const Icon(Icons.edit, size: 16)
+                  ? Icon(Icons.edit, size: 16, color: scheme.primary)
                   : null,
               selected: _selected?.kind == 'item' && _selected?.key == key,
               onTap: () => setState(() => _selected = _Selection('item', key)),
@@ -399,7 +419,9 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         tiles.add(
           ListTile(
             dense: true,
-            title: Text(nameOf(group)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
+            title: Text(nameOf(group), style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
             subtitle: Text(catalog.optionsOf(key).map(nameOf).join(', '), maxLines: 1, overflow: TextOverflow.ellipsis),
             selected: _selected?.kind == 'group' && _selected?.key == key,
             onTap: () => setState(() => _selected = _Selection('group', key)),
@@ -407,50 +429,67 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         );
       }
     }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: SegmentedButton<_Pane>(
-            segments: const [
-              ButtonSegment(value: _Pane.dishes, label: Text('Dishes'), icon: Icon(Icons.restaurant_menu)),
-              ButtonSegment(value: _Pane.options, label: Text('Option groups'), icon: Icon(Icons.checklist)),
-            ],
-            selected: {_pane},
-            onSelectionChanged: (s) => setState(() => _pane = s.first),
+    return Material(
+      color: scheme.surfaceContainerLowest,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: SegmentedButton<_Pane>(
+              segments: const [
+                ButtonSegment(value: _Pane.dishes, label: Text('Dishes'), icon: Icon(Icons.restaurant_menu)),
+                ButtonSegment(value: _Pane.options, label: Text('Option groups'), icon: Icon(Icons.checklist)),
+              ],
+              selected: {_pane},
+              onSelectionChanged: (s) => setState(() => _pane = s.first),
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: TextField(
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
-            onChanged: (v) => setState(() => _query = v),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: TextField(
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
+              onChanged: (v) => setState(() => _query = v),
+            ),
           ),
-        ),
-        Expanded(child: ListView(children: tiles)),
-      ],
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              children: tiles,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _detail(MenuCatalog catalog) {
     final s = _selected;
+    final Widget child;
     if (s == null || catalog.get(s.kind, s.key) == null) {
-      return const Center(child: Text('Pick a dish, a category or an option group.'));
+      child = const Center(
+        key: ValueKey('empty-detail'),
+        child: Text('Pick a dish, a category or an option group.'),
+      );
+    } else {
+      final Widget editor = switch (s.kind) {
+        'item' => ItemEditor(
+          catalog: catalog,
+          itemKey: s.key,
+          onChanged: _changed,
+          onDeleted: () => setState(() => _selected = null),
+        ),
+        'category' => CategoryEditor(catalog: catalog, categoryKey: s.key, onChanged: _changed),
+        _ => GroupEditor(catalog: catalog, groupKey: s.key, onChanged: _changed),
+      };
+      child = SingleChildScrollView(
+        key: ValueKey('${s.kind}/${s.key}/${catalog.revision}'),
+        padding: const EdgeInsets.all(24),
+        child: editor,
+      );
     }
-    final Widget editor = switch (s.kind) {
-      'item' => ItemEditor(
-        catalog: catalog,
-        itemKey: s.key,
-        onChanged: _changed,
-        onDeleted: () => setState(() => _selected = null),
-      ),
-      'category' => CategoryEditor(catalog: catalog, categoryKey: s.key, onChanged: _changed),
-      _ => GroupEditor(catalog: catalog, groupKey: s.key, onChanged: _changed),
-    };
-    return SingleChildScrollView(
-      key: ValueKey('${s.kind}/${s.key}/${catalog.revision}'),
-      padding: const EdgeInsets.all(24),
-      child: editor,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: child,
     );
   }
 }
@@ -957,10 +996,23 @@ Widget _names(Map<String, dynamic> row, VoidCallback onChanged, {bool kitchen = 
   );
 }
 
-Widget _heading(BuildContext context, String text) => Padding(
-  padding: const EdgeInsets.only(top: 28, bottom: 8),
-  child: Text(text, style: Theme.of(context).textTheme.titleMedium),
-);
+Widget _heading(BuildContext context, String text) {
+  final theme = Theme.of(context);
+  return Padding(
+    padding: const EdgeInsets.only(top: 28, bottom: 10),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          text,
+          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        const Divider(height: 1),
+      ],
+    ),
+  );
+}
 
 Widget _text(
   String key,

@@ -47,14 +47,31 @@ class _DrillDownState extends State<DrillDown> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final ready = (_pulled / DrillDown.distance).clamp(0.0, 1.0);
     return Column(
       children: [
         widget.header,
         if (_pulled > 0)
           SizedBox(
-            height: 24 * ready,
-            child: Opacity(opacity: ready, child: const Icon(Icons.keyboard_double_arrow_up, size: 18)),
+            height: 28 * ready,
+            child: Opacity(
+              opacity: ready,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: ready >= 1.0 ? scheme.primaryContainer : scheme.surfaceContainerHigh,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.keyboard_double_arrow_up,
+                    size: 16,
+                    color: ready >= 1.0 ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
           ),
         Expanded(
           child: NotificationListener<ScrollNotification>(onNotification: _onScroll, child: widget.child),

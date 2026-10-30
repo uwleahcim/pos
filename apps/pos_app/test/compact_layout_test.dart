@@ -15,7 +15,9 @@ import 'package:pos_app/photos.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/reflow.dart';
+import 'package:pos_app/screens/signin_screen.dart';
 import 'package:pos_app/screens/status_bar.dart';
+import 'package:pos_app/screens/theme.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -362,5 +364,60 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     outbox.dispose();
     photos.dispose();
+  });
+
+  testWidgets('sign-in PIN pad animates dots, shakes on wrong PIN, and scales on press', (tester) async {
+    final settings = Settings(device: 'bar1', endpoints: ['http://hub:8000']);
+    final api = PosApi(
+      settings,
+      client: MockClient((request) async {
+        final pin = (jsonDecode(request.body) as Map)['pin'];
+        if (pin == '1111') {
+          return json({'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'});
+        }
+        return json({
+          'detail': {'error': 'unknown_credential'},
+        }, 401);
+      }),
+    );
+    final session = Session(api);
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: PosTheme.light(),
+        darkTheme: PosTheme.dark(),
+        home: SignInScreen(session: session, settings: settings, camera: NoCamera()),
+      ),
+    );
+    expect(find.text('Enter your PIN'), findsOneWidget);
+
+    // Press down on a key to verify tactile PressableScale feedback, then tap digits
+    final gesture = await tester.startGesture(tester.getCenter(find.text('1')));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      tester.widget<AnimatedScale>(find.ancestor(of: find.text('1'), matching: find.byType(AnimatedScale))).scale,
+      lessThan(1.0),
+    );
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.text('●'), findsOneWidget);
+
+    // Clear and enter 4 digits of a wrong PIN -> error message & shake animation
+    await tester.tap(find.text('C'));
+    await tester.pump();
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(find.text('2'));
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('Wrong PIN'), findsOneWidget);
+
+    // Enter right PIN -> signs in
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(find.text('1'));
+      await tester.pump(const Duration(milliseconds: 30));
+    }
+    await tester.pumpAndSettle();
+    expect(session.signedIn, isTrue);
   });
 }

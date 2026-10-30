@@ -6,6 +6,7 @@ import '../api.dart';
 import '../menu.dart';
 import 'drill_down.dart';
 import 'reflow.dart';
+import 'theme.dart';
 
 /// A line the operator configured: what to send in `add_line`.
 class ChosenLine {
@@ -174,11 +175,11 @@ class _MenuPanelState extends State<MenuPanel> {
 
   Widget _grid({required List<MenuSection> sections, required List<MenuEntry> entries, required int depth}) =>
       GridView.extent(
-        maxCrossAxisExtent: 180,
-        childAspectRatio: 1.35,
-        padding: const EdgeInsets.all(8),
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
+        maxCrossAxisExtent: 185,
+        childAspectRatio: 1.32,
+        padding: const EdgeInsets.all(10),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
         physics: DrillDown.physics,
         children: [
           for (final s in sections)
@@ -206,7 +207,8 @@ class _MenuPanelState extends State<MenuPanel> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text('Menu not loaded: $_error'),
-                  TextButton(onPressed: _load, child: const Text('Retry')),
+                  const SizedBox(height: 8),
+                  FilledButton.tonal(onPressed: _load, child: const Text('Retry')),
                 ],
               ),
       );
@@ -217,7 +219,7 @@ class _MenuPanelState extends State<MenuPanel> {
       return Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
             child: TextField(
               controller: _search,
               decoration: InputDecoration(
@@ -231,7 +233,6 @@ class _MenuPanelState extends State<MenuPanel> {
                     : null,
                 hintText: 'Number or name',
                 isDense: true,
-                border: const OutlineInputBorder(),
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -280,8 +281,13 @@ class _Strip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 44,
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 46,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+      ),
       child: Row(
         children: [
           IconButton(
@@ -297,7 +303,7 @@ class _Strip extends StatelessWidget {
               children: [
                 for (final s in sections)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
                     child: Reflow(
                       id: 's:${s.sectionId}',
                       group: reflow,
@@ -354,40 +360,58 @@ class _SectionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final count = section.allEntries.length;
-    return Material(
-      color: theme.colorScheme.tertiaryContainer,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  section.name,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onTertiaryContainer),
-                ),
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      count == 1 ? '1 dish' : '$count dishes',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall,
+    return PressableScale(
+      child: Material(
+        color: scheme.tertiaryContainer,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: scheme.tertiary.withValues(alpha: 0.28)),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    section.name,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: scheme.onTertiaryContainer,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onTertiaryContainer),
-                ],
-              ),
-            ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        count == 1 ? '1 dish' : '$count dishes',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onTertiaryContainer.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: scheme.onTertiaryContainer.withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.chevron_right, size: 15, color: scheme.onTertiaryContainer),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -405,59 +429,98 @@ class _EntryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final available = entry.available;
-    return Material(
-      color: available ? theme.colorScheme.secondaryContainer : theme.colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: available ? onTap : null,
-        onLongPress: onLongPress,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      entry.number ?? '',
-                      maxLines: 1,
-                      overflow: TextOverflow.clip,
-                      style: theme.textTheme.labelMedium,
-                    ),
-                  ),
-                  Text(available ? entry.priceLabel : '86', style: theme.textTheme.labelLarge),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return PressableScale(
+      enabled: available,
+      child: Material(
+        color: available ? scheme.surfaceContainerLowest : scheme.surfaceContainerHighest,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: available ? scheme.outlineVariant : scheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: available ? onTap : null,
+          onLongPress: onLongPress,
+          child: Padding(
+            padding: const EdgeInsets.all(9),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
-                        entry.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          decoration: available ? null : TextDecoration.lineThrough,
+                        entry.number ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.clip,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: PosTheme.tabular,
                         ),
                       ),
                     ),
-                    if (entry.secondName != null)
-                      Text(
-                        entry.secondName!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        color: available ? scheme.secondaryContainer : scheme.errorContainer,
+                        borderRadius: BorderRadius.circular(6),
                       ),
+                      child: Text(
+                        available ? entry.priceLabel : '86',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: available ? scheme.onSecondaryContainer : scheme.onErrorContainer,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: PosTheme.tabular,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              if (!entry.quickAdd) Icon(Icons.tune, size: 14, color: theme.colorScheme.onSecondaryContainer),
-            ],
+                const SizedBox(height: 5),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          entry.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            decoration: available ? null : TextDecoration.lineThrough,
+                            color: available ? scheme.onSurface : scheme.onSurfaceVariant,
+                            height: 1.18,
+                          ),
+                        ),
+                      ),
+                      if (entry.secondName != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Text(
+                            entry.secondName!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (!entry.quickAdd)
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Icon(Icons.tune, size: 13, color: scheme.onSurfaceVariant),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -571,6 +634,7 @@ class _ItemSheetState extends State<ItemSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final detail = _detail;
     final priced = _priced;
     final total = priced == null ? null : (double.parse(priced.unitPrice) * _qty).toStringAsFixed(2);
@@ -579,7 +643,7 @@ class _ItemSheetState extends State<ItemSheet> {
         widget.entry.secondName == null ? widget.entry.name : '${widget.entry.name}  ${widget.entry.secondName}',
       ),
       content: SizedBox(
-        width: 480,
+        width: 490,
         child: detail == null
             ? Center(heightFactor: 2, child: _error == null ? const CircularProgressIndicator() : Text(_error!))
             : SingleChildScrollView(
@@ -588,8 +652,10 @@ class _ItemSheetState extends State<ItemSheet> {
                   children: [
                     if (widget.entry.variants.length > 1) ...[
                       Text('Size', style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
+                        runSpacing: 6,
                         children: [
                           for (final v in widget.entry.variants)
                             ChoiceChip(
@@ -604,12 +670,19 @@ class _ItemSheetState extends State<ItemSheet> {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
                     ],
                     for (final g in detail.groups) ...[
-                      Text(g.required ? '${g.name} (required)' : g.name, style: theme.textTheme.titleSmall),
+                      Text(
+                        g.required ? '${g.name} (required)' : g.name,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: g.required ? scheme.primary : scheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
                       Wrap(
                         spacing: 8,
+                        runSpacing: 6,
                         children: [
                           for (final o in g.options)
                             FilterChip(
@@ -619,31 +692,77 @@ class _ItemSheetState extends State<ItemSheet> {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
                     ],
                     TextField(
                       controller: _note,
-                      decoration: const InputDecoration(labelText: 'Note to the kitchen', isDense: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Note to the kitchen',
+                        prefixIcon: Icon(Icons.edit_note_outlined),
+                        isDense: true,
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        IconButton(
-                          onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
-                          icon: const Icon(Icons.remove),
-                        ),
-                        Text('$_qty', style: theme.textTheme.titleLarge),
-                        IconButton(onPressed: () => setState(() => _qty++), icon: const Icon(Icons.add)),
-                        const Spacer(),
-                        if (total != null) Text('\$$total', style: theme.textTheme.titleLarge),
-                      ],
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: scheme.outlineVariant),
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
+                            icon: const Icon(Icons.remove),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text(
+                              '$_qty',
+                              style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                            ),
+                          ),
+                          IconButton(onPressed: () => setState(() => _qty++), icon: const Icon(Icons.add)),
+                          const Spacer(),
+                          if (total != null)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Text(
+                                '\$$total',
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.primary,
+                                  fontFeatures: PosTheme.tabular,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                     if (priced != null && !priced.ok)
-                      for (final p in priced.problems) Text(p, style: TextStyle(color: theme.colorScheme.error)),
+                      for (final p in priced.problems)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(p, style: TextStyle(color: scheme.error)),
+                        ),
                     if (widget.warning != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(widget.warning!, style: TextStyle(color: theme.colorScheme.error)),
+                      Container(
+                        margin: const EdgeInsets.only(top: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: scheme.errorContainer.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded, size: 18, color: scheme.error),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(widget.warning!, style: TextStyle(color: scheme.error)),
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 ),
