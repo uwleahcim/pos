@@ -68,11 +68,7 @@ class PosApp extends StatelessWidget {
         builder: (context, _) {
           final Widget screen;
           if (!settings.isConfigured) {
-            screen = SettingsScreen(
-              key: const ValueKey('first-run-settings'),
-              settings: settings,
-              firstRun: true,
-            );
+            screen = SettingsScreen(key: const ValueKey('first-run-settings'), settings: settings, firstRun: true);
           } else if (!session.signedIn) {
             screen = SignInScreen(
               key: const ValueKey('sign-in'),

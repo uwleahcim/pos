@@ -216,10 +216,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             tooltip: _floor ? 'List of checks' : 'Floor map',
             icon: AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
-              child: Icon(
-                _floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded,
-                key: ValueKey(_floor),
-              ),
+              child: Icon(_floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded, key: ValueKey(_floor)),
             ),
             onPressed: () => setState(() => _floor = !_floor),
           ),
@@ -257,10 +254,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         children: [
                           Container(
                             padding: const EdgeInsets.all(18),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerLow,
-                              shape: BoxShape.circle,
-                            ),
+                            decoration: BoxDecoration(color: scheme.surfaceContainerLow, shape: BoxShape.circle),
                             child: Icon(Icons.receipt_long_outlined, size: 36, color: scheme.outline),
                           ),
                           const SizedBox(height: 14),

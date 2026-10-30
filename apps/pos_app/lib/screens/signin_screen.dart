@@ -24,10 +24,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
   String _pin = '';
   String? _message;
   bool _busy = false;
-  late final AnimationController _shake = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 420),
-  );
+  late final AnimationController _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
 
   @override
   void dispose() {
@@ -73,10 +70,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
           children: [
             Container(
               padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
+              decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)),
               child: Icon(Icons.restaurant_rounded, size: 18, color: scheme.onPrimaryContainer),
             ),
             const SizedBox(width: 10),
@@ -99,11 +93,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: scheme.outlineVariant),
               boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
+                BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 24, offset: const Offset(0, 8)),
               ],
             ),
             child: Wrap(
@@ -126,10 +116,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(14.5),
-                            child: widget.camera.preview(),
-                          ),
+                          ClipRRect(borderRadius: BorderRadius.circular(14.5), child: widget.camera.preview()),
                           Positioned(
                             left: 10,
                             bottom: 10,
@@ -205,9 +192,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
                                     decoration: BoxDecoration(
                                       color: i < _pin.length
                                           ? scheme.primary
-                                          : (_message != null
-                                                ? scheme.errorContainer
-                                                : scheme.surfaceContainerHighest),
+                                          : (_message != null ? scheme.errorContainer : scheme.surfaceContainerHighest),
                                       shape: BoxShape.circle,
                                       border: Border.all(
                                         color: i < _pin.length

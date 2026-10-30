@@ -319,11 +319,7 @@ class _OrderScreenState extends State<OrderScreen> {
                 onCourse: (course) => setState(() => _course = course),
               ),
               Expanded(
-                child: MenuPanel(
-                  api: widget.api,
-                  onChosen: _add,
-                  qtyOf: (entry) => _entryQty(order, entry),
-                ),
+                child: MenuPanel(api: widget.api, onChosen: _add, qtyOf: (entry) => _entryQty(order, entry)),
               ),
             ],
           )
@@ -519,9 +515,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                                     height: 34,
                                     child: DecoratedBox(
                                       decoration: BoxDecoration(
-                                        color: line.isVoid
-                                            ? scheme.surfaceContainerHighest
-                                            : scheme.surfaceContainer,
+                                        color: line.isVoid ? scheme.surfaceContainerHighest : scheme.surfaceContainer,
                                         borderRadius: BorderRadius.circular(8),
                                         border: Border.all(color: scheme.outlineVariant),
                                       ),
@@ -557,10 +551,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                             title: Text(
                               priced?.name ?? line.item,
                               style: line.isVoid
-                                  ? TextStyle(
-                                      decoration: TextDecoration.lineThrough,
-                                      color: scheme.onSurfaceVariant,
-                                    )
+                                  ? TextStyle(decoration: TextDecoration.lineThrough, color: scheme.onSurfaceVariant)
                                   : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                             ),
                             subtitle: Text(
@@ -638,10 +629,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                   _TotalRow('Subtotal', check.subtotal),
                   const SizedBox(height: 2),
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 6),
-                    child: Divider(height: 1),
-                  ),
+                  const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
                   _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
                 ],
               ),
@@ -782,17 +770,12 @@ class _CourseHeader extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: posColors.checkHeader,
-        border: Border.symmetric(
-          horizontal: BorderSide(color: theme.colorScheme.outlineVariant, width: 0.7),
-        ),
+        border: Border.symmetric(horizontal: BorderSide(color: theme.colorScheme.outlineVariant, width: 0.7)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [
-          Text(
-            name,
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
+          Text(name, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
           const Spacer(),
           AnimatedContainer(
             duration: const Duration(milliseconds: 220),
@@ -805,18 +788,11 @@ class _CourseHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  fired ? Icons.local_fire_department : Icons.pause_circle_outline,
-                  size: 14,
-                  color: badgeFg,
-                ),
+                Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 14, color: badgeFg),
                 const SizedBox(width: 4),
                 Text(
                   state,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: badgeFg,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: theme.textTheme.labelSmall?.copyWith(color: badgeFg, fontWeight: FontWeight.w700),
                 ),
               ],
             ),
@@ -953,11 +929,7 @@ class _FireMenu extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.local_fire_department,
-                      size: 18,
-                      color: held.isNotEmpty ? posColors.waitingText : null,
-                    ),
+                    Icon(Icons.local_fire_department, size: 18, color: held.isNotEmpty ? posColors.waitingText : null),
                     const SizedBox(width: 4),
                     Text(
                       held.isEmpty ? 'Fire' : 'Fire (${held.length} held)',
@@ -997,10 +969,7 @@ class _TotalRow extends StatelessWidget {
       children: [
         Text(label, style: baseStyle),
         const Spacer(),
-        Text(
-          amount,
-          style: baseStyle?.copyWith(fontFeatures: PosTheme.tabular),
-        ),
+        Text(amount, style: baseStyle?.copyWith(fontFeatures: PosTheme.tabular)),
       ],
     );
   }

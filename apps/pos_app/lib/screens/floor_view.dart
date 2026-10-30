@@ -272,7 +272,9 @@ class _TablePositioned extends StatelessWidget {
     final (fill, border, textColor) = _stageStyle(posColors, check?.stage);
     final radius = BorderRadius.circular(table.kind == 'booth' ? 12 : 8);
     final shape = table.round
-        ? CircleBorder(side: BorderSide(color: border, width: check == null ? 1.5 : 2.2))
+        ? CircleBorder(
+            side: BorderSide(color: border, width: check == null ? 1.5 : 2.2),
+          )
         : RoundedRectangleBorder(
             borderRadius: radius,
             side: BorderSide(color: border, width: check == null ? 1.5 : 2.2),
@@ -382,10 +384,7 @@ class _Legend extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            Text(
-              label,
-              style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
+            Text(label, style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
           ],
         ),
       );

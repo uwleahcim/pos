@@ -319,10 +319,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('s:dinner/apps')));
     await tester.pumpAndSettle();
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')),
-        matching: find.text('4×'),
-      ),
+      find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')), matching: find.text('4×')),
       findsOneWidget,
     );
 

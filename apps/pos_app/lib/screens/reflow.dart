@@ -96,8 +96,7 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
       final now = _rect();
       if (!mounted || overlay == null || now == null) return _land();
       final (start, _) = from;
-      if ((now.topLeft - start.topLeft).distance < 1.0 &&
-          (now.bottomRight - start.bottomRight).distance < 1.0) {
+      if ((now.topLeft - start.topLeft).distance < 1.0 && (now.bottomRight - start.bottomRight).distance < 1.0) {
         return _land();
       }
       setState(() => _mode = _Mode.moving);
@@ -127,9 +126,7 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
           _Mode.moving => 0,
           _Mode.fading => v,
         },
-        child: _mode == _Mode.fading
-            ? Transform.scale(scale: 0.94 + 0.06 * v, child: child)
-            : child,
+        child: _mode == _Mode.fading ? Transform.scale(scale: 0.94 + 0.06 * v, child: child) : child,
       );
     },
   );

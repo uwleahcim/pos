@@ -372,10 +372,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
               selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
               title: Text(
                 nameOf(category).toUpperCase(),
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: scheme.primary,
-                  letterSpacing: 0.6,
-                ),
+                style: theme.textTheme.labelLarge?.copyWith(color: scheme.primary, letterSpacing: 0.6),
               ),
               trailing: const Icon(Icons.tune, size: 18),
               selected: _selected?.kind == 'category' && _selected?.key == category['code'],
@@ -452,10 +449,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
             ),
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              children: tiles,
-            ),
+            child: ListView(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), children: tiles),
           ),
         ],
       ),
@@ -466,10 +460,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final s = _selected;
     final Widget child;
     if (s == null || catalog.get(s.kind, s.key) == null) {
-      child = const Center(
-        key: ValueKey('empty-detail'),
-        child: Text('Pick a dish, a category or an option group.'),
-      );
+      child = const Center(key: ValueKey('empty-detail'), child: Text('Pick a dish, a category or an option group.'));
     } else {
       final Widget editor = switch (s.kind) {
         'item' => ItemEditor(
@@ -487,10 +478,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         child: editor,
       );
     }
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      child: child,
-    );
+    return AnimatedSwitcher(duration: const Duration(milliseconds: 180), child: child);
   }
 }
 
@@ -1003,10 +991,7 @@ Widget _heading(BuildContext context, String text) {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          text,
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-        ),
+        Text(text, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         const Divider(height: 1),
       ],

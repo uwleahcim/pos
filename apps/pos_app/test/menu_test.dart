@@ -153,10 +153,7 @@ void main() {
       await tester.pump();
       expect(chosen.single.request.variantId, 'TSINGTAO:bottle');
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('entry-qty:dinner:B1:TSINGTAO')),
-          matching: find.text('1×'),
-        ),
+        find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:B1:TSINGTAO')), matching: find.text('1×')),
         findsOneWidget,
       );
 
@@ -172,10 +169,7 @@ void main() {
       expect(chosen.last.request.selections['rice'], ['rice:white']);
       expect(chosen.last.request.selections['spice'], ['spice:medium']);
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('entry-qty:dinner:88:BB')),
-          matching: find.text('1×'),
-        ),
+        find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:88:BB')), matching: find.text('1×')),
         findsOneWidget,
       );
 
@@ -197,10 +191,7 @@ void main() {
       expect(chosen.last.request.variantId, 'GTC:pint');
       expect(chosen.last.request.selections['rice'], ['rice:white']);
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')),
-          matching: find.text('1×'),
-        ),
+        find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')), matching: find.text('1×')),
         findsOneWidget,
       );
 
@@ -235,10 +226,7 @@ void main() {
       expect(chosen.length, 5);
       expect(chosen.last.request.variantId, 'GTC:pint');
       expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')),
-          matching: find.text('2×'),
-        ),
+        find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')), matching: find.text('2×')),
         findsOneWidget,
       );
 
