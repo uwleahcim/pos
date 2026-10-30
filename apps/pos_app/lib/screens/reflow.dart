@@ -91,10 +91,16 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
       }
       return;
     }
-    _mode = _Mode.moving; // the element itself stays hidden while its copy travels to it
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final overlay = Overlay.maybeOf(context);
-      if (!mounted || overlay == null) return _land();
+      final now = _rect();
+      if (!mounted || overlay == null || now == null) return _land();
+      final (start, _) = from;
+      if ((now.topLeft - start.topLeft).distance < 1.0 &&
+          (now.bottomRight - start.bottomRight).distance < 1.0) {
+        return _land();
+      }
+      setState(() => _mode = _Mode.moving);
       _flight = OverlayEntry(
         builder: (_) => _Flight(from: from, to: this, overlay: overlay),
       );

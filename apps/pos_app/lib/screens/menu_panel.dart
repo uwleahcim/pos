@@ -40,9 +40,9 @@ abstract final class MenuPanelCheck {
 
 /// The menu as buttons. It opens on its categories; a category opens its dishes below and collapses the
 /// categories section only by the number of rows needed to show the dishes (keeping category buttons the
-/// same size), and pulling down at the top of the dishes goes back (see [DrillDown]). A category with
-/// subcategories opens the same way, one level at a time. A dish with nothing to ask is added with one tap;
-/// anything else opens [ItemSheet]. The search box on the categories finds dishes in all of them.
+/// same size), and pulling down at the top of the dishes goes back (see [DrillDown]). Switching between
+/// categories with different item counts smoothly expands or shrinks the items section and the categories
+/// section in lockstep. A dish with nothing to ask is added with one tap; anything else opens [ItemSheet].
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen});
 
@@ -63,11 +63,13 @@ class _MenuPanelState extends State<MenuPanel> {
   List<Menu>? _menus;
   String? _error;
   var _path = <String>[]; // the open categories, outermost first, by section id
-  final _reflow = ReflowGroup();
+  List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
   final _search = TextEditingController();
+  final _categoriesScroll = ScrollController();
+  String? _lastScrollTarget;
 
   @override
   void initState() {
@@ -80,6 +82,7 @@ class _MenuPanelState extends State<MenuPanel> {
   void dispose() {
     _watch?.cancel();
     _search.dispose();
+    _categoriesScroll.dispose();
     super.dispose();
   }
 
@@ -137,10 +140,9 @@ class _MenuPanelState extends State<MenuPanel> {
     ];
   }
 
-  /// Opens `section` at `depth`. The categories stay the same size in their grid above, collapsing only
-  /// enough to show the opened section's items below (see [Reflow]).
+  /// Opens `section` at `depth`. The categories stay the same size in their grid above, smoothly
+  /// collapsing or expanding to match the rows needed by `section`'s items.
   void _openAt(int depth, MenuSection section) {
-    _reflow.snapshot();
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
       _search.clear();
@@ -148,8 +150,45 @@ class _MenuPanelState extends State<MenuPanel> {
   }
 
   void _close() {
-    _reflow.snapshot();
     setState(() => _path = _path.take(_open.length - 1).toList());
+  }
+
+  /// Scrolls the categories grid in sync with the section height animation when the selected category's
+  /// row would otherwise be covered by the expanding items section.
+  void _ensureSelectedCategoryVisible({
+    required String scrollKey,
+    required int selectedIndex,
+    required int crossAxisCount,
+    required double tileHeight,
+    required double targetCategoriesHeight,
+  }) {
+    if (_lastScrollTarget == scrollKey || selectedIndex < 0) return;
+    _lastScrollTarget = scrollKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_categoriesScroll.hasClients) return;
+      final position = _categoriesScroll.position;
+      final row = selectedIndex ~/ crossAxisCount;
+      final rowTop = _gridPadding + row * (tileHeight + _gridSpacing);
+      final rowBottom = rowTop + tileHeight + _gridPadding;
+      final current = position.pixels;
+      double? target;
+      if (rowBottom > current + targetCategoriesHeight) {
+        target = rowBottom - targetCategoriesHeight;
+      }
+      if (rowTop < (target ?? current)) {
+        target = rowTop;
+      }
+      if (target != null) {
+        final clamped = target.clamp(position.minScrollExtent, position.maxScrollExtent);
+        if ((clamped - current).abs() > 1.0) {
+          _categoriesScroll.animateTo(
+            clamped,
+            duration: Reflow.duration,
+            curve: Curves.easeInOutCubic,
+          );
+        }
+      }
+    });
   }
 
   /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
@@ -183,6 +222,7 @@ class _MenuPanelState extends State<MenuPanel> {
 
   Widget _grid({
     Key? key,
+    ScrollController? controller,
     required List<MenuSection> sections,
     required List<MenuEntry> entries,
     required int depth,
@@ -191,6 +231,7 @@ class _MenuPanelState extends State<MenuPanel> {
     MenuSection? selected,
   }) => GridView(
     key: key,
+    controller: controller,
     padding: const EdgeInsets.all(_gridPadding),
     physics: DrillDown.physics,
     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -201,20 +242,18 @@ class _MenuPanelState extends State<MenuPanel> {
     ),
     children: [
       for (final s in sections)
-        Reflow(
-          id: 's:${s.sectionId}',
-          group: _reflow,
-          child: _SectionButton(
-            section: s,
-            selected: s == selected,
-            onTap: () => s == selected ? _close() : _openAt(depth, s),
-          ),
+        _SectionButton(
+          key: ValueKey('s:${s.sectionId}'),
+          section: s,
+          selected: s == selected,
+          onTap: () => s == selected ? _close() : _openAt(depth, s),
         ),
       for (final e in entries)
-        Reflow(
-          id: 'e:${e.entryId}:${e.item}',
-          group: _reflow,
-          child: _EntryButton(entry: e, onTap: () => _tap(e), onLongPress: () => _eightySix(e)),
+        _EntryButton(
+          key: ValueKey('e:${e.entryId}:${e.item}'),
+          entry: e,
+          onTap: () => _tap(e),
+          onLongPress: () => _eightySix(e),
         ),
     ],
   );
@@ -245,25 +284,58 @@ class _MenuPanelState extends State<MenuPanel> {
             rows <= 0 ? 0.0 : _gridPadding * 2 + rows * tileHeight + (rows - 1) * _gridSpacing;
 
         final open = _open;
+        if (open.isNotEmpty) {
+          _lastOpen = open;
+        } else {
+          _lastScrollTarget = null;
+        }
         final searching = open.isEmpty && _search.text.trim().isNotEmpty;
         final depth = open.isEmpty ? 0 : open.length - 1;
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
-        double itemsHeight = 0;
+        double targetItemsHeight = 0;
         if (here != null) {
           final itemCount = here.sections.length + here.entries.length;
           final itemRows = itemCount == 0 ? 1 : (itemCount / crossAxisCount).ceil();
           final minCategoriesHeight = gridHeightForRows(1);
           final neededItemsHeight = _itemsHeaderHeight + gridHeightForRows(itemRows);
           final maxItemsHeight = math.max(0.0, constraints.maxHeight - minCategoriesHeight);
-          itemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
+          targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
+
+          final targetCategoriesHeight = math.max(minCategoriesHeight, constraints.maxHeight - targetItemsHeight);
+          _ensureSelectedCategoryVisible(
+            scrollKey: '${here.sectionId}:${targetItemsHeight.round()}',
+            selectedIndex: siblings.indexOf(here),
+            crossAxisCount: crossAxisCount,
+            tileHeight: tileHeight,
+            targetCategoriesHeight: targetCategoriesHeight,
+          );
         }
+
+        final displayOpen = open.isNotEmpty ? open : _lastOpen;
+        final displayHere = displayOpen.lastOrNull;
 
         return Column(
           children: [
-            if (open.isEmpty)
-              Padding(
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: open.isEmpty ? 1.0 : 0.0),
+              duration: Reflow.duration,
+              curve: Curves.easeInOutCubic,
+              builder: (context, factor, child) {
+                if (factor <= 0.005 && open.isNotEmpty) return const SizedBox.shrink();
+                return ClipRect(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    heightFactor: factor.clamp(0.0, 1.0),
+                    child: Opacity(
+                      opacity: factor.clamp(0.0, 1.0),
+                      child: child,
+                    ),
+                  ),
+                );
+              },
+              child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
                 child: TextField(
                   controller: _search,
@@ -282,6 +354,7 @@ class _MenuPanelState extends State<MenuPanel> {
                   onChanged: (_) => setState(() {}),
                 ),
               ),
+            ),
             Expanded(
               child: searching
                   ? _grid(
@@ -294,6 +367,7 @@ class _MenuPanelState extends State<MenuPanel> {
                     )
                   : _grid(
                       key: ValueKey('categories-$depth'),
+                      controller: depth == 0 ? _categoriesScroll : null,
                       sections: siblings,
                       entries: const [],
                       depth: depth,
@@ -302,23 +376,42 @@ class _MenuPanelState extends State<MenuPanel> {
                       tileHeight: tileHeight,
                     ),
             ),
-            if (here != null)
-              SizedBox(
-                height: itemsHeight,
-                child: DrillDown(
-                  key: ValueKey(_path.take(open.length).join('/')),
-                  onClose: _close,
-                  header: _ItemsHeader(path: open, onBack: _close),
-                  child: _grid(
-                    key: ValueKey('items-${here.sectionId}'),
-                    sections: here.sections,
-                    entries: here.entries,
-                    depth: open.length,
-                    crossAxisCount: crossAxisCount,
-                    tileHeight: tileHeight,
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: targetItemsHeight),
+              duration: Reflow.duration,
+              curve: Curves.easeInOutCubic,
+              builder: (context, animatedHeight, _) {
+                if (animatedHeight <= 0.5 || displayHere == null) return const SizedBox.shrink();
+                final innerHeight = math.max(animatedHeight, _itemsHeaderHeight + 1.0);
+                return SizedBox(
+                  height: animatedHeight,
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.topCenter,
+                      minHeight: innerHeight,
+                      maxHeight: innerHeight,
+                      child: DrillDown(
+                        onClose: _close,
+                        header: _ItemsHeader(path: displayOpen, onBack: _close),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          child: _grid(
+                            key: ValueKey('items-${displayHere.sectionId}'),
+                            sections: displayHere.sections,
+                            entries: displayHere.entries,
+                            depth: displayOpen.length,
+                            crossAxisCount: crossAxisCount,
+                            tileHeight: tileHeight,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
+            ),
           ],
         );
       },
@@ -339,6 +432,7 @@ class _ItemsHeader extends StatelessWidget {
     final scheme = theme.colorScheme;
     final here = path.last;
     final count = here.sections.length + here.entries.length;
+    final title = path.map((s) => s.name).join(' › ');
     return Container(
       height: _MenuPanelState._itemsHeaderHeight,
       decoration: BoxDecoration(
@@ -355,11 +449,19 @@ class _ItemsHeader extends StatelessWidget {
             onPressed: onBack,
           ),
           Expanded(
-            child: Text(
-              path.map((s) => s.name).join(' › '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              layoutBuilder: (current, previous) => Stack(
+                alignment: Alignment.centerLeft,
+                children: [...previous, ?current],
+              ),
+              child: Text(
+                title,
+                key: ValueKey(title),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
           ),
           Padding(
@@ -375,104 +477,79 @@ class _ItemsHeader extends StatelessWidget {
   }
 }
 
-class _SectionButton extends StatefulWidget {
-  const _SectionButton({required this.section, required this.onTap, this.selected = false});
+class _SectionButton extends StatelessWidget {
+  const _SectionButton({super.key, required this.section, required this.onTap, this.selected = false});
 
   final MenuSection section;
   final bool selected;
   final VoidCallback onTap;
 
   @override
-  State<_SectionButton> createState() => _SectionButtonState();
-}
-
-class _SectionButtonState extends State<_SectionButton> {
-  @override
-  void initState() {
-    super.initState();
-    _ensureVisibleIfSelected();
-  }
-
-  @override
-  void didUpdateWidget(_SectionButton old) {
-    super.didUpdateWidget(old);
-    if (widget.selected && !old.selected) _ensureVisibleIfSelected();
-  }
-
-  void _ensureVisibleIfSelected() {
-    if (!widget.selected) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        Scrollable.ensureVisible(
-          context,
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-        );
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final selected = widget.selected;
-    final count = widget.section.allEntries.length;
+    final count = section.allEntries.length;
     final bg = selected ? scheme.primaryContainer : scheme.tertiaryContainer;
     final fg = selected ? scheme.onPrimaryContainer : scheme.onTertiaryContainer;
     final border = selected ? scheme.primary : scheme.tertiary.withValues(alpha: 0.28);
     return PressableScale(
-      child: Material(
-        color: bg,
-        shape: RoundedRectangleBorder(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: bg,
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: border, width: selected ? 2 : 1),
+          border: Border.all(color: border, width: selected ? 2 : 1),
         ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: widget.onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.section.name,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: fg,
-                      fontWeight: FontWeight.w700,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      section.name,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: fg,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        count == 1 ? '1 dish' : '$count dishes',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: fg.withValues(alpha: 0.8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          count == 1 ? '1 dish' : '$count dishes',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: fg.withValues(alpha: 0.8),
+                          ),
                         ),
                       ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: fg.withValues(alpha: 0.12),
-                        shape: BoxShape.circle,
+                      Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: fg.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          selected ? Icons.expand_less : Icons.chevron_right,
+                          size: 15,
+                          color: fg,
+                        ),
                       ),
-                      child: Icon(
-                        selected ? Icons.expand_less : Icons.chevron_right,
-                        size: 15,
-                        color: fg,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -482,7 +559,7 @@ class _SectionButtonState extends State<_SectionButton> {
 }
 
 class _EntryButton extends StatelessWidget {
-  const _EntryButton({required this.entry, required this.onTap, required this.onLongPress});
+  const _EntryButton({super.key, required this.entry, required this.onTap, required this.onLongPress});
 
   final MenuEntry entry;
   final VoidCallback onTap;

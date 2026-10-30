@@ -179,12 +179,17 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     final twoRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
 
-    // Chef's Specials only needs 1 row of items (2 dishes), so categories collapse by 1 row less
+    // Chef's Specials only needs 1 row of items (2 dishes), so categories smoothly expand by 1 row
     await tester.tap(find.text("Chef's Specials"));
+    await tester.pump();
+    await tester.pump(Reflow.duration ~/ 2);
+    final midExpandHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
     await tester.pumpAndSettle();
     expect(tester.getSize(categoryTile("Chef's Specials")), initialTileSize);
     final oneRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
     expect(oneRowCategoriesHeight, greaterThan(twoRowCategoriesHeight + 100));
+    expect(midExpandHeight, greaterThan(twoRowCategoriesHeight + 20));
+    expect(midExpandHeight, lessThan(oneRowCategoriesHeight - 20));
     expect(find.text("General Tso's Chicken"), findsOneWidget);
     expect(find.text('Beef with Broccoli'), findsOneWidget);
 
