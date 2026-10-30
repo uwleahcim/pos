@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -53,12 +54,13 @@ class MenuPanel extends StatefulWidget {
   State<MenuPanel> createState() => _MenuPanelState();
 }
 
-class _MenuPanelState extends State<MenuPanel> {
+class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMixin {
   static const _gridPadding = 10.0;
   static const _gridSpacing = 10.0;
   static const _maxCrossAxisExtent = 185.0;
   static const _childAspectRatio = 1.55;
-  static const _itemsHeaderHeight = 40.0;
+  static const _searchBarHeight = 56.0;
+  static const _itemsDividerHeight = 1.0;
 
   List<Menu>? _menus;
   String? _error;
@@ -68,8 +70,20 @@ class _MenuPanelState extends State<MenuPanel> {
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
   final _search = TextEditingController();
-  final _categoriesScroll = ScrollController();
-  String? _lastScrollTarget;
+  final _categoriesScroll = _CategoryScrollController();
+  late final _transition = AnimationController(
+    vsync: this,
+    duration: Reflow.duration,
+    value: 1.0,
+  )..addListener(_onTransitionTick);
+
+  double _fromSearchFactor = 1.0;
+  double _currentSearchFactor = 1.0;
+  double _fromItemsHeight = 0.0;
+  double _currentItemsHeight = 0.0;
+  double _fromScrollOffset = 0.0;
+  double _fromCategoriesHeight = 0.0;
+  bool _syncScroll = false;
 
   @override
   void initState() {
@@ -81,9 +95,15 @@ class _MenuPanelState extends State<MenuPanel> {
   @override
   void dispose() {
     _watch?.cancel();
+    _transition.dispose();
     _search.dispose();
     _categoriesScroll.dispose();
     super.dispose();
+  }
+
+  void _onTransitionTick() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _load() async {
@@ -140,9 +160,28 @@ class _MenuPanelState extends State<MenuPanel> {
     ];
   }
 
+  void _startTransition({required bool resetScroll}) {
+    _fromSearchFactor = _currentSearchFactor;
+    _fromItemsHeight = _currentItemsHeight;
+    if (resetScroll) {
+      _fromScrollOffset = 0.0;
+      _fromCategoriesHeight = 0.0;
+    } else {
+      _fromScrollOffset = _categoriesScroll.hasClients ? _categoriesScroll.offset : 0.0;
+      _fromCategoriesHeight =
+          _categoriesScroll.hasClients && _categoriesScroll.position.haveDimensions
+          ? _categoriesScroll.position.viewportDimension
+          : 0.0;
+    }
+    _syncScroll = true;
+    _transition.forward(from: 0.0);
+  }
+
   /// Opens `section` at `depth`. The categories stay the same size in their grid above, smoothly
   /// collapsing or expanding to match the rows needed by `section`'s items.
   void _openAt(int depth, MenuSection section) {
+    final currentDepth = _open.isEmpty ? 0 : _open.length - 1;
+    _startTransition(resetScroll: depth != currentDepth);
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
       _search.clear();
@@ -150,45 +189,9 @@ class _MenuPanelState extends State<MenuPanel> {
   }
 
   void _close() {
+    final closingSubcategory = _open.length > 1;
+    _startTransition(resetScroll: closingSubcategory);
     setState(() => _path = _path.take(_open.length - 1).toList());
-  }
-
-  /// Scrolls the categories grid in sync with the section height animation when the selected category's
-  /// row would otherwise be covered by the expanding items section.
-  void _ensureSelectedCategoryVisible({
-    required String scrollKey,
-    required int selectedIndex,
-    required int crossAxisCount,
-    required double tileHeight,
-    required double targetCategoriesHeight,
-  }) {
-    if (_lastScrollTarget == scrollKey || selectedIndex < 0) return;
-    _lastScrollTarget = scrollKey;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_categoriesScroll.hasClients) return;
-      final position = _categoriesScroll.position;
-      final row = selectedIndex ~/ crossAxisCount;
-      final rowTop = _gridPadding + row * (tileHeight + _gridSpacing);
-      final rowBottom = rowTop + tileHeight + _gridPadding;
-      final current = position.pixels;
-      double? target;
-      if (rowBottom > current + targetCategoriesHeight) {
-        target = rowBottom - targetCategoriesHeight;
-      }
-      if (rowTop < (target ?? current)) {
-        target = rowTop;
-      }
-      if (target != null) {
-        final clamped = target.clamp(position.minScrollExtent, position.maxScrollExtent);
-        if ((clamped - current).abs() > 1.0) {
-          _categoriesScroll.animateTo(
-            clamped,
-            duration: Reflow.duration,
-            curve: Curves.easeInOutCubic,
-          );
-        }
-      }
-    });
   }
 
   /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
@@ -223,6 +226,7 @@ class _MenuPanelState extends State<MenuPanel> {
   Widget _grid({
     Key? key,
     ScrollController? controller,
+    double extraBottomPadding = 0.0,
     required List<MenuSection> sections,
     required List<MenuEntry> entries,
     required int depth,
@@ -232,7 +236,12 @@ class _MenuPanelState extends State<MenuPanel> {
   }) => GridView(
     key: key,
     controller: controller,
-    padding: const EdgeInsets.all(_gridPadding),
+    padding: EdgeInsets.fromLTRB(
+      _gridPadding,
+      _gridPadding,
+      _gridPadding,
+      _gridPadding + extraBottomPadding,
+    ),
     physics: DrillDown.physics,
     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: crossAxisCount,
@@ -286,31 +295,100 @@ class _MenuPanelState extends State<MenuPanel> {
         final open = _open;
         if (open.isNotEmpty) {
           _lastOpen = open;
-        } else {
-          _lastScrollTarget = null;
         }
         final searching = open.isEmpty && _search.text.trim().isNotEmpty;
         final depth = open.isEmpty ? 0 : open.length - 1;
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
-        double targetItemsHeight = 0;
+        final minCategoriesHeight = gridHeightForRows(1);
+        double targetItemsHeight = 0.0;
         if (here != null) {
           final itemCount = here.sections.length + here.entries.length;
           final itemRows = itemCount == 0 ? 1 : (itemCount / crossAxisCount).ceil();
-          final minCategoriesHeight = gridHeightForRows(1);
-          final neededItemsHeight = _itemsHeaderHeight + gridHeightForRows(itemRows);
+          final neededItemsHeight = _itemsDividerHeight + gridHeightForRows(itemRows);
           final maxItemsHeight = math.max(0.0, constraints.maxHeight - minCategoriesHeight);
           targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
+        }
 
-          final targetCategoriesHeight = math.max(minCategoriesHeight, constraints.maxHeight - targetItemsHeight);
-          _ensureSelectedCategoryVisible(
-            scrollKey: '${here.sectionId}:${targetItemsHeight.round()}',
-            selectedIndex: siblings.indexOf(here),
-            crossAxisCount: crossAxisCount,
-            tileHeight: tileHeight,
-            targetCategoriesHeight: targetCategoriesHeight,
-          );
+        final targetSearchFactor = open.isEmpty ? 1.0 : 0.0;
+        final t = Curves.easeInOutCubic.transform(_transition.value);
+        final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
+        final currentItemsHeight = math.max(0.0, ui.lerpDouble(_fromItemsHeight, targetItemsHeight, t)!);
+        _currentSearchFactor = currentSearchFactor;
+        _currentItemsHeight = currentItemsHeight;
+
+        final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
+        final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
+        final currentCategoriesHeight = math.max(
+          0.0,
+          constraints.maxHeight - currentSearchHeight - currentItemsHeight,
+        );
+
+        final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
+        final totalCategoriesContentHeight = gridHeightForRows(totalCategoryRows);
+        final targetCategoriesHeight = math.max(
+          minCategoriesHeight,
+          constraints.maxHeight - _searchBarHeight * targetSearchFactor - targetItemsHeight,
+        );
+        final targetMaxScroll = math.max(0.0, totalCategoriesContentHeight - targetCategoriesHeight);
+
+        double extraBottomSpace = 0.0;
+        if (_categoriesScroll.userDragged) {
+          _syncScroll = false;
+          _categoriesScroll.userDragged = false;
+        }
+        if (_syncScroll) {
+          var targetScroll = _fromScrollOffset.clamp(0.0, targetMaxScroll);
+          double? rowTop;
+          double? rowBottom;
+          if (here != null) {
+            final selectedIndex = siblings.indexOf(here);
+            if (selectedIndex >= 0) {
+              final row = selectedIndex ~/ crossAxisCount;
+              rowTop = row * (tileHeight + _gridSpacing);
+              rowBottom = rowTop + tileHeight + _gridPadding * 2;
+              if (rowBottom > targetScroll + targetCategoriesHeight) {
+                targetScroll = rowBottom - targetCategoriesHeight;
+              }
+              if (rowTop < targetScroll) {
+                targetScroll = rowTop;
+              }
+              targetScroll = targetScroll.clamp(0.0, targetMaxScroll);
+            }
+          }
+          final startBottomVisible = _fromCategoriesHeight <= 0 ||
+              (rowBottom != null && rowBottom <= _fromScrollOffset + _fromCategoriesHeight + 1.0);
+          final startTopVisible = rowTop != null && rowTop >= _fromScrollOffset - 1.0;
+
+          double desiredForViewport(double viewportHeight) {
+            final progress = Curves.easeInOutCubic.transform(_transition.value);
+            var desired = ui.lerpDouble(_fromScrollOffset, targetScroll, progress)!;
+            if (rowBottom != null &&
+                (startBottomVisible || progress >= 1.0) &&
+                rowBottom > desired + viewportHeight) {
+              desired = rowBottom - viewportHeight;
+            }
+            if (rowTop != null && (startTopVisible || progress >= 1.0) && rowTop < desired) {
+              desired = rowTop;
+            }
+            return math.max(0.0, desired);
+          }
+
+          _categoriesScroll.desiredScrollForViewport = desiredForViewport;
+          final currentDesired = desiredForViewport(currentCategoriesHeight);
+          if (currentDesired > 0) {
+            extraBottomSpace = math.max(
+              0.0,
+              currentCategoriesHeight + currentDesired - totalCategoriesContentHeight,
+            );
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_syncScroll) return;
+            _categoriesScroll.syncToDesired();
+          });
+        } else {
+          _categoriesScroll.desiredScrollForViewport = null;
         }
 
         final displayOpen = open.isNotEmpty ? open : _lastOpen;
@@ -318,43 +396,41 @@ class _MenuPanelState extends State<MenuPanel> {
 
         return Column(
           children: [
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(end: open.isEmpty ? 1.0 : 0.0),
-              duration: Reflow.duration,
-              curve: Curves.easeInOutCubic,
-              builder: (context, factor, child) {
-                if (factor <= 0.005 && open.isNotEmpty) return const SizedBox.shrink();
-                return ClipRect(
-                  child: Align(
+            if (showSearch)
+              SizedBox(
+                height: currentSearchHeight,
+                child: ClipRect(
+                  child: OverflowBox(
                     alignment: Alignment.topCenter,
-                    heightFactor: factor.clamp(0.0, 1.0),
+                    minHeight: _searchBarHeight,
+                    maxHeight: _searchBarHeight,
                     child: Opacity(
-                      opacity: factor.clamp(0.0, 1.0),
-                      child: child,
+                      opacity: currentSearchFactor,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                        child: Center(
+                          child: TextField(
+                            controller: _search,
+                            decoration: InputDecoration(
+                              prefixIcon: const Icon(Icons.search),
+                              suffixIcon: searching
+                                  ? IconButton(
+                                      tooltip: 'Clear',
+                                      icon: const Icon(Icons.close),
+                                      onPressed: () => setState(_search.clear),
+                                    )
+                                  : null,
+                              hintText: 'Number or name',
+                              isDense: true,
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                );
-              },
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
-                child: TextField(
-                  controller: _search,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: searching
-                        ? IconButton(
-                            tooltip: 'Clear',
-                            icon: const Icon(Icons.close),
-                            onPressed: () => setState(_search.clear),
-                          )
-                        : null,
-                    hintText: 'Number or name',
-                    isDense: true,
-                  ),
-                  onChanged: (_) => setState(() {}),
                 ),
               ),
-            ),
             Expanded(
               child: searching
                   ? _grid(
@@ -367,7 +443,8 @@ class _MenuPanelState extends State<MenuPanel> {
                     )
                   : _grid(
                       key: ValueKey('categories-$depth'),
-                      controller: depth == 0 ? _categoriesScroll : null,
+                      controller: _categoriesScroll,
+                      extraBottomPadding: extraBottomSpace,
                       sections: siblings,
                       entries: const [],
                       depth: depth,
@@ -376,23 +453,19 @@ class _MenuPanelState extends State<MenuPanel> {
                       tileHeight: tileHeight,
                     ),
             ),
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(end: targetItemsHeight),
-              duration: Reflow.duration,
-              curve: Curves.easeInOutCubic,
-              builder: (context, animatedHeight, _) {
-                if (animatedHeight <= 0.5 || displayHere == null) return const SizedBox.shrink();
-                final innerHeight = math.max(animatedHeight, _itemsHeaderHeight + 1.0);
-                return SizedBox(
-                  height: animatedHeight,
-                  child: ClipRect(
-                    child: OverflowBox(
-                      alignment: Alignment.topCenter,
-                      minHeight: innerHeight,
-                      maxHeight: innerHeight,
+            if (currentItemsHeight > 0.5 && displayHere != null)
+              SizedBox(
+                height: currentItemsHeight,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topCenter,
+                    minHeight: math.max(currentItemsHeight, _itemsDividerHeight + 1.0),
+                    maxHeight: math.max(currentItemsHeight, _itemsDividerHeight + 1.0),
+                    child: ColoredBox(
+                      color: Theme.of(context).colorScheme.surfaceContainerLow,
                       child: DrillDown(
                         onClose: _close,
-                        header: _ItemsHeader(path: displayOpen, onBack: _close),
+                        header: const Divider(height: _itemsDividerHeight, thickness: _itemsDividerHeight),
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 200),
                           switchInCurve: Curves.easeOutCubic,
@@ -409,9 +482,8 @@ class _MenuPanelState extends State<MenuPanel> {
                       ),
                     ),
                   ),
-                );
-              },
-            ),
+                ),
+              ),
           ],
         );
       },
@@ -419,61 +491,74 @@ class _MenuPanelState extends State<MenuPanel> {
   }
 }
 
-/// Compact divider header between the collapsed category grid and the open category's items below.
-class _ItemsHeader extends StatelessWidget {
-  const _ItemsHeader({required this.path, required this.onBack});
-
-  final List<MenuSection> path;
-  final VoidCallback onBack;
+class _CategoryScrollController extends ScrollController {
+  double Function(double viewportHeight)? desiredScrollForViewport;
+  bool userDragged = false;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final here = path.last;
-    final count = here.sections.length + here.entries.length;
-    final title = path.map((s) => s.name).join(' › ');
-    return Container(
-      height: _MenuPanelState._itemsHeaderHeight,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        border: Border.symmetric(horizontal: BorderSide(color: scheme.outlineVariant)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            key: const ValueKey('menu-back'),
-            tooltip: 'Back to the categories',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.expand_more, size: 20),
-            onPressed: onBack,
-          ),
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              layoutBuilder: (current, previous) => Stack(
-                alignment: Alignment.centerLeft,
-                children: [...previous, ?current],
-              ),
-              child: Text(
-                title,
-                key: ValueKey(title),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Text(
-              count == 1 ? '1 item' : '$count items',
-              style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ),
-        ],
-      ),
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) {
+    return _CategoryScrollPosition(
+      controller: this,
+      physics: physics,
+      context: context,
+      oldPosition: oldPosition,
     );
+  }
+
+  void syncToDesired() {
+    if (!hasClients) return;
+    final pos = position;
+    if (pos is _CategoryScrollPosition) {
+      pos.syncToDesired();
+    }
+  }
+}
+
+class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
+  _CategoryScrollPosition({
+    required this.controller,
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+  });
+
+  final _CategoryScrollController controller;
+
+  @override
+  void applyUserOffset(double delta) {
+    controller.userDragged = true;
+    controller.desiredScrollForViewport = null;
+    super.applyUserOffset(delta);
+  }
+
+  @override
+  bool correctForNewDimensions(ScrollMetrics oldPosition, ScrollMetrics newPosition) {
+    final desiredForViewport = controller.desiredScrollForViewport;
+    if (desiredForViewport != null) {
+      final desired = desiredForViewport(newPosition.viewportDimension)
+          .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent);
+      if ((desired - pixels).abs() > 0.01) {
+        correctPixels(desired);
+        return false;
+      }
+      return true;
+    }
+    return super.correctForNewDimensions(oldPosition, newPosition);
+  }
+
+  void syncToDesired() {
+    if (!hasPixels || !haveDimensions) return;
+    final desiredForViewport = controller.desiredScrollForViewport;
+    if (desiredForViewport == null) return;
+    final desired = desiredForViewport(viewportDimension)
+        .clamp(minScrollExtent, maxScrollExtent);
+    if ((desired - pixels).abs() > 0.5) {
+      jumpTo(desired);
+    }
   }
 }
 
@@ -535,6 +620,7 @@ class _SectionButton extends StatelessWidget {
                         ),
                       ),
                       Container(
+                        key: selected ? const ValueKey('menu-back') : null,
                         padding: const EdgeInsets.all(2),
                         decoration: BoxDecoration(
                           color: fg.withValues(alpha: 0.12),

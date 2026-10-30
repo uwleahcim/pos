@@ -177,6 +177,8 @@ void main() {
     expect(find.text('Egg roll'), findsOneWidget);
     expect(find.text('Pu Pu Platter'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
+    // No duplicate category header bar in the items section: 'Appetizers' appears only once (on its tile).
+    expect(find.text('Appetizers'), findsOneWidget);
     final twoRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
 
     // Chef's Specials only needs 1 row of items (2 dishes), so categories smoothly expand by 1 row
@@ -213,6 +215,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Mai Tai'), findsNothing);
     expect(find.text('Appetizers'), findsOneWidget);
+
+    // Selecting a bottom-row category whose items expand over its original y-position scrolls the
+    // categories grid in lockstep so the selected category is never covered by the items section.
+    await tester.binding.setSurfaceSize(const Size(390, 560));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bar'));
+    await tester.pump();
+    await tester.pump(Reflow.duration ~/ 2);
+    final midCatRect = tester.getRect(find.byKey(const ValueKey('categories-0')));
+    final midBarRect = tester.getRect(categoryTile('Bar'));
+    expect(midBarRect.bottom, lessThanOrEqualTo(midCatRect.bottom + 0.5));
+    await tester.pumpAndSettle();
+    final finalCatRect = tester.getRect(find.byKey(const ValueKey('categories-0')));
+    final finalBarRect = tester.getRect(categoryTile('Bar'));
+    expect(finalBarRect.top, greaterThanOrEqualTo(finalCatRect.top - 0.5));
+    expect(finalBarRect.bottom, lessThanOrEqualTo(finalCatRect.bottom + 0.5));
+
     await tester.pumpWidget(const SizedBox());
   });
 
