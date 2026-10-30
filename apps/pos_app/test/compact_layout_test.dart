@@ -314,10 +314,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(sent().last, op('set_line', {'line_id': 'L1', 'qty': 4}));
 
+    // Opening Appetizers on the menu shows the current check quantity (4×) on the Egg roll button,
+    // and voiding the line removes the quantity badge from the button.
+    await tester.tap(find.byKey(const ValueKey('s:dinner/apps')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')),
+        matching: find.text('4×'),
+      ),
+      findsOneWidget,
+    );
+
     await tester.longPress(eggBin);
     await tester.pumpAndSettle();
     expect(sent().last, op('void_line', {'line_id': 'L1'}));
     expect(egg, findsNothing);
+    expect(find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')), findsNothing);
 
     // fired: one fewer asks first, then voids the two and sends one
     await tester.tap(find.byKey(const ValueKey('bin-L2')));

@@ -145,11 +145,20 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // 1. Simple item with no options: one tap adds immediately
+      // 1. Simple item with no options: one tap adds immediately and shows quantity on the button
       await tester.enterText(find.byType(TextField), 'B1');
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('entry-qty:dinner:B1:TSINGTAO')), findsNothing);
       await tester.tap(find.text('Tsingtao'));
+      await tester.pump();
       expect(chosen.single.request.variantId, 'TSINGTAO:bottle');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('entry-qty:dinner:B1:TSINGTAO')),
+          matching: find.text('1×'),
+        ),
+        findsOneWidget,
+      );
 
       // 2. Item with modifier groups that all have defaults: one tap automatically adds with defaults
       await tester.enterText(find.byType(TextField), '88');
@@ -162,6 +171,13 @@ void main() {
       expect(chosen.last.request.variantId, 'BB:regular');
       expect(chosen.last.request.selections['rice'], ['rice:white']);
       expect(chosen.last.request.selections['spice'], ['spice:medium']);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('entry-qty:dinner:88:BB')),
+          matching: find.text('1×'),
+        ),
+        findsOneWidget,
+      );
 
       // 3. Item needing a required size selection: tap expands inline section, selecting size collapses & adds
       await tester.enterText(find.byType(TextField), '87');
@@ -180,6 +196,13 @@ void main() {
       expect(chosen.length, 3);
       expect(chosen.last.request.variantId, 'GTC:pint');
       expect(chosen.last.request.selections['rice'], ['rice:white']);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')),
+          matching: find.text('1×'),
+        ),
+        findsOneWidget,
+      );
 
       // 4. Item with a required modifier group without defaults: tap expands inline section, picking option collapses & adds
       await tester.enterText(find.byType(TextField), 'C5');
@@ -211,6 +234,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(chosen.length, 5);
       expect(chosen.last.request.variantId, 'GTC:pint');
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('entry-qty:dinner:87:GTC')),
+          matching: find.text('2×'),
+        ),
+        findsOneWidget,
+      );
 
       // 6. Selecting a bottom-row item in an open category keeps the selected item visible as the
       // modifier selection section expands below it.

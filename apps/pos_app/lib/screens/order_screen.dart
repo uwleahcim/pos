@@ -237,6 +237,33 @@ class _OrderScreenState extends State<OrderScreen> {
     return seats;
   }
 
+  bool _lineMatchesEntry(Line line, MenuEntry entry) {
+    final local = _local[line.lineId];
+    final lineEntryId = line.entryId ?? line.request?.entryId ?? local?.entryId;
+    if (lineEntryId != null && lineEntryId.isNotEmpty && entry.entryId.isNotEmpty) {
+      return lineEntryId == entry.entryId;
+    }
+    final lineItemId = line.itemId ?? local?.itemId;
+    if (lineItemId != null && lineItemId.isNotEmpty && entry.item.isNotEmpty) {
+      return lineItemId == entry.item;
+    }
+    final variantId = line.request?.variantId;
+    if (variantId != null && variantId.isNotEmpty && entry.variants.isNotEmpty) {
+      return entry.variants.any((v) => v.variantId == variantId);
+    }
+    return line.item == entry.name || line.item.startsWith('${entry.name} (');
+  }
+
+  /// Total quantity of `entry` across all active lines on the check.
+  int _entryQty(Order? order, MenuEntry entry) {
+    if (order == null) return 0;
+    var total = 0;
+    for (final line in order.activeLines) {
+      if (_lineMatchesEntry(line, entry)) total += line.qty;
+    }
+    return total;
+  }
+
   /// Seats are the order's party size, so every screen on the order shows the same ones. A seat comes off
   /// only from the end, and only once its dishes are off it or moved.
   Future<void> _setSeats(Order? order, int seats) async {
@@ -292,7 +319,11 @@ class _OrderScreenState extends State<OrderScreen> {
                 onCourse: (course) => setState(() => _course = course),
               ),
               Expanded(
-                child: MenuPanel(api: widget.api, onChosen: _add),
+                child: MenuPanel(
+                  api: widget.api,
+                  onChosen: _add,
+                  qtyOf: (entry) => _entryQty(order, entry),
+                ),
               ),
             ],
           )

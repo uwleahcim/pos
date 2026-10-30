@@ -33,6 +33,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         final id = data['line_id'] as String;
         if (lines.containsKey(id)) continue; // the backend has it already
         final request = data['request'];
+        final req = request is Map ? LineRequest.fromJson(request.cast<String, dynamic>()) : null;
         lines[id] = Line(
           lineId: id,
           item: data['item'] as String? ?? '',
@@ -41,7 +42,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           seat: data['seat'] as int?,
           course: data['course'] as String?,
           note: data['note'] as String? ?? '',
-          request: request is Map ? LineRequest.fromJson(request.cast<String, dynamic>()) : null,
+          entryId: req?.entryId,
+          request: req,
           pending: true,
         );
       case 'set_line':

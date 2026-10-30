@@ -48,10 +48,11 @@ abstract final class MenuPanelCheck {
 /// defaults) expands an inline section below until those selections are made. Long-pressing an item opens
 /// [ItemSheet] as a popup to customize any modifiers, quantity, or kitchen note.
 class MenuPanel extends StatefulWidget {
-  const MenuPanel({super.key, required this.api, required this.onChosen});
+  const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf});
 
   final PosApi api;
   final ValueChanged<ChosenLine> onChosen;
+  final int Function(MenuEntry entry)? qtyOf;
 
   @override
   State<MenuPanel> createState() => _MenuPanelState();
@@ -70,6 +71,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   var _path = <String>[]; // the open categories, outermost first, by section id
   List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
   final _itemCache = <String, ItemDetail>{};
+  final _localCounts = <String, int>{}; // fallback item counts when widget.qtyOf is not provided
   _PendingItemSelection? _pending;
   _PendingItemSelection? _lastPending; // kept while the required-selections tray animates closed
   int? _revision;
@@ -231,6 +233,19 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     setState(() => _pending = null);
   }
 
+  void _choose(ChosenLine chosen) {
+    final key = '${chosen.request.entryId ?? ''}:${chosen.itemId ?? ''}';
+    setState(() {
+      _localCounts[key] = (_localCounts[key] ?? 0) + chosen.qty;
+    });
+    widget.onChosen(chosen);
+  }
+
+  int _qtyOf(MenuEntry entry) {
+    if (widget.qtyOf != null) return widget.qtyOf!(entry);
+    return _localCounts['${entry.entryId}:${entry.item}'] ?? 0;
+  }
+
   void _selectPendingVariant(VariantOffer variant) {
     final pending = _pending;
     if (pending == null || !variant.available) return;
@@ -238,7 +253,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
-      widget.onChosen(chosen);
+      _choose(chosen);
     } else {
       setState(() {});
     }
@@ -258,7 +273,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
-      widget.onChosen(chosen);
+      _choose(chosen);
     } else {
       setState(() {});
     }
@@ -333,7 +348,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
     if (pending.isComplete) {
       if (_pending != null) _closePending();
-      widget.onChosen(pending.toChosenLine());
+      _choose(pending.toChosenLine());
       return;
     }
 
@@ -355,7 +370,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         onEightySix: () => _eightySix(entry),
       ),
     );
-    if (chosen != null) widget.onChosen(chosen);
+    if (chosen != null) _choose(chosen);
   }
 
   Widget _grid({
@@ -396,6 +411,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _EntryButton(
           key: ValueKey('e:${e.entryId}:${e.item}'),
           entry: e,
+          qty: _qtyOf(e),
           selected: _pending != null && _sameEntry(_pending!.entry, e),
           onTap: () => _tap(e),
           onLongPress: () => _longPress(e),
@@ -1182,10 +1198,12 @@ class _EntryButton extends StatelessWidget {
     required this.entry,
     required this.onTap,
     required this.onLongPress,
+    this.qty = 0,
     this.selected = false,
   });
 
   final MenuEntry entry;
+  final int qty;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -1200,7 +1218,9 @@ class _EntryButton extends StatelessWidget {
         : (selected ? scheme.primaryContainer : scheme.surfaceContainerLowest);
     final borderColor = !available
         ? scheme.outlineVariant.withValues(alpha: 0.5)
-        : (selected ? scheme.primary : scheme.outlineVariant);
+        : (selected
+              ? scheme.primary
+              : (qty > 0 ? scheme.primary.withValues(alpha: 0.55) : scheme.outlineVariant));
     return PressableScale(
       enabled: available,
       child: Material(
@@ -1209,7 +1229,7 @@ class _EntryButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           side: BorderSide(
             color: borderColor,
-            width: selected ? 2 : 1,
+            width: selected ? 2 : (qty > 0 ? 1.5 : 1),
           ),
         ),
         child: InkWell(
@@ -1235,6 +1255,25 @@ class _EntryButton extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (qty > 0) ...[
+                      Container(
+                        key: ValueKey('entry-qty:${entry.entryId}:${entry.item}'),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '$qty×',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: scheme.onPrimary,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: PosTheme.tabular,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                       decoration: BoxDecoration(
