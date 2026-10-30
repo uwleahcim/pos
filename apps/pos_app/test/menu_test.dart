@@ -148,7 +148,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(ItemSheet), findsNothing);
       expect(find.byKey(const ValueKey('required-selections')), findsOneWidget);
-      expect(find.text('Size (required)'), findsOneWidget);
+      expect(find.text('Size'), findsWidgets);
+      final itemTileSize = tester.getSize(find.byKey(const ValueKey('e:dinner:87:GTC')));
+      final modTileSize = tester.getSize(find.byKey(const ValueKey('req-variant:GTC:pint')));
+      expect(modTileSize, itemTileSize);
       await tester.tap(find.text('Pint'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('required-selections')), findsNothing);
@@ -162,7 +165,7 @@ void main() {
       await tester.tap(find.text('Combination Plate'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('required-selections')), findsOneWidget);
-      expect(find.text('Choice of side (required)'), findsOneWidget);
+      expect(find.text('Choice of side'), findsWidgets);
       await tester.tap(find.text('Lo mein'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('required-selections')), findsNothing);

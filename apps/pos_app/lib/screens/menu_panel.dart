@@ -428,24 +428,22 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
+        final minCategoriesHeight = gridHeightForRows(1);
         double targetRequiredHeight = 0.0;
         final pending = _pending;
         if (pending != null) {
-          final chipsPerRow = (usableWidth / 145.0).floor().clamp(2, 6);
-          var groupsHeight = 0.0;
-          if (pending.needsVariant) {
-            final rows = (pending.availableVariants.length / chipsPerRow).ceil().clamp(1, 6);
-            groupsHeight += 24.0 + rows * 38.0 + (rows - 1) * 6.0 + 10.0;
-          }
-          for (final g in pending.requiredGroups) {
-            final rows = (g.options.length / chipsPerRow).ceil().clamp(1, 8);
-            groupsHeight += 24.0 + rows * 38.0 + (rows - 1) * 6.0 + 10.0;
-          }
-          final neededRequired = _itemsDividerHeight + 42.0 + groupsHeight + 8.0;
-          targetRequiredHeight = neededRequired.clamp(0.0, math.max(120.0, constraints.maxHeight * 0.45));
+          final requiredCount = (pending.needsVariant ? pending.availableVariants.length : 0) +
+              pending.requiredGroups.fold<int>(0, (sum, g) => sum + g.options.length);
+          final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
+          final neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
+          final minItemsReserve = here != null ? (_itemsDividerHeight + gridHeightForRows(1)) : 0.0;
+          final maxRequiredHeight = math.max(
+            0.0,
+            constraints.maxHeight - minCategoriesHeight - minItemsReserve,
+          );
+          targetRequiredHeight = neededRequiredHeight.clamp(0.0, maxRequiredHeight);
         }
 
-        final minCategoriesHeight = gridHeightForRows(1);
         double targetItemsHeight = 0.0;
         if (here != null) {
           final itemCount = here.sections.length + here.entries.length;
@@ -647,10 +645,12 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                 child: ClipRect(
                   child: OverflowBox(
                     alignment: Alignment.topCenter,
-                    minHeight: math.max(currentRequiredHeight, 56.0),
-                    maxHeight: math.max(currentRequiredHeight, 56.0),
+                    minHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
+                    maxHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
                     child: _RequiredSelectionsSection(
                       pending: displayPending,
+                      crossAxisCount: crossAxisCount,
+                      tileHeight: tileHeight,
                       onSelectVariant: _selectPendingVariant,
                       onToggleOption: _togglePendingOption,
                       onClose: _closePending,
@@ -892,191 +892,168 @@ int? _parseCents(String price) {
 class _RequiredSelectionsSection extends StatelessWidget {
   const _RequiredSelectionsSection({
     required this.pending,
+    required this.crossAxisCount,
+    required this.tileHeight,
     required this.onSelectVariant,
     required this.onToggleOption,
     required this.onClose,
   });
 
   final _PendingItemSelection pending;
+  final int crossAxisCount;
+  final double tileHeight;
   final ValueChanged<VariantOffer> onSelectVariant;
   final void Function(GroupDetail group, OptionDetail option) onToggleOption;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     return ColoredBox(
       color: scheme.surfaceContainer,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Divider(height: 1, thickness: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 6, 2),
-            child: Row(
-              children: [
-                Icon(Icons.touch_app_outlined, size: 16, color: scheme.primary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    pending.entry.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: scheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    'Required',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  key: const ValueKey('close-required-selections'),
-                  tooltip: 'Cancel',
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-                  icon: const Icon(Icons.close, size: 18),
-                  onPressed: onClose,
-                ),
-              ],
-            ),
+      child: DrillDown(
+        onClose: onClose,
+        header: const Divider(
+          height: _MenuPanelState._itemsDividerHeight,
+          thickness: _MenuPanelState._itemsDividerHeight,
+        ),
+        child: GridView(
+          padding: const EdgeInsets.all(_MenuPanelState._gridPadding),
+          physics: DrillDown.physics,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: _MenuPanelState._gridSpacing,
+            crossAxisSpacing: _MenuPanelState._gridSpacing,
+            mainAxisExtent: tileHeight,
           ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (pending.needsVariant) ...[
-                    Text(
-                      'Size (required)',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        for (final v in pending.availableVariants)
-                          _RequiredChip(
-                            key: ValueKey('req-variant:${v.variantId}'),
-                            label: v.name,
-                            trailing: v.price,
-                            selected: pending.selectedVariantId == v.variantId,
-                            onTap: v.available ? () => onSelectVariant(v) : null,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  for (final g in pending.requiredGroups) ...[
-                    Text(
-                      g.minSelect > 1 ? '${g.name} (choose ${g.minSelect})' : '${g.name} (required)',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        for (final o in g.options)
-                          _RequiredChip(
-                            key: ValueKey('req-option:${g.groupId}:${o.optionId}'),
-                            label: o.name,
-                            trailing: o.free ? null : '+${o.price}',
-                            selected: (pending.selections[g.groupId] ?? const []).contains(o.optionId),
-                            onTap: o.available ? () => onToggleOption(g, o) : null,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
+          children: [
+            if (pending.needsVariant)
+              for (final v in pending.availableVariants)
+                _ModifierButton(
+                  key: ValueKey('req-variant:${v.variantId}'),
+                  groupLabel: 'Size',
+                  name: v.name,
+                  priceLabel: v.price,
+                  available: v.available,
+                  selected: pending.selectedVariantId == v.variantId,
+                  onTap: () => onSelectVariant(v),
+                ),
+            for (final g in pending.requiredGroups)
+              for (final o in g.options)
+                _ModifierButton(
+                  key: ValueKey('req-option:${g.groupId}:${o.optionId}'),
+                  groupLabel: g.minSelect > 1
+                      ? '${g.name} (${(pending.selections[g.groupId] ?? const []).length}/${g.minSelect})'
+                      : g.name,
+                  name: o.name,
+                  priceLabel: o.free ? null : '+${o.price}',
+                  available: o.available,
+                  selected: (pending.selections[g.groupId] ?? const []).contains(o.optionId),
+                  onTap: () => onToggleOption(g, o),
+                ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _RequiredChip extends StatelessWidget {
-  const _RequiredChip({
+class _ModifierButton extends StatelessWidget {
+  const _ModifierButton({
     super.key,
-    required this.label,
-    this.trailing,
+    required this.groupLabel,
+    required this.name,
+    this.priceLabel,
+    required this.available,
     required this.selected,
     required this.onTap,
   });
 
-  final String label;
-  final String? trailing;
+  final String groupLabel;
+  final String name;
+  final String? priceLabel;
+  final bool available;
   final bool selected;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final enabled = onTap != null;
-    final bg = selected
-        ? scheme.primaryContainer
-        : (enabled ? scheme.surfaceContainerLowest : scheme.surfaceContainerHighest);
-    final fg = selected
-        ? scheme.onPrimaryContainer
-        : (enabled ? scheme.onSurface : scheme.onSurfaceVariant);
-    final border = selected ? scheme.primary : scheme.outlineVariant;
-    return Material(
-      color: bg,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: border, width: selected ? 1.5 : 1),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: fg,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+    final bg = !available
+        ? scheme.surfaceContainerHighest
+        : (selected ? scheme.primaryContainer : scheme.surfaceContainerLowest);
+    final borderColor = !available
+        ? scheme.outlineVariant.withValues(alpha: 0.5)
+        : (selected ? scheme.primary : scheme.outlineVariant);
+    return PressableScale(
+      enabled: available,
+      child: Material(
+        color: bg,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: borderColor,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: available ? onTap : null,
+          child: Padding(
+            padding: const EdgeInsets.all(9),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        groupLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: selected ? scheme.onPrimaryContainer : scheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (!available || priceLabel != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: available ? scheme.secondaryContainer : scheme.errorContainer,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          available ? priceLabel! : '86',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: available ? scheme.onSecondaryContainer : scheme.onErrorContainer,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: PosTheme.tabular,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
-              if (trailing != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  trailing!,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: fg.withValues(alpha: 0.75),
-                    fontFeatures: PosTheme.tabular,
+                const SizedBox(height: 4),
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      decoration: available ? null : TextDecoration.lineThrough,
+                      color: !available
+                          ? scheme.onSurfaceVariant
+                          : (selected ? scheme.onPrimaryContainer : scheme.onSurface),
+                      fontWeight: selected ? FontWeight.w700 : null,
+                      height: 1.15,
+                    ),
                   ),
                 ),
               ],
-            ],
+            ),
           ),
         ),
       ),
