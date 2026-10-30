@@ -43,7 +43,10 @@ abstract final class MenuPanelCheck {
 /// categories section only by the number of rows needed to show the dishes (keeping category buttons the
 /// same size), and pulling down at the top of the dishes goes back (see [DrillDown]). Switching between
 /// categories with different item counts smoothly expands or shrinks the items section and the categories
-/// section in lockstep. A dish with nothing to ask is added with one tap; anything else opens [ItemSheet].
+/// section in lockstep. Tapping an item whose required choices already have defaults adds it immediately;
+/// tapping an item that needs required selections (such as size or a required modifier group without
+/// defaults) expands an inline section below until those selections are made. Long-pressing an item opens
+/// [ItemSheet] as a popup to customize any modifiers, quantity, or kitchen note.
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen});
 
@@ -66,6 +69,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   String? _error;
   var _path = <String>[]; // the open categories, outermost first, by section id
   List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
+  final _itemCache = <String, ItemDetail>{};
+  _PendingItemSelection? _pending;
+  _PendingItemSelection? _lastPending; // kept while the required-selections tray animates closed
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
@@ -81,6 +87,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   double _currentSearchFactor = 1.0;
   double _fromItemsHeight = 0.0;
   double _currentItemsHeight = 0.0;
+  double _fromRequiredHeight = 0.0;
+  double _currentRequiredHeight = 0.0;
   double _fromScrollOffset = 0.0;
   double _fromCategoriesHeight = 0.0;
   bool _syncScroll = false;
@@ -115,6 +123,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           _revision = revision;
           _loadedAt = DateTime.now();
           _error = null;
+          _itemCache.clear();
         });
       }
     } on ApiException catch (err) {
@@ -163,6 +172,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void _startTransition({required bool resetScroll}) {
     _fromSearchFactor = _currentSearchFactor;
     _fromItemsHeight = _currentItemsHeight;
+    _fromRequiredHeight = _currentRequiredHeight;
     if (resetScroll) {
       _fromScrollOffset = 0.0;
       _fromCategoriesHeight = 0.0;
@@ -184,6 +194,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     _startTransition(resetScroll: depth != currentDepth);
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
+      _pending = null;
       _search.clear();
     });
   }
@@ -191,10 +202,60 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void _close() {
     final closingSubcategory = _open.length > 1;
     _startTransition(resetScroll: closingSubcategory);
-    setState(() => _path = _path.take(_open.length - 1).toList());
+    setState(() {
+      _path = _path.take(_open.length - 1).toList();
+      _pending = null;
+    });
   }
 
-  /// The 86 board from the order screen: long-press a dish to mark a size sold out or back.
+  void _openPending(_PendingItemSelection pending) {
+    _startTransition(resetScroll: false);
+    setState(() {
+      _pending = pending;
+      _lastPending = pending;
+    });
+  }
+
+  void _closePending() {
+    if (_pending == null) return;
+    _startTransition(resetScroll: false);
+    setState(() => _pending = null);
+  }
+
+  void _selectPendingVariant(VariantOffer variant) {
+    final pending = _pending;
+    if (pending == null || !variant.available) return;
+    pending.selectedVariantId = variant.variantId;
+    if (pending.isComplete) {
+      final chosen = pending.toChosenLine();
+      _closePending();
+      widget.onChosen(chosen);
+    } else {
+      setState(() {});
+    }
+  }
+
+  void _togglePendingOption(GroupDetail group, OptionDetail option) {
+    final pending = _pending;
+    if (pending == null || !option.available) return;
+    final current = pending.selections[group.groupId] ?? const [];
+    if (group.single) {
+      pending.selections[group.groupId] = [option.optionId];
+    } else if (current.contains(option.optionId)) {
+      pending.selections[group.groupId] = [...current]..remove(option.optionId);
+    } else if (group.maxSelect == null || current.length < group.maxSelect!) {
+      pending.selections[group.groupId] = [...current, option.optionId];
+    }
+    if (pending.isComplete) {
+      final chosen = pending.toChosenLine();
+      _closePending();
+      widget.onChosen(chosen);
+    } else {
+      setState(() {});
+    }
+  }
+
+  /// The 86 board from the order screen: mark a size sold out or back.
   Future<void> _eightySix(MenuEntry entry) async {
     await showDialog<void>(
       context: context,
@@ -203,22 +264,87 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     await _load();
   }
 
+  /// Tapping an item auto-adds it immediately when all required selections already have defaults
+  /// (or when it has only one size and no options). When required selections are still needed
+  /// (such as choosing a size or a required modifier group with no defaults), it expands the
+  /// inline required-selections section below.
   Future<void> _tap(MenuEntry entry) async {
     if (!entry.available) return;
-    if (entry.quickAdd) {
-      widget.onChosen(
-        ChosenLine(
-          name: entry.name,
-          request: LineRequest(variantId: entry.variants.first.variantId, entryId: entry.entryId),
-          unitPrice: entry.variants.first.price,
-          itemId: entry.item,
-        ),
-      );
+    if (_pending != null && _pending!.entry == entry) {
+      _closePending();
       return;
     }
+    final availableVariants = [
+      for (final v in entry.variants)
+        if (v.available) v,
+    ];
+    if (availableVariants.isEmpty) return;
+
+    ItemDetail? detail;
+    final selections = <String, List<String>>{};
+    final requiredGroups = <GroupDetail>[];
+
+    if (entry.hasOptions) {
+      final cacheKey = '${entry.entryId}:${entry.item}';
+      detail = _itemCache[cacheKey];
+      if (detail == null) {
+        try {
+          final entryId = entry.entryId.isEmpty ? null : entry.entryId;
+          detail = await widget.api.item(entry.item, entryId: entryId);
+          _itemCache[cacheKey] = detail;
+        } on ApiException {
+          detail = null;
+        }
+      }
+      if (!mounted) return;
+      for (final g in detail?.groups ?? const <GroupDetail>[]) {
+        final defaults = [
+          for (final o in g.options)
+            if (o.isDefault && o.available) o.optionId,
+        ];
+        if (defaults.isNotEmpty) {
+          selections[g.groupId] = defaults;
+        }
+        if (g.required && defaults.length < g.minSelect) {
+          requiredGroups.add(g);
+        }
+      }
+    }
+
+    final needsVariant = availableVariants.length > 1;
+    final pending = _PendingItemSelection(
+      entry: entry,
+      detail: detail,
+      availableVariants: availableVariants,
+      needsVariant: needsVariant,
+      selectedVariantId: needsVariant ? null : availableVariants.first.variantId,
+      requiredGroups: requiredGroups,
+      selections: selections,
+    );
+
+    if (pending.isComplete) {
+      if (_pending != null) _closePending();
+      widget.onChosen(pending.toChosenLine());
+      return;
+    }
+
+    _openPending(pending);
+  }
+
+  /// Long-pressing an item opens the popup [ItemSheet] to customize modifiers, size, quantity, or note.
+  Future<void> _longPress(MenuEntry entry) async {
+    if (!entry.available) {
+      await _eightySix(entry);
+      return;
+    }
+    if (_pending != null) _closePending();
     final chosen = await showDialog<ChosenLine>(
       context: context,
-      builder: (_) => ItemSheet(api: widget.api, entry: entry),
+      builder: (_) => ItemSheet(
+        api: widget.api,
+        entry: entry,
+        onEightySix: () => _eightySix(entry),
+      ),
     );
     if (chosen != null) widget.onChosen(chosen);
   }
@@ -261,8 +387,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _EntryButton(
           key: ValueKey('e:${e.entryId}:${e.item}'),
           entry: e,
+          selected: _pending?.entry == e,
           onTap: () => _tap(e),
-          onLongPress: () => _eightySix(e),
+          onLongPress: () => _longPress(e),
         ),
     ],
   );
@@ -301,13 +428,33 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
+        double targetRequiredHeight = 0.0;
+        final pending = _pending;
+        if (pending != null) {
+          final chipsPerRow = (usableWidth / 145.0).floor().clamp(2, 6);
+          var groupsHeight = 0.0;
+          if (pending.needsVariant) {
+            final rows = (pending.availableVariants.length / chipsPerRow).ceil().clamp(1, 6);
+            groupsHeight += 24.0 + rows * 38.0 + (rows - 1) * 6.0 + 10.0;
+          }
+          for (final g in pending.requiredGroups) {
+            final rows = (g.options.length / chipsPerRow).ceil().clamp(1, 8);
+            groupsHeight += 24.0 + rows * 38.0 + (rows - 1) * 6.0 + 10.0;
+          }
+          final neededRequired = _itemsDividerHeight + 42.0 + groupsHeight + 8.0;
+          targetRequiredHeight = neededRequired.clamp(0.0, math.max(120.0, constraints.maxHeight * 0.45));
+        }
+
         final minCategoriesHeight = gridHeightForRows(1);
         double targetItemsHeight = 0.0;
         if (here != null) {
           final itemCount = here.sections.length + here.entries.length;
           final itemRows = itemCount == 0 ? 1 : (itemCount / crossAxisCount).ceil();
           final neededItemsHeight = _itemsDividerHeight + gridHeightForRows(itemRows);
-          final maxItemsHeight = math.max(0.0, constraints.maxHeight - minCategoriesHeight);
+          final maxItemsHeight = math.max(
+            0.0,
+            constraints.maxHeight - minCategoriesHeight - targetRequiredHeight,
+          );
           targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
         }
 
@@ -315,21 +462,26 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final t = Curves.easeInOutCubic.transform(_transition.value);
         final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
         final currentItemsHeight = math.max(0.0, ui.lerpDouble(_fromItemsHeight, targetItemsHeight, t)!);
+        final currentRequiredHeight = math.max(0.0, ui.lerpDouble(_fromRequiredHeight, targetRequiredHeight, t)!);
         _currentSearchFactor = currentSearchFactor;
         _currentItemsHeight = currentItemsHeight;
+        _currentRequiredHeight = currentRequiredHeight;
 
         final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
         final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
         final currentCategoriesHeight = math.max(
           0.0,
-          constraints.maxHeight - currentSearchHeight - currentItemsHeight,
+          constraints.maxHeight - currentSearchHeight - currentItemsHeight - currentRequiredHeight,
         );
 
         final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
         final totalCategoriesContentHeight = gridHeightForRows(totalCategoryRows);
         final targetCategoriesHeight = math.max(
           minCategoriesHeight,
-          constraints.maxHeight - _searchBarHeight * targetSearchFactor - targetItemsHeight,
+          constraints.maxHeight -
+              _searchBarHeight * targetSearchFactor -
+              targetItemsHeight -
+              targetRequiredHeight,
         );
         final targetMaxScroll = math.max(0.0, totalCategoriesContentHeight - targetCategoriesHeight);
 
@@ -393,6 +545,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
         final displayOpen = open.isNotEmpty ? open : _lastOpen;
         final displayHere = displayOpen.lastOrNull;
+        final displayPending = pending ?? _lastPending;
 
         return Column(
           children: [
@@ -417,13 +570,16 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                                   ? IconButton(
                                       tooltip: 'Clear',
                                       icon: const Icon(Icons.close),
-                                      onPressed: () => setState(_search.clear),
+                                      onPressed: () => setState(() {
+                                        _search.clear();
+                                        _pending = null;
+                                      }),
                                     )
                                   : null,
                               hintText: 'Number or name',
                               isDense: true,
                             ),
-                            onChanged: (_) => setState(() {}),
+                            onChanged: (_) => setState(() => _pending = null),
                           ),
                         ),
                       ),
@@ -480,6 +636,24 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                           ),
                         ),
                       ),
+                    ),
+                  ),
+                ),
+              ),
+            if (currentRequiredHeight > 0.5 && displayPending != null)
+              SizedBox(
+                key: const ValueKey('required-selections'),
+                height: currentRequiredHeight,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topCenter,
+                    minHeight: math.max(currentRequiredHeight, 56.0),
+                    maxHeight: math.max(currentRequiredHeight, 56.0),
+                    child: _RequiredSelectionsSection(
+                      pending: displayPending,
+                      onSelectVariant: _selectPendingVariant,
+                      onToggleOption: _togglePendingOption,
+                      onClose: _closePending,
                     ),
                   ),
                 ),
@@ -644,10 +818,283 @@ class _SectionButton extends StatelessWidget {
   }
 }
 
-class _EntryButton extends StatelessWidget {
-  const _EntryButton({super.key, required this.entry, required this.onTap, required this.onLongPress});
+class _PendingItemSelection {
+  _PendingItemSelection({
+    required this.entry,
+    this.detail,
+    required this.availableVariants,
+    required this.needsVariant,
+    this.selectedVariantId,
+    required this.requiredGroups,
+    required this.selections,
+  });
 
   final MenuEntry entry;
+  final ItemDetail? detail;
+  final List<VariantOffer> availableVariants;
+  final bool needsVariant;
+  String? selectedVariantId;
+  final List<GroupDetail> requiredGroups;
+  final Map<String, List<String>> selections;
+
+  bool get isComplete {
+    if (selectedVariantId == null) return false;
+    for (final g in requiredGroups) {
+      final count = selections[g.groupId]?.length ?? 0;
+      if (count < g.minSelect) return false;
+    }
+    return true;
+  }
+
+  ChosenLine toChosenLine() {
+    final variant = availableVariants.firstWhere(
+      (v) => v.variantId == selectedVariantId,
+      orElse: () => availableVariants.first,
+    );
+    final name = entry.variants.length > 1 ? '${entry.name} (${variant.name})' : entry.name;
+    var priceCents = _parseCents(variant.price);
+    final modifiers = <String>[];
+    for (final g in detail?.groups ?? const <GroupDetail>[]) {
+      final pickedIds = selections[g.groupId] ?? const [];
+      for (final o in g.options) {
+        if (pickedIds.contains(o.optionId)) {
+          if (!o.isDefault) modifiers.add(o.name);
+          if (!o.free && priceCents != null) {
+            final extra = _parseCents(o.price);
+            if (extra != null) priceCents += extra;
+          }
+        }
+      }
+    }
+    final unitPrice = priceCents != null ? (priceCents / 100.0).toStringAsFixed(2) : variant.price;
+    return ChosenLine(
+      name: name,
+      request: LineRequest(
+        variantId: variant.variantId,
+        entryId: entry.entryId,
+        selections: {
+          for (final MapEntry(:key, :value) in selections.entries)
+            if (value.isNotEmpty) key: [...value],
+        },
+      ),
+      unitPrice: unitPrice,
+      modifiers: modifiers,
+      itemId: entry.item,
+    );
+  }
+}
+
+int? _parseCents(String price) {
+  final d = double.tryParse(price);
+  return d == null ? null : (d * 100).round();
+}
+
+class _RequiredSelectionsSection extends StatelessWidget {
+  const _RequiredSelectionsSection({
+    required this.pending,
+    required this.onSelectVariant,
+    required this.onToggleOption,
+    required this.onClose,
+  });
+
+  final _PendingItemSelection pending;
+  final ValueChanged<VariantOffer> onSelectVariant;
+  final void Function(GroupDetail group, OptionDetail option) onToggleOption;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return ColoredBox(
+      color: scheme.surfaceContainer,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Divider(height: 1, thickness: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 6, 2),
+            child: Row(
+              children: [
+                Icon(Icons.touch_app_outlined, size: 16, color: scheme.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    pending.entry.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Required',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  key: const ValueKey('close-required-selections'),
+                  tooltip: 'Cancel',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: onClose,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (pending.needsVariant) ...[
+                    Text(
+                      'Size (required)',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final v in pending.availableVariants)
+                          _RequiredChip(
+                            key: ValueKey('req-variant:${v.variantId}'),
+                            label: v.name,
+                            trailing: v.price,
+                            selected: pending.selectedVariantId == v.variantId,
+                            onTap: v.available ? () => onSelectVariant(v) : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  for (final g in pending.requiredGroups) ...[
+                    Text(
+                      g.minSelect > 1 ? '${g.name} (choose ${g.minSelect})' : '${g.name} (required)',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final o in g.options)
+                          _RequiredChip(
+                            key: ValueKey('req-option:${g.groupId}:${o.optionId}'),
+                            label: o.name,
+                            trailing: o.free ? null : '+${o.price}',
+                            selected: (pending.selections[g.groupId] ?? const []).contains(o.optionId),
+                            onTap: o.available ? () => onToggleOption(g, o) : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RequiredChip extends StatelessWidget {
+  const _RequiredChip({
+    super.key,
+    required this.label,
+    this.trailing,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String? trailing;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final enabled = onTap != null;
+    final bg = selected
+        ? scheme.primaryContainer
+        : (enabled ? scheme.surfaceContainerLowest : scheme.surfaceContainerHighest);
+    final fg = selected
+        ? scheme.onPrimaryContainer
+        : (enabled ? scheme.onSurface : scheme.onSurfaceVariant);
+    final border = selected ? scheme.primary : scheme.outlineVariant;
+    return Material(
+      color: bg,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: border, width: selected ? 1.5 : 1),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: fg,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  trailing!,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: fg.withValues(alpha: 0.75),
+                    fontFeatures: PosTheme.tabular,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EntryButton extends StatelessWidget {
+  const _EntryButton({
+    super.key,
+    required this.entry,
+    required this.onTap,
+    required this.onLongPress,
+    this.selected = false,
+  });
+
+  final MenuEntry entry;
+  final bool selected;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -656,14 +1103,21 @@ class _EntryButton extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final available = entry.available;
+    final bg = !available
+        ? scheme.surfaceContainerHighest
+        : (selected ? scheme.primaryContainer : scheme.surfaceContainerLowest);
+    final borderColor = !available
+        ? scheme.outlineVariant.withValues(alpha: 0.5)
+        : (selected ? scheme.primary : scheme.outlineVariant);
     return PressableScale(
       enabled: available,
       child: Material(
-        color: available ? scheme.surfaceContainerLowest : scheme.surfaceContainerHighest,
+        color: bg,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
           side: BorderSide(
-            color: available ? scheme.outlineVariant : scheme.outlineVariant.withValues(alpha: 0.5),
+            color: borderColor,
+            width: selected ? 2 : 1,
           ),
         ),
         child: InkWell(
@@ -756,7 +1210,14 @@ class _EntryButton extends StatelessWidget {
 /// Size, choices, quantity and a note for one dish, with the backend's price shown as they change.
 /// With [initial] it reopens a line already on the order, to change it.
 class ItemSheet extends StatefulWidget {
-  const ItemSheet({super.key, required this.api, required this.entry, this.initial, this.warning});
+  const ItemSheet({
+    super.key,
+    required this.api,
+    required this.entry,
+    this.initial,
+    this.warning,
+    this.onEightySix,
+  });
 
   final PosApi api;
   final MenuEntry entry;
@@ -764,6 +1225,7 @@ class ItemSheet extends StatefulWidget {
 
   /// Shown above the buttons, e.g. that changing a fired dish voids it.
   final String? warning;
+  final VoidCallback? onEightySix;
 
   @override
   State<ItemSheet> createState() => _ItemSheetState();
@@ -864,8 +1326,23 @@ class _ItemSheetState extends State<ItemSheet> {
     final priced = _priced;
     final total = priced == null ? null : (double.parse(priced.unitPrice) * _qty).toStringAsFixed(2);
     return AlertDialog(
-      title: Text(
-        widget.entry.secondName == null ? widget.entry.name : '${widget.entry.name}  ${widget.entry.secondName}',
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              widget.entry.secondName == null ? widget.entry.name : '${widget.entry.name}  ${widget.entry.secondName}',
+            ),
+          ),
+          if (widget.onEightySix != null)
+            IconButton(
+              tooltip: '86 ${widget.entry.name}',
+              icon: const Icon(Icons.block, size: 18),
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.onEightySix!();
+              },
+            ),
+        ],
       ),
       content: SizedBox(
         width: 490,
