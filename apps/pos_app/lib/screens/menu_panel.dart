@@ -77,6 +77,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   Timer? _watch;
   final _search = TextEditingController();
   final _categoriesScroll = _CategoryScrollController();
+  final _searchScroll = _CategoryScrollController();
+  final _itemsScrolls = <String, _CategoryScrollController>{};
   late final _transition = AnimationController(
     vsync: this,
     duration: Reflow.duration,
@@ -89,9 +91,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   double _currentItemsHeight = 0.0;
   double _fromRequiredHeight = 0.0;
   double _currentRequiredHeight = 0.0;
-  double _fromScrollOffset = 0.0;
-  double _fromCategoriesHeight = 0.0;
-  bool _syncScroll = false;
+
+  _CategoryScrollController _itemsScrollFor(String sectionId) =>
+      _itemsScrolls.putIfAbsent(sectionId, _CategoryScrollController.new);
+
+  static bool _sameEntry(MenuEntry a, MenuEntry b) => a.entryId == b.entryId && a.item == b.item;
 
   @override
   void initState() {
@@ -106,6 +110,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     _transition.dispose();
     _search.dispose();
     _categoriesScroll.dispose();
+    _searchScroll.dispose();
+    for (final c in _itemsScrolls.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -169,21 +177,19 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     ];
   }
 
-  void _startTransition({required bool resetScroll}) {
+  void _startTransition({required bool resetScroll, String? resetItemsSectionId}) {
     _fromSearchFactor = _currentSearchFactor;
     _fromItemsHeight = _currentItemsHeight;
     _fromRequiredHeight = _currentRequiredHeight;
-    if (resetScroll) {
-      _fromScrollOffset = 0.0;
-      _fromCategoriesHeight = 0.0;
-    } else {
-      _fromScrollOffset = _categoriesScroll.hasClients ? _categoriesScroll.offset : 0.0;
-      _fromCategoriesHeight =
-          _categoriesScroll.hasClients && _categoriesScroll.position.haveDimensions
-          ? _categoriesScroll.position.viewportDimension
-          : 0.0;
+    _categoriesScroll.captureStart(resetScroll: resetScroll);
+    _searchScroll.captureStart(resetScroll: false);
+    final here = _open.lastOrNull;
+    if (here != null) {
+      _itemsScrollFor(here.sectionId).captureStart(resetScroll: false);
     }
-    _syncScroll = true;
+    if (resetItemsSectionId != null) {
+      _itemsScrollFor(resetItemsSectionId).captureStart(resetScroll: true);
+    }
     _transition.forward(from: 0.0);
   }
 
@@ -191,7 +197,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// collapsing or expanding to match the rows needed by `section`'s items.
   void _openAt(int depth, MenuSection section) {
     final currentDepth = _open.isEmpty ? 0 : _open.length - 1;
-    _startTransition(resetScroll: depth != currentDepth);
+    _startTransition(resetScroll: depth != currentDepth, resetItemsSectionId: section.sectionId);
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
       _pending = null;
@@ -387,7 +393,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _EntryButton(
           key: ValueKey('e:${e.entryId}:${e.item}'),
           entry: e,
-          selected: _pending?.entry == e,
+          selected: _pending != null && _sameEntry(_pending!.entry, e),
           onTap: () => _tap(e),
           onLongPress: () => _longPress(e),
         ),
@@ -436,10 +442,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
               pending.requiredGroups.fold<int>(0, (sum, g) => sum + g.options.length);
           final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
           final neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
+          final minTopReserve = searching ? (_searchBarHeight + gridHeightForRows(1)) : minCategoriesHeight;
           final minItemsReserve = here != null ? (_itemsDividerHeight + gridHeightForRows(1)) : 0.0;
           final maxRequiredHeight = math.max(
             0.0,
-            constraints.maxHeight - minCategoriesHeight - minItemsReserve,
+            constraints.maxHeight - minTopReserve - minItemsReserve,
           );
           targetRequiredHeight = neededRequiredHeight.clamp(0.0, maxRequiredHeight);
         }
@@ -472,8 +479,6 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           constraints.maxHeight - currentSearchHeight - currentItemsHeight - currentRequiredHeight,
         );
 
-        final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
-        final totalCategoriesContentHeight = gridHeightForRows(totalCategoryRows);
         final targetCategoriesHeight = math.max(
           minCategoriesHeight,
           constraints.maxHeight -
@@ -481,69 +486,71 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
               targetItemsHeight -
               targetRequiredHeight,
         );
-        final targetMaxScroll = math.max(0.0, totalCategoriesContentHeight - targetCategoriesHeight);
-
-        double extraBottomSpace = 0.0;
-        if (_categoriesScroll.userDragged) {
-          _syncScroll = false;
-          _categoriesScroll.userDragged = false;
-        }
-        if (_syncScroll) {
-          var targetScroll = _fromScrollOffset.clamp(0.0, targetMaxScroll);
-          double? rowTop;
-          double? rowBottom;
-          if (here != null) {
-            final selectedIndex = siblings.indexOf(here);
-            if (selectedIndex >= 0) {
-              final row = selectedIndex ~/ crossAxisCount;
-              rowTop = row * (tileHeight + _gridSpacing);
-              rowBottom = rowTop + tileHeight + _gridPadding * 2;
-              if (rowBottom > targetScroll + targetCategoriesHeight) {
-                targetScroll = rowBottom - targetCategoriesHeight;
-              }
-              if (rowTop < targetScroll) {
-                targetScroll = rowTop;
-              }
-              targetScroll = targetScroll.clamp(0.0, targetMaxScroll);
-            }
-          }
-          final startBottomVisible = _fromCategoriesHeight <= 0 ||
-              (rowBottom != null && rowBottom <= _fromScrollOffset + _fromCategoriesHeight + 1.0);
-          final startTopVisible = rowTop != null && rowTop >= _fromScrollOffset - 1.0;
-
-          double desiredForViewport(double viewportHeight) {
-            final progress = Curves.easeInOutCubic.transform(_transition.value);
-            var desired = ui.lerpDouble(_fromScrollOffset, targetScroll, progress)!;
-            if (rowBottom != null &&
-                (startBottomVisible || progress >= 1.0) &&
-                rowBottom > desired + viewportHeight) {
-              desired = rowBottom - viewportHeight;
-            }
-            if (rowTop != null && (startTopVisible || progress >= 1.0) && rowTop < desired) {
-              desired = rowTop;
-            }
-            return math.max(0.0, desired);
-          }
-
-          _categoriesScroll.desiredScrollForViewport = desiredForViewport;
-          final currentDesired = desiredForViewport(currentCategoriesHeight);
-          if (currentDesired > 0) {
-            extraBottomSpace = math.max(
-              0.0,
-              currentCategoriesHeight + currentDesired - totalCategoriesContentHeight,
-            );
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || !_syncScroll) return;
-            _categoriesScroll.syncToDesired();
-          });
-        } else {
-          _categoriesScroll.desiredScrollForViewport = null;
-        }
 
         final displayOpen = open.isNotEmpty ? open : _lastOpen;
         final displayHere = displayOpen.lastOrNull;
         final displayPending = pending ?? _lastPending;
+
+        final extraBottomSpace = _categoriesScroll.syncViewport(
+          totalTileCount: siblings.length,
+          selectedTileIndex: here != null ? siblings.indexOf(here) : -1,
+          crossAxisCount: crossAxisCount,
+          tileHeight: tileHeight,
+          gridPadding: _gridPadding,
+          gridSpacing: _gridSpacing,
+          currentViewportHeight: currentCategoriesHeight,
+          targetViewportHeight: targetCategoriesHeight,
+          progress: t,
+        );
+
+        final found = searching ? _found : const <MenuEntry>[];
+        final searchExtraBottomSpace = searching
+            ? _searchScroll.syncViewport(
+                totalTileCount: found.length,
+                selectedTileIndex: pending != null
+                    ? found.indexWhere((e) => _sameEntry(e, pending.entry))
+                    : -1,
+                crossAxisCount: crossAxisCount,
+                tileHeight: tileHeight,
+                gridPadding: _gridPadding,
+                gridSpacing: _gridSpacing,
+                currentViewportHeight: currentCategoriesHeight,
+                targetViewportHeight: targetCategoriesHeight,
+                progress: t,
+              )
+            : 0.0;
+
+        _CategoryScrollController? itemsScroll;
+        double itemsExtraBottomSpace = 0.0;
+        if (displayHere != null) {
+          itemsScroll = _itemsScrollFor(displayHere.sectionId);
+          final entryIdx = pending != null
+              ? displayHere.entries.indexWhere((e) => _sameEntry(e, pending.entry))
+              : -1;
+          final selectedItemTileIndex = entryIdx >= 0 ? displayHere.sections.length + entryIdx : -1;
+          itemsExtraBottomSpace = itemsScroll.syncViewport(
+            totalTileCount: displayHere.sections.length + displayHere.entries.length,
+            selectedTileIndex: selectedItemTileIndex,
+            crossAxisCount: crossAxisCount,
+            tileHeight: tileHeight,
+            gridPadding: _gridPadding,
+            gridSpacing: _gridSpacing,
+            currentViewportHeight: math.max(0.0, currentItemsHeight - _itemsDividerHeight),
+            targetViewportHeight: math.max(0.0, targetItemsHeight - _itemsDividerHeight),
+            progress: t,
+          );
+        }
+
+        if (_categoriesScroll.syncActive ||
+            _searchScroll.syncActive ||
+            (itemsScroll != null && itemsScroll.syncActive)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _categoriesScroll.syncToDesired();
+            _searchScroll.syncToDesired();
+            itemsScroll?.syncToDesired();
+          });
+        }
 
         return Column(
           children: [
@@ -589,8 +596,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
               child: searching
                   ? _grid(
                       key: const ValueKey('search-grid'),
+                      controller: _searchScroll,
+                      extraBottomPadding: searchExtraBottomSpace,
                       sections: const [],
-                      entries: _found,
+                      entries: found,
                       depth: 0,
                       crossAxisCount: crossAxisCount,
                       tileHeight: tileHeight,
@@ -626,6 +635,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                           switchOutCurve: Curves.easeInCubic,
                           child: _grid(
                             key: ValueKey('items-${displayHere.sectionId}'),
+                            controller: itemsScroll,
+                            extraBottomPadding: itemsExtraBottomSpace,
                             sections: displayHere.sections,
                             entries: displayHere.entries,
                             depth: displayOpen.length,
@@ -667,7 +678,83 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
 class _CategoryScrollController extends ScrollController {
   double Function(double viewportHeight)? desiredScrollForViewport;
-  bool userDragged = false;
+  bool syncActive = false;
+  double fromScrollOffset = 0.0;
+  double fromViewportHeight = 0.0;
+
+  void captureStart({required bool resetScroll}) {
+    if (resetScroll) {
+      fromScrollOffset = 0.0;
+      fromViewportHeight = 0.0;
+    } else {
+      fromScrollOffset = hasClients ? offset : 0.0;
+      fromViewportHeight = hasClients && position.haveDimensions ? position.viewportDimension : 0.0;
+    }
+    syncActive = true;
+  }
+
+  double syncViewport({
+    required int totalTileCount,
+    required int selectedTileIndex,
+    required int crossAxisCount,
+    required double tileHeight,
+    required double gridPadding,
+    required double gridSpacing,
+    required double currentViewportHeight,
+    required double targetViewportHeight,
+    required double progress,
+  }) {
+    if (!syncActive) {
+      desiredScrollForViewport = null;
+      return 0.0;
+    }
+    final totalRows = (totalTileCount / crossAxisCount).ceil();
+    final totalContentHeight = totalRows <= 0
+        ? 0.0
+        : gridPadding * 2 + totalRows * tileHeight + (totalRows - 1) * gridSpacing;
+    final targetMaxScroll = math.max(0.0, totalContentHeight - targetViewportHeight);
+    var targetScroll = fromScrollOffset.clamp(0.0, targetMaxScroll);
+    double? rowTop;
+    double? rowBottom;
+    if (selectedTileIndex >= 0 && selectedTileIndex < totalTileCount) {
+      final row = selectedTileIndex ~/ crossAxisCount;
+      rowTop = row * (tileHeight + gridSpacing);
+      rowBottom = rowTop + tileHeight + gridPadding * 2;
+      if (rowBottom > targetScroll + targetViewportHeight) {
+        targetScroll = rowBottom - targetViewportHeight;
+      }
+      if (rowTop < targetScroll) {
+        targetScroll = rowTop;
+      }
+      targetScroll = targetScroll.clamp(0.0, targetMaxScroll);
+    }
+    final startBottomVisible = fromViewportHeight <= 0 ||
+        (rowBottom != null && rowBottom <= fromScrollOffset + fromViewportHeight + 1.0);
+    final startTopVisible = rowTop != null && rowTop >= fromScrollOffset - 1.0;
+
+    double desiredForViewport(double viewportHeight) {
+      var desired = ui.lerpDouble(fromScrollOffset, targetScroll, progress)!;
+      if (rowBottom != null &&
+          (startBottomVisible || progress >= 1.0) &&
+          rowBottom > desired + viewportHeight) {
+        desired = rowBottom - viewportHeight;
+      }
+      if (rowTop != null && (startTopVisible || progress >= 1.0) && rowTop < desired) {
+        desired = rowTop;
+      }
+      return math.max(0.0, desired);
+    }
+
+    desiredScrollForViewport = desiredForViewport;
+    final currentDesired = desiredForViewport(currentViewportHeight);
+    if (currentDesired > 0) {
+      return math.max(
+        0.0,
+        currentViewportHeight + currentDesired - totalContentHeight,
+      );
+    }
+    return 0.0;
+  }
 
   @override
   ScrollPosition createScrollPosition(
@@ -704,7 +791,7 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
 
   @override
   void applyUserOffset(double delta) {
-    controller.userDragged = true;
+    controller.syncActive = false;
     controller.desiredScrollForViewport = null;
     super.applyUserOffset(delta);
   }
