@@ -294,4 +294,39 @@ void main() {
     expect(reads, 2);
     expect(find.text('Egg roll (new recipe)'), findsOneWidget); // and still in the category it had open
   });
+
+  testWidgets('a dish whose choices cannot be loaded is not added blind', (tester) async {
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/menu':
+            return http.Response.bytes(utf8.encode(jsonEncode(fixture('menu'))), 200);
+          case '/menu/items/WHISKY':
+            return http.Response('{"detail": "restarting"}', 503); // the hub is down between the menu and the tap
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    final chosen = <ChosenLine>[];
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: chosen.add),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'B5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Japanese whisky'));
+    await tester.pumpAndSettle();
+    // Not added with its 'Serve' choice unknown (the hub would refuse the line), and the operator is told why.
+    expect(chosen, isEmpty);
+    expect(find.byKey(const ValueKey('required-selections')), findsNothing);
+    expect(find.textContaining("Can't load the choices for Japanese whisky"), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

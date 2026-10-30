@@ -82,7 +82,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _searchScroll = _CategoryScrollController();
   final _itemsScrolls = <String, _CategoryScrollController>{};
   late final _transition = AnimationController(vsync: this, duration: Reflow.duration, value: 1.0)
-    ..addListener(_onTransitionTick);
+    ..addListener(_onTransitionTick)
+    ..addStatusListener(_onTransitionStatus);
 
   double _fromSearchFactor = 1.0;
   double _currentSearchFactor = 1.0;
@@ -121,6 +122,18 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void _onTransitionTick() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// The grids are steered to computed offsets only while the trays animate. Once the last frame has landed,
+  /// they are the operator's again: a later rebuild, a mouse wheel or a resize must not snap them back.
+  void _onTransitionStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _transition.isAnimating) return;
+      for (final scroll in [_categoriesScroll, _searchScroll, ..._itemsScrolls.values]) {
+        scroll.endSync();
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -313,12 +326,17 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           final entryId = entry.entryId.isEmpty ? null : entry.entryId;
           detail = await widget.api.item(entry.item, entryId: entryId);
           _itemCache[cacheKey] = detail;
-        } on ApiException {
-          detail = null;
+        } on ApiException catch (err) {
+          // Added blind, the dish would reach the hub without its required choices and be refused there, and
+          // the operator would only find out when the line vanished from the check. Say so now instead.
+          if (!mounted) return;
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text("Can't load the choices for ${entry.name}: $err")));
+          return;
         }
       }
       if (!mounted) return;
-      for (final g in detail?.groups ?? const <GroupDetail>[]) {
+      for (final g in detail.groups) {
         final defaults = [
           for (final o in g.options)
             if (o.isDefault && o.available) o.optionId,
@@ -776,6 +794,13 @@ class _CategoryScrollController extends ScrollController {
     if (pos is _CategoryScrollPosition) {
       pos.syncToDesired();
     }
+  }
+
+  /// Lands the final offset, then stops steering: later rebuilds and dimension changes leave the scroll alone.
+  void endSync() {
+    syncToDesired();
+    syncActive = false;
+    desiredScrollForViewport = null;
   }
 }
 
