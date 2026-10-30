@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/screens/menu_panel.dart';
+import 'package:pos_app/screens/reflow.dart';
 import 'package:pos_app/settings.dart';
 
 /// Fixtures are the backend's own answers (sample menu), saved from its test client.
@@ -93,6 +94,25 @@ void main() {
           },
         ],
       };
+      final whisky = {
+        'item': 'WHISKY',
+        'name': 'Japanese whisky',
+        'variants': [
+          {'variant_id': 'WHISKY:2oz', 'name': '2 oz', 'price': '14.00', 'status': 'available'},
+        ],
+        'groups': [
+          {
+            'group_id': 'pour',
+            'name': 'Serve',
+            'min_select': 1,
+            'max_select': 1,
+            'options': [
+              {'option_id': 'pour:neat', 'name': 'Neat', 'price': '0.00', 'status': 'available'},
+              {'option_id': 'pour:rocks', 'name': 'On the rocks', 'price': '0.00', 'status': 'available'},
+            ],
+          },
+        ],
+      };
       final api = PosApi(
         settings,
         client: MockClient((request) async {
@@ -105,6 +125,8 @@ void main() {
               return http.Response.bytes(utf8.encode(jsonEncode(bb)), 200);
             case '/menu/items/C5':
               return http.Response.bytes(utf8.encode(jsonEncode(c5)), 200);
+            case '/menu/items/WHISKY':
+              return http.Response.bytes(utf8.encode(jsonEncode(whisky)), 200);
             case '/menu/price':
               priced.add(jsonDecode(request.body) as Map<String, dynamic>);
               return http.Response(jsonEncode({'name': "General Tso's Chicken (Pint)", 'unit_price': '15.95'}), 200);
@@ -189,6 +211,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(chosen.length, 5);
       expect(chosen.last.request.variantId, 'GTC:pint');
+
+      // 6. Selecting a bottom-row item in an open category keeps the selected item visible as the
+      // modifier selection section expands below it.
+      await tester.tap(find.byTooltip('Clear'));
+      await tester.binding.setSurfaceSize(const Size(390, 560));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bar'));
+      await tester.pumpAndSettle();
+      final whiskyTile = find.byKey(const ValueKey('e:dinner:B5:WHISKY'));
+      await tester.tap(whiskyTile);
+      await tester.pump(); // complete async api.item('WHISKY')
+      await tester.pump(Reflow.duration ~/ 2);
+      final midItemsRect = tester.getRect(find.byKey(const ValueKey('items-dinner/bar')));
+      final midWhiskyRect = tester.getRect(whiskyTile);
+      expect(midWhiskyRect.bottom, lessThanOrEqualTo(midItemsRect.bottom + 0.5));
+      await tester.pumpAndSettle();
+      final finalItemsRect = tester.getRect(find.byKey(const ValueKey('items-dinner/bar')));
+      final finalWhiskyRect = tester.getRect(whiskyTile);
+      expect(finalWhiskyRect.top, greaterThanOrEqualTo(finalItemsRect.top - 0.5));
+      expect(finalWhiskyRect.bottom, lessThanOrEqualTo(finalItemsRect.bottom + 0.5));
     },
   );
 

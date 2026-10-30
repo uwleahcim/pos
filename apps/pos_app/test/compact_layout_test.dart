@@ -179,9 +179,19 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     // No duplicate category header bar in the items section: 'Appetizers' appears only once (on its tile).
     expect(find.text('Appetizers'), findsOneWidget);
+    // The items section expands directly below the categories section, not from the bottom of the screen.
+    final catRect = tester.getRect(find.byKey(const ValueKey('categories-0')));
+    final appsItemsRect = tester.getRect(find.byKey(const ValueKey('items-dinner/apps')));
+    expect(appsItemsRect.top, closeTo(catRect.bottom + 1.0, 0.5));
+    expect(appsItemsRect.bottom, lessThan(700));
+
+    // When screen height requires collapsing categories (e.g. 560px tall), Appetizers (2 rows of items)
+    // collapses categories more than Chef's Specials (1 row of items), and switching between them
+    // smoothly expands the categories section and shrinks the items section.
+    await tester.binding.setSurfaceSize(const Size(400, 560));
+    await tester.pumpAndSettle();
     final twoRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
 
-    // Chef's Specials only needs 1 row of items (2 dishes), so categories smoothly expand by 1 row
     await tester.tap(find.text("Chef's Specials"));
     await tester.pump();
     await tester.pump(Reflow.duration ~/ 2);
@@ -189,11 +199,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getSize(categoryTile("Chef's Specials")), initialTileSize);
     final oneRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
-    expect(oneRowCategoriesHeight, greaterThan(twoRowCategoriesHeight + 100));
+    expect(oneRowCategoriesHeight, greaterThan(twoRowCategoriesHeight + 90));
     expect(midExpandHeight, greaterThan(twoRowCategoriesHeight + 20));
     expect(midExpandHeight, lessThan(oneRowCategoriesHeight - 20));
     expect(find.text("General Tso's Chicken"), findsOneWidget);
     expect(find.text('Beef with Broccoli'), findsOneWidget);
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    await tester.pumpAndSettle();
 
     await tester.drag(find.text("General Tso's Chicken"), const Offset(0, 300));
     await tester.pumpAndSettle();

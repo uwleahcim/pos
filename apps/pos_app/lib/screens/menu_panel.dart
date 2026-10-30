@@ -87,6 +87,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   double _fromSearchFactor = 1.0;
   double _currentSearchFactor = 1.0;
+  double _fromCategoriesHeight = 0.0;
+  double _currentCategoriesHeight = 0.0;
   double _fromItemsHeight = 0.0;
   double _currentItemsHeight = 0.0;
   double _fromRequiredHeight = 0.0;
@@ -179,6 +181,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   void _startTransition({required bool resetScroll, String? resetItemsSectionId}) {
     _fromSearchFactor = _currentSearchFactor;
+    _fromCategoriesHeight = _currentCategoriesHeight;
     _fromItemsHeight = _currentItemsHeight;
     _fromRequiredHeight = _currentRequiredHeight;
     _categoriesScroll.captureStart(resetScroll: resetScroll);
@@ -434,7 +437,14 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
-        final minCategoriesHeight = gridHeightForRows(1);
+        final found = searching ? _found : const <MenuEntry>[];
+        final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
+        final totalCategoriesContentHeight = gridHeightForRows(math.max(1, totalCategoryRows));
+        final totalSearchRows = (found.length / crossAxisCount).ceil();
+        final totalSearchContentHeight = gridHeightForRows(math.max(1, totalSearchRows));
+        final topContentHeight = searching ? totalSearchContentHeight : totalCategoriesContentHeight;
+        final minCategoriesHeight = math.min(topContentHeight, gridHeightForRows(1));
+
         double targetRequiredHeight = 0.0;
         final pending = _pending;
         if (pending != null) {
@@ -464,28 +474,46 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         }
 
         final targetSearchFactor = open.isEmpty ? 1.0 : 0.0;
-        final t = Curves.easeInOutCubic.transform(_transition.value);
-        final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
-        final currentItemsHeight = math.max(0.0, ui.lerpDouble(_fromItemsHeight, targetItemsHeight, t)!);
-        final currentRequiredHeight = math.max(0.0, ui.lerpDouble(_fromRequiredHeight, targetRequiredHeight, t)!);
-        _currentSearchFactor = currentSearchFactor;
-        _currentItemsHeight = currentItemsHeight;
-        _currentRequiredHeight = currentRequiredHeight;
-
-        final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
-        final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
-        final currentCategoriesHeight = math.max(
-          0.0,
-          constraints.maxHeight - currentSearchHeight - currentItemsHeight - currentRequiredHeight,
-        );
-
-        final targetCategoriesHeight = math.max(
+        final availableForCategories = math.max(
           minCategoriesHeight,
           constraints.maxHeight -
               _searchBarHeight * targetSearchFactor -
               targetItemsHeight -
               targetRequiredHeight,
         );
+        final targetCategoriesHeight = math.min(topContentHeight, availableForCategories);
+
+        final t = Curves.easeInOutCubic.transform(_transition.value);
+        final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
+        final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
+        final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
+
+        final rawCategoriesHeight = math.max(
+          0.0,
+          ui.lerpDouble(_fromCategoriesHeight, targetCategoriesHeight, t)!,
+        );
+        final double currentCategoriesHeight = rawCategoriesHeight.clamp(
+          0.0,
+          math.max(0.0, constraints.maxHeight - currentSearchHeight),
+        );
+        final rawItemsHeight = math.max(0.0, ui.lerpDouble(_fromItemsHeight, targetItemsHeight, t)!);
+        final double currentItemsHeight = rawItemsHeight.clamp(
+          0.0,
+          math.max(0.0, constraints.maxHeight - currentSearchHeight - currentCategoriesHeight),
+        );
+        final rawRequiredHeight = math.max(0.0, ui.lerpDouble(_fromRequiredHeight, targetRequiredHeight, t)!);
+        final double currentRequiredHeight = rawRequiredHeight.clamp(
+          0.0,
+          math.max(
+            0.0,
+            constraints.maxHeight - currentSearchHeight - currentCategoriesHeight - currentItemsHeight,
+          ),
+        );
+
+        _currentSearchFactor = currentSearchFactor;
+        _currentCategoriesHeight = currentCategoriesHeight;
+        _currentItemsHeight = currentItemsHeight;
+        _currentRequiredHeight = currentRequiredHeight;
 
         final displayOpen = open.isNotEmpty ? open : _lastOpen;
         final displayHere = displayOpen.lastOrNull;
@@ -503,7 +531,6 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           progress: t,
         );
 
-        final found = searching ? _found : const <MenuEntry>[];
         final searchExtraBottomSpace = searching
             ? _searchScroll.syncViewport(
                 totalTileCount: found.length,
@@ -592,7 +619,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                   ),
                 ),
               ),
-            Expanded(
+            SizedBox(
+              height: currentCategoriesHeight,
               child: searching
                   ? _grid(
                       key: const ValueKey('search-grid'),
