@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -247,6 +248,43 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('once a category has opened, a mouse wheel scroll of the categories sticks', (tester) async {
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient(
+        (request) async => request.url.path == '/menu' ? json(fixture('menu')) : json({'revision': 0}),
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(400, 560));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var rebuilds = 0;
+    Widget panel() => MaterialApp(
+      home: Scaffold(
+        body: MenuPanel(api: api, onChosen: (_) {}, qtyOf: (_) => rebuilds),
+      ),
+    );
+    await tester.pumpWidget(panel());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Appetizers'));
+    await tester.pumpAndSettle();
+    final grid = find.descendant(of: find.byKey(const ValueKey('categories-0')), matching: find.byType(Scrollable));
+    final position = tester.state<ScrollableState>(grid).position;
+    expect(position.maxScrollExtent, greaterThan(0)); // three rows of categories, fewer on show
+    final before = position.pixels;
+    final mouse = TestPointer(1, PointerDeviceKind.mouse);
+    mouse.hover(tester.getCenter(find.byKey(const ValueKey('categories-0'))));
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, 40)));
+    await tester.pump();
+    final scrolled = position.pixels;
+    expect(scrolled, greaterThan(before));
+    // The order screen rebuilds the panel every couple of seconds; that must not undo the operator's scroll.
+    rebuilds++;
+    await tester.pumpWidget(panel());
+    await tester.pump();
+    expect(position.pixels, scrolled);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('tap the quantity for one more, the bin for one fewer; hold for any number or none', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
@@ -319,10 +357,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('s:dinner/apps')));
     await tester.pumpAndSettle();
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')),
-        matching: find.text('4×'),
-      ),
+      find.descendant(of: find.byKey(const ValueKey('entry-qty:dinner:1:EGGROLL')), matching: find.text('4×')),
       findsOneWidget,
     );
 

@@ -94,8 +94,7 @@ class PosColors extends ThemeExtension<PosColors> {
   );
 
   static PosColors of(BuildContext context) =>
-      Theme.of(context).extension<PosColors>() ??
-      (Theme.of(context).brightness == Brightness.dark ? dark : light);
+      Theme.of(context).extension<PosColors>() ?? (Theme.of(context).brightness == Brightness.dark ? dark : light);
 
   @override
   PosColors copyWith({
@@ -303,27 +302,18 @@ abstract final class PosTheme {
           borderRadius: BorderRadius.circular(20),
           side: BorderSide(color: baseScheme.outlineVariant.withValues(alpha: 0.6)),
         ),
-        titleTextStyle: textTheme.titleLarge?.copyWith(
-          color: baseScheme.onSurface,
-          fontWeight: FontWeight.w700,
-        ),
+        titleTextStyle: textTheme.titleLarge?.copyWith(color: baseScheme.onSurface, fontWeight: FontWeight.w700),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: baseScheme.surfaceContainerLowest,
         surfaceTintColor: Colors.transparent,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        ),
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      dividerTheme: DividerThemeData(
-        color: baseScheme.outlineVariant,
-        thickness: 1,
-        space: 1,
-      ),
+      dividerTheme: DividerThemeData(color: baseScheme.outlineVariant, thickness: 1, space: 1),
     );
   }
 }

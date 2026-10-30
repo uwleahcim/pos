@@ -81,11 +81,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _categoriesScroll = _CategoryScrollController();
   final _searchScroll = _CategoryScrollController();
   final _itemsScrolls = <String, _CategoryScrollController>{};
-  late final _transition = AnimationController(
-    vsync: this,
-    duration: Reflow.duration,
-    value: 1.0,
-  )..addListener(_onTransitionTick);
+  late final _transition = AnimationController(vsync: this, duration: Reflow.duration, value: 1.0)
+    ..addListener(_onTransitionTick)
+    ..addStatusListener(_onTransitionStatus);
 
   double _fromSearchFactor = 1.0;
   double _currentSearchFactor = 1.0;
@@ -124,6 +122,18 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void _onTransitionTick() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  /// The grids are steered to computed offsets only while the trays animate. Once the last frame has landed,
+  /// they are the operator's again: a later rebuild, a mouse wheel or a resize must not snap them back.
+  void _onTransitionStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _transition.isAnimating) return;
+      for (final scroll in [_categoriesScroll, _searchScroll, ..._itemsScrolls.values]) {
+        scroll.endSync();
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -316,12 +326,17 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           final entryId = entry.entryId.isEmpty ? null : entry.entryId;
           detail = await widget.api.item(entry.item, entryId: entryId);
           _itemCache[cacheKey] = detail;
-        } on ApiException {
-          detail = null;
+        } on ApiException catch (err) {
+          // Added blind, the dish would reach the hub without its required choices and be refused there, and
+          // the operator would only find out when the line vanished from the check. Say so now instead.
+          if (!mounted) return;
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text("Can't load the choices for ${entry.name}: $err")));
+          return;
         }
       }
       if (!mounted) return;
-      for (final g in detail?.groups ?? const <GroupDetail>[]) {
+      for (final g in detail.groups) {
         final defaults = [
           for (final o in g.options)
             if (o.isDefault && o.available) o.optionId,
@@ -364,11 +379,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (_pending != null) _closePending();
     final chosen = await showDialog<ChosenLine>(
       context: context,
-      builder: (_) => ItemSheet(
-        api: widget.api,
-        entry: entry,
-        onEightySix: () => _eightySix(entry),
-      ),
+      builder: (_) => ItemSheet(api: widget.api, entry: entry, onEightySix: () => _eightySix(entry)),
     );
     if (chosen != null) _choose(chosen);
   }
@@ -386,12 +397,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   }) => GridView(
     key: key,
     controller: controller,
-    padding: EdgeInsets.fromLTRB(
-      _gridPadding,
-      _gridPadding,
-      _gridPadding,
-      _gridPadding + extraBottomPadding,
-    ),
+    padding: EdgeInsets.fromLTRB(_gridPadding, _gridPadding, _gridPadding, _gridPadding + extraBottomPadding),
     physics: DrillDown.physics,
     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: crossAxisCount,
@@ -464,16 +470,14 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         double targetRequiredHeight = 0.0;
         final pending = _pending;
         if (pending != null) {
-          final requiredCount = (pending.needsVariant ? pending.availableVariants.length : 0) +
+          final requiredCount =
+              (pending.needsVariant ? pending.availableVariants.length : 0) +
               pending.requiredGroups.fold<int>(0, (sum, g) => sum + g.options.length);
           final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
           final neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
           final minTopReserve = searching ? (_searchBarHeight + gridHeightForRows(1)) : minCategoriesHeight;
           final minItemsReserve = here != null ? (_itemsDividerHeight + gridHeightForRows(1)) : 0.0;
-          final maxRequiredHeight = math.max(
-            0.0,
-            constraints.maxHeight - minTopReserve - minItemsReserve,
-          );
+          final maxRequiredHeight = math.max(0.0, constraints.maxHeight - minTopReserve - minItemsReserve);
           targetRequiredHeight = neededRequiredHeight.clamp(0.0, maxRequiredHeight);
         }
 
@@ -482,20 +486,14 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           final itemCount = here.sections.length + here.entries.length;
           final itemRows = itemCount == 0 ? 1 : (itemCount / crossAxisCount).ceil();
           final neededItemsHeight = _itemsDividerHeight + gridHeightForRows(itemRows);
-          final maxItemsHeight = math.max(
-            0.0,
-            constraints.maxHeight - minCategoriesHeight - targetRequiredHeight,
-          );
+          final maxItemsHeight = math.max(0.0, constraints.maxHeight - minCategoriesHeight - targetRequiredHeight);
           targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
         }
 
         final targetSearchFactor = open.isEmpty ? 1.0 : 0.0;
         final availableForCategories = math.max(
           minCategoriesHeight,
-          constraints.maxHeight -
-              _searchBarHeight * targetSearchFactor -
-              targetItemsHeight -
-              targetRequiredHeight,
+          constraints.maxHeight - _searchBarHeight * targetSearchFactor - targetItemsHeight - targetRequiredHeight,
         );
         final targetCategoriesHeight = math.min(topContentHeight, availableForCategories);
 
@@ -504,10 +502,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
         final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
 
-        final rawCategoriesHeight = math.max(
-          0.0,
-          ui.lerpDouble(_fromCategoriesHeight, targetCategoriesHeight, t)!,
-        );
+        final rawCategoriesHeight = math.max(0.0, ui.lerpDouble(_fromCategoriesHeight, targetCategoriesHeight, t)!);
         final double currentCategoriesHeight = rawCategoriesHeight.clamp(
           0.0,
           math.max(0.0, constraints.maxHeight - currentSearchHeight),
@@ -520,10 +515,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final rawRequiredHeight = math.max(0.0, ui.lerpDouble(_fromRequiredHeight, targetRequiredHeight, t)!);
         final double currentRequiredHeight = rawRequiredHeight.clamp(
           0.0,
-          math.max(
-            0.0,
-            constraints.maxHeight - currentSearchHeight - currentCategoriesHeight - currentItemsHeight,
-          ),
+          math.max(0.0, constraints.maxHeight - currentSearchHeight - currentCategoriesHeight - currentItemsHeight),
         );
 
         _currentSearchFactor = currentSearchFactor;
@@ -550,9 +542,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final searchExtraBottomSpace = searching
             ? _searchScroll.syncViewport(
                 totalTileCount: found.length,
-                selectedTileIndex: pending != null
-                    ? found.indexWhere((e) => _sameEntry(e, pending.entry))
-                    : -1,
+                selectedTileIndex: pending != null ? found.indexWhere((e) => _sameEntry(e, pending.entry)) : -1,
                 crossAxisCount: crossAxisCount,
                 tileHeight: tileHeight,
                 gridPadding: _gridPadding,
@@ -567,9 +557,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         double itemsExtraBottomSpace = 0.0;
         if (displayHere != null) {
           itemsScroll = _itemsScrollFor(displayHere.sectionId);
-          final entryIdx = pending != null
-              ? displayHere.entries.indexWhere((e) => _sameEntry(e, pending.entry))
-              : -1;
+          final entryIdx = pending != null ? displayHere.entries.indexWhere((e) => _sameEntry(e, pending.entry)) : -1;
           final selectedItemTileIndex = entryIdx >= 0 ? displayHere.sections.length + entryIdx : -1;
           itemsExtraBottomSpace = itemsScroll.syncViewport(
             totalTileCount: displayHere.sections.length + displayHere.entries.length,
@@ -772,15 +760,13 @@ class _CategoryScrollController extends ScrollController {
       }
       targetScroll = targetScroll.clamp(0.0, targetMaxScroll);
     }
-    final startBottomVisible = fromViewportHeight <= 0 ||
-        (rowBottom != null && rowBottom <= fromScrollOffset + fromViewportHeight + 1.0);
+    final startBottomVisible =
+        fromViewportHeight <= 0 || (rowBottom != null && rowBottom <= fromScrollOffset + fromViewportHeight + 1.0);
     final startTopVisible = rowTop != null && rowTop >= fromScrollOffset - 1.0;
 
     double desiredForViewport(double viewportHeight) {
       var desired = ui.lerpDouble(fromScrollOffset, targetScroll, progress)!;
-      if (rowBottom != null &&
-          (startBottomVisible || progress >= 1.0) &&
-          rowBottom > desired + viewportHeight) {
+      if (rowBottom != null && (startBottomVisible || progress >= 1.0) && rowBottom > desired + viewportHeight) {
         desired = rowBottom - viewportHeight;
       }
       if (rowTop != null && (startTopVisible || progress >= 1.0) && rowTop < desired) {
@@ -792,26 +778,14 @@ class _CategoryScrollController extends ScrollController {
     desiredScrollForViewport = desiredForViewport;
     final currentDesired = desiredForViewport(currentViewportHeight);
     if (currentDesired > 0) {
-      return math.max(
-        0.0,
-        currentViewportHeight + currentDesired - totalContentHeight,
-      );
+      return math.max(0.0, currentViewportHeight + currentDesired - totalContentHeight);
     }
     return 0.0;
   }
 
   @override
-  ScrollPosition createScrollPosition(
-    ScrollPhysics physics,
-    ScrollContext context,
-    ScrollPosition? oldPosition,
-  ) {
-    return _CategoryScrollPosition(
-      controller: this,
-      physics: physics,
-      context: context,
-      oldPosition: oldPosition,
-    );
+  ScrollPosition createScrollPosition(ScrollPhysics physics, ScrollContext context, ScrollPosition? oldPosition) {
+    return _CategoryScrollPosition(controller: this, physics: physics, context: context, oldPosition: oldPosition);
   }
 
   void syncToDesired() {
@@ -820,6 +794,13 @@ class _CategoryScrollController extends ScrollController {
     if (pos is _CategoryScrollPosition) {
       pos.syncToDesired();
     }
+  }
+
+  /// Lands the final offset, then stops steering: later rebuilds and dimension changes leave the scroll alone.
+  void endSync() {
+    syncToDesired();
+    syncActive = false;
+    desiredScrollForViewport = null;
   }
 }
 
@@ -859,8 +840,7 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
     if (!hasPixels || !haveDimensions) return;
     final desiredForViewport = controller.desiredScrollForViewport;
     if (desiredForViewport == null) return;
-    final desired = desiredForViewport(viewportDimension)
-        .clamp(minScrollExtent, maxScrollExtent);
+    final desired = desiredForViewport(viewportDimension).clamp(minScrollExtent, maxScrollExtent);
     if ((desired - pixels).abs() > 0.5) {
       jumpTo(desired);
     }
@@ -906,10 +886,7 @@ class _SectionButton extends StatelessWidget {
                       section.name,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: fg,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: theme.textTheme.titleSmall?.copyWith(color: fg, fontWeight: FontWeight.w700),
                     ),
                   ),
                   Row(
@@ -919,23 +896,14 @@ class _SectionButton extends StatelessWidget {
                           count == 1 ? '1 dish' : '$count dishes',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: fg.withValues(alpha: 0.8),
-                          ),
+                          style: theme.textTheme.labelSmall?.copyWith(color: fg.withValues(alpha: 0.8)),
                         ),
                       ),
                       Container(
                         key: selected ? const ValueKey('menu-back') : null,
                         padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: fg.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          selected ? Icons.expand_less : Icons.chevron_right,
-                          size: 15,
-                          color: fg,
-                        ),
+                        decoration: BoxDecoration(color: fg.withValues(alpha: 0.12), shape: BoxShape.circle),
+                        child: Icon(selected ? Icons.expand_less : Icons.chevron_right, size: 15, color: fg),
                       ),
                     ],
                   ),
@@ -1123,10 +1091,7 @@ class _ModifierButton extends StatelessWidget {
         color: bg,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(
-            color: borderColor,
-            width: selected ? 2 : 1,
-          ),
+          side: BorderSide(color: borderColor, width: selected ? 2 : 1),
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -1218,19 +1183,14 @@ class _EntryButton extends StatelessWidget {
         : (selected ? scheme.primaryContainer : scheme.surfaceContainerLowest);
     final borderColor = !available
         ? scheme.outlineVariant.withValues(alpha: 0.5)
-        : (selected
-              ? scheme.primary
-              : (qty > 0 ? scheme.primary.withValues(alpha: 0.55) : scheme.outlineVariant));
+        : (selected ? scheme.primary : (qty > 0 ? scheme.primary.withValues(alpha: 0.55) : scheme.outlineVariant));
     return PressableScale(
       enabled: available,
       child: Material(
         color: bg,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(
-            color: borderColor,
-            width: selected ? 2 : (qty > 0 ? 1.5 : 1),
-          ),
+          side: BorderSide(color: borderColor, width: selected ? 2 : (qty > 0 ? 1.5 : 1)),
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -1259,10 +1219,7 @@ class _EntryButton extends StatelessWidget {
                       Container(
                         key: ValueKey('entry-qty:${entry.entryId}:${entry.item}'),
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: scheme.primary,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
+                        decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(6)),
                         child: Text(
                           '$qty×',
                           style: theme.textTheme.labelMedium?.copyWith(
@@ -1315,10 +1272,7 @@ class _EntryButton extends StatelessWidget {
                             entry.secondName!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                              fontSize: 11.5,
-                            ),
+                            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, fontSize: 11.5),
                           ),
                         ),
                     ],
@@ -1341,14 +1295,7 @@ class _EntryButton extends StatelessWidget {
 /// Size, choices, quantity and a note for one dish, with the backend's price shown as they change.
 /// With [initial] it reopens a line already on the order, to change it.
 class ItemSheet extends StatefulWidget {
-  const ItemSheet({
-    super.key,
-    required this.api,
-    required this.entry,
-    this.initial,
-    this.warning,
-    this.onEightySix,
-  });
+  const ItemSheet({super.key, required this.api, required this.entry, this.initial, this.warning, this.onEightySix});
 
   final PosApi api;
   final MenuEntry entry;
