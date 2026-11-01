@@ -8,7 +8,6 @@ import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/screens/menu_panel.dart';
-import 'package:pos_app/screens/reflow.dart';
 import 'package:pos_app/screens/theme.dart';
 import 'package:pos_app/settings.dart';
 
@@ -254,7 +253,7 @@ void main() {
       await tester.binding.setSurfaceSize(null);
       tester.view
         ..physicalSize = const Size(390, 560)
-        ..devicePixelRatio = 1; // a phone: the tray of tiles, not a tablet's strip
+        ..devicePixelRatio = 1; // a phone
       addTearDown(tester.view.reset);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Bar'));
@@ -262,7 +261,7 @@ void main() {
       final whiskyTile = find.byKey(const ValueKey('e:dinner:B5:WHISKY'));
       await tester.tap(whiskyTile);
       await tester.pump(); // complete async api.item('WHISKY')
-      await tester.pump(Reflow.duration ~/ 2);
+      await tester.pump(MenuPanel.transition ~/ 2);
       final midItemsRect = tester.getRect(find.byKey(const ValueKey('items-dinner/bar')));
       final midWhiskyRect = tester.getRect(whiskyTile);
       expect(midWhiskyRect.bottom, lessThanOrEqualTo(midItemsRect.bottom + 0.5));
@@ -274,7 +273,7 @@ void main() {
     },
   );
 
-  testWidgets('on a tablet an open category collapses its siblings to a strip and the dishes get the room', (
+  testWidgets('a tablet keeps the category tiles when one opens, like a phone, and the dishes open below', (
     tester,
   ) async {
     final menu = fixture('menu');
@@ -296,7 +295,7 @@ void main() {
     );
     tester.view
       ..physicalSize = const Size(1000, 800)
-      ..devicePixelRatio = 1; // a tablet, by the screen width the panel goes by
+      ..devicePixelRatio = 1; // a tablet or Mac: the same layout as a phone, only wider
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
@@ -306,7 +305,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('category-strip')), findsNothing);
 
     // every category tile has its own colour: the menu's own for the sushi bar, the palette for the rest
     final scheme = Theme.of(tester.element(find.text('Sushi bar'))).colorScheme;
@@ -319,28 +317,23 @@ void main() {
     expect(tileColor('Appetizers'), categoryTint(scheme, index: 0).fill);
     expect(tileColor('Appetizers'), isNot(tileColor("Chef's Specials")));
 
-    // Opening a category: the tiles travel up into a strip of chips, and the dishes take the rest.
-    final tileTop = tester.getTopLeft(find.text("Chef's Specials")).dy;
+    // Opening a category: the tiles keep their size and only move up into the room the search bar leaves, and
+    // the dishes open right below them. Never a strip of chips, however wide the screen (Mike, 2026-11-01).
+    Finder tile(String label) => find.ancestor(of: find.text(label), matching: find.byType(PressableScale)).first;
+    final before = tester.getRect(tile("Chef's Specials"));
     await tester.tap(find.text('Appetizers'));
-    await tester.pump(); // the new layout, with the travelling copies
-    await tester.pump(); // their first frame
-    await tester.pump(Reflow.duration ~/ 2);
-    final halfway = [
-      for (final e in find.text("Chef's Specials").evaluate()) tester.getTopLeft(find.byWidget(e.widget)).dy,
-    ];
     await tester.pumpAndSettle();
-    final strip = find.byKey(const ValueKey('category-strip'));
-    expect(strip, findsOneWidget);
-    expect(find.byKey(const ValueKey('categories-0')), findsNothing);
+    expect(find.byKey(const ValueKey('category-strip')), findsNothing);
+    expect(find.byKey(const ValueKey('categories-0')), findsOneWidget);
+    final after = tester.getRect(tile("Chef's Specials"));
+    expect(after.size, before.size);
+    expect(after.top, lessThan(before.top));
+    expect(find.text('Appetizers'), findsOneWidget); // its tile: no chip, no header
     expect(find.byType(TextField), findsNothing);
-    expect(tester.getSize(strip).height, 48);
-    final chipTop = tester.getTopLeft(find.text("Chef's Specials")).dy;
-    expect(chipTop, lessThan(tileTop));
-    expect(halfway.any((y) => y < tileTop - 4 && y > chipTop + 4), isTrue);
     expect(find.text('Egg roll'), findsOneWidget);
+    final categories = tester.getRect(find.byKey(const ValueKey('categories-0')));
     final items = tester.getRect(find.byKey(const ValueKey('items-dinner/apps')));
-    expect(items.top, closeTo(49, 1.5));
-    expect(items.bottom, closeTo(800, 1.5));
+    expect(items.top, closeTo(categories.bottom + 1.0, 0.5));
 
     // the customize mark only where a tap will ask: two sizes, not a rice group with a default
     await tester.tap(find.text("Chef's Specials"));
@@ -351,28 +344,28 @@ void main() {
     expect(find.descendant(of: gtc, matching: find.byIcon(Icons.tune)), findsOneWidget);
     expect(find.descendant(of: bb, matching: find.byIcon(Icons.tune)), findsNothing);
 
-    // nested: Bar's subcategory opens from the dishes into the strip, behind a crumb; back goes one level
+    // nested: Bar opens on its subcategory tile and its own dishes; Beer opens one level further under its own
+    // tile, with no crumb; the mark on the open tile goes one level back
     await tester.tap(find.text('Bar'));
     await tester.pumpAndSettle();
     expect(find.text('Mai Tai'), findsOneWidget);
+    expect(find.text('Tsingtao'), findsNothing);
     await tester.tap(find.text('Beer'));
     await tester.pumpAndSettle();
     expect(find.text('Tsingtao'), findsOneWidget);
-    expect(find.text('Bar ›'), findsOneWidget);
     expect(find.text('Mai Tai'), findsNothing);
+    expect(find.text('Bar ›'), findsNothing);
+    expect(find.byKey(const ValueKey('categories-1')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('menu-back')));
     await tester.pumpAndSettle();
     expect(find.text('Mai Tai'), findsOneWidget);
-    expect(find.text('Bar ›'), findsNothing);
     expect(find.text('Tsingtao'), findsNothing);
 
-    // pulling down at the top of the dishes closes the category: the grid of tiles is back, with the search
+    // pulling down at the top of the dishes closes the category: the search is back
     await tester.drag(find.text('Mai Tai'), const Offset(0, 300));
     await tester.pumpAndSettle();
-    expect(strip, findsNothing);
-    expect(find.byKey(const ValueKey('categories-0')), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Mai Tai'), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

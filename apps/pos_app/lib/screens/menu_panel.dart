@@ -7,9 +7,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../local_order.dart' show localPrice;
 import '../menu.dart';
-import 'compact.dart';
 import 'drill_down.dart';
-import 'reflow.dart';
 import 'theme.dart';
 
 /// A line the operator configured: what to send in `add_line`.
@@ -50,10 +48,13 @@ abstract final class MenuPanelCheck {
 /// defaults) expands an inline section below until those selections are made. Long-pressing an item opens
 /// [ItemSheet] as a popup to customize any modifiers, quantity, or kitchen note.
 ///
-/// On a tablet or Mac the dishes get the room instead: once a category is open, its siblings collapse to a
-/// strip of chips on one line (each tile travelling to its chip, see [Reflow]) and the dishes take the rest.
+/// The same on every screen: a Mac or a tablet only fits more tiles per row. The categories never collapse to
+/// a strip of chips (Mike, 2026-11-01).
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf});
+
+  /// How long the trays take to open, close or change size.
+  static const transition = Duration(milliseconds: 280);
 
   final PosApi api;
   final ValueChanged<ChosenLine> onChosen;
@@ -70,13 +71,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   static const _childAspectRatio = 1.55;
   static const _searchBarHeight = 56.0;
   static const _itemsDividerHeight = 1.0;
-  static const _stripHeight = 48.0;
 
   List<Menu>? _menus;
-  final _reflow = ReflowGroup();
-  final _stripScroll = ScrollController();
-  final _chipKeys = <String, GlobalKey>{}; // by section id, to scroll the open category's chip into view
-  bool _strip = false; // a tablet or Mac: an open category's siblings are a strip, not a tray (set in build)
   String? _error;
   var _path = <String>[]; // the open categories, outermost first, by section id
   List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
@@ -91,7 +87,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _categoriesScroll = _CategoryScrollController();
   final _searchScroll = _CategoryScrollController();
   final _itemsScrolls = <String, _CategoryScrollController>{};
-  late final _transition = AnimationController(vsync: this, duration: Reflow.duration, value: 1.0)
+  late final _transition = AnimationController(vsync: this, duration: MenuPanel.transition, value: 1.0)
     ..addListener(_onTransitionTick)
     ..addStatusListener(_onTransitionStatus);
 
@@ -123,7 +119,6 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     _search.dispose();
     _categoriesScroll.dispose();
     _searchScroll.dispose();
-    _stripScroll.dispose();
     for (final c in _itemsScrolls.values) {
       c.dispose();
     }
@@ -237,42 +232,20 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// collapsing or expanding to match the rows needed by `section`'s items.
   void _openAt(int depth, MenuSection section) {
     final currentDepth = _open.isEmpty ? 0 : _open.length - 1;
-    // On a tablet the tiles become the strip's chips (a sub-category's tiles too): remember where each is, so
-    // it travels to its chip instead of the screen swapping.
-    if (_strip && (_open.isEmpty || depth != currentDepth)) _reflow.snapshot();
     _startTransition(resetScroll: depth != currentDepth, resetItemsSectionId: section.sectionId);
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
       _pending = null;
       _search.clear();
     });
-    _showOnStrip(section.sectionId);
   }
 
   void _close() {
     final closingSubcategory = _open.length > 1;
-    if (_strip) _reflow.snapshot(); // the chips travel back to their tiles
     _startTransition(resetScroll: closingSubcategory);
     setState(() {
       _path = _path.take(_open.length - 1).toList();
       _pending = null;
-    });
-    final here = _open.lastOrNull;
-    if (here != null) _showOnStrip(here.sectionId);
-  }
-
-  /// Scrolls the strip so the open category's chip is in view.
-  void _showOnStrip(String sectionId) {
-    if (!_strip) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final chip = _chipKeys[sectionId]?.currentContext;
-      if (!mounted || chip == null) return;
-      Scrollable.ensureVisible(
-        chip,
-        alignment: 0.5,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
     });
   }
 
@@ -454,16 +427,12 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     ),
     children: [
       for (final (i, s) in sections.indexed)
-        Reflow(
+        _SectionButton(
           key: ValueKey('s:${s.sectionId}'),
-          id: 's:${s.sectionId}',
-          group: _reflow,
-          child: _SectionButton(
-            section: s,
-            index: i,
-            selected: s == selected,
-            onTap: () => s == selected ? _close() : _openAt(depth, s),
-          ),
+          section: s,
+          index: i,
+          selected: s == selected,
+          onTap: () => s == selected ? _close() : _openAt(depth, s),
         ),
       for (final e in entries)
         _EntryButton(
@@ -511,18 +480,13 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final here = open.lastOrNull;
         final siblings = depth == 0 ? _sections : open[depth - 1].sections;
 
-        // A tablet or Mac gives the dishes the room: an open category's siblings are a strip of chips on one
-        // line and the dishes take the rest. A phone keeps the tray of tiles above the dishes.
-        _strip = !compact(context);
-        final stripOpen = _strip && open.isNotEmpty;
-
         final found = searching ? _found : const <MenuEntry>[];
         final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
         final totalCategoriesContentHeight = gridHeightForRows(math.max(1, totalCategoryRows));
         final totalSearchRows = (found.length / crossAxisCount).ceil();
         final totalSearchContentHeight = gridHeightForRows(math.max(1, totalSearchRows));
         final topContentHeight = searching ? totalSearchContentHeight : totalCategoriesContentHeight;
-        final minCategoriesHeight = stripOpen ? _stripHeight : math.min(topContentHeight, gridHeightForRows(1));
+        final minCategoriesHeight = math.min(topContentHeight, gridHeightForRows(1));
 
         double targetRequiredHeight = 0.0;
         final pending = _pending;
@@ -544,7 +508,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           final itemRows = itemCount == 0 ? 1 : (itemCount / crossAxisCount).ceil();
           final neededItemsHeight = _itemsDividerHeight + gridHeightForRows(itemRows);
           final maxItemsHeight = math.max(0.0, constraints.maxHeight - minCategoriesHeight - targetRequiredHeight);
-          targetItemsHeight = stripOpen ? maxItemsHeight : neededItemsHeight.clamp(0.0, maxItemsHeight);
+          targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
         }
 
         final targetSearchFactor = open.isEmpty ? 1.0 : 0.0;
@@ -552,7 +516,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           minCategoriesHeight,
           constraints.maxHeight - _searchBarHeight * targetSearchFactor - targetItemsHeight - targetRequiredHeight,
         );
-        final targetCategoriesHeight = stripOpen ? _stripHeight : math.min(topContentHeight, availableForCategories);
+        final targetCategoriesHeight = math.min(topContentHeight, availableForCategories);
 
         final t = Curves.easeInOutCubic.transform(_transition.value);
         final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
@@ -692,26 +656,6 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                       depth: 0,
                       crossAxisCount: crossAxisCount,
                       tileHeight: tileHeight,
-                    )
-                  : stripOpen
-                  // the strip sits at the top at its final size while the space the tiles had closes up
-                  ? ClipRect(
-                      child: OverflowBox(
-                        alignment: Alignment.topCenter,
-                        minHeight: _stripHeight,
-                        maxHeight: _stripHeight,
-                        child: _CategoryStrip(
-                          key: const ValueKey('category-strip'),
-                          controller: _stripScroll,
-                          crumbs: [for (final s in open.take(depth)) s.name],
-                          siblings: siblings,
-                          selected: here!,
-                          group: _reflow,
-                          chipKeys: _chipKeys,
-                          onBack: _close,
-                          onSelect: (s) => s == here ? _close() : _openAt(depth, s),
-                        ),
-                      ),
                     )
                   : _grid(
                       key: ValueKey('categories-$depth'),
@@ -927,7 +871,13 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
 /// A category tile, in the colour the menu gives the category or one from the palette by its place among its
 /// siblings, so a glance tells the sections apart.
 class _SectionButton extends StatelessWidget {
-  const _SectionButton({required this.section, required this.index, required this.onTap, this.selected = false});
+  const _SectionButton({
+    super.key,
+    required this.section,
+    required this.index,
+    required this.onTap,
+    this.selected = false,
+  });
 
   final MenuSection section;
   final int index;
@@ -990,134 +940,6 @@ class _SectionButton extends StatelessWidget {
                   ),
                 ],
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// An open category's siblings on one line, on a tablet or Mac: the open one marked, the others a tap away,
-/// and a button back to the full grid. Each chip is the tile it was, travelled here (see [Reflow]).
-class _CategoryStrip extends StatelessWidget {
-  const _CategoryStrip({
-    super.key,
-    required this.controller,
-    required this.crumbs,
-    required this.siblings,
-    required this.selected,
-    required this.group,
-    required this.chipKeys,
-    required this.onBack,
-    required this.onSelect,
-  });
-
-  final ScrollController controller;
-  final List<String> crumbs; // the categories this level opened from, outermost first
-  final List<MenuSection> siblings;
-  final MenuSection selected;
-  final ReflowGroup group;
-  final Map<String, GlobalKey> chipKeys;
-  final VoidCallback onBack;
-  final ValueChanged<MenuSection> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return SizedBox(
-      height: _MenuPanelState._stripHeight,
-      child: Row(
-        children: [
-          const SizedBox(width: 6),
-          IconButton(
-            key: const ValueKey('menu-back'),
-            tooltip: crumbs.isEmpty ? 'All categories' : 'Back to ${crumbs.last}',
-            visualDensity: VisualDensity.compact,
-            icon: Icon(crumbs.isEmpty ? Icons.grid_view_rounded : Icons.arrow_back_rounded),
-            onPressed: onBack,
-          ),
-          if (crumbs.isNotEmpty)
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 180),
-              child: Padding(
-                padding: const EdgeInsets.only(left: 4),
-                child: Text(
-                  '${crumbs.last} ›',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ),
-            ),
-          Expanded(
-            child: ListView(
-              controller: controller,
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              children: [
-                for (final (i, s) in siblings.indexed)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
-                    child: Reflow(
-                      key: chipKeys.putIfAbsent(s.sectionId, GlobalKey.new),
-                      id: 's:${s.sectionId}',
-                      group: group,
-                      child: _StripChip(section: s, index: i, selected: s == selected, onTap: () => onSelect(s)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StripChip extends StatelessWidget {
-  const _StripChip({required this.section, required this.index, required this.selected, required this.onTap});
-
-  final MenuSection section;
-  final int index;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final tint = categoryTint(scheme, hex: section.color, index: index);
-    return PressableScale(
-      child: Material(
-        color: tint.fill,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(17),
-          side: BorderSide(
-            color: selected ? scheme.primary : tint.border.withValues(alpha: 0.6),
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(17),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (selected) ...[Icon(Icons.expand_less, size: 16, color: scheme.primary), const SizedBox(width: 4)],
-                Text(
-                  section.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: tint.text,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                ),
-              ],
             ),
           ),
         ),
