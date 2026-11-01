@@ -15,7 +15,6 @@ import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
-import 'package:pos_app/screens/reflow.dart';
 import 'package:pos_app/screens/signin_screen.dart';
 import 'package:pos_app/screens/status_bar.dart';
 import 'package:pos_app/screens/theme.dart';
@@ -42,8 +41,8 @@ Matcher op(String kind, Map data) =>
 
 http.Response json(Object body, [int status = 200]) => http.Response.bytes(utf8.encode(jsonEncode(body)), status);
 
-/// Sizes the screen itself (what [MediaQuery] reports), not only the drawing surface: the menu panel picks a
-/// phone's tray or a tablet's strip by the screen width.
+/// Sizes the screen itself (what [MediaQuery] reports), not only the drawing surface: the app bars and rows go
+/// by the screen width (see `compact`).
 void screen(WidgetTester tester, Size size) {
   tester.view
     ..physicalSize = size
@@ -154,7 +153,7 @@ void main() {
       Settings(device: 't1', endpoints: ['http://hub:8000']),
       client: MockClient((request) async => request.url.path == '/menu' ? json(menu) : json({'revision': 0})),
     );
-    screen(tester, const Size(400, 800)); // a phone: the tray of tiles, not a tablet's strip
+    screen(tester, const Size(400, 800)); // a phone
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -173,9 +172,9 @@ void main() {
     final initialTileSize = tester.getSize(categoryTile("Chef's Specials"));
     final tile = tester.getCenter(find.text("Chef's Specials"));
     await tester.tap(find.text('Appetizers'));
-    await tester.pump(); // the new layout, with the travelling copies
-    await tester.pump(); // their first frame
-    await tester.pump(Reflow.duration ~/ 2);
+    await tester.pump(); // the new layout
+    await tester.pump(); // the first frame of the trays moving
+    await tester.pump(MenuPanel.transition ~/ 2);
     final halfway = [
       for (final e in find.text("Chef's Specials").evaluate()) tester.getCenter(find.byWidget(e.widget)).dy,
     ];
@@ -204,7 +203,7 @@ void main() {
 
     await tester.tap(find.text("Chef's Specials"));
     await tester.pump();
-    await tester.pump(Reflow.duration ~/ 2);
+    await tester.pump(MenuPanel.transition ~/ 2);
     final midExpandHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
     await tester.pumpAndSettle();
     expect(tester.getSize(categoryTile("Chef's Specials")), initialTileSize);
@@ -244,7 +243,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bar'));
     await tester.pump();
-    await tester.pump(Reflow.duration ~/ 2);
+    await tester.pump(MenuPanel.transition ~/ 2);
     final midCatRect = tester.getRect(find.byKey(const ValueKey('categories-0')));
     final midBarRect = tester.getRect(categoryTile('Bar'));
     expect(midBarRect.bottom, lessThanOrEqualTo(midCatRect.bottom + 0.5));
