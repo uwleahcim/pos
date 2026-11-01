@@ -170,7 +170,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><a href="#payments">Payments</a></li>
     <li><a href="#identity">Identity &amp; access</a></li>
     <li><a href="#phones">Phones &amp; remote operators</a></li>
-    <li><a href="#service">Service, sushi, bar, catering</a></li>
+    <li><a href="#service">Service, takeout, sushi, bar, catering</a></li>
     <li><a href="#integrations">Integrations</a></li>
     <li><a href="#backoffice">Back office</a></li>
     <li><a href="#operations">Operations &amp; quality</a></li>
@@ -182,10 +182,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <main>
 <header class="doc">
-  <p class="eyebrow">Architecture design · draft 6</p>
+  <p class="eyebrow">Architecture design · draft 7</p>
   <h1>Restaurant POS Architecture</h1>
   <p class="lede">A point of sale for one full-service Chinese restaurant with a sushi bar, a full bar and a catering business today, and a couple dozen locations later. Every location keeps selling when the internet drops, and keeps selling through the cloud when both of its local servers die.</p>
-  <div class="meta"><span>Prepared for Mike</span><span>29 Oct 2026</span><span>Status: phase 1 in progress; draft 6 brings Android screens back next to macOS and iOS</span></div>
+  <div class="meta"><span>Prepared for Mike</span><span>1 Nov 2026</span><span>Status: phase 1 in progress; draft 7 adds card surcharges, kitchen pacing, takeout pickup, an owner app and guest feedback, and moves the storefront, kiosk, courier dispatch and marketplaces earlier</span></div>
 </header>
 
 <section id="summary">
@@ -224,9 +224,14 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Printers</td><td>Ethernet ESC/POS printers with IP addresses, working with or without hubs.</td><td>4, 16</td></tr>
       <tr><td>Restaurant type</td><td>Full service with a sushi bar, a full bar and catering; ezCater for catering orders; Resy planned for reservations.</td><td>12, 13</td></tr>
       <tr><td>Payroll</td><td>ADP.</td><td>14</td></tr>
+      <tr><td>Card fees</td><td>A surcharge or dual (cash and card) pricing per location, limited by that location's state law and the card networks' rules; never on debit.</td><td>8, 9</td></tr>
+      <tr><td>Kitchen pacing</td><td>The hub owns kitchen capacity per time slot and quotes every pickup and delivery time, on every channel.</td><td>12</td></tr>
+      <tr><td>Takeout</td><td>Future orders, an "order ready" text, a pickup board and curbside check-in.</td><td>12</td></tr>
+      <tr><td>Owner app and feedback</td><td>An owner role of the same app on a phone with live numbers and alerts; a rating link on digital receipts.</td><td>14</td></tr>
+      <tr><td>Own channels</td><td>Delivery marketplaces in phase 2 through an aggregator; own storefront, QR and kiosk ordering and on-demand courier dispatch in phase 3.</td><td>13, 17</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Still open:</strong> the accounting system (QuickBooks, Xero or other), server banking versus shared drawers, whether tips are pooled, and team size (the plan assumes 2 to 4 developers). The own online storefront and delivery marketplaces are planned for phase 4. Each can change without rework.</p>
+  <p><strong>Still open:</strong> the accounting system (QuickBooks, Xero or other), server banking versus shared drawers, whether tips are pooled, the order aggregator (Otter, Chowly, Deliverect or direct), and team size (the plan assumes 2 to 4 developers). Each can change without rework.</p>
 </section>
 
 <section id="stack">
@@ -396,6 +401,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <li><b>TaxLine · Exemption</b> <span>what was charged, per jurisdiction</span></li>
       <li><b>Payment · Refund · Tip · Tab · PreAuth</b> <span>provider reference, fees</span></li>
       <li><b>CateringEvent · Deposit · Invoice</b> <span>date, address, headcount, balance</span></li>
+      <li><b>PacingSlot · Pickup · CourierDelivery</b> <span>capacity, promised time, ready, check-in, driver</span></li>
+      <li><b>CardFeeRule · Surcharge</b> <span>per location and state, what was added</span></li>
       <li><b>KitchenTicket · PrintJob</b> <span>fired, bumped, printed, relayed</span></li>
     </ul></div>
     <div class="entity"><h4>People</h4><ul>
@@ -404,6 +411,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <li><b>Shift · TimePunch · TipPool · TipOut</b> <span>clock, breaks, pooling</span></li>
       <li><b>CashDrawer · PaidInOut</b> <span>counts, drops, server banks</span></li>
       <li><b>Customer · LoyaltyAccount · GiftCard</b> <span>language, consent, balances</span></li>
+      <li><b>Feedback</b> <span>rating, comment, order, server, channel</span></li>
       <li><b>AuditEvent</b> <span>who, what, which device, photo</span></li>
     </ul></div>
   </div>
@@ -426,7 +434,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td><code>tax_class</code> is text; the order module applies rates</td><td>Tax class is a small table, a modifier can set it ("heated"), and the order module applies the full model in section 8.</td><td>All continental states.</td></tr>
       <tr><td>Not in the design</td><td>Market-price and open-price variants, minimum quantity on a variant, an age-check flag, alcohol service hours on a category, routing by the station that placed the order, and a waste operation that depletes inventory without a sale.</td><td>Sushi bar, full bar, catering (section 12).</td></tr>
       <tr><td>HTMX screens</td><td>The same screens in the Flutter admin app on a Mac.</td><td>One UI toolkit.</td></tr>
-      <tr><td>Open decisions</td><td>Agreed as recommended: one shared ingredient master; lunch, delivery and holiday pricing as menus; half-up rounding per line with tax outside the engine; linked combo pricing later; auto-86 opt-in. Changed: single location, and two languages. Noted: the storefront and driver app the design lists are phase 4.</td><td></td></tr>
+      <tr><td>Open decisions</td><td>Agreed as recommended: one shared ingredient master; lunch, delivery and holiday pricing as menus; half-up rounding per line with tax outside the engine; linked combo pricing later; auto-86 opt-in. Changed: single location, and two languages. Noted: the storefront the design lists is phase 3, the driver app phase 4.</td><td></td></tr>
     </tbody>
   </table></div>
 
@@ -453,7 +461,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Jurisdiction</td><td>A taxing authority and its level, with its parent.</td><td>Illinois · Cook County · Chicago · MPEA district</td></tr>
       <tr><td>Tax component</td><td>One rate from one jurisdiction: a percentage, a per-unit amount (per fluid ounce, per item) or a fixed amount, with effective dates, a reporting code and a rounding rule. Changes are entered ahead and switch at midnight.</td><td>Illinois 6.25% · Philadelphia 1.5¢ per fl oz</td></tr>
       <tr><td>Tax group</td><td>An ordered bundle of components; a component can compound on the ones before it.</td><td>Chicago downtown prepared food: six components</td></tr>
-      <tr><td>Tax class</td><td>What a thing is for tax purposes, inherited from the category, overridable per item and variant, changeable by a modifier.</td><td>Prepared food · cold food to go · bakery · alcohol · sweetened beverage · merchandise · gift card · service charge · delivery fee</td></tr>
+      <tr><td>Tax class</td><td>What a thing is for tax purposes, inherited from the category, overridable per item and variant, changeable by a modifier.</td><td>Prepared food · cold food to go · bakery · alcohol · sweetened beverage · merchandise · gift card · service charge · delivery fee · card surcharge</td></tr>
       <tr><td>Tax rule</td><td>Per location: for a class, an order type (dine-in, takeout, delivery, catering), a channel and optionally a time window, which group applies or exempt. Most specific wins.</td><td>Cold food to go in California: exempt; the same item dine-in: prepared food</td></tr>
       <tr><td>Exemption</td><td>A customer's certificate (type, number, state, expiry) or a manager override on one order with a reason; both logged and reported.</td><td>A school's certificate on a catering order</td></tr>
       <tr><td>Delivery zone</td><td>ZIP codes or map areas with their own group, for destination-based states. Lives on the hub.</td><td>Deliveries to the next town use its rate</td></tr>
@@ -472,6 +480,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Per-ounce beverage taxes</td><td>Philadelphia, Seattle, Boulder, several California cities</td><td>Per-unit components from the variant's volume, as a line or folded into the price</td></tr>
       <tr><td>Delivery taxed at the customer's address</td><td>Most states; Texas, Arizona and Illinois tax at the restaurant</td><td>A sourcing setting per location plus delivery zones</td></tr>
       <tr><td>Taxable service charges and fees</td><td>Mandatory gratuities, delivery and bag fees in some states</td><td>Each fee has a class and goes through the rules</td></tr>
+      <tr><td>Card surcharges</td><td>Taxable in some states, not in others; under dual pricing the card price is simply the price</td><td>A card-surcharge class with a rule per location (section 9)</td></tr>
       <tr><td>Exempt customers</td><td>Schools, nonprofits, government, resale</td><td>Certificates on the profile, order overrides with reason</td></tr>
       <tr><td>Rates that change</td><td>Quarterly local changes, new districts</td><td>Effective dates, entered ahead</td></tr>
       <tr><td>Prices that include tax</td><td>Bar menus, food trucks, events</td><td>Inclusive flag per menu, item or location</td></tr>
@@ -497,6 +506,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   </table></div>
   <p><strong>Routing to the lowest cost.</strong> When staff press <em>Pay by card</em>, a router on the hub keeps only providers that are reachable with a reader at this station, picks the lowest estimated fee for the amount from each provider's rate table (small tickets favor a low fixed fee, large ones a low percentage), applies your preferences (a default per location, a volume target), and names the reader or sends the payment to it. A provider that is down is skipped. The limit: once a card is tapped on a reader, that reader's provider processes it, so the cost choice happens when the reader is chosen. Bar tabs need pre-authorization, incremental authorization and capture with tip, and go only to providers whose readers support it.</p>
   <p><strong>What is recorded.</strong> Provider, reference, method (tap, chip, wallet, QR), estimated fee, and later the actual fee. Refunds and tip adjustments return to the original provider. A nightly reconciliation pulls each provider's payout reports and shows the real cost per provider, so the routing rules are proven or corrected. Orders from ezCater and other marketplaces arrive paid and are recorded as external payments with the channel's commission as a fee. Each provider has its own merchant account; keys stay in the cloud and on hubs, never on terminals.</p>
+  <p><strong>Passing card fees to guests.</strong> Each location picks one card-fee mode: none, a <em>surcharge</em> added to credit card payments, or <em>dual pricing</em>, where every price has a cash and a card amount and the POS, customer display, receipts and online menus show both. The rules are data per state with effective dates: a state that bans surcharges blocks that mode, the rate is capped at the lower of the state limit and the card networks' limit (about 3%) and never above the provider's real cost, and debit and prepaid cards are never surcharged, so the reader's card type decides at the moment of payment. Surcharges need notice: a line on the menu, at the door and at the register (printable from the portal), the amount as its own line on the receipt, and registration with the card networks where they require it. The surcharge goes through the tax rules with its own class, tips are calculated before it, refunds return it in proportion, and reports show it apart from sales so it never inflates sales or tip-outs. Cash, gift cards, house accounts and external marketplace payments carry no surcharge.</p>
 </section>
 
 <section id="identity">
@@ -561,8 +571,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 </section>
 
 <section id="service">
-  <h2><span class="n">12</span>Table service, sushi, bar and catering</h2>
-  <p>All of this sits on the order model and the menu engine without new machinery; the extensions are the six listed in section 7.</p>
+  <h2><span class="n">12</span>Table service, takeout, sushi, bar and catering</h2>
+  <p>All of this sits on the order model and the menu engine; the extensions are the six listed in section 7, plus kitchen pacing below.</p>
   <h3>Table service</h3>
   <ul>
     <li><strong>Seats and courses.</strong> Every line carries a seat and a course (drinks, appetizers, entrées, dessert, custom). Tickets and the expo screen show both; a check splits by seat with one tap. Courses are held and fired by the server, after a set delay, or by the expo when the previous course is bumped; the kitchen screen shows what is held and for how long. Rush and VIP tags and the allergy note print on every station's copy.</li>
@@ -572,6 +582,22 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Tips and payroll.</strong> Pooling by role and shift, tip-outs to bartenders, bussers and sushi chefs, card tip fees where passed on, declared cash tips at clock-out, a per-employee tip report for payroll and IRS reporting, and the ADP export.</li>
     <li><strong>Hosting.</strong> Floor plan with sections and server assignments, table status (open, ordered, entrées fired, check dropped, paid, needs bussing), turn times, a waitlist with text paging, and a built-in reservation book, with the Resy adapter in section 13.</li>
     <li><strong>Expo and runners.</strong> An expo mode shows every ticket, bumps per item, paces courses, and prints runner slips with table and seat.</li>
+  </ul>
+  <h3>Takeout and pickup</h3>
+  <ul>
+    <li><strong>Future orders.</strong> Any takeout or delivery order, from any channel, can be for a later time today or another day. It waits on the hub and fires on its own ahead of the promised time by its prep time, the way catering orders do, and shows on the kitchen screen as scheduled until then.</li>
+    <li><strong>Ready text.</strong> When expo bumps the last item, or the cashier marks it ready, the customer gets a text in their language through the messaging provider: the order is ready, where to pick it up, and a link that pays the balance if it is unpaid. Delays push a new time the same way.</li>
+    <li><strong>Pickup board.</strong> A screen by the counter, another mode of the app, shows orders as in progress and ready by first name and number, in the location's languages, and never shows what was ordered or a full name.</li>
+    <li><strong>Curbside.</strong> The ready text carries an "I'm here" link; the guest adds a car or a spot number, and the counter screen chimes with the order, the car and how long they have waited. It works without an app or an account.</li>
+    <li><strong>Pickup shelf and handover.</strong> Orders are marked picked up by a tap or by scanning the receipt, with time from ready to handover reported per location. Unclaimed orders flag after a set time.</li>
+  </ul>
+  <h3>Kitchen pacing</h3>
+  <p>Every channel that promises a time asks the hub, so the counter, phone operators, the storefront, kiosks, ezCater and the marketplaces never overload the kitchen together.</p>
+  <ul>
+    <li><strong>Load.</strong> Each item carries a prep load per station from the menu engine (a quart of fried rice weighs more on the wok than a soda does), and each station has a capacity per 15-minute slot, set per location and day part. The hub adds up fired and scheduled lines, including dine-in, slot by slot.</li>
+    <li><strong>Quote times.</strong> A new takeout or delivery order gets the first slot whose stations all have room, plus packing time, and delivery adds the courier's estimate. That time shows on the order screen, the call card, the storefront and in confirmations. Phase 1 starts with a quote time the manager sets by hand per channel; the automatic quote replaces it in phase 2.</li>
+    <li><strong>Throttling.</strong> When a slot is full, later orders move to the next open one; above a set backlog the storefront and kiosk offer only later times, and the marketplaces get a longer prep time or a pause through their adapter. A manager can pause or slow any channel with one tap, and the change shows on the status bar of every station.</li>
+    <li><strong>Learning.</strong> Actual bump times per station feed back into the loads every week, so the quotes match the kitchen rather than a guess. Quoted versus actual times are reported per channel.</li>
   </ul>
   <h3>Sushi bar</h3>
   <ul>
@@ -596,7 +622,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <ul>
     <li><strong>The order.</strong> Event date and time, headcount, pickup or delivery with address and contact, setup notes, utensils and disposables, per-item lead times, quotes that become orders, change and cancellation cutoffs per location, every change an operation the kitchen sees.</li>
     <li><strong>Menus and money.</strong> A catering channel menu with half and full trays as variants, per-person items with a minimum headcount, packages as combos, packaging and utensils as recipe components. Deposits and partial payments, balance due at handover, invoices and receipts by email, house accounts with terms, service, delivery and gratuity charges with their own tax classes, delivery-zone tax where required.</li>
-    <li><strong>Production and delivery.</strong> A daily prep sheet aggregates catering orders by item and, through the recipe explosion, by ingredient. Orders fire automatically ahead of the event; tray labels print with item names, allergens and customer; a packing list prints with the receipt; a driver is assigned and marks delivery with a photo in the driver app the design plans for.</li>
+    <li><strong>Production and delivery.</strong> A daily prep sheet aggregates catering orders by item and, through the recipe explosion, by ingredient. Orders fire automatically ahead of the event; tray labels print with item names, allergens and customer; a packing list prints with the receipt; delivery goes to a courier through the dispatch adapter in section 13, or to the restaurant's own driver, who marks delivery with a photo in the driver app planned for phase 4.</li>
     <li><strong>ezCater</strong> orders arrive through the channel adapter in section 13 and behave exactly like orders taken by staff.</li>
   </ul>
 </section>
@@ -614,8 +640,11 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>ADP</td><td>Hours, overtime, breaks, declared tips and tip-outs per pay period, through ADP's connector or time-import file, employee ids matched.</td><td>2</td></tr>
       <tr><td>Accounting (QuickBooks, Xero or a ledger file)</td><td>Daily sales journal: sales by category and location, tax by jurisdiction, tips, discounts, gift card and deposit liabilities, house account receivables, expected deposits per provider.</td><td>2</td></tr>
       <tr><td>Scheduling (7shifts or HotSchedules)</td><td>Sales and punches out; the schedule in, with clock-in enforcement.</td><td>3</td></tr>
-      <tr><td>Delivery marketplaces (DoorDash, Uber Eats), own storefront</td><td>Orders in, menus with channel pricing out, on the ezCater adapter pattern.</td><td>4</td></tr>
-      <tr><td>Text and email</td><td>Payment links, receipts, waitlist paging, marketing with consent, alerts, through a messaging provider.</td><td>1</td></tr>
+      <tr><td>Delivery marketplaces (DoorDash, Uber Eats)</td><td>Orders in, menus with channel pricing and 86s out, prep time and pause from kitchen pacing, on the ezCater adapter pattern. Through the same order aggregator as ezCater (Otter, Chowly or Deliverect) unless direct access is cheaper, so no separate tablets.</td><td>2</td></tr>
+      <tr><td>Own storefront, QR and kiosk ordering</td><td>Not an adapter but another face of the backend: the menu engine, pacing and payment layer behind a web storefront for pickup and delivery, QR ordering at the table on the same pages (the order joins the table's check), and a kiosk mode of the app at the counter. Takes over from GloriaFood, whose menu the importer already reads.</td><td>3</td></tr>
+      <tr><td>Courier dispatch (DoorDash Drive, Uber Direct)</td><td>Delivery orders from the storefront, phone and catering sent to an on-demand courier: quote and fee before the order is confirmed, dispatch timed from kitchen pacing, driver location and status back for the ready text and the expo screen. The cheaper healthy provider per order, as in payments.</td><td>3</td></tr>
+      <tr><td>Text and email</td><td>Payment links, receipts, waitlist paging, ready texts and curbside check-in, feedback links, marketing with consent, alerts, through a messaging provider.</td><td>1</td></tr>
+      <tr><td>Push notifications</td><td>Owner app alerts through Apple and Google push services.</td><td>2</td></tr>
       <tr><td>Tax rate service (Stripe Tax, Avalara, TaxJar)</td><td>Rate lookups by address and suggested updates; never in the sale path.</td><td>3</td></tr>
       <tr><td>Device management</td><td>Apple Business Manager for Macs, iPads and iPhones; Android Enterprise (zero-touch) for Android devices; a signed release feed for hubs.</td><td>2</td></tr>
     </tbody>
@@ -626,6 +655,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <h2><span class="n">14</span>Back office</h2>
   <ul>
     <li><strong>Reporting.</strong> Reports run on a cloud read replica seconds behind, never on the database taking orders; cross-location analytics and years of history sit in a column store fed from it. Standard reports: sales by server, section, hour and location; product mix with food, beverage and catering split; voids and comps after firing by employee; discounts by reason; table turns and covers; ticket times per station; tip and tip-out summaries; cash variance per drawer or server; catering due this week with balances; tax by jurisdiction; food versus alcohol; and a daily close with each provider's batch beside the cash count. Owners get a daily summary by text or email at close.</li>
+    <li><strong>Owner app.</strong> The same Flutter app in an owner or manager role on an iPhone or Android phone, signed in with email and two-factor like the portal and never enrolled as a station. It reads the reporting replica, so it shows today's numbers within seconds: sales, covers and average check against the same day last week, labor cost as a percentage of sales, open checks, voids, comps and discounts with who did them and their photo, quoted versus actual ticket times, and channel status, per location or all of them. Push alerts for what needs a decision: a void or comp above a set amount, a cash variance, a hub failover or a location offline, a low guest rating, a channel paused. It can pause a channel and approve a waiting request; it cannot take orders or money. Each owner chooses which alerts reach them and when.</li>
+    <li><strong>Guest feedback.</strong> Digital receipts and the ready text carry a link to rate the visit from one to five with an optional comment, in the guest's language and with no account. Each rating records the order, location, channel, server or cashier, and the items, so a low score points at a shift or a dish. A low score alerts the manager, who can reply by text or email from the portal, and a guest who left a phone number can be sent a make-good offer through loyalty. Ratings never touch tips or tip-outs, servers see their own average but not individual comments, and scores are reported by location, server, item and channel.</li>
     <li><strong>Your data is yours.</strong> Every report exports to a spreadsheet, every table is reachable through a documented API under the same roles, and a full export is available on request.</li>
     <li><strong>Labor.</strong> Time clock, roles and tip reporting are built in because they are tied to sign-in; scheduling connects through the adapter in section 13 and could be built in later by replacing it. Meal and rest break reminders and attestations, overtime alerts before they happen, minor work-hour limits and predictive-scheduling notices are set per location.</li>
     <li><strong>Loyalty and gift cards.</strong> Points or visits, rewards redeemed as discounts the engine already handles, tiers, birthday and win-back offers. A gift card liability ledger in the cloud, physical cards and e-gifts, redeemable at every location. Points earned offline post when the order reaches the cloud; redemptions offline are allowed up to a set amount and settle on reconnect.</li>
@@ -679,7 +710,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <div class="phase"><span class="when">Phase 1 · months 1 to 4</span><h3>One restaurant, full service</h3>
       <ul>
         <li><b>Menu:</b> layers 1 and 2 of the design (sell, configure): catalog, variants, modifiers, combos, menus with numbers and schedules, kitchen labels, 86 board, spreadsheet import of the current item list; languages with fallback chains, English and Chinese loaded first; media library with POS photo tiles; market and open price.</li>
-        <li><b>Orders:</b> order entry, table map, seats and courses with hold and fire, transfers and merges, split checks, kitchen and receipt printing, service bar routing, catering orders with event details, deposits, invoices and prep sheets.</li>
+        <li><b>Orders:</b> order entry, table map, seats and courses with hold and fire, transfers and merges, split checks, kitchen and receipt printing, service bar routing, catering orders with event details, deposits, invoices and prep sheets; future takeout orders, manual quote times per channel, and the ready text.</li>
         <li><b>Money:</b> Stripe then GoDaddy through the payment layer, bar tabs with pre-authorization, auto-gratuity, age-check prompt, server banking and close-out, end of day; taxes set up for the first location.</li>
         <li><b>People:</b> sign-in by PIN and NFC tag, event photos with retention, roles.</li>
         <li><b>Platform:</b> hubs with offline mode, business-day cutoff, printer failover, training mode, basic health alerts, text links and receipts.</li>
@@ -688,22 +719,24 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <div class="phase"><span class="when">Phase 2 · months 4 to 6</span><h3>Cloud, kitchen screens, handhelds</h3>
       <ul>
         <li><b>Platform:</b> standby hub with automatic takeover, cloud sync with the cloud as a live second backend, admin portal, staged updates, status board and alerting, reporting replica.</li>
-        <li><b>Floor and kitchen:</b> kitchen display with bump and recall, expo mode, plating photos on screens, handheld ordering and pay at the table, QR pay, customer display at the register, keg and tap tracking, tray labels.</li>
-        <li><b>People and money:</b> face sign-in and session guard after the first state's legal review, time clock, tip pooling and tip-outs, ADP and accounting exports, tax reports by jurisdiction.</li>
+        <li><b>Floor and kitchen:</b> kitchen display with bump and recall, expo mode, plating photos on screens, handheld ordering and pay at the table, QR pay, customer display at the register, keg and tap tracking, tray labels; automatic kitchen pacing and quote times, the pickup board and curbside check-in.</li>
+        <li><b>People and money:</b> face sign-in and session guard after the first state's legal review, time clock, tip pooling and tip-outs, ADP and accounting exports, tax reports by jurisdiction; card surcharge or dual pricing after a review of the first state's rules.</li>
         <li><b>Menu:</b> ingredients and recipes for the top fifty sellers, with food cost and margin in the portal.</li>
-        <li><b>Channels:</b> the ezCater adapter.</li>
+        <li><b>Channels:</b> the order aggregator carrying ezCater, DoorDash and Uber Eats, with pacing driving their prep times.</li>
+        <li><b>Owners:</b> the owner app with live numbers and push alerts.</li>
       </ul>
       <p class="exit"><b>Done when:</b> unplugging either hub, or the internet, mid-service goes unnoticed by guests.</p></div>
-    <div class="phase"><span class="when">Phase 3 · months 6 to 9</span><h3>Customers and multiple locations</h3>
+    <div class="phase"><span class="when">Phase 3 · months 6 to 10</span><h3>Customers, own channels and multiple locations</h3>
       <ul>
-        <li><b>Customers:</b> profiles, caller ID pop with FreePBX, order history, loyalty points, gift cards across locations, allergen review queue and badges.</li>
+        <li><b>Customers:</b> profiles, caller ID pop with FreePBX, order history, loyalty points, gift cards across locations, allergen review queue and badges, guest feedback on receipts.</li>
+        <li><b>Own channels:</b> the storefront for pickup and delivery, replacing GloriaFood; QR ordering at the table and the kiosk on the same flow; courier dispatch through DoorDash Drive or Uber Direct. Live at the first location before the second opens.</li>
         <li><b>Payments:</b> PayPal and QR payments, cost-based routing across providers, payout reconciliation, rate service.</li>
         <li><b>Locations:</b> central menu with per-location overrides, cross-location reporting, backup cloud region, device enrollment at scale, feature flags, scheduling adapter, remote operators over VPN, the shared call pool with queues and call cards. Second and third locations go live.</li>
       </ul>
-      <p class="exit"><b>Done when:</b> three locations run on it and an owner changes a price everywhere from the portal.</p></div>
-    <div class="phase"><span class="when">Phase 4 · month 9 onward</span><h3>Growth</h3>
+      <p class="exit"><b>Done when:</b> guests order from the storefront with a delivery by courier, and three locations run on it while an owner changes a price everywhere from the portal.</p></div>
+    <div class="phase"><span class="when">Phase 4 · month 10 onward</span><h3>Growth</h3>
       <ul>
-        <li>Own storefront and driver app on the same engine; delivery marketplaces; QR ordering at the table; the Resy adapter.</li>
+        <li>Own driver app on the same engine, beside courier dispatch; the Resy adapter.</li>
         <li>Inventory and purchasing with counts, variance and auto-86 (liquor by bottle, fish by weight); loyalty campaigns; deeper analytics.</li>
       </ul></div>
   </div>
@@ -719,9 +752,12 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Biometric law.</strong> Face sign-in is opt-in per location and person with consent records, in-house encrypted signatures and scheduled deletion; a location where it is not allowed runs on PIN and tags, nothing else changed.</li>
     <li><strong>Tax settings.</strong> Effective-dated rates, a weekly collected-versus-expected report per jurisdiction, and each location's rules reviewed with its accountant.</li>
     <li><strong>Printers and scripts.</strong> Chinese character support varies; tickets fall back to printing as an image on any ESC/POS printer.</li>
+    <li><strong>Surcharge rules.</strong> State laws and card-network rules change, and a wrong surcharge means refunds and fines. The mode is off by default, the rules are effective-dated data checked at every payment, and each location's setup is reviewed before it goes live.</li>
+    <li><strong>Pacing needs good numbers.</strong> Quotes are only as good as the prep loads. Manual quote times come first, the automatic quote learns from real bump times, and a manager can override it at any moment.</li>
+    <li><strong>A bigger phase 3.</strong> Own channels and multiple locations land together, so phase 3 runs a month longer. The storefront goes live at the first location before the second opens, so the two never debut at once.</li>
   </ul>
 </section>
 
-<footer>Draft 4 for review. No repository or code exists yet; the next step after your feedback is a phase 0 plan with the spikes above.</footer>
+<footer>Draft 7 for review. Phase 0 spikes and the start of phase 1 are in the repository.</footer>
 </main>
 </div>
