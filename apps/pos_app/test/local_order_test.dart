@@ -96,6 +96,106 @@ void main() {
     expect(estimateCheck(read, removed, const {}).total, '0.00');
   });
 
+  test('the estimate keeps the discounts and charges on the new lines, in the hub order', () {
+    const read = Check(
+      lines: [
+        CheckLine(lineId: 'L1', name: 'Tea', qty: 1, total: '10.00', discount: '10.00'),
+        CheckLine(lineId: 'L2', name: 'Duck', qty: 1, total: '20.00'),
+      ],
+      subtotal: '30.00',
+      discounts: [
+        CheckDiscount(
+          discountId: 'D1',
+          reason: 'comp',
+          name: 'Manager comp',
+          kind: 'comp',
+          value: '0',
+          amount: '10.00',
+          lineId: 'L1',
+        ),
+        CheckDiscount(
+          discountId: 'D2',
+          reason: 'loyalty',
+          name: 'Loyalty reward',
+          kind: 'percent',
+          value: '10',
+          amount: '2.00',
+        ),
+      ],
+      discountTotal: '12.00',
+      charges: [
+        CheckCharge(
+          chargeId: 'auto_gratuity',
+          name: 'Gratuity 18%',
+          kind: 'percent',
+          value: '18',
+          amount: '3.24',
+          gratuity: true,
+          automatic: true,
+        ),
+      ],
+      chargeTotal: '3.24',
+      taxLines: taxes,
+      tax: '1.26',
+      taxRatePct: '7.00',
+      total: '22.50',
+    );
+    final order = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [hubLine('L1'), hubLine('L2')],
+      fired: const {},
+    );
+    final more = withLocalOps(order, [
+      op('set_line', {'line_id': 'L2', 'qty': 2}),
+    ]);
+    final check = estimateCheck(read, more, const {});
+    // The comp still takes the whole tea; 10% of the 40.00 of duck; the party's gratuity on the 36.00 left,
+    // untaxed; tax on the 36.00: 2.25 + 0.27.
+    expect(check.lines.map((l) => (l.lineId, l.total, l.discount)), [
+      ('L1', '10.00', '10.00'),
+      ('L2', '40.00', '0.00'),
+    ]);
+    expect(check.discounts.map((d) => d.amount), ['10.00', '4.00']);
+    expect(check.charges.single.amount, '6.48');
+    expect((check.discountTotal, check.chargeTotal, check.tax, check.total), ('14.00', '6.48', '2.52', '45.00'));
+    // A taxed service charge goes into the tax base; a discount whose line is gone is dropped.
+    const taxed = Check(
+      lines: [CheckLine(lineId: 'L1', name: 'Tea', qty: 1, total: '10.00')],
+      subtotal: '10.00',
+      discounts: [
+        CheckDiscount(
+          discountId: 'D3',
+          reason: 'promotion',
+          name: 'Promotion',
+          kind: 'amount',
+          value: '50',
+          amount: '10.00',
+          lineId: 'L1',
+        ),
+      ],
+      charges: [
+        CheckCharge(chargeId: 'C1', name: 'Catering', kind: 'percent', value: '18', amount: '0.00', taxed: true),
+      ],
+      taxLines: taxes,
+      tax: '0.00',
+      taxRatePct: '7.00',
+      total: '0.00',
+    );
+    final added = withLocalOps(
+      Order(orderId: 'o1', status: 'open', fields: const {}, lines: [hubLine('L1')], fired: const {}),
+      [
+        op('void_line', {'line_id': 'L1'}),
+        op('add_line', {'line_id': 'L2', 'item': 'Duck', 'qty': 1}),
+      ],
+    );
+    final again = estimateCheck(taxed, added, {'L2': const LocalLine(unitPrice: '20.00')});
+    expect(again.discounts, isEmpty);
+    expect(again.charges.single.amount, '3.60');
+    expect((again.tax, again.total), ('1.66', '25.26')); // 7% of 23.60: 1.475 -> 1.48, 0.177 -> 0.18
+  });
+
   test('money in cents', () {
     expect(cents('17.95'), 1795);
     expect(cents('8.5'), 850);

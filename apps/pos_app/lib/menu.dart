@@ -306,6 +306,7 @@ class CheckLine {
     required this.total,
     this.seat,
     this.modifiers = const [],
+    this.discount = '0.00',
   });
 
   factory CheckLine.fromJson(Map<String, dynamic> json) => CheckLine(
@@ -315,6 +316,7 @@ class CheckLine {
     total: json['total'] as String? ?? '0.00',
     seat: json['seat'] as int?,
     modifiers: List<String>.from(json['modifiers'] as List? ?? const []),
+    discount: json['discount'] as String? ?? '0.00',
   );
 
   final String lineId;
@@ -324,8 +326,122 @@ class CheckLine {
   final int? seat;
   final List<String> modifiers;
 
-  CheckLine withQty(int qty, String total) =>
-      CheckLine(lineId: lineId, name: name, qty: qty, total: total, seat: seat, modifiers: modifiers);
+  /// What came off this line itself (a comp, a percentage or an amount on it); a check discount is its own row.
+  final String discount;
+
+  bool get isDiscounted => discount != '0.00' && discount != '0';
+
+  CheckLine withQty(int qty, String total, {String? discount}) => CheckLine(
+    lineId: lineId,
+    name: name,
+    qty: qty,
+    total: total,
+    seat: seat,
+    modifiers: modifiers,
+    discount: discount ?? this.discount,
+  );
+}
+
+/// A discount on the check as the backend applied it: its reason, who put it on and who approved it.
+class CheckDiscount {
+  const CheckDiscount({
+    required this.discountId,
+    required this.reason,
+    required this.name,
+    required this.kind,
+    required this.value,
+    required this.amount,
+    this.lineId,
+    this.note = '',
+    this.appliedBy = '',
+    this.approvedBy,
+  });
+
+  factory CheckDiscount.fromJson(Map<String, dynamic> json) => CheckDiscount(
+    discountId: json['discount_id'] as String,
+    reason: json['reason'] as String? ?? '',
+    name: json['name'] as String? ?? json['reason'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'percent',
+    value: json['value']?.toString() ?? '0',
+    amount: json['amount'] as String? ?? '0.00',
+    lineId: json['line_id'] as String?,
+    note: json['note'] as String? ?? '',
+    appliedBy: json['applied_by'] as String? ?? '',
+    approvedBy: (json['approved_by'] as Map?)?['name'] as String?,
+  );
+
+  final String discountId;
+  final String reason;
+  final String name;
+  final String kind; // percent | amount | comp
+  final String value;
+  final String amount;
+  final String? lineId;
+  final String note;
+  final String appliedBy;
+  final String? approvedBy;
+
+  CheckDiscount withAmount(String amount) => CheckDiscount(
+    discountId: discountId,
+    reason: reason,
+    name: name,
+    kind: kind,
+    value: value,
+    amount: amount,
+    lineId: lineId,
+    note: note,
+    appliedBy: appliedBy,
+    approvedBy: approvedBy,
+  );
+}
+
+/// A service charge on the check: automatic from the rules (a party's gratuity, a delivery fee) or put on by staff.
+class CheckCharge {
+  const CheckCharge({
+    required this.chargeId,
+    required this.name,
+    required this.kind,
+    required this.value,
+    required this.amount,
+    this.gratuity = false,
+    this.automatic = false,
+    this.taxed = false,
+    this.appliedBy,
+  });
+
+  factory CheckCharge.fromJson(Map<String, dynamic> json) => CheckCharge(
+    chargeId: json['charge_id'] as String,
+    name: json['name'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'amount',
+    value: json['value']?.toString() ?? '0',
+    amount: json['amount'] as String? ?? '0.00',
+    gratuity: json['gratuity'] as bool? ?? false,
+    automatic: json['automatic'] as bool? ?? false,
+    taxed: json['taxed'] as bool? ?? false,
+    appliedBy: json['applied_by'] as String?,
+  );
+
+  final String chargeId;
+  final String name;
+  final String kind; // percent | amount
+  final String value;
+  final String amount;
+  final bool gratuity;
+  final bool automatic;
+  final bool taxed;
+  final String? appliedBy;
+
+  CheckCharge withAmount(String amount) => CheckCharge(
+    chargeId: chargeId,
+    name: name,
+    kind: kind,
+    value: value,
+    amount: amount,
+    gratuity: gratuity,
+    automatic: automatic,
+    taxed: taxed,
+    appliedBy: appliedBy,
+  );
 }
 
 class TaxLine {
@@ -352,12 +468,24 @@ class Check {
     required this.tax,
     required this.taxRatePct,
     required this.total,
+    this.discounts = const [],
+    this.discountTotal = '0.00',
+    this.charges = const [],
+    this.chargeTotal = '0.00',
     this.estimated = false,
   });
 
   factory Check.fromJson(Map<String, dynamic> json) => Check(
     lines: (json['lines'] as List? ?? const []).map((l) => CheckLine.fromJson(l as Map<String, dynamic>)).toList(),
     subtotal: json['subtotal'] as String? ?? '0.00',
+    discounts: (json['discounts'] as List? ?? const [])
+        .map((d) => CheckDiscount.fromJson(d as Map<String, dynamic>))
+        .toList(),
+    discountTotal: json['discount_total'] as String? ?? '0.00',
+    charges: (json['charges'] as List? ?? const [])
+        .map((c) => CheckCharge.fromJson(c as Map<String, dynamic>))
+        .toList(),
+    chargeTotal: json['charge_total'] as String? ?? '0.00',
     taxLines: (json['tax_lines'] as List? ?? const []).map((t) => TaxLine.fromJson(t as Map<String, dynamic>)).toList(),
     tax: json['tax'] as String? ?? '0.00',
     taxRatePct: json['tax_rate_pct'] as String? ?? '',
@@ -365,7 +493,11 @@ class Check {
   );
 
   final List<CheckLine> lines;
-  final String subtotal;
+  final String subtotal; // the lines before any discount
+  final List<CheckDiscount> discounts;
+  final String discountTotal;
+  final List<CheckCharge> charges;
+  final String chargeTotal;
   final List<TaxLine> taxLines;
   final String tax;
   final String taxRatePct; // the combined rate, e.g. 7.00: customers see one tax line

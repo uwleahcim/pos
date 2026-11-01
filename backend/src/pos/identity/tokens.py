@@ -27,6 +27,7 @@ class Grant:
     name: str
     role: str
     expires: float
+    scope: str | None = None  # what the token is good for, e.g. "adjust:o1" for a discount on one order
 
 
 class Tokens:
@@ -35,8 +36,10 @@ class Tokens:
         self._key = secret.encode()
         self._clock = clock
 
-    def issue(self, staff_id: str, name: str, role: str, ttl: float = TTL_SECONDS) -> tuple[str, Grant]:
-        grant = Grant(staff_id, name, role, self._clock() + ttl)
+    def issue(
+        self, staff_id: str, name: str, role: str, ttl: float = TTL_SECONDS, *, scope: str | None = None
+    ) -> tuple[str, Grant]:
+        grant = Grant(staff_id, name, role, self._clock() + ttl, scope)
         body = _b64(json.dumps(grant.__dict__, separators=(",", ":")).encode())
         return f"{body}.{self._sign(body)}", grant
 

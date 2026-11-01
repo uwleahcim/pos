@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'cache.dart';
 import 'floor.dart';
 import 'menu.dart';
+import 'pricing.dart';
 import 'settings.dart';
 
 /// One line of an order, exactly as the backend reports it.
@@ -222,6 +223,14 @@ class PosApi {
     });
     return Check.fromJson(json);
   }
+
+  /// The discount reasons and service charges this location allows, with who may apply them.
+  Future<PricingRules> pricingRules() async => PricingRules.fromJson(await _get('/pricing/rules'));
+
+  /// A manager's PIN for a discount or a charge on one order: the answer's `approval` goes on the operation.
+  /// 401 is a wrong PIN, 403 not a manager, 423 locked after too many tries.
+  Future<Map<String, dynamic>> approve({required String device, required String pin, required String orderId}) =>
+      _post('/approvals', {'device': device, 'pin': pin, 'order_id': orderId});
 
   /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
   /// no backend works a new check's tax from. Null until a check has been read on this device.

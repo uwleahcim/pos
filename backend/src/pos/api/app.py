@@ -24,7 +24,8 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
-from ..orders.check import check_for
+from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
+from ..orders.check import charge_snapshot, check_for
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
@@ -156,6 +157,15 @@ class PriceIn(BaseModel):
     notes: str | None = None
 
 
+class ApprovalIn(BaseModel):
+    """A manager's PIN on the spot, for one purpose on one order."""
+
+    device: str
+    pin: str
+    purpose: str = Field("adjust", pattern="^adjust$")
+    order_id: str
+
+
 def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
     """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
     dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
@@ -183,6 +193,63 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
 
 WARNINGS: frozenset[str] = frozenset()
 """Problem codes a line may still be sold with; none yet, so every problem stops the sale."""
+
+ADJUSTMENTS = frozenset({"discount", "remove_discount", "charge", "remove_charge"})
+
+
+def adjust_ops(
+    rules: PricingRules, tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op]
+) -> tuple[list[Op], list[dict[str, Any]]]:
+    """Check every new discount and charge against the location's rules before it is stored. A manager's
+    approval travels as a token (`approval`, from POST /approvals, good for one order) and is swapped for
+    `approved_by`, who it was, so the check and the reports name the manager; nothing a terminal says about
+    approval on its own is kept. An adjustment the rules refuse (an unknown reason, over its cap, no manager
+    when one is needed, a second discount on a dish that does not stack) is left out and reported with its
+    problems, like a refused line; the rest of the batch goes through."""
+    out: list[Op] = []
+    refused: list[dict[str, Any]] = []
+    active: dict[str, dict[str, dict[str, Any]]] = {}  # order -> live discounts by id, as this batch leaves them
+    for op in ops:
+        if op.kind not in ADJUSTMENTS:
+            out.append(op)
+            continue
+        data = {k: v for k, v in op.data.items() if k not in ("approval", "approved_by")}
+        grant = tokens.verify(op.data["approval"]) if isinstance(op.data.get("approval"), str) else None
+        approved = grant is not None and grant.role in APPROVERS and grant.scope == f"adjust:{op.order_id}"
+        if grant is not None and approved:
+            data["approved_by"] = {"staff_id": grant.staff_id, "name": grant.name}
+        ident = data.get("discount_id" if op.kind.endswith("discount") else "charge_id")
+        if not isinstance(ident, str) or not ident:
+            problems = [{"code": "bad_request", "message": f"a {op.kind} needs its id"}]
+            refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
+            continue
+        if op.order_id not in active:
+            state = store.state(op.order_id)
+            active[op.order_id] = {
+                d.discount_id: {"reason": d.reason, "line_id": d.line_id} for d in state.discounts.values() if d.active
+            }
+        live = active[op.order_id]
+        if op.kind == "remove_discount":
+            live.pop(ident, None)
+        else:
+            problems = rules.problems(op.kind, data, approved=approved, existing=live.values())
+            if problems:
+                refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
+                continue
+            if op.kind == "discount":
+                live[ident] = {"reason": data.get("reason"), "line_id": data.get("line_id")}
+            elif op.kind == "charge":
+                data.update(charge_snapshot(rules.charges[str(data["code"])]))
+        out.append(replace(op, data=data))
+    return out, refused
+
+
+def _tally(totals: dict[str, Decimal], key: str, amount: Decimal) -> None:
+    totals[key] = totals.get(key, Decimal(0)) + amount
+
+
+def _totals(totals: dict[str, Decimal]) -> list[dict[str, str]]:
+    return [{"key": key, "amount": str(amount)} for key, amount in sorted(totals.items(), key=lambda kv: -kv[1])]
 
 
 def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
@@ -212,17 +279,19 @@ def create_app(
     floor: FloorPlan | None = None,
     tokens: Tokens | None = None,
     preferences: PreferenceStore | None = None,
+    pricing: PricingRules | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else default_menu()
     app.state.taxes = taxes if taxes is not None else load_profile()
+    app.state.pricing = pricing if pricing is not None else load_rules()
     app.state.floor = floor if floor is not None else load_floor()
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
     app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.printing = printing if printing is not None else PrintService.from_env()
-    app.state.tokens = tokens
+    app.state.tokens = tokens if tokens is not None else Tokens()
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -247,6 +316,8 @@ def create_app(
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         app.state.menu.refresh()
         fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
+        fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
+        refused += refused_adjustments
         try:
             accepted = store.append(fresh)
         except ClockDriftError as err:
@@ -283,11 +354,11 @@ def create_app(
 
     @app.get("/orders/{order_id}/check")
     def read_check(order_id: str) -> dict[str, Any]:
-        """What the table owes: priced lines, subtotal, tax lines by jurisdiction, total."""
+        """What the table owes: priced lines, discounts, charges, subtotal, tax lines by jurisdiction, total."""
         store: OpStore | PgOpStore = app.state.store
         if not store.for_order(order_id):
             raise HTTPException(404, "no such order")
-        return check_for(store.state(order_id), app.state.taxes)
+        return check_for(store.state(order_id), app.state.taxes, app.state.pricing)
 
     @app.get("/floor")
     def read_floor() -> dict[str, Any]:
@@ -295,9 +366,80 @@ def create_app(
         store: OpStore | PgOpStore = app.state.store
         states = [store.state(order_id) for order_id in store.order_ids()]
         open_states = [s for s in states if s.status == "open"]
-        totals = {s.order_id: Decimal(check_for(s, app.state.taxes)["total"]) for s in open_states}
+        totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
         plan: FloorPlan = app.state.floor
         return {**plan.as_json(), "status": table_status(open_states, totals), "cursor": store.cursor}
+
+    # Discounts and charges: the rules are data, a manager approves on the spot, reports say who and why ----
+    @app.get("/pricing/rules")
+    def read_pricing_rules() -> dict[str, Any]:
+        """The discount reasons and service charges this location allows, with their limits and who may apply them."""
+        rules: PricingRules = app.state.pricing
+        return rules.as_json()
+
+    @app.post("/approvals")
+    def approve(body: ApprovalIn) -> dict[str, Any]:
+        """A manager's PIN for a discount or a charge on one order. The answer is a short-lived token the
+        terminal puts on the operation as `approval`; the hub records who it was, never the token."""
+        directory: Directory = app.state.staff
+        try:
+            found = directory.by_pin(body.pin, device=body.device)
+        except Locked as err:
+            raise HTTPException(423, {"error": "locked", "seconds": round(err.seconds_left)}) from err
+        if found is None:
+            raise HTTPException(401, {"error": "unknown_credential"})
+        if found.role not in APPROVERS:
+            raise HTTPException(403, {"error": "not_allowed", "role": found.role})
+        token, grant = app.state.tokens.issue(
+            found.staff_id, found.name, found.role, APPROVAL_TTL, scope=f"{body.purpose}:{body.order_id}"
+        )
+        return {
+            "approval": token,
+            "staff_id": grant.staff_id,
+            "name": grant.name,
+            "role": grant.role,
+            "expires": grant.expires,
+        }
+
+    @app.get("/reports/adjustments")
+    def report_adjustments(
+        since: int = Query(0, ge=0, description="orders active since this wall-clock ms"),
+    ) -> dict[str, Any]:
+        """Every discount and charge on the orders, with totals by reason, by who applied it and by who
+        approved it: the manager's look at what came off the register and why (architecture section 9).
+        Discounts taken off again are counted, not valued."""
+        store: OpStore | PgOpStore = app.state.store
+        discounts: list[dict[str, Any]] = []
+        charges: list[dict[str, Any]] = []
+        by_reason: dict[str, Decimal] = {}
+        by_staff: dict[str, Decimal] = {}
+        by_approver: dict[str, Decimal] = {}
+        removed = 0
+        for order_id in store.order_ids():
+            state = store.state(order_id)
+            if state.last is None or state.last.wall_ms < since:
+                continue
+            check = check_for(state, app.state.taxes, app.state.pricing)
+            about = {"order_id": order_id, "table": state.fields.get("table"), "status": state.status}
+            for row in check["discounts"]:
+                discounts.append({**about, **row})
+                amount = Decimal(row["amount"])
+                _tally(by_reason, row["reason"], amount)
+                _tally(by_staff, row["applied_by"] or "", amount)
+                _tally(by_approver, (row["approved_by"] or {}).get("name", ""), amount)
+            charges.extend({**about, **row} for row in check["charges"])
+            removed += sum(1 for d in state.discounts.values() if not d.active)
+        return {
+            "discounts": discounts,
+            "charges": charges,
+            "discount_total": str(sum(by_reason.values(), Decimal(0))),
+            "charge_total": str(sum((Decimal(c["amount"]) for c in charges), Decimal(0))),
+            "by_reason": _totals(by_reason),
+            "by_staff": _totals(by_staff),
+            "by_approver": _totals(by_approver),
+            "removed": removed,
+            "cursor": store.cursor,
+        }
 
     # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
     @app.get("/menu")

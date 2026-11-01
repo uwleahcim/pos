@@ -84,6 +84,10 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
 
 /// The backend's check, adjusted for lines this screen added or took off since: `estimated` until the backend
 /// has priced them. Tax uses the backend's own rates and rounding (half up, per component, on the check).
+///
+/// The discounts and charges the backend last applied are worked out again on the new lines in its order:
+/// on a line first (a comp is the line, a percentage of it, an amount up to it), then on the check, then
+/// charges on what is left, then tax on the discounted lines and the taxed charges.
 Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   final active = order.activeLines;
   final known = {for (final l in check?.lines ?? const <CheckLine>[]) l.lineId: l};
@@ -119,16 +123,57 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
       ),
     );
   }
+
+  final net = {for (final l in lines) l.lineId: cents(l.total)}; // what each line is worth after its discounts
+  final off = {for (final l in lines) l.lineId: 0};
+  var checkOff = 0;
+  final discounts = <CheckDiscount>[];
+  for (final d in check?.discounts ?? const <CheckDiscount>[]) {
+    final lineId = d.lineId;
+    if (lineId != null && !net.containsKey(lineId)) continue; // its line came off
+    final base = lineId == null ? net.values.fold(0, (a, b) => a + b) - checkOff : net[lineId]!;
+    var amount = switch (d.kind) {
+      'comp' => base,
+      'percent' => _percentOf(base, d.value),
+      _ => cents(d.value),
+    };
+    amount = amount.clamp(0, base);
+    if (lineId == null) {
+      checkOff += amount;
+    } else {
+      net[lineId] = base - amount;
+      off[lineId] = off[lineId]! + amount;
+    }
+    discounts.add(d.withAmount(money(amount)));
+  }
+  final discounted = net.values.fold(0, (a, b) => a + b) - checkOff;
+  final charges = <CheckCharge>[];
+  var chargeTotal = 0;
+  var taxedCharges = 0;
+  for (final c in check?.charges ?? const <CheckCharge>[]) {
+    final amount = c.kind == 'percent' ? _percentOf(discounted, c.value) : cents(c.value);
+    chargeTotal += amount;
+    if (c.taxed) taxedCharges += amount;
+    charges.add(c.withAmount(money(amount)));
+  }
+
   final rates = [for (final t in check?.taxLines ?? const <TaxLine>[]) t.ratePct];
   if (rates.isEmpty && (check?.taxRatePct ?? '').isNotEmpty) rates.add(check!.taxRatePct);
-  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(subtotal, rate));
+  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(discounted + taxedCharges, rate));
   return Check(
-    lines: lines,
+    lines: [
+      for (final l in lines)
+        off[l.lineId] == 0 && !l.isDiscounted ? l : l.withQty(l.qty, l.total, discount: money(off[l.lineId]!)),
+    ],
     subtotal: money(subtotal),
+    discounts: discounts,
+    discountTotal: money(subtotal - discounted),
+    charges: charges,
+    chargeTotal: money(chargeTotal),
     taxLines: check?.taxLines ?? const [],
     tax: money(tax),
     taxRatePct: check?.taxRatePct ?? '',
-    total: money(subtotal + tax),
+    total: money(discounted + chargeTotal + tax),
     estimated: true,
   );
 }

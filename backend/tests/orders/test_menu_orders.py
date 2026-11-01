@@ -194,7 +194,7 @@ def test_an_empty_check_still_names_its_tax_rates():
     c = client()
     c.post("/orders/o1/ops", json=[payload("a", "create", 0, table="12", order_type="dine_in")])
     check = c.get("/orders/o1/check").json()
-    assert (check["subtotal"], check["tax"], check["tax_rate_pct"]) == ("0", "0.00", "7.00")
+    assert (check["subtotal"], check["tax"], check["tax_rate_pct"]) == ("0.00", "0.00", "7.00")
     assert [t["rate_pct"] for t in check["tax_lines"]] == ["6.25", "0.75"]
 
 

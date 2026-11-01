@@ -117,6 +117,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           photos: widget.photos,
           orderId: orderId,
           courses: courses,
+          staffName: widget.session.staff?.name,
         ),
       ),
     );
