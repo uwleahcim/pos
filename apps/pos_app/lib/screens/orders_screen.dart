@@ -11,6 +11,7 @@ import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
 import 'compact.dart';
+import 'display_dialog.dart';
 import 'floor_view.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
@@ -182,6 +183,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
           ),
         ),
+      (
+        'Display',
+        Icons.text_fields,
+        () => showDialog<void>(
+          context: context,
+          builder: (_) => DisplayDialog(session: widget.session),
+        ),
+      ),
       (
         'Settings',
         Icons.settings,

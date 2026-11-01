@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/screens/display_dialog.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,7 +38,13 @@ void main() {
     if (request.url.path == '/signin') {
       final pin = (jsonDecode(request.body) as Map)['pin'];
       if (pin == '1111') {
-        final amy = {'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'};
+        final amy = {
+          'staff_id': 's1',
+          'name': 'Amy',
+          'role': 'server',
+          'method': 'pin',
+          'preferences': {'text_scale': 1.3, 'high_contrast': true, 'locale': 'en'},
+        };
         return http.Response(jsonEncode(amy), 200);
       }
       if (pin == '0000') {
@@ -56,6 +63,7 @@ void main() {
       );
     }
     if (request.url.path == '/events/photos') return http.Response(jsonEncode({'photo_id': 'x', 'bytes': 7}), 202);
+    if (request.method == 'PUT' && request.url.path == '/staff/s1/preferences') return http.Response(request.body, 200);
     return http.Response('{}', 404);
   });
 
@@ -74,6 +82,45 @@ void main() {
     expect(session.signedIn, isFalse);
     expect(await session.signInWithPin('mac1', '0000'), 'Wrong PIN');
     expect(await session.signInWithPin('mac1', '2222'), contains('Wait a minute'));
+  });
+
+  test('display settings come with the sign-in, are saved for every device, and go at sign-out', () async {
+    final settings = Settings(device: 'mac1', endpoints: const ['http://hub1:8000']);
+    final session = Session(PosApi(settings, client: client()));
+    expect(session.prefs, const DisplayPrefs());
+    await session.signInWithPin('mac1', '1111');
+    expect((session.prefs.textScale, session.prefs.highContrast), (1.3, true));
+
+    expect(await session.savePrefs(session.prefs.copyWith(textScale: 1.0)), isNull);
+    expect(session.prefs.textScale, 1.0);
+    final put = requests.last;
+    expect((put.method, put.url.path), ('PUT', '/staff/s1/preferences'));
+    expect(jsonDecode(put.body), {'text_scale': 1.0, 'high_contrast': true, 'locale': 'en'});
+
+    backendUp = false; // applied on this screen all the same, and the dialog says it was not saved
+    expect(await session.savePrefs(session.prefs.copyWith(highContrast: false)), isNotNull);
+    expect(session.prefs.highContrast, isFalse);
+
+    session.signOut();
+    expect(session.prefs, const DisplayPrefs());
+  });
+
+  testWidgets('the Display dialog applies a text size and contrast at once', (tester) async {
+    final settings = Settings(device: 'mac1', endpoints: const ['http://hub1:8000']);
+    final session = Session(PosApi(settings, client: client()));
+    await session.signInWithPin('mac1', '1111');
+    await tester.pumpWidget(MaterialApp(home: DisplayDialog(session: session)));
+    expect(tester.widget<ChoiceChip>(find.byKey(const ValueKey('text-scale:1.3'))).selected, isTrue);
+
+    await tester.tap(find.text('Normal'));
+    await tester.pumpAndSettle();
+    expect(session.prefs.textScale, 1.0);
+    expect(tester.widget<ChoiceChip>(find.byKey(const ValueKey('text-scale:1.0'))).selected, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('high-contrast')));
+    await tester.pumpAndSettle();
+    expect(session.prefs.highContrast, isFalse);
+    expect(jsonDecode(requests.last.body), {'text_scale': 1.0, 'high_contrast': false, 'locale': 'en'});
   });
 
   test('an event photo is taken at once and sent when the backend is reachable', () async {

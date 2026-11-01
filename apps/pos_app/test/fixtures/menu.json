@@ -29,7 +29,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:2",
@@ -50,7 +51,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:3",
@@ -69,7 +71,8 @@
        ],
        "contains": [],
        "tags": [],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:4",
@@ -91,7 +94,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       }
      ],
      "sections": []
@@ -130,7 +134,8 @@
         "spicy",
         "popular"
        ],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": true
       },
       {
        "entry_id": "dinner:88",
@@ -152,7 +157,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       }
      ],
      "sections": []
@@ -182,7 +188,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": true
       },
       {
        "entry_id": "dinner:40",
@@ -205,7 +212,8 @@
         "wheat"
        ],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       }
      ],
      "sections": []
@@ -231,7 +239,8 @@
        ],
        "contains": [],
        "tags": [],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:S2",
@@ -252,7 +261,8 @@
        "tags": [
         "raw"
        ],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:S3",
@@ -273,7 +283,8 @@
        "tags": [
         "raw"
        ],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:S4",
@@ -292,10 +303,12 @@
        ],
        "contains": [],
        "tags": [],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       }
      ],
-     "sections": []
+     "sections": [],
+     "color": "#2F5E48"
     },
     {
      "section_id": "dinner/bar",
@@ -320,7 +333,8 @@
        "tags": [
         "21+"
        ],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:B2",
@@ -348,7 +362,8 @@
        "tags": [
         "21+"
        ],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": true
       },
       {
        "entry_id": "dinner:B3",
@@ -369,7 +384,8 @@
        "tags": [
         "21+"
        ],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:B4",
@@ -390,7 +406,8 @@
        "tags": [
         "21+"
        ],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:B5",
@@ -411,7 +428,8 @@
        "tags": [
         "21+"
        ],
-       "has_options": true
+       "has_options": true,
+       "needs_choice": true
       }
      ],
      "sections": []
@@ -437,7 +455,8 @@
        ],
        "contains": [],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       },
       {
        "entry_id": "dinner:D2",
@@ -456,7 +475,8 @@
        ],
        "contains": [],
        "tags": [],
-       "has_options": false
+       "has_options": false,
+       "needs_choice": false
       }
      ],
      "sections": []

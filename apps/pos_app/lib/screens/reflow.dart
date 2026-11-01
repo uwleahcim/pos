@@ -13,6 +13,7 @@ class ReflowGroup {
   final _live = <Object, _ReflowState>{};
   Map<Object, (Rect, Widget)> _from = const {};
   DateTime _at = DateTime(0);
+  int _generation = 0; // counts snapshots, so an element travels once per change however often it rebuilds
 
   /// Remembers where every element is now and what it looks like.
   void snapshot() {
@@ -21,6 +22,7 @@ class ReflowGroup {
         if (value._rect() case final rect?) key: (rect, value.widget.child),
     };
     _at = DateTime.now();
+    _generation++;
   }
 
   bool get _changing => DateTime.now().difference(_at) < const Duration(milliseconds: 500);
@@ -46,11 +48,14 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
   late final _t = CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic);
   OverlayEntry? _flight;
   _Mode _mode = _Mode.still;
+  int _seen = -1; // the snapshot this element last travelled for
+  int _run = 0; // which start the controller is on, so an earlier run ending does not land a later one
 
   @override
   void initState() {
     super.initState();
     widget.group._live[widget.id] = this;
+    _seen = widget.group._generation;
     _arrive();
   }
 
@@ -61,10 +66,12 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
       if (old.group._live[old.id] == this) old.group._live.remove(old.id);
       widget.group._live[widget.id] = this;
     }
-    if (widget.group._changing) {
+    // Still here after a change, perhaps somewhere else: travel from where it was, once per change (the
+    // layout keeps rebuilding while it animates).
+    if (widget.group._changing && _seen != widget.group._generation) {
+      _seen = widget.group._generation;
       _land();
-      _controller.reset();
-      _arrive();
+      _arrive(settled: true);
     }
   }
 
@@ -82,12 +89,25 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
     return box.localToGlobal(Offset.zero) & box.size;
   }
 
-  void _arrive() {
+  /// Starts the controller over. It is only touched between frames: the travelling copy in the overlay
+  /// listens to it, and a value set while the framework builds would reach that copy out of turn.
+  void _start() {
+    final run = ++_run;
+    _controller.forward(from: 0.0).whenComplete(() {
+      if (run == _run) _land();
+    });
+  }
+
+  /// [settled] when the element was already on screen (updated, not created): one with no place to travel
+  /// from then simply stays, where a new one would fade in.
+  void _arrive({bool settled = false}) {
     final from = widget.group._take(widget.id);
     if (from == null) {
-      if (widget.group._changing) {
+      if (widget.group._changing && !settled) {
         _mode = _Mode.fading;
-        _controller.forward().whenComplete(_land);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _start();
+        });
       }
       return;
     }
@@ -104,7 +124,7 @@ class _ReflowState extends State<Reflow> with SingleTickerProviderStateMixin {
         builder: (_) => _Flight(from: from, to: this, overlay: overlay),
       );
       overlay.insert(_flight!);
-      _controller.forward().whenComplete(_land);
+      _start();
     });
   }
 

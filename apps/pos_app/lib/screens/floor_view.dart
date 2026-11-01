@@ -334,14 +334,32 @@ class _TablePositioned extends StatelessWidget {
                                   color: border.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
-                                child: Text(
-                                  '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
-                                  style: TextStyle(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: textColor,
-                                    fontFeatures: PosTheme.tabular,
-                                  ),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
+                                      style: TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: textColor,
+                                        fontFeatures: PosTheme.tabular,
+                                      ),
+                                    ),
+                                    // what the table has run up and whose it is, as a manager reads the room
+                                    if (check.total != null || check.server != null)
+                                      Text(
+                                        [
+                                          if (check.total != null) '\$${check.total}',
+                                          _initials(check.server),
+                                        ].where((s) => s.isNotEmpty).join(' '),
+                                        style: TextStyle(
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: textColor,
+                                          fontFeatures: PosTheme.tabular,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                           ],
@@ -358,6 +376,15 @@ class _TablePositioned extends StatelessWidget {
     );
   }
 }
+
+/// "Amy" -> "A", "Mike Wu" -> "MW": the server on a table, in the room a tile has.
+String _initials(String? name) => (name ?? '')
+    .trim()
+    .split(RegExp(r'\s+'))
+    .where((word) => word.isNotEmpty)
+    .take(2)
+    .map((word) => word.substring(0, 1).toUpperCase())
+    .join();
 
 class _Legend extends StatelessWidget {
   const _Legend();

@@ -42,6 +42,15 @@ Matcher op(String kind, Map data) =>
 
 http.Response json(Object body, [int status = 200]) => http.Response.bytes(utf8.encode(jsonEncode(body)), status);
 
+/// Sizes the screen itself (what [MediaQuery] reports), not only the drawing surface: the menu panel picks a
+/// phone's tray or a tablet's strip by the screen width.
+void screen(WidgetTester tester, Size size) {
+  tester.view
+    ..physicalSize = size
+    ..devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
 void main() {
   group('changing how many', () {
     var n = 0;
@@ -145,7 +154,7 @@ void main() {
       Settings(device: 't1', endpoints: ['http://hub:8000']),
       client: MockClient((request) async => request.url.path == '/menu' ? json(menu) : json({'revision': 0})),
     );
-    await tester.binding.setSurfaceSize(const Size(400, 800));
+    screen(tester, const Size(400, 800)); // a phone: the tray of tiles, not a tablet's strip
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -189,7 +198,7 @@ void main() {
     // When screen height requires collapsing categories (e.g. 560px tall), Appetizers (2 rows of items)
     // collapses categories more than Chef's Specials (1 row of items), and switching between them
     // smoothly expands the categories section and shrinks the items section.
-    await tester.binding.setSurfaceSize(const Size(400, 560));
+    screen(tester, const Size(400, 560));
     await tester.pumpAndSettle();
     final twoRowCategoriesHeight = tester.getSize(find.byKey(const ValueKey('categories-0'))).height;
 
@@ -205,7 +214,7 @@ void main() {
     expect(midExpandHeight, lessThan(oneRowCategoriesHeight - 20));
     expect(find.text("General Tso's Chicken"), findsOneWidget);
     expect(find.text('Beef with Broccoli'), findsOneWidget);
-    await tester.binding.setSurfaceSize(const Size(400, 800));
+    screen(tester, const Size(400, 800));
     await tester.pumpAndSettle();
 
     await tester.drag(find.text("General Tso's Chicken"), const Offset(0, 300));
@@ -231,7 +240,7 @@ void main() {
 
     // Selecting a bottom-row category whose items expand over its original y-position scrolls the
     // categories grid in lockstep so the selected category is never covered by the items section.
-    await tester.binding.setSurfaceSize(const Size(390, 560));
+    screen(tester, const Size(390, 560));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bar'));
     await tester.pump();
@@ -255,8 +264,7 @@ void main() {
         (request) async => request.url.path == '/menu' ? json(fixture('menu')) : json({'revision': 0}),
       ),
     );
-    await tester.binding.setSurfaceSize(const Size(400, 560));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    screen(tester, const Size(400, 560));
     var rebuilds = 0;
     Widget panel() => MaterialApp(
       home: Scaffold(
@@ -389,6 +397,80 @@ void main() {
     expect(find.byTooltip('Close'), findsOneWidget);
     expect(find.text('Seat  '), findsOneWidget);
     expect(tester.getTopLeft(find.text('Course  ')).dy, tester.getTopLeft(find.text('Seat  ')).dy);
+
+    await tester.pumpWidget(const SizedBox());
+    outbox.dispose();
+    photos.dispose();
+  });
+
+  testWidgets('fire everything and leave sends the order and goes back to the floor', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final settings = Settings(device: 't1', endpoints: ['http://hub:8000'], prefs: prefs);
+    final api = PosApi(
+      settings,
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/orders/o1':
+            return json({
+              'order_id': 'o1',
+              'fields': {'table': 'A1', 'guests': 2},
+              'lines': {'L1': line('Egg roll', 1)},
+            });
+          case '/orders/o1/check':
+            return json({
+              'lines': [
+                {'line_id': 'L1', 'name': 'Egg roll', 'qty': 1, 'total': '2.50'},
+              ],
+              'subtotal': '2.50',
+              'tax_rate_pct': '7.00',
+              'tax': '0.18',
+              'total': '2.68',
+            });
+          case '/menu':
+            return json(fixture('menu'));
+          case '/orders/o1/ops':
+            return http.Response('down', 503);
+        }
+        return json({'revision': 0});
+      }),
+    );
+    final outbox = Outbox(api, settings, prefs: prefs);
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+    List<(String, Map)> sent() => [for (final op in outbox.pendingOps) (op['kind'] as String, op['data'] as Map)];
+
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => OrderScreen(api: api, outbox: outbox, photos: photos, orderId: 'o1'),
+                  ),
+                ),
+                child: const Text('Table A1'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Table A1'));
+    await tester.pumpAndSettle();
+    expect(find.byType(OrderScreen), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Fire'));
+    await tester.pumpAndSettle();
+    expect(find.text('Fire Entrees'), findsOneWidget); // the held course, to fire and stay for the next round
+    expect(find.text('Fire everything'), findsOneWidget);
+    await tester.tap(find.text('Fire everything and leave'));
+    await tester.pumpAndSettle();
+    expect(sent().last, op('fire', {'course': '*'}));
+    expect(find.byType(OrderScreen), findsNothing); // back where the next table is
 
     await tester.pumpWidget(const SizedBox());
     outbox.dispose();

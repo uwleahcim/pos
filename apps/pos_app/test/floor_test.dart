@@ -44,6 +44,7 @@ void main() {
     expect(find.text('1 of 42 tables open'), findsOneWidget);
     expect(find.text('B5'), findsOneWidget);
     expect(find.textContaining('4p'), findsOneWidget); // A7's party of four
+    expect(find.text('\$36.86 A'), findsOneWidget); // what they have run up, and Amy's initial
     await tester.tap(find.text('A7'));
     expect(tapped, ['A7']);
 

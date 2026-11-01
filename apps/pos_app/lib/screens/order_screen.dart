@@ -129,7 +129,12 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
 
-  Future<void> _fire(String course) => _append('fire', {'course': course});
+  /// Sends a held course (or everything) to the kitchen. Sending has two forms: stay on the check for the
+  /// next round, or leave it for the next table.
+  Future<void> _fire(String course, {bool leave = false}) async {
+    await _append('fire', {'course': course});
+    if (leave && mounted) Navigator.of(context).pop();
+  }
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
@@ -878,13 +883,13 @@ class _SeatCourseBar extends StatelessWidget {
   }
 }
 
-/// Fire one held course, or everything at once.
+/// Fire one held course, or everything at once: and stay on the check, or leave it.
 class _FireMenu extends StatelessWidget {
   const _FireMenu({required this.order, required this.courses, required this.onFire});
 
   final Order order;
   final List<Course> courses;
-  final ValueChanged<String> onFire;
+  final void Function(String course, {bool leave}) onFire;
 
   @override
   Widget build(BuildContext context) {
@@ -894,22 +899,34 @@ class _FireMenu extends StatelessWidget {
       for (final c in courses)
         if (waiting.contains(c.id)) c,
     ];
-    return PopupMenuButton<String>(
+    return PopupMenuButton<(String, bool)>(
       tooltip: 'Fire',
-      onSelected: onFire,
+      onSelected: (choice) => onFire(choice.$1, leave: choice.$2),
       itemBuilder: (_) => [
         for (final c in held)
           PopupMenuItem(
-            value: c.id,
+            value: (c.id, false),
             child: Row(
               children: [
                 Icon(Icons.local_fire_department, size: 18, color: posColors.waitingBorder),
                 const SizedBox(width: 8),
-                Text('Fire ${c.name}'),
+                Flexible(child: Text('Fire ${c.name}', overflow: TextOverflow.ellipsis)),
               ],
             ),
           ),
-        const PopupMenuItem(value: '*', child: Text('Fire everything')),
+        if (held.isNotEmpty) const PopupMenuDivider(),
+        const PopupMenuItem(value: ('*', false), child: Text('Fire everything')),
+        const PopupMenuItem(
+          key: ValueKey('fire-and-leave'),
+          value: ('*', true),
+          child: Row(
+            children: [
+              Icon(Icons.logout, size: 18),
+              SizedBox(width: 8),
+              Flexible(child: Text('Fire everything and leave', overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+        ),
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),

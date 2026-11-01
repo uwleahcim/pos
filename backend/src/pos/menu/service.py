@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from .defs import Definitions, StaleMenu
-from .engine import MenuEngine, ResolvedSection, all_problems, flatten_modifiers
+from .engine import PREFIXES, MenuEngine, ResolvedEntry, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
-from .resolved import ResolvedLine
+from .resolved import ResolvedLine, ResolvedModifier
 
 if TYPE_CHECKING:
     from .store import MenuStore
@@ -44,6 +44,7 @@ def selection_from(data: Mapping[str, Any]) -> Selection:
         qty=int(data.get("qty", 1)),
         children=tuple(selection_from(c) for c in data.get("children", ())),
         components=tuple(component_from(c) for c in data.get("components", ())),
+        prefix=str(data["prefix"]) if data.get("prefix") else None,
     )
 
 
@@ -186,6 +187,7 @@ class MenuService:
         return {
             "section_id": section.section_id,
             "name": section.name,
+            "color": self._section_color(section.section_id),
             "entries": [
                 {
                     "entry_id": e.entry_id,
@@ -197,11 +199,36 @@ class MenuService:
                     "contains": list(e.contains),
                     "tags": list(e.tags),
                     "has_options": bool(self.defs.attachments_for(e.item)),
+                    "needs_choice": self._needs_choice(e),
                 }
                 for e in section.entries
             ],
             "sections": [self._section(s, locale) for s in section.sections],
         }
+
+    def _section_color(self, section_id: str) -> str | None:
+        """The POS tile colour set on the section (`display.color`, #RRGGBB), or None for the app's palette."""
+        section = self.defs.sections.get(section_id)
+        color = section.display.get("color") if section is not None else None
+        return str(color) if color else None
+
+    def _needs_choice(self, entry: ResolvedEntry) -> bool:
+        """Whether a tap on this dish has to ask something before it can go on the check: a size, or a
+        required group with no default. The tile shows its customize mark only then."""
+        if len([v for v in entry.variants if v.status == "available"]) > 1:
+            return True
+        for group, overrides in self.defs.attachments_for(entry.item):
+            min_select = overrides.get("min", group.min_select)
+            if min_select <= 0:
+                continue
+            hidden = set(overrides.get("hidden", ()))
+            options = [o for o in self.defs.options_of(group.code) if o.active and o.code not in hidden]
+            default = overrides.get("default")
+            # the engine fills in one default per group (`_apply_group`), so one default answers a group of one
+            has_default = any(o.code == default for o in options) if default else any(o.is_default for o in options)
+            if min_select > (1 if has_default else 0):
+                return True
+        return False
 
     def _second_name(self, item_code: str, locale: str) -> str | None:
         """The other language on the button: Chinese under an English name, English under a Chinese one."""
@@ -240,6 +267,14 @@ class MenuService:
     def resolve(self, request: Mapping[str, Any], at: datetime | None = None) -> ResolvedLine:
         return self.engine.resolve(request_from(request), at)
 
+    def _modifier_label(self, m: ResolvedModifier) -> str:
+        """What the check shows for a choice: the option's name, with its instruction in front (NO Add shrimp)."""
+        option = self.defs.options.get(m.option_id)
+        if option is None:
+            return m.kitchen_label
+        name = self.defs.localizer.text(option.names, "en")
+        return f"{PREFIXES[m.prefix]} {name}" if m.prefix else name
+
     def priced(self, request: Mapping[str, Any], at: datetime | None = None) -> dict[str, Any]:
         """The snapshot an order line keeps: names, the price of one, tax class, kitchen lines, problems."""
         line = self.resolve(request, at)
@@ -263,10 +298,9 @@ class MenuService:
                     "group_id": m.group_id,
                     "option_id": m.option_id,
                     "qty": m.qty,
-                    "label": loc.text(self.defs.options[m.option_id].names, "en")
-                    if m.option_id in self.defs.options
-                    else m.kitchen_label,
+                    "label": self._modifier_label(m),
                     "kitchen_label": m.kitchen_label,
+                    "prefix": m.prefix,
                     "price": str(m.price_delta),
                     "defaulted": m.defaulted,
                 }

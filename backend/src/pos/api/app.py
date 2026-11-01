@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
+from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
@@ -91,11 +92,29 @@ def default_menu() -> MenuService:
     return MenuService()
 
 
+def default_preferences() -> PreferenceStore:
+    """Staff preferences in PostgreSQL when DATABASE_URL is set, in memory otherwise."""
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn:
+        from ..identity.preferences import PgPreferenceStore
+
+        return PgPreferenceStore(dsn)
+    return PreferenceStore()
+
+
 class SignInIn(BaseModel):
     device: str
     pin: str | None = None
     tag_uid: str | None = None
     photo_id: str | None = None
+
+
+class PreferencesIn(BaseModel):
+    """What a staff member sets for themselves; a key left out keeps its stored value."""
+
+    text_scale: float | None = Field(None, description="1.0 is the normal size; 0.8 to 1.6")
+    high_contrast: bool | None = None
+    locale: str | None = None
 
 
 class PhotoIn(BaseModel):
@@ -192,6 +211,7 @@ def create_app(
     taxes: TaxProfile | None = None,
     floor: FloorPlan | None = None,
     tokens: Tokens | None = None,
+    preferences: PreferenceStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else default_menu()
@@ -200,6 +220,7 @@ def create_app(
     app.state.store = store if store is not None else default_store()
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
+    app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.printing = printing if printing is not None else PrintService.from_env()
     app.state.tokens = tokens
     if printing is None:
@@ -353,7 +374,31 @@ def create_app(
             raise HTTPException(423, {"error": "locked", "seconds": round(err.seconds_left)}) from err
         if found is None:
             raise HTTPException(401, {"error": "unknown_credential"})
-        return {"staff_id": found.staff_id, "name": found.name, "role": found.role, "method": found.method}
+        return {
+            "staff_id": found.staff_id,
+            "name": found.name,
+            "role": found.role,
+            "method": found.method,
+            "preferences": app.state.preferences.get(found.staff_id),
+        }
+
+    @app.get("/staff/{staff_id}/preferences")
+    def read_preferences(staff_id: str) -> dict[str, Any]:
+        """Text size, contrast and language as this staff member set them, with defaults filled in."""
+        preferences: PreferenceStore = app.state.preferences
+        return {"staff_id": staff_id, "preferences": preferences.get(staff_id)}
+
+    @app.put("/staff/{staff_id}/preferences")
+    def write_preferences(staff_id: str, body: PreferencesIn) -> dict[str, Any]:
+        """Sets the keys given and keeps the rest, so they follow the person to the next device."""
+        preferences: PreferenceStore = app.state.preferences
+        try:
+            saved = preferences.put(staff_id, body.model_dump(exclude_none=True))
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_preference", "message": str(err)}) from err
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        return {"staff_id": staff_id, "preferences": saved}
 
     @app.post("/events/photos", status_code=202)
     def put_photo(body: PhotoIn) -> dict[str, Any]:

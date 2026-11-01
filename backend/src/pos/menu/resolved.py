@@ -36,6 +36,7 @@ class ResolvedModifier:
     children: tuple[ResolvedModifier, ...] = ()
     defaulted: bool = False
     station: str | None = None
+    prefix: str | None = None  # no | extra | side | light, already written into kitchen_label
 
 
 @dataclass(frozen=True)
