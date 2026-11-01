@@ -28,21 +28,28 @@ class MenuEntry {
     this.number,
     this.secondName,
     this.hasOptions = false,
+    this.needsChoice = false,
     this.tags = const [],
   });
 
-  factory MenuEntry.fromJson(Map<String, dynamic> json) => MenuEntry(
-    entryId: json['entry_id'] as String,
-    item: json['item'] as String,
-    name: json['name'] as String? ?? '',
-    number: json['number'] as String?,
-    secondName: json['second_name'] as String?,
-    hasOptions: json['has_options'] as bool? ?? false,
-    tags: List<String>.from(json['tags'] as List? ?? const []),
-    variants: (json['variants'] as List? ?? const [])
+  factory MenuEntry.fromJson(Map<String, dynamic> json) {
+    final variants = (json['variants'] as List? ?? const [])
         .map((v) => VariantOffer.fromJson(v as Map<String, dynamic>))
-        .toList(),
-  );
+        .toList();
+    final hasOptions = json['has_options'] as bool? ?? false;
+    return MenuEntry(
+      entryId: json['entry_id'] as String,
+      item: json['item'] as String,
+      name: json['name'] as String? ?? '',
+      number: json['number'] as String?,
+      secondName: json['second_name'] as String?,
+      hasOptions: hasOptions,
+      // an older hub does not say: then assume a tap asks whenever there is anything to ask
+      needsChoice: json['needs_choice'] as bool? ?? (hasOptions || variants.length > 1),
+      tags: List<String>.from(json['tags'] as List? ?? const []),
+      variants: variants,
+    );
+  }
 
   /// A line's dish when only its item is known (reopening a line from an order).
   factory MenuEntry.fromDetail(ItemDetail detail, {String? entryId}) => MenuEntry(
@@ -51,6 +58,7 @@ class MenuEntry {
     name: detail.name,
     secondName: detail.secondName,
     hasOptions: true,
+    needsChoice: true,
     variants: detail.variants,
   );
 
@@ -60,6 +68,10 @@ class MenuEntry {
   final String? number;
   final String? secondName;
   final bool hasOptions;
+
+  /// A tap has to ask something (a size, a required choice with no default) before the dish can go on the
+  /// check. The tile shows its customize mark only then: a dish whose rice simply defaults says nothing.
+  final bool needsChoice;
   final List<String> tags;
   final List<VariantOffer> variants;
 
@@ -74,11 +86,18 @@ class MenuEntry {
 }
 
 class MenuSection {
-  const MenuSection({required this.sectionId, required this.name, required this.entries, this.sections = const []});
+  const MenuSection({
+    required this.sectionId,
+    required this.name,
+    required this.entries,
+    this.sections = const [],
+    this.color,
+  });
 
   factory MenuSection.fromJson(Map<String, dynamic> json) => MenuSection(
     sectionId: json['section_id'] as String,
     name: json['name'] as String? ?? '',
+    color: json['color'] as String?,
     entries: (json['entries'] as List? ?? const []).map((e) => MenuEntry.fromJson(e as Map<String, dynamic>)).toList(),
     sections: (json['sections'] as List? ?? const [])
         .map((s) => MenuSection.fromJson(s as Map<String, dynamic>))
@@ -87,6 +106,9 @@ class MenuSection {
 
   final String sectionId;
   final String name;
+
+  /// The tile colour the menu gives this category (`#RRGGBB`), or null for one from the app's palette.
+  final String? color;
   final List<MenuEntry> entries;
   final List<MenuSection> sections;
 
@@ -192,21 +214,33 @@ class ItemDetail {
   final List<GroupDetail> groups;
 }
 
+/// The one-tap instructions a choice can carry, as the backend spells them, with the word shown for each.
+const instructions = {'no': 'No', 'extra': 'Extra', 'side': 'On the side', 'light': 'Light'};
+
 /// What the customer chose for one line; the backend's `request` on `add_line`.
 class LineRequest {
-  LineRequest({required this.variantId, this.entryId, Map<String, List<String>>? selections, this.notes})
-    : selections = selections ?? {};
+  LineRequest({
+    required this.variantId,
+    this.entryId,
+    Map<String, List<String>>? selections,
+    Map<String, String>? prefixes,
+    this.notes,
+  }) : selections = selections ?? {},
+       prefixes = prefixes ?? {};
 
   factory LineRequest.fromJson(Map<String, dynamic> json) {
     final selections = <String, List<String>>{};
+    final prefixes = <String, String>{};
     for (final s in json['selections'] as List? ?? const []) {
       final m = s as Map<String, dynamic>;
       selections.putIfAbsent(m['group_id'] as String, () => []).add(m['option_id'] as String);
+      if (m['prefix'] != null) prefixes[m['option_id'] as String] = m['prefix'] as String;
     }
     return LineRequest(
       variantId: json['variant_id'] as String,
       entryId: json['entry_id'] as String?,
       selections: selections,
+      prefixes: prefixes,
       notes: json['notes'] as String?,
     );
   }
@@ -217,12 +251,17 @@ class LineRequest {
     selections: {
       for (final e in selections.entries) e.key: [...e.value],
     },
+    prefixes: {...prefixes},
     notes: notes,
   );
 
   String variantId;
   final String? entryId;
   final Map<String, List<String>> selections; // group id -> option ids
+
+  /// An instruction on a chosen option (option id -> no | extra | side | light): "no peanuts" without an
+  /// option of its own. The backend prints it in front of the kitchen label and makes a "no" free.
+  final Map<String, String> prefixes;
   String? notes;
 
   Map<String, dynamic> toJson() => {
@@ -230,7 +269,8 @@ class LineRequest {
     'entry_id': ?entryId,
     'selections': [
       for (final e in selections.entries)
-        for (final option in e.value) {'group_id': e.key, 'option_id': option},
+        for (final option in e.value)
+          {'group_id': e.key, 'option_id': option, if (prefixes[option] != null) 'prefix': prefixes[option]},
     ],
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
   };

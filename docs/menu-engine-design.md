@@ -222,6 +222,7 @@ class Selection:
     qty: int = 1
     children: tuple["Selection", ...] = ()       # nested groups, or a slot's linked item's groups
     components: tuple[ComponentRequest, ...] = () # a slot's linked item's nested components
+    prefix: str | None = None                    # a one-tap instruction: no | extra | side | light
 
 @dataclass(frozen=True)
 class LineRequest:
@@ -232,6 +233,8 @@ class LineRequest:
     components: tuple[ComponentRequest, ...] = ()
     notes: str | None = None
 ```
+
+`prefix` was added on 1 November 2026 (architecture draft 8, from the competitive review): the NO, EXTRA, SIDE and LIGHT row the item sheet offers on any option, so "no peanuts" or "sauce on the side" need no option of their own. The engine prints the instruction in front of the option's kitchen label (NO 加虾), makes a "no" option free and skips its recipe effects, and keeps the price and effects of the other three.
 
 **Output.** Resolution is a pure function of (definitions as of now, request, time, locale):
 

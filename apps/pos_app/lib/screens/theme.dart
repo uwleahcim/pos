@@ -175,11 +175,14 @@ abstract final class PosTheme {
 
   static const tabular = [FontFeature.tabularFigures()];
 
-  static ThemeData light() => _build(Brightness.light);
-  static ThemeData dark() => _build(Brightness.dark);
+  /// [highContrast] is a staff member's own setting: black-on-white text, darker outlines and thicker
+  /// borders, for a bright room or tired eyes. The same colours otherwise.
+  static ThemeData light({bool highContrast = false}) => _build(Brightness.light, highContrast: highContrast);
+  static ThemeData dark({bool highContrast = false}) => _build(Brightness.dark, highContrast: highContrast);
 
-  static ThemeData _build(Brightness brightness) {
+  static ThemeData _build(Brightness brightness, {bool highContrast = false}) {
     final isDark = brightness == Brightness.dark;
+    final strongLine = isDark ? const Color(0xFF9A9088) : const Color(0xFF6B6157);
     final baseScheme = ColorScheme.fromSeed(
       seedColor: _seed,
       brightness: brightness,
@@ -187,13 +190,18 @@ abstract final class PosTheme {
       secondary: isDark ? const Color(0xFFDCC2B4) : const Color(0xFF5C4033),
       tertiary: isDark ? const Color(0xFF8CD4B0) : const Color(0xFF2F5E48),
       surface: isDark ? const Color(0xFF181513) : const Color(0xFFFAF7F2),
+      onSurface: highContrast ? (isDark ? Colors.white : Colors.black) : null,
+      onSurfaceVariant: highContrast ? (isDark ? const Color(0xFFF2ECE4) : const Color(0xFF1E1A17)) : null,
+      outline: highContrast ? strongLine : null,
       surfaceContainerLowest: isDark ? const Color(0xFF12100E) : const Color(0xFFFFFFFF),
       surfaceContainerLow: isDark ? const Color(0xFF1D1A17) : const Color(0xFFF6F2EB),
       surfaceContainer: isDark ? const Color(0xFF231F1C) : const Color(0xFFF0EAE1),
       surfaceContainerHigh: isDark ? const Color(0xFF2D2824) : const Color(0xFFE9E2D7),
       surfaceContainerHighest: isDark ? const Color(0xFF38322D) : const Color(0xFFE1D9CC),
-      outlineVariant: isDark ? const Color(0xFF3F3832) : const Color(0xFFD8CFC2),
+      outlineVariant: highContrast ? strongLine : (isDark ? const Color(0xFF3F3832) : const Color(0xFFD8CFC2)),
     );
+    final posColors = isDark ? PosColors.dark : PosColors.light;
+    final lineWidth = highContrast ? 1.6 : 1.0;
 
     final baseText = Typography.material2021().englishLike.apply(
       bodyColor: baseScheme.onSurface,
@@ -216,7 +224,16 @@ abstract final class PosTheme {
       colorScheme: baseScheme,
       textTheme: textTheme,
       scaffoldBackgroundColor: baseScheme.surface,
-      extensions: [isDark ? PosColors.dark : PosColors.light],
+      extensions: [
+        highContrast
+            ? posColors.copyWith(
+                freeTableBorder: strongLine,
+                roomBorder: strongLine,
+                freeTableText: baseScheme.onSurface,
+                floorGridDot: baseScheme.outlineVariant,
+              )
+            : posColors,
+      ],
       appBarTheme: AppBarTheme(
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -236,12 +253,12 @@ abstract final class PosTheme {
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: baseScheme.outlineVariant),
+          side: BorderSide(color: baseScheme.outlineVariant, width: lineWidth),
         ),
       ),
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        side: BorderSide(color: baseScheme.outlineVariant),
+        side: BorderSide(color: baseScheme.outlineVariant, width: lineWidth),
         selectedColor: baseScheme.primaryContainer,
         backgroundColor: baseScheme.surfaceContainerLow,
         labelStyle: textTheme.labelLarge?.copyWith(color: baseScheme.onSurface),
@@ -313,9 +330,33 @@ abstract final class PosTheme {
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      dividerTheme: DividerThemeData(color: baseScheme.outlineVariant, thickness: 1, space: 1),
+      dividerTheme: DividerThemeData(color: baseScheme.outlineVariant, thickness: lineWidth, space: 1),
     );
   }
+}
+
+/// The colours of a category tile: the hue the menu gives the category (`#RRGGBB`), or one from a fixed
+/// palette by its position, set light or dark for the theme so the name stays readable on it.
+({Color fill, Color border, Color text}) categoryTint(ColorScheme scheme, {String? hex, required int index}) {
+  const hues = [8.0, 32.0, 52.0, 98.0, 152.0, 190.0, 222.0, 262.0, 300.0, 335.0];
+  final given = parseHexColor(hex);
+  final hue = given == null ? hues[index % hues.length] : HSLColor.fromColor(given).hue;
+  final saturation = given == null ? 0.42 : HSLColor.fromColor(given).saturation.clamp(0.25, 0.7);
+  final dark = scheme.brightness == Brightness.dark;
+  return (
+    fill: HSLColor.fromAHSL(1, hue, saturation, dark ? 0.2 : 0.88).toColor(),
+    border: HSLColor.fromAHSL(1, hue, saturation, dark ? 0.45 : 0.6).toColor(),
+    text: HSLColor.fromAHSL(1, hue, dark ? 0.35 : 0.5, dark ? 0.9 : 0.2).toColor(),
+  );
+}
+
+/// `#RRGGBB` or `RRGGBB` as a colour; null for anything else.
+Color? parseHexColor(String? hex) {
+  if (hex == null) return null;
+  final digits = hex.trim().replaceFirst('#', '');
+  if (digits.length != 6) return null;
+  final value = int.tryParse(digits, radix: 16);
+  return value == null ? null : Color(0xFF000000 | value);
 }
 
 /// Tactile press-scale feedback that uses a passive [Listener] so it never competes with child

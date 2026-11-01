@@ -212,6 +212,10 @@ class PosApi {
   /// Stores an event photo; sending the same photo twice is harmless.
   Future<Map<String, dynamic>> putPhoto(Map<String, dynamic> photo) => _post('/events/photos', photo);
 
+  /// Saves what a staff member set for themselves (text size, contrast, language), for every device.
+  Future<Map<String, dynamic>> putPreferences(String staffId, Map<String, dynamic> prefs) =>
+      _put('/staff/$staffId/preferences', prefs);
+
   /// Appends operations; returns the op ids the backend had not seen before and the ones it refused
   /// (a line the menu would not sell), each with the reason.
   Future<AppendResult> appendOps(String orderId, List<Map<String, dynamic>> ops) async {
@@ -292,6 +296,11 @@ class PosApi {
         ),
         timeout: timeout,
       );
+
+  Future<Map<String, dynamic>> _put(String path, Object body) => _withFailover(
+    (base) =>
+        _client.put(Uri.parse('$base$path'), headers: {'content-type': 'application/json'}, body: jsonEncode(body)),
+  );
 
   List<String> _candidates() {
     final configured = settings.endpoints;

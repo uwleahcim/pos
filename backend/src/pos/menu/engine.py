@@ -172,6 +172,20 @@ def flatten_modifiers(mods: Iterable[ResolvedModifier]) -> Iterable[ResolvedModi
         yield from flatten_modifiers(mod.children)
 
 
+PREFIXES: dict[str, str] = {"no": "NO", "extra": "EXTRA", "side": "SIDE", "light": "LIGHT"}
+"""The one-tap instructions a selection may carry (`Selection.prefix`), printed in front of the option's
+kitchen label: NO 加虾, SIDE 糙米. "no" also makes the option free and skips its recipe effects; the other
+three keep the option's price and effects. A price per instruction waits for a real need."""
+
+
+def prefixed_label(prefix: str | None, kitchen_label: str | None, name: str) -> str:
+    """The kitchen label with its instruction in front. An option without a kitchen label prints only when
+    it carries an instruction, under its name."""
+    if prefix is None:
+        return kitchen_label or ""
+    return f"{PREFIXES[prefix]} {kitchen_label or name}"
+
+
 class MenuEngine:
     def __init__(self, defs: Definitions, now=None) -> None:
         self.defs = defs
@@ -510,11 +524,17 @@ class MenuEngine:
                 sq = opt.max_qty
             units += sq - max(sel.qty, 1)  # settle the count on the clamped quantity
             price = money(prices.get(opt.code, opt.price))
-            label = opt.kitchen_label or ""
+            prefix = sel.prefix
+            if prefix is not None and prefix not in PREFIXES:
+                ctx.problems.append(
+                    Problem("bad_prefix", f"{opt.id}: no instruction {prefix!r}", group_id=group.code, option_id=opt.id)
+                )
+                prefix = None
+            label = prefixed_label(prefix, opt.kitchen_label, defs.localizer.text(opt.names, "en"))
             if opt.linked_variant:
                 results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, defaulted, own_header, label))
                 continue
-            if opt.price_mode == "free":
+            if opt.price_mode == "free" or prefix == "no":
                 delta = ZERO
             elif opt.price_mode == "delta":
                 free_units = min(free_left, sq)
@@ -522,7 +542,14 @@ class MenuEngine:
                 delta = money(price * (sq - free_units))
             else:  # absolute: charged as-is, outside the free count
                 delta = money(price * sq)
-            effects = tuple(self._apply_effect(ctx, effect, opt, sq) for effect in opt.effects)
+            if prefix == "no":
+                # "no shrimp": nothing goes into the dish, so nothing comes out of inventory
+                effects = tuple(
+                    EffectResult(effect.op, effect.role or effect.ingredient or "", "no_op", "no")
+                    for effect in opt.effects
+                )
+            else:
+                effects = tuple(self._apply_effect(ctx, effect, opt, sq) for effect in opt.effects)
             if opt.station:
                 ctx.stations.add(opt.station)
             children: list[ResolvedModifier] = []
@@ -545,7 +572,9 @@ class MenuEngine:
                     continue
                 children.extend(self._apply_group(ctx, child_group, {}, child_by_group.get(code, []), own_header))
             results.append(
-                ResolvedModifier(group.code, opt.id, sq, label, delta, effects, tuple(children), defaulted, opt.station)
+                ResolvedModifier(
+                    group.code, opt.id, sq, label, delta, effects, tuple(children), defaulted, opt.station, prefix
+                )
             )
         if max_select is not None and units > max_select:
             ctx.problems.append(Problem("too_many", f"{group.code} takes at most {max_select}", group_id=group.code))

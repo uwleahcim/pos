@@ -69,6 +69,27 @@ def test_item_detail_shows_effective_prices_and_defaults(engine):
     assert [o.linked_variant for o in combo.groups[0].options] == ["GTC:lunch", "BB:lunch"]
 
 
+def test_tiles_say_when_a_tap_must_ask_and_carry_their_colour(defs):
+    from dataclasses import replace
+
+    from pos.menu.defs import Attachment
+    from pos.menu.service import MenuService
+
+    defs.sections["dinner/chefs"] = replace(defs.sections["dinner/chefs"], display={"color": "#2F5E48"})
+    service = MenuService(defs, now=lambda: LUNCH_TIME)
+    sections = {s["section_id"]: s for m in service.menus("pos") for s in m["sections"]}
+    assert sections["dinner/chefs"]["color"] == "#2F5E48"
+    assert all(s["color"] is None for sid, s in sections.items() if sid != "dinner/chefs"), "the app picks the rest"
+    by_number = {e["number"]: e for s in sections.values() for e in s["entries"]}
+    assert by_number["87"]["needs_choice"], "pint or quart has to be chosen"
+    assert not by_number["L12"]["needs_choice"], "one size at lunch, and the rice defaults to white"
+
+    defs.add(Attachment("item", "GTC", "rice", {"hidden": ["white"]}))  # no default left in a required group
+    service = MenuService(defs, now=lambda: LUNCH_TIME)
+    by_number = {e["number"]: e for m in service.menus("pos") for s in m["sections"] for e in s["entries"]}
+    assert by_number["L12"]["needs_choice"], "a required choice with no default has to be asked"
+
+
 def test_dependents_walk_preps_nested_dishes_and_combo_slots(engine):
     # GTC through the sauce prep, C5 through its entree slot, PFR directly; BB uses oyster sauce, not soy
     assert engine.dependents("soy_sauce") == [

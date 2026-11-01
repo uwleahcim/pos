@@ -9,6 +9,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/reflow.dart';
+import 'package:pos_app/screens/theme.dart';
 import 'package:pos_app/settings.dart';
 
 /// Fixtures are the backend's own answers (sample menu), saved from its test client.
@@ -27,6 +28,14 @@ void main() {
     expect(entries['GTC']!.quickAdd, isFalse);
     expect(entries['GTC']!.priceLabel, endsWith('+'));
     expect(entries['DRAFT']!.variants.length, 2);
+    // the backend says which tiles will ask something; a dish whose rice simply defaults does not
+    expect(entries['GTC']!.needsChoice, isTrue);
+    expect(entries['BB']!.needsChoice, isFalse);
+    expect(entries['BB']!.hasOptions, isTrue);
+    expect(MenuEntry.fromJson({'entry_id': 'x', 'item': 'X', 'has_options': true}).needsChoice, isTrue); // an older hub
+    final sections = {for (final s in menus.single.sections) s.sectionId: s};
+    expect(sections['dinner/sushi']!.color, '#2F5E48');
+    expect(sections['dinner/apps']!.color, isNull);
   });
 
   test('item groups and the request sent back', () {
@@ -50,6 +59,15 @@ void main() {
         {'group_id': 'addons', 'option_id': 'addons:nomsg'},
       ],
     });
+    // a word on a choice travels with it, both ways
+    request.prefixes['addons:shrimp'] = 'no';
+    expect(
+      request.toJson()['selections'],
+      contains(equals({'group_id': 'addons', 'option_id': 'addons:shrimp', 'prefix': 'no'})),
+    );
+    final back = LineRequest.fromJson(request.toJson());
+    expect(back.prefixes, {'addons:shrimp': 'no'});
+    expect(back.copy().prefixes, {'addons:shrimp': 'no'});
   });
 
   test('the check carries the backend totals and Massachusetts tax lines', () {
@@ -233,7 +251,11 @@ void main() {
       // 6. Selecting a bottom-row item in an open category keeps the selected item visible as the
       // modifier selection section expands below it.
       await tester.tap(find.byTooltip('Clear'));
-      await tester.binding.setSurfaceSize(const Size(390, 560));
+      await tester.binding.setSurfaceSize(null);
+      tester.view
+        ..physicalSize = const Size(390, 560)
+        ..devicePixelRatio = 1; // a phone: the tray of tiles, not a tablet's strip
+      addTearDown(tester.view.reset);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Bar'));
       await tester.pumpAndSettle();
@@ -251,6 +273,185 @@ void main() {
       expect(finalWhiskyRect.bottom, lessThanOrEqualTo(finalItemsRect.bottom + 0.5));
     },
   );
+
+  testWidgets('on a tablet an open category collapses its siblings to a strip and the dishes get the room', (
+    tester,
+  ) async {
+    final menu = fixture('menu');
+    // one nested level, as a category with subcategories would come
+    final sections = (menu['menus'] as List)[0]['sections'] as List;
+    final bar = sections.firstWhere((s) => s['section_id'] == 'dinner/bar') as Map<String, dynamic>;
+    final entries = bar['entries'] as List;
+    bar['sections'] = [
+      {'section_id': 'dinner/bar/beer', 'name': 'Beer', 'entries': entries.sublist(0, 2)},
+    ];
+    bar['entries'] = entries.sublist(2);
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient(
+        (request) async => request.url.path == '/menu'
+            ? http.Response.bytes(utf8.encode(jsonEncode(menu)), 200)
+            : http.Response(jsonEncode({'revision': 0}), 200),
+      ),
+    );
+    tester.view
+      ..physicalSize = const Size(1000, 800)
+      ..devicePixelRatio = 1; // a tablet, by the screen width the panel goes by
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: (_) {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('category-strip')), findsNothing);
+
+    // every category tile has its own colour: the menu's own for the sushi bar, the palette for the rest
+    final scheme = Theme.of(tester.element(find.text('Sushi bar'))).colorScheme;
+    Color tileColor(String name) {
+      final box = find.ancestor(of: find.text(name), matching: find.byType(AnimatedContainer)).first;
+      return (tester.widget<AnimatedContainer>(box).decoration! as BoxDecoration).color!;
+    }
+
+    expect(tileColor('Sushi bar'), categoryTint(scheme, hex: '#2F5E48', index: 3).fill);
+    expect(tileColor('Appetizers'), categoryTint(scheme, index: 0).fill);
+    expect(tileColor('Appetizers'), isNot(tileColor("Chef's Specials")));
+
+    // Opening a category: the tiles travel up into a strip of chips, and the dishes take the rest.
+    final tileTop = tester.getTopLeft(find.text("Chef's Specials")).dy;
+    await tester.tap(find.text('Appetizers'));
+    await tester.pump(); // the new layout, with the travelling copies
+    await tester.pump(); // their first frame
+    await tester.pump(Reflow.duration ~/ 2);
+    final halfway = [
+      for (final e in find.text("Chef's Specials").evaluate()) tester.getTopLeft(find.byWidget(e.widget)).dy,
+    ];
+    await tester.pumpAndSettle();
+    final strip = find.byKey(const ValueKey('category-strip'));
+    expect(strip, findsOneWidget);
+    expect(find.byKey(const ValueKey('categories-0')), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    expect(tester.getSize(strip).height, 48);
+    final chipTop = tester.getTopLeft(find.text("Chef's Specials")).dy;
+    expect(chipTop, lessThan(tileTop));
+    expect(halfway.any((y) => y < tileTop - 4 && y > chipTop + 4), isTrue);
+    expect(find.text('Egg roll'), findsOneWidget);
+    final items = tester.getRect(find.byKey(const ValueKey('items-dinner/apps')));
+    expect(items.top, closeTo(49, 1.5));
+    expect(items.bottom, closeTo(800, 1.5));
+
+    // the customize mark only where a tap will ask: two sizes, not a rice group with a default
+    await tester.tap(find.text("Chef's Specials"));
+    await tester.pumpAndSettle();
+    expect(find.text('Egg roll'), findsNothing);
+    final gtc = find.byKey(const ValueKey('e:dinner:87:GTC'));
+    final bb = find.byKey(const ValueKey('e:dinner:88:BB'));
+    expect(find.descendant(of: gtc, matching: find.byIcon(Icons.tune)), findsOneWidget);
+    expect(find.descendant(of: bb, matching: find.byIcon(Icons.tune)), findsNothing);
+
+    // nested: Bar's subcategory opens from the dishes into the strip, behind a crumb; back goes one level
+    await tester.tap(find.text('Bar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mai Tai'), findsOneWidget);
+    await tester.tap(find.text('Beer'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tsingtao'), findsOneWidget);
+    expect(find.text('Bar ›'), findsOneWidget);
+    expect(find.text('Mai Tai'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('menu-back')));
+    await tester.pumpAndSettle();
+    expect(find.text('Mai Tai'), findsOneWidget);
+    expect(find.text('Bar ›'), findsNothing);
+    expect(find.text('Tsingtao'), findsNothing);
+
+    // pulling down at the top of the dishes closes the category: the grid of tiles is back, with the search
+    await tester.drag(find.text('Mai Tai'), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(strip, findsNothing);
+    expect(find.byKey(const ValueKey('categories-0')), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Mai Tai'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the item sheet marks a choice No, Extra, On the side or Light with one tap each', (tester) async {
+    final priced = <Map<String, dynamic>>[];
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/menu/items/GTC':
+            return http.Response.bytes(utf8.encode(jsonEncode(fixture('item_gtc'))), 200);
+          case '/menu/price':
+            priced.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'name': "General Tso's Chicken (Pint)", 'unit_price': '13.95'}), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    final chefs = ((fixture('menu')['menus'] as List)[0]['sections'] as List)[1] as Map<String, dynamic>;
+    final entry = MenuEntry.fromJson((chefs['entries'] as List)[0] as Map<String, dynamic>);
+    ChosenLine? result;
+    await tester.binding.setSurfaceSize(const Size(1000, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await showDialog<ChosenLine>(
+              context: context,
+              builder: (_) => ItemSheet(api: api, entry: entry),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    Finder chip(String label) => find.ancestor(of: find.text(label), matching: find.byType(FilterChip));
+    bool selected(String label) => tester.widget<FilterChip>(chip(label)).selected;
+    Future<void> tapAndPrice(Finder what) async {
+      await tester.tap(what);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+    }
+
+    // "No" and then the choice: it goes on the line with its word, and costs nothing
+    await tester.tap(find.byKey(const ValueKey('instruction:no')));
+    await tester.pump();
+    expect(find.text('Now tap the choice to mark “No”.'), findsOneWidget);
+    await tapAndPrice(chip('Add shrimp +4.00'));
+    expect(selected('No Add shrimp'), isTrue);
+    expect(find.text('Now tap the choice to mark “No”.'), findsNothing); // one choice per word
+    expect(
+      priced.last['selections'],
+      contains(equals({'group_id': 'addons', 'option_id': 'addons:shrimp', 'prefix': 'no'})),
+    );
+
+    // "On the side" keeps the price; the same word again leaves the plain choice; a plain tap takes it off
+    await tester.tap(find.byKey(const ValueKey('instruction:side')));
+    await tester.pump();
+    await tapAndPrice(chip('Extra sauce +0.50'));
+    expect(selected('On the side Extra sauce +0.50'), isTrue);
+    await tester.tap(find.byKey(const ValueKey('instruction:side')));
+    await tester.pump();
+    await tapAndPrice(chip('On the side Extra sauce +0.50'));
+    expect(selected('Extra sauce +0.50'), isTrue);
+    await tapAndPrice(chip('Extra sauce +0.50'));
+    expect(selected('Extra sauce +0.50'), isFalse);
+    expect((priced.last['selections'] as List).any((s) => s['option_id'] == 'addons:sauce'), isFalse);
+
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    expect(result!.request.prefixes, {'addons:shrimp': 'no'});
+    expect(result!.request.selections['addons'], ['addons:shrimp']);
+    expect(result!.modifiers, ['No Add shrimp']);
+  });
 
   testWidgets('a saved menu reaches the screen without reopening it', (tester) async {
     var revision = 3;
