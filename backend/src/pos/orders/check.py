@@ -126,6 +126,8 @@ def check_for(
     # An empty check still names its tax lines (at 0.00), so a terminal knows the rates for its own estimate.
     tax_lines = taxes.compute(taxable or [TaxableLine("", "default", ZERO)], order_type, on)
     tax = sum((t.amount for t in tax_lines), ZERO)
+    total = cents(discounted + charge_total + tax)
+    paid = sum((Decimal(p.amount or "0") for p in state.payments.values()), ZERO)
     return {
         "order_id": state.order_id,
         "status": state.status,
@@ -140,7 +142,14 @@ def check_for(
         "tax": str(cents(tax)),
         # customers see one tax line; the split by jurisdiction is for the back office
         "tax_rate_pct": str(sum((t.rate_pct for t in tax_lines), ZERO)),
-        "total": str(cents(discounted + charge_total + tax)),
+        "total": str(total),
+        # Counter mode pays before the kitchen sees the order; `due` is what is still owed at pickup.
+        "payments": [
+            {"payment_id": pid, **p.as_json()}
+            for pid, p in sorted(state.payments.items(), key=lambda kv: kv[1].stamp or "")
+        ],
+        "paid": str(cents(paid)),
+        "due": str(cents(max(total - paid, ZERO))),
         "unpriced": unpriced,
     }
 

@@ -9,6 +9,7 @@ import 'floor.dart';
 import 'menu.dart';
 import 'pricing.dart';
 import 'settings.dart';
+import 'takeout.dart';
 
 /// One line of an order, exactly as the backend reports it.
 class Line {
@@ -96,10 +97,16 @@ class Order {
     required this.fields,
     required this.lines,
     required this.fired,
+    this.payments = const [],
   });
 
   /// A check the backend has not heard of yet (its create is still on the way).
-  const Order.empty(this.orderId) : status = 'open', fields = const {}, lines = const [], fired = const {};
+  const Order.empty(this.orderId)
+    : status = 'open',
+      fields = const {},
+      lines = const [],
+      fired = const {},
+      payments = const [];
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries
@@ -111,6 +118,9 @@ class Order {
       fields: Map<String, dynamic>.from(json['fields'] as Map? ?? const {}),
       lines: lines,
       fired: Map<String, String>.from(json['fired'] as Map? ?? const {}),
+      payments: (json['payments'] as Map<String, dynamic>? ?? const {}).entries
+          .map((e) => Payment.fromJson(e.key, e.value as Map<String, dynamic>))
+          .toList(),
     );
   }
 
@@ -119,8 +129,19 @@ class Order {
   final Map<String, dynamic> fields;
   final List<Line> lines;
   final Map<String, String> fired;
+  final List<Payment> payments;
 
   String get table => fields['table']?.toString() ?? '';
+
+  // Counter mode and takeout (architecture section 12): numbered by the hub, named by the operator.
+  bool get isTakeout => table.isEmpty;
+  int? get orderNo => fields['order_no'] as int?;
+  String get customerName => fields['customer_name']?.toString() ?? '';
+  String get phone => fields['phone']?.toString() ?? '';
+  String get channel => fields['channel']?.toString() ?? '';
+  String get stage => fields['stage']?.toString() ?? 'new';
+  int? get promisedAt => fields['promised_at'] as int?;
+  bool get hasPaid => payments.isNotEmpty;
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
   List<Line> get activeLines => lines.where((l) => l.isActive).toList();
@@ -133,6 +154,37 @@ class Order {
     for (final l in activeLines)
       if (!l.fired) l.course ?? '',
   };
+}
+
+/// Money taken on an order: cash at the counter, or settled elsewhere (a phone order paid through another
+/// system). `pending` until the hub has it.
+class Payment {
+  const Payment({
+    required this.paymentId,
+    required this.method,
+    required this.amount,
+    this.tendered,
+    this.note = '',
+    this.by = '',
+    this.pending = false,
+  });
+
+  factory Payment.fromJson(String paymentId, Map<String, dynamic> json) => Payment(
+    paymentId: paymentId,
+    method: json['method'] as String? ?? 'cash',
+    amount: json['amount']?.toString() ?? '0',
+    tendered: json['tendered']?.toString(),
+    note: json['note'] as String? ?? '',
+    by: json['by'] as String? ?? '',
+  );
+
+  final String paymentId;
+  final String method; // cash | elsewhere | card
+  final String amount;
+  final String? tendered;
+  final String note;
+  final String by;
+  final bool pending;
 }
 
 class AppendResult {
@@ -223,6 +275,20 @@ class PosApi {
     });
     return Check.fromJson(json);
   }
+
+  /// Minutes each channel promises a takeout order, and which channels may pay at pickup.
+  Future<Quotes> quotes() async => Quotes.fromJson(await _get('/settings/quotes'));
+
+  /// A manager (token from [adminSession]) sets the quote times for every terminal.
+  Future<Quotes> saveQuotes(String token, Quotes quotes) async => Quotes.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/quotes'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(quotes.toJson()),
+      ),
+    ),
+  );
 
   /// The discount reasons and service charges this location allows, with who may apply them.
   Future<PricingRules> pricingRules() async => PricingRules.fromJson(await _get('/pricing/rules'));

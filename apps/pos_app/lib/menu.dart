@@ -458,6 +458,31 @@ class TaxLine {
   final String amount;
 }
 
+/// A payment as the backend's check lists it.
+class CheckPayment {
+  const CheckPayment({
+    required this.paymentId,
+    required this.method,
+    required this.amount,
+    this.tendered,
+    this.by = '',
+  });
+
+  factory CheckPayment.fromJson(Map<String, dynamic> json) => CheckPayment(
+    paymentId: json['payment_id'] as String,
+    method: json['method'] as String? ?? 'cash',
+    amount: json['amount']?.toString() ?? '0',
+    tendered: json['tendered']?.toString(),
+    by: json['by'] as String? ?? '',
+  );
+
+  final String paymentId;
+  final String method;
+  final String amount;
+  final String? tendered;
+  final String by;
+}
+
 /// What the table owes, as the backend adds it up. `taxLines` split the tax by jurisdiction for the back
 /// office; screens and receipts show the single `tax` line.
 class Check {
@@ -472,6 +497,9 @@ class Check {
     this.discountTotal = '0.00',
     this.charges = const [],
     this.chargeTotal = '0.00',
+    this.payments = const [],
+    this.paid = '0.00',
+    this.due = '0.00',
     this.estimated = false,
   });
 
@@ -490,6 +518,11 @@ class Check {
     tax: json['tax'] as String? ?? '0.00',
     taxRatePct: json['tax_rate_pct'] as String? ?? '',
     total: json['total'] as String? ?? '0.00',
+    payments: (json['payments'] as List? ?? const [])
+        .map((p) => CheckPayment.fromJson(p as Map<String, dynamic>))
+        .toList(),
+    paid: json['paid'] as String? ?? '0.00',
+    due: json['due'] as String? ?? json['total'] as String? ?? '0.00',
   );
 
   final List<CheckLine> lines;
@@ -502,6 +535,11 @@ class Check {
   final String tax;
   final String taxRatePct; // the combined rate, e.g. 7.00: customers see one tax line
   final String total;
+
+  /// Counter mode pays before the kitchen sees the order; `due` is what is still owed.
+  final List<CheckPayment> payments;
+  final String paid;
+  final String due;
 
   /// Worked out on this device for lines the backend has not priced yet; replaced by its next answer.
   final bool estimated;

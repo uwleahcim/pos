@@ -11,11 +11,13 @@ import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../takeout.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
 import 'floor_view.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
+import 'quotes_dialog.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'theme.dart';
@@ -88,10 +90,70 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return [for (final q in queued) (q, true), for (final o in _orders) (o, false)];
   }
 
+  /// Counter mode (architecture section 12): name and phone first, the channel, when it is for. The hub
+  /// numbers the order when the create arrives; the quote comes from the hub's settings per channel.
   Future<void> _newOrder() async {
-    final name = await showDialog<String>(context: context, builder: (context) => const _TableDialog());
-    if (name == null || !mounted) return;
-    await _create({'order_type': 'takeout', if (name.isNotEmpty) 'note': name});
+    Quotes quotes;
+    try {
+      quotes = await widget.api.quotes();
+    } on ApiException {
+      quotes = const Quotes(); // the hub's own defaults, until it answers
+    }
+    if (!mounted) return;
+    final request = await showDialog<TakeoutRequest>(
+      context: context,
+      builder: (context) => _TakeoutDialog(quotes: quotes),
+    );
+    if (request == null || !mounted) return;
+    final minutes = quotes.minutesFor(request.channel);
+    final promised = request.promisedAt ?? DateTime.now().add(Duration(minutes: minutes));
+    await _create({
+      'order_type': 'takeout',
+      'channel': request.channel,
+      'customer_name': request.name,
+      if (request.phone.isNotEmpty) 'phone': request.phone,
+      'locale': request.locale,
+      'quoted_minutes': minutes,
+      'promised_at': promised.millisecondsSinceEpoch,
+      'stage': 'new',
+    });
+  }
+
+  /// Ready sends the customer their text (the hub does, once); picked up closes the check.
+  Future<void> _setStage(Order order, String stage) async {
+    await widget.outbox.addAll(order.orderId, [
+      ('set_field', {'stage': stage}),
+      if (stage == 'picked_up') ('close', {}),
+    ]);
+  }
+
+  Future<void> _quoteTimes() async {
+    final token = await showDialog<String>(
+      context: context,
+      builder: (_) => ManagerPinDialog(
+        api: widget.api,
+        device: widget.settings.device,
+        action: 'Set quote times',
+        what: 'set the quote times',
+      ),
+    );
+    if (token == null || !mounted) return;
+    Quotes quotes;
+    try {
+      quotes = await widget.api.quotes();
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err.message)));
+      return;
+    }
+    if (!mounted) return;
+    final saved = await showDialog<Quotes>(
+      context: context,
+      builder: (_) => QuotesDialog(api: widget.api, token: token, quotes: quotes),
+    );
+    if (saved != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote times saved')));
+    }
   }
 
   /// Opens a new check with these fields, stamped with the signed-in server, and shows it.
@@ -189,6 +251,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _refresh();
         }),
       ),
+      if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
+        ('Quote times', Icons.timer_outlined, _quoteTimes),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
         (
           'Menu editor',
@@ -297,7 +361,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         final (order, queued) = listed[i];
                         final lines = order.activeLines;
                         final items = lines.fold<int>(0, (n, l) => n + l.qty);
-                        final isTakeout = order.table.isEmpty;
+                        final isTakeout = order.isTakeout;
+                        final stage = order.stage;
+                        // Counter mode: the number the hub gave it, the name, the channel, when it is for,
+                        // whether it is paid, and the next step (Ready texts the customer; Picked up closes).
+                        final Widget? step = !isTakeout || !order.isOpen || !order.isFired
+                            ? null
+                            : stage == 'new'
+                            ? FilledButton.tonal(
+                                key: ValueKey('ready-${order.orderId}'),
+                                onPressed: () => _setStage(order, 'ready'),
+                                child: const Text('Ready'),
+                              )
+                            : stage == 'ready'
+                            ? FilledButton.tonal(
+                                key: ValueKey('picked-up-${order.orderId}'),
+                                onPressed: () => _setStage(order, 'picked_up'),
+                                child: const Text('Picked up'),
+                              )
+                            : null;
                         return PressableScale(
                           pressedScale: 0.985,
                           child: Card(
@@ -308,22 +390,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 backgroundColor: order.isFired ? posColors.fired : scheme.primaryContainer,
                                 foregroundColor: order.isFired ? posColors.firedText : scheme.onPrimaryContainer,
                                 child: Text(
-                                  isTakeout ? '?' : order.table,
+                                  isTakeout ? '${order.orderNo ?? '…'}' : order.table,
                                   style: const TextStyle(fontWeight: FontWeight.w700),
                                 ),
                               ),
                               title: Text(
-                                isTakeout ? 'To go ${order.fields['note'] ?? ''}' : 'Table ${order.table}',
+                                isTakeout
+                                    ? [
+                                        order.customerName.isEmpty ? 'To go' : order.customerName,
+                                        if (order.channel.isNotEmpty) channelLabel(order.channel).toLowerCase(),
+                                      ].join(' · ')
+                                    : 'Table ${order.table}',
                                 style: theme.textTheme.titleMedium,
                               ),
                               subtitle: Text(
-                                '$items items · ${order.status}${order.isFired ? ' · fired' : ''}'
-                                '${queued ? ' · waiting to send' : ''}',
+                                [
+                                  '$items items',
+                                  order.status,
+                                  if (order.isFired) 'fired',
+                                  if (isTakeout && order.promisedAt != null) 'ready ${clockTime(order.promisedAt!)}',
+                                  if (isTakeout) order.hasPaid ? 'paid' : 'pay at pickup',
+                                  if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
+                                  if (queued) 'waiting to send',
+                                ].join(' · '),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: queued ? scheme.error : scheme.onSurfaceVariant,
                                 ),
                               ),
-                              trailing: const Icon(Icons.chevron_right),
+                              trailing: step ?? const Icon(Icons.chevron_right),
                               onTap: () => _open(order.orderId),
                             ),
                           ),
@@ -343,38 +437,156 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 }
 
-class _TableDialog extends StatefulWidget {
-  const _TableDialog();
+/// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is
+/// for now (the channel's quote) or a later time today or tomorrow.
+class _TakeoutDialog extends StatefulWidget {
+  const _TakeoutDialog({required this.quotes});
+  final Quotes quotes;
 
   @override
-  State<_TableDialog> createState() => _TableDialogState();
+  State<_TakeoutDialog> createState() => _TakeoutDialogState();
 }
 
-class _TableDialogState extends State<_TableDialog> {
-  final _controller = TextEditingController();
+class _TakeoutDialogState extends State<_TakeoutDialog> {
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  String _channel = 'counter';
+  String _locale = 'en';
+  bool _later = false;
+  int _dayOffset = 0; // 0 today, 1 tomorrow
+  TimeOfDay? _time;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _name.dispose();
+    _phone.dispose();
     super.dispose();
+  }
+
+  DateTime? get _promised {
+    final time = _time;
+    if (!_later || time == null) return null;
+    final day = DateTime.now().add(Duration(days: _dayOffset));
+    return DateTime(day.year, day.month, day.day, time.hour, time.minute);
+  }
+
+  bool get _ready => _name.text.trim().isNotEmpty && (!_later || _time != null);
+
+  void _start() => Navigator.of(context).pop(
+    TakeoutRequest(
+      name: _name.text.trim(),
+      phone: _phone.text.trim(),
+      channel: _channel,
+      locale: _locale,
+      promisedAt: _promised,
+    ),
+  );
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(context: context, initialTime: _time ?? TimeOfDay.now());
+    if (picked != null && mounted) setState(() => _time = picked);
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final minutes = widget.quotes.minutesFor(_channel);
     return AlertDialog(
       title: const Text('To-go order'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: const InputDecoration(
-          labelText: 'Name for the order (optional)',
-          prefixIcon: Icon(Icons.person_outline),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const ValueKey('takeout-name'),
+                controller: _name,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Name', prefixIcon: Icon(Icons.person_outline)),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                key: const ValueKey('takeout-phone'),
+                controller: _phone,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone (for the ready text)',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final c in handChannels)
+                    ChoiceChip(
+                      key: ValueKey('channel:$c'),
+                      label: Text(channelLabel(c)),
+                      selected: _channel == c,
+                      onSelected: (_) => setState(() => _channel = c),
+                    ),
+                  const SizedBox(width: 8),
+                  for (final (code, label) in const [('en', 'English'), ('zh', '中文')])
+                    ChoiceChip(
+                      key: ValueKey('locale:$code'),
+                      label: Text(label),
+                      selected: _locale == code,
+                      onSelected: (_) => setState(() => _locale = code),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                key: const ValueKey('takeout-later'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('For later'),
+                subtitle: Text(_later ? 'Prints ahead of its time by the quote' : 'Ready in about $minutes min'),
+                value: _later,
+                onChanged: (on) => setState(() => _later = on),
+              ),
+              if (_later)
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 0, label: Text('Today')),
+                        ButtonSegment(value: 1, label: Text('Tomorrow')),
+                      ],
+                      selected: {_dayOffset},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (s) => setState(() => _dayOffset = s.first),
+                    ),
+                    OutlinedButton.icon(
+                      key: const ValueKey('takeout-time'),
+                      onPressed: _pickTime,
+                      icon: const Icon(Icons.schedule),
+                      label: Text(_time == null ? 'Time' : _time!.format(context)),
+                    ),
+                  ],
+                ),
+              if (_later && _time == null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text('Pick the time it is for.', style: theme.textTheme.bodySmall),
+                ),
+            ],
+          ),
         ),
-        onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.of(context).pop(_controller.text.trim()), child: const Text('Start')),
+        FilledButton(
+          key: const ValueKey('takeout-start'),
+          onPressed: _ready ? _start : null,
+          child: const Text('Start'),
+        ),
       ],
     );
   }

@@ -32,13 +32,34 @@ KINDS = frozenset(
         "remove_discount",  # data: discount_id
         "charge",  # data: charge_id, code (a charge rule), + the rule's snapshot the hub fills in
         "remove_charge",  # data: charge_id (a rule's code takes off the automatic charge it applies)
+        "pay",  # data: payment_id, method (cash|elsewhere|card), amount, tendered?, note?, by?
     }
 )
 """Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
 (ADR 6, capture-only mode). The replay ignores it; the printer heads the ticket "late" and reports list it.
 A `discount`, `charge` or `remove_charge` may carry `approval`, a manager's token; the hub swaps it for
 `approved_by` (who) before storing (pos.orders.adjustments)."""
-ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "server_id", "ticket_no"})
+ORDER_FIELDS = frozenset(
+    {
+        "table",
+        "guests",
+        "note",
+        "order_type",
+        "server",
+        "server_id",
+        "ticket_no",
+        # Counter mode and takeout (architecture section 12): the hub numbers the order, the terminal names the
+        # customer, the channel it came in on, when it was promised for and how long was quoted.
+        "order_no",
+        "customer_name",
+        "phone",
+        "channel",  # counter | phone | online | delivery | catering
+        "promised_at",  # wall-clock ms; a future order waits on the hub until its lead time
+        "quoted_minutes",
+        "stage",  # new | ready | picked_up
+        "locale",  # the customer's language for texts
+    }
+)
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
 
 
@@ -144,6 +165,29 @@ class Charge:
 
 
 @dataclass
+class Payment:
+    """Money taken on the order: cash at the counter, or settled elsewhere (a phone order paid through
+    another system). Refunds and card payments through a provider come with the payments phase."""
+
+    payment_id: str
+    method: str = "cash"  # cash | elsewhere | card
+    amount: str = "0"
+    tendered: str | None = None  # cash handed over; the change is tendered - amount
+    note: str = ""
+    by: str = ""
+    stamp: HLC | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "method": self.method,
+            "amount": self.amount,
+            "tendered": self.tendered,
+            "note": self.note,
+            "by": self.by,
+        }
+
+
+@dataclass
 class OrderState:
     order_id: str
     status: str = "open"  # open | closed | void
@@ -153,6 +197,7 @@ class OrderState:
     fired: dict[str, HLC] = field(default_factory=dict)  # course -> first fire stamp
     discounts: dict[str, Discount] = field(default_factory=dict)
     charges: dict[str, Charge] = field(default_factory=dict)
+    payments: dict[str, Payment] = field(default_factory=dict)
     applied: list[str] = field(default_factory=list)  # op ids in replay order
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
@@ -182,6 +227,7 @@ class OrderState:
             "fired": {course: str(stamp) for course, stamp in sorted(self.fired.items())},
             "discounts": {did: d.as_json() for did, d in sorted(self.discounts.items())},
             "charges": {cid: c.as_json() for cid, c in sorted(self.charges.items())},
+            "payments": {pid: p.as_json() for pid, p in sorted(self.payments.items())},
         }
 
     def _fired_before(self, course: str | None) -> bool:
@@ -305,6 +351,19 @@ def apply(state: OrderState, op: Op) -> None:
         charge.active = False
         if data.get("approved_by") is not None:
             charge.approved_by = data["approved_by"]
+
+    elif kind == "pay":
+        pid = data["payment_id"]
+        if pid not in state.payments:  # the same payment sent twice is one payment
+            state.payments[pid] = Payment(
+                payment_id=pid,
+                method=str(data.get("method", "cash")),
+                amount=str(data.get("amount", "0")),
+                tendered=None if data.get("tendered") is None else str(data["tendered"]),
+                note=str(data.get("note", "")),
+                by=str(data.get("by", "")),
+                stamp=op.hlc,
+            )
 
     state.applied.append(op.op_id)
     if state.first is None:

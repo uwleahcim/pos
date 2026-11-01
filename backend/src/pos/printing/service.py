@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
@@ -26,6 +27,9 @@ from .ticket import DIALECTS, Ticket, TicketLine, render
 
 LATE_AFTER_MS = 10 * 60 * 1000
 """An operation stamped this long before it arrives was queued through an outage, flagged or not."""
+
+DEFAULT_LEAD_MINUTES = 15
+"""How long before its promised time a future order's ticket prints when the order carries no quote."""
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,23 @@ def taken_offline(ops: Iterable[Op], now_ms: int, late_after_ms: int = LATE_AFTE
     return datetime.fromtimestamp(min(op.hlc.wall_ms for op in late) / 1000)
 
 
+def lead_delay(state: OrderState, now_ms: int, *, default_lead_minutes: int = DEFAULT_LEAD_MINUTES) -> float:
+    """Seconds a ticket for this order waits before printing: a future order (architecture section 12,
+    "Future orders") fires on its own ahead of its promised time by the minutes quoted for it, so the kitchen
+    sees it when it is time to cook, not when it was taken. 0 for an order due now or soon."""
+    promised = state.fields.get("promised_at")
+    if not isinstance(promised, int):
+        return 0.0
+    quoted = state.fields.get("quoted_minutes")
+    lead_ms = (quoted if isinstance(quoted, int) and quoted > 0 else default_lead_minutes) * 60_000
+    delay = (promised - lead_ms - now_ms) / 1000
+    return delay if delay > 60 else 0.0
+
+
+def _when(ms: Any) -> datetime | None:
+    return datetime.fromtimestamp(ms / 1000) if isinstance(ms, int) else None
+
+
 def ticket_for(
     state: OrderState,
     sent: list[Line],
@@ -109,6 +130,10 @@ def ticket_for(
         guests=fields.get("guests"),
         course=course,
         late=late,
+        order_no=fields.get("order_no") if isinstance(fields.get("order_no"), int) else None,
+        customer=str(fields.get("customer_name", "")),
+        channel=str(fields.get("channel", "")),
+        promised=_when(fields.get("promised_at")),
     )
 
 
@@ -211,8 +236,10 @@ class PrintService:
             sent, voided = kitchen_changes(before, after)
             if sent or voided:
                 key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
-                late = taken_offline(batch, self._now(), self._late_after_ms)
-                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late))
+                now = self._now()
+                late = taken_offline(batch, now, self._late_after_ms)
+                delay = lead_delay(after, now) if not voided else 0.0  # a void prints at once
+                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, delay=delay))
         return jobs
 
     def send(
@@ -223,7 +250,10 @@ class PrintService:
         *,
         key: str,
         late: datetime | None = None,
+        delay: float = 0.0,
     ) -> list[PrintJob]:
+        """`delay` seconds holds the tickets back (a future order's lead time); the hub's retry loop and the
+        relays pick them up when they are due."""
         with self._lock:
             ticket_no = next(self._tickets)
         jobs = []
@@ -240,7 +270,7 @@ class PrintService:
             )
             if ticket is None:
                 continue
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.name}"))
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.name}", delay=delay))
         return jobs
 
     @staticmethod
@@ -253,10 +283,10 @@ class PrintService:
 
         return takes
 
-    def queue(self, ticket: Ticket, printer: Printer, *, job_id: str | None = None) -> PrintJob:
+    def queue(self, ticket: Ticket, printer: Printer, *, job_id: str | None = None, delay: float = 0.0) -> PrintJob:
         data = render(ticket, dots=self._dots, font=self._font, dialect=printer.dialect)
-        job = self.store.create(printer.address, data, job_id=job_id)
-        if self.direct:
+        job = self.store.create(printer.address, data, job_id=job_id, delay=delay)
+        if self.direct and delay <= 0:
             threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
         return job
 
@@ -264,7 +294,8 @@ class PrintService:
         self.store.deliver_direct(job, send=self._send)
 
     def start_retrying(self, interval: float = 3.0) -> None:
-        """A daemon that gives undelivered jobs another go every `interval` seconds (hubs only)."""
+        """A daemon that gives undelivered jobs another go every `interval` seconds, and prints a future
+        order's tickets when their time comes (hubs only)."""
         if not self.direct or not self.printers:
             return
 

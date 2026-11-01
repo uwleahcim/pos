@@ -56,7 +56,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final token = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _ManagerPinDialog(api: widget.api, device: widget.settings.device),
+      builder: (_) => ManagerPinDialog(api: widget.api, device: widget.settings.device),
     );
     if (token == null) return false;
     _token = token;
@@ -1135,16 +1135,25 @@ String _slug(String name) => name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+')
 
 // --- dialogs --------------------------------------------------------------------------------------------
 
-class _ManagerPinDialog extends StatefulWidget {
-  const _ManagerPinDialog({required this.api, required this.device});
+/// A manager's PIN for a session token (`/admin/session`): the menu editor, the quote times.
+class ManagerPinDialog extends StatefulWidget {
+  const ManagerPinDialog({
+    super.key,
+    required this.api,
+    required this.device,
+    this.action = 'Open the editor',
+    this.what = 'edit the menu',
+  });
   final PosApi api;
   final String device;
+  final String action; // the button
+  final String what; // "Only a manager can <what>"
 
   @override
-  State<_ManagerPinDialog> createState() => _ManagerPinDialogState();
+  State<ManagerPinDialog> createState() => _ManagerPinDialogState();
 }
 
-class _ManagerPinDialogState extends State<_ManagerPinDialog> {
+class _ManagerPinDialogState extends State<ManagerPinDialog> {
   final _pin = TextEditingController();
   String? _message;
   bool _busy = false;
@@ -1167,7 +1176,7 @@ class _ManagerPinDialogState extends State<_ManagerPinDialog> {
         _pin.clear();
         _message = switch (err.status) {
           401 => 'Wrong PIN',
-          403 => 'Only a manager can edit the menu',
+          403 => 'Only a manager can ${widget.what}',
           423 => 'Too many tries. Wait a minute.',
           _ => err.message,
         };
@@ -1191,7 +1200,7 @@ class _ManagerPinDialogState extends State<_ManagerPinDialog> {
     ),
     actions: [
       TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-      FilledButton(onPressed: _busy ? null : _submit, child: const Text('Open the editor')),
+      FilledButton(onPressed: _busy ? null : _submit, child: Text(widget.action)),
     ],
   );
 }

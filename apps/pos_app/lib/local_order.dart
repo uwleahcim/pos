@@ -26,6 +26,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
   var status = order.status;
   final fields = {...order.fields};
   final lines = {for (final l in order.lines) l.lineId: l};
+  final payments = [...order.payments];
   for (final op in ops) {
     final data = (op['data'] as Map?)?.cast<String, dynamic>() ?? const {};
     switch (op['kind']) {
@@ -71,6 +72,21 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         if (status == 'closed') status = 'open';
       case 'void_order':
         status = 'void';
+      case 'pay':
+        final id = data['payment_id'] as String? ?? '';
+        if (id.isNotEmpty && !payments.any((p) => p.paymentId == id)) {
+          payments.add(
+            Payment(
+              paymentId: id,
+              method: data['method'] as String? ?? 'cash',
+              amount: data['amount']?.toString() ?? '0',
+              tendered: data['tendered']?.toString(),
+              note: data['note'] as String? ?? '',
+              by: data['by'] as String? ?? '',
+              pending: true,
+            ),
+          );
+        }
     }
   }
   return Order(
@@ -79,6 +95,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     fields: fields,
     lines: lines.values.toList(),
     fired: order.fired,
+    payments: payments,
   );
 }
 
@@ -92,7 +109,9 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   final active = order.activeLines;
   final known = {for (final l in check?.lines ?? const <CheckLine>[]) l.lineId: l};
   final changed =
-      active.any((l) => known[l.lineId]?.qty != l.qty) || known.keys.any((id) => !active.any((l) => l.lineId == id));
+      active.any((l) => known[l.lineId]?.qty != l.qty) ||
+      known.keys.any((id) => !active.any((l) => l.lineId == id)) ||
+      order.payments.length != (check?.payments.length ?? 0);
   if (check != null && !changed) return check;
 
   final lines = <CheckLine>[];
@@ -160,6 +179,8 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   final rates = [for (final t in check?.taxLines ?? const <TaxLine>[]) t.ratePct];
   if (rates.isEmpty && (check?.taxRatePct ?? '').isNotEmpty) rates.add(check!.taxRatePct);
   final tax = rates.fold(0, (sum, rate) => sum + _percentOf(discounted + taxedCharges, rate));
+  final total = discounted + chargeTotal + tax;
+  final paid = order.payments.fold(0, (sum, p) => sum + cents(p.amount));
   return Check(
     lines: [
       for (final l in lines)
@@ -173,7 +194,10 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
     taxLines: check?.taxLines ?? const [],
     tax: money(tax),
     taxRatePct: check?.taxRatePct ?? '',
-    total: money(discounted + chargeTotal + tax),
+    total: money(total),
+    payments: check?.payments ?? const [],
+    paid: money(paid),
+    due: money(total - paid < 0 ? 0 : total - paid),
     estimated: true,
   );
 }

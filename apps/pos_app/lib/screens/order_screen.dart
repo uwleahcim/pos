@@ -10,9 +10,11 @@ import '../menu.dart';
 import '../outbox.dart';
 import '../photos.dart';
 import '../pricing.dart';
+import '../takeout.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'menu_panel.dart';
+import 'pay_dialog.dart';
 import 'status_bar.dart';
 import 'theme.dart';
 
@@ -112,6 +114,7 @@ class _OrderScreenState extends State<OrderScreen> {
     'remove_discount',
     'charge',
     'remove_charge',
+    'pay',
   };
 
   Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) => _appendAll([(kind, data)]);
@@ -217,6 +220,52 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _fire(String course, {bool leave = false}) async {
     await _append('fire', {'course': course});
     if (leave && mounted) Navigator.of(context).pop();
+  }
+
+  /// Counter mode (architecture section 12): the check is paid before the kitchen sees it, the change shows,
+  /// and the screen goes back for the next customer. Where the location lets the channel pay at pickup (a
+  /// phone order), the order can go to the kitchen unpaid and the ready text says so.
+  Future<void> _payAndSend(Order order, Check check) async {
+    var payAtPickup = false;
+    try {
+      payAtPickup = (await widget.api.quotes()).mayPayAtPickup(order.channel);
+    } on ApiException {
+      // nothing answers: cash and paid elsewhere need nothing from a backend
+    }
+    if (!mounted) return;
+    final choice = await showDialog<PayChoice>(
+      context: context,
+      builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup),
+    );
+    if (choice == null || !mounted) return;
+    await _appendAll([
+      if (choice.takesMoney)
+        (
+          'pay',
+          {
+            'payment_id': widget.outbox.newId(),
+            'method': choice.method,
+            'amount': check.due,
+            'tendered': ?choice.tendered,
+            if (choice.note.isNotEmpty) 'note': choice.note,
+            'by': ?widget.staffName,
+          },
+        ),
+      ('fire', {'course': '*'}),
+    ]);
+    if (!mounted) return;
+    final change = choice.tendered == null ? 0 : cents(choice.tendered!) - cents(check.due);
+    if (change > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
+          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+        ),
+      );
+      if (!mounted) return;
+    }
+    Navigator.of(context).pop();
   }
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -400,16 +449,17 @@ class _OrderScreenState extends State<OrderScreen> {
     final menu = open
         ? Column(
             children: [
-              _SeatCourseBar(
-                seats: seats,
-                seat: _seat,
-                course: _course,
-                courses: widget.courses,
-                onSeat: (seat) => setState(() => _seat = seat),
-                onAddSeat: () => _setSeats(order, seats + 1),
-                onRemoveSeat: () => _setSeats(order, seats - 1),
-                onCourse: (course) => setState(() => _course = course),
-              ),
+              if (order?.isTakeout != true) // a table's seats and courses; a to-go order has neither
+                _SeatCourseBar(
+                  seats: seats,
+                  seat: _seat,
+                  course: _course,
+                  courses: widget.courses,
+                  onSeat: (seat) => setState(() => _seat = seat),
+                  onAddSeat: () => _setSeats(order, seats + 1),
+                  onRemoveSeat: () => _setSeats(order, seats - 1),
+                  onCourse: (course) => setState(() => _course = course),
+                ),
               Expanded(
                 child: MenuPanel(api: widget.api, onChosen: _add, qtyOf: (entry) => _entryQty(order, entry)),
               ),
@@ -427,10 +477,22 @@ class _OrderScreenState extends State<OrderScreen> {
           );
     return Scaffold(
       appBar: AppBar(
-        title: Text(order == null ? 'Order' : 'Table ${order.table} · ${order.status}'),
+        title: Text(
+          order == null
+              ? 'Order'
+              : order.isTakeout
+              ? _takeoutTitle(order)
+              : 'Table ${order.table} · ${order.status}',
+        ),
         actions: [
           StatusIcon(api: widget.api, outbox: widget.outbox),
-          if (order != null && open) _FireMenu(order: order, courses: widget.courses, onFire: _fire),
+          if (order != null && open && !order.isTakeout)
+            _FireMenu(order: order, courses: widget.courses, onFire: _fire),
+          // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
+          if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
+            check != null && cents(check.due) > 0
+                ? _Action('Pay & send', Icons.point_of_sale, () => _payAndSend(order, check))
+                : _Action('Send', Icons.send, () => _fire('*', leave: true)),
           if (order != null && open) _Action('Discount', Icons.percent, _discount),
           if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
           if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
@@ -745,6 +807,9 @@ class _TicketPanelState extends State<_TicketPanel> {
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
                   _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
+                  for (final p in order.payments)
+                    _TotalRow(_paymentLabel(p), '−${p.amount}', key: ValueKey('paid-${p.paymentId}')),
+                  if (order.payments.isNotEmpty) _TotalRow('Due', check.due, strong: true, key: const ValueKey('due')),
                 ],
               ),
             ),
@@ -1070,6 +1135,17 @@ class _FireMenu extends StatelessWidget {
     );
   }
 }
+
+/// "#42 Linda · 18:05" for the app bar of a to-go order; the hub gives the number when the create lands.
+String _takeoutTitle(Order order) => [
+  '#${order.orderNo ?? '…'} ${order.customerName.isEmpty ? 'To go' : order.customerName}',
+  if (order.promisedAt != null) clockTime(order.promisedAt!),
+  if (!order.isOpen) order.status,
+].join(' · ');
+
+/// "Paid cash (tendered 20.00)", "Paid elsewhere · sending".
+String _paymentLabel(Payment p) =>
+    ['Paid ${p.method}${p.tendered != null ? ' (tendered ${p.tendered})' : ''}', if (p.pending) 'sending'].join(' · ');
 
 /// "Manager comp · on Peking Duck · Mike approved".
 String _discountLabel(CheckDiscount d, Check check) {

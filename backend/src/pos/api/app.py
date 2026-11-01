@@ -11,10 +11,10 @@ import binascii
 import os
 import time
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -24,14 +24,18 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
+from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
 from ..orders.check import charge_snapshot, check_for
+from ..orders.numbers import OrderNumbers
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
+from ..settings import SettingStore, clean_quotes, default_settings
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 from ..tax import TaxProfile, load_profile
+from .auth import manager_from
 from .menu_admin import add_menu_admin
 
 if TYPE_CHECKING:
@@ -166,6 +170,64 @@ class ApprovalIn(BaseModel):
     order_id: str
 
 
+class QuotesIn(BaseModel):
+    """How many minutes each channel promises a takeout order, and which channels may pay at pickup."""
+
+    minutes: dict[str, int] = Field(default_factory=dict)
+    pay_at_pickup: list[str] = Field(default_factory=list)
+
+
+PAYMENT_METHODS = frozenset({"cash", "elsewhere", "card"})
+
+
+def number_orders(numbers: OrderNumbers, ops: list[Op]) -> list[Op]:
+    """A takeout, counter or delivery order gets its number of the day when its `create` arrives (a table
+    order is known by its table). The hub gives the number, never the terminal, so two counters cannot pick
+    the same one; a terminal's own guess is dropped."""
+    out = []
+    for op in ops:
+        if op.kind == "create" and op.data.get("order_type", "dine_in") != "dine_in":
+            op = replace(op, data={**op.data, "order_no": numbers.next(), "stage": op.data.get("stage") or "new"})
+        out.append(op)
+    return out
+
+
+def pay_ops(ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
+    """A `pay` names its method and an amount above zero; cash may say what was tendered (at least the
+    amount). A bad one is refused with its problems; the rest of the batch goes through."""
+    out: list[Op] = []
+    refused: list[dict[str, Any]] = []
+    for op in ops:
+        if op.kind != "pay":
+            out.append(op)
+            continue
+        problems = []
+        data = op.data
+        if not isinstance(data.get("payment_id"), str) or not data["payment_id"]:
+            problems.append({"code": "bad_request", "message": "a payment needs its id"})
+        if data.get("method", "cash") not in PAYMENT_METHODS:
+            problems.append({"code": "bad_method", "message": f"no payment method called {data.get('method')!r}"})
+        amount = _money(data.get("amount"))
+        if amount is None or amount <= 0:
+            problems.append({"code": "bad_value", "message": "an amount above zero is needed"})
+        elif data.get("tendered") is not None:
+            tendered = _money(data["tendered"])
+            if tendered is None or tendered < amount:
+                problems.append({"code": "bad_value", "message": "what was tendered is less than the amount"})
+        if problems:
+            refused.append({"op_id": op.op_id, "error": "invalid_payment", "problems": problems})
+            continue
+        out.append(op)
+    return out, refused
+
+
+def _money(value: Any) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
 def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
     """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
     dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
@@ -252,7 +314,7 @@ def _totals(totals: dict[str, Decimal]) -> list[dict[str, str]]:
     return [{"key": key, "amount": str(amount)} for key, amount in sorted(totals.items(), key=lambda kv: -kv[1])]
 
 
-def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
+def job_out(job: PrintJob, *, with_data: bool = False, due_in: float = 0.0) -> dict[str, Any]:
     out: dict[str, Any] = {
         "job_id": job.job_id,
         "printer": job.printer,
@@ -262,6 +324,7 @@ def job_out(job: PrintJob, *, with_data: bool = False) -> dict[str, Any]:
         "leased_to": job.leased_to,
         "done_by": job.done_by,
         "last_error": job.last_error,
+        "due_in": round(due_in),  # seconds until a future order's ticket may print; 0 for the rest
     }
     if with_data:
         out["data_b64"] = base64.b64encode(job.data).decode("ascii")
@@ -280,6 +343,10 @@ def create_app(
     tokens: Tokens | None = None,
     preferences: PreferenceStore | None = None,
     pricing: PricingRules | None = None,
+    settings: SettingStore | None = None,
+    messenger: Messenger | None = None,
+    location: str | None = None,
+    numbers: OrderNumbers | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else default_menu()
@@ -292,6 +359,15 @@ def create_app(
     app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.printing = printing if printing is not None else PrintService.from_env()
     app.state.tokens = tokens if tokens is not None else Tokens()
+    app.state.settings = settings if settings is not None else default_settings()
+    app.state.messenger = messenger if messenger is not None else messenger_from_env()
+    app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or "the restaurant"
+    app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store)
+    app.state.notifier = Notifier(
+        app.state.messenger,
+        location=app.state.location,
+        unpaid=lambda state: Decimal(check_for(state, app.state.taxes, app.state.pricing)["due"]) > 0,
+    )
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -317,7 +393,9 @@ def create_app(
         app.state.menu.refresh()
         fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
         fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
-        refused += refused_adjustments
+        fresh, refused_payments = pay_ops(fresh)
+        fresh = number_orders(app.state.numbers, fresh)
+        refused += refused_adjustments + refused_payments
         try:
             accepted = store.append(fresh)
         except ClockDriftError as err:
@@ -327,10 +405,12 @@ def create_app(
             raise HTTPException(503, {"error": "read_only"}) from err
         printing: PrintService = app.state.printing
         jobs = printing.on_ops(store.for_order, list(accepted))
+        texts = app.state.notifier.on_ops(store.for_order, list(accepted))
         return {
             "accepted": [op.op_id for op in accepted],
             "cursor": store.cursor,
             "print_jobs": [j.job_id for j in jobs],
+            "texts": [m.as_json() for m in texts],
             "refused": refused,
         }
 
@@ -369,6 +449,34 @@ def create_app(
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
         plan: FloorPlan = app.state.floor
         return {**plan.as_json(), "status": table_status(open_states, totals), "cursor": store.cursor}
+
+    # Counter mode and takeout: the quote per channel, and the texts that went out --------------------------
+    @app.get("/settings/quotes")
+    def read_quotes() -> dict[str, Any]:
+        """Minutes each channel promises a takeout order, and which channels may pay at pickup."""
+        settings: SettingStore = app.state.settings
+        return settings.get("quotes")
+
+    @app.put("/settings/quotes")
+    def write_quotes(body: QuotesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager (token from /admin/session) sets the quote times by hand; kitchen pacing takes over in phase 2."""
+        manager_from(app.state.tokens, authorization)
+        try:
+            cleaned = clean_quotes(body.model_dump())
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        settings: SettingStore = app.state.settings
+        try:
+            return settings.put("quotes", cleaned)
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+
+    @app.get("/messages")
+    def read_messages(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+        """The texts this backend sent (or would have: the log messenger keeps them), newest first."""
+        messenger = app.state.messenger
+        sent = list(reversed(messenger.sent)) if isinstance(messenger, LogMessenger) else []
+        return {"messages": [m.as_json() for m in sent[:limit]], "provider": type(messenger).__name__}
 
     # Discounts and charges: the rules are data, a manager approves on the spot, reports say who and why ----
     @app.get("/pricing/rules")
@@ -614,7 +722,7 @@ def create_app(
         jobs = sorted(printing.store.all(), key=lambda j: j.created, reverse=True)
         if status is not None:
             jobs = [j for j in jobs if j.status == status]
-        return {"jobs": [job_out(j) for j in jobs[:200]]}
+        return {"jobs": [job_out(j, due_in=printing.store.due_in(j)) for j in jobs[:200]]}
 
     @app.post("/print/jobs/claim")
     def claim_job(body: ClaimIn) -> dict[str, Any]:

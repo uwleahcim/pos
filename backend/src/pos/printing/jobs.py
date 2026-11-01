@@ -32,6 +32,7 @@ class PrintJob:
     done_by: str | None = None
     done_at: float | None = None
     last_error: str | None = None
+    not_before: float = 0.0  # a future order's ticket: nobody prints it before this (the store's clock)
 
 
 def send_raw(printer: str, data: bytes, *, timeout: float = 4.0, linger: float = 2.0) -> None:
@@ -66,17 +67,25 @@ class JobStore:
         self._lease = lease
         self._lock = threading.Lock()
 
-    def create(self, printer: str, data: bytes, *, job_id: str | None = None) -> PrintJob:
+    def create(self, printer: str, data: bytes, *, job_id: str | None = None, delay: float = 0.0) -> PrintJob:
+        """Queues a job; `delay` seconds keeps it from every printer and relay until then (a future order)."""
         with self._lock:
             job_id = job_id or uuid.uuid4().hex
             if job_id in self._jobs:
                 return self._jobs[job_id]  # the same job asked for twice is one job
-            job = PrintJob(job_id=job_id, printer=printer, data=data, created=self._clock())
+            now = self._clock()
+            job = PrintJob(
+                job_id=job_id, printer=printer, data=data, created=now, not_before=now + delay if delay > 0 else 0.0
+            )
             self._jobs[job_id] = job
             return job
 
     def get(self, job_id: str) -> PrintJob | None:
         return self._jobs.get(job_id)
+
+    def due_in(self, job: PrintJob) -> float:
+        """Seconds until a scheduled job may print; 0 for one that may print now."""
+        return max(0.0, job.not_before - self._clock())
 
     def all(self) -> list[PrintJob]:
         with self._lock:
@@ -105,6 +114,7 @@ class JobStore:
             for j in self._jobs.values()
             if j.status in ("queued", "leased")
             and (j.status == "queued" or j.lease_until <= now)
+            and j.not_before <= now
             and (printers is None or j.printer in printers)
         ]
         return sorted(jobs, key=lambda j: j.created)
