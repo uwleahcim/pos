@@ -4,9 +4,10 @@ A point-of-sale system for a group of full-service restaurants: Flutter apps on 
 backend that runs on two hubs per location and in two cloud regions, and an append-only order log that
 merges after any disconnect.
 
-- Architecture (draft 7): `docs/architecture.html` (also published at https://claude.ai/artifact/NyhuxEexcTSdNhYkJ6n4ay)
+- Architecture (draft 8): `docs/architecture.html` (also published at https://claude.ai/artifact/NyhuxEexcTSdNhYkJ6n4ay)
 - Menu engine specification: `docs/menu-engine-design.md` (the binding spec for the engine)
 - Decisions: `docs/adr/`
+- Competitive review against Toast, Square, Clover, Lightspeed and TouchBistro (1 Nov 2026): `docs/competitive-review-2026-11-01.md`
 - Phase 0 plan and spike status: `docs/phase0/README.md` and `spikes/`
 
 ## Layout

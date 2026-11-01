@@ -182,17 +182,17 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <main>
 <header class="doc">
-  <p class="eyebrow">Architecture design · draft 7</p>
+  <p class="eyebrow">Architecture design · draft 8</p>
   <h1>Restaurant POS Architecture</h1>
   <p class="lede">A point of sale for one full-service Chinese restaurant with a sushi bar, a full bar and a catering business today, and a couple dozen locations later. Every location keeps selling when the internet drops, and keeps selling through the cloud when both of its local servers die.</p>
-  <div class="meta"><span>Prepared for Mike</span><span>1 Nov 2026</span><span>Status: phase 1 in progress; draft 7 adds card surcharges, kitchen pacing, takeout pickup, an owner app and guest feedback, and moves the storefront, kiosk, courier dispatch and marketplaces earlier</span></div>
+  <div class="meta"><span>Prepared for Mike</span><span>1 Nov 2026</span><span>Status: phase 1 in progress; draft 8 adds discounts and charges, a counter mode, station groups with a start queue and a capture-only mode on terminals, from the second competitive review</span></div>
 </header>
 
 <section id="summary">
   <h2><span class="n">1</span>Summary &amp; decisions</h2>
   <p>Five ideas carry the whole design.</p>
   <ol>
-    <li><strong>Terminals are screens.</strong> The Flutter app draws screens, collects what was chosen, and sends it as a small, append-only <em>operation</em> to a backend. It holds no business rules and no business data.</li>
+    <li><strong>Terminals are screens.</strong> The Flutter app draws screens, collects what was chosen, and sends it as a small, append-only <em>operation</em> to a backend. It holds no business rules and no business data. When no backend answers at all it can still queue an order against its cached menu (ADR 6), and nothing more.</li>
     <li><strong>One backend, two homes.</strong> All rules, including the menu engine, live in one Python backend. It runs on a pair of <strong>hubs</strong> at each location and in the <strong>cloud</strong> in two regions. Each side is a complete system on its own, both are live at all times, and a terminal uses whichever it can reach.</li>
     <li><strong>Hubs are for speed and independence.</strong> They sit on the restaurant's own network, so they are fast, reach printers and kitchen screens without NAT or firewall tricks, keep that network closed to the internet, and keep the location working when the internet line is down.</li>
     <li><strong>Orders are logs that merge.</strong> An order is the set of operations made against it. Two copies merge by taking the union, so hubs, cloud and terminals always agree, whatever order things arrive in.</li>
@@ -213,7 +213,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <thead><tr><th>Topic</th><th>Decision</th><th>Section</th></tr></thead>
     <tbody>
       <tr><td>Apps and backend</td><td>Flutter for screens only; Python backend owns every rule, running on hubs and cloud. No engine copy in the apps.</td><td>2</td></tr>
-      <tr><td>Hubs and cloud</td><td>Two hubs per location and two cloud regions, each side a complete system, both live. Screens need not work if hubs and internet fail together.</td><td>3, 4</td></tr>
+      <tr><td>Hubs and cloud</td><td>Two hubs per location and two cloud regions, each side a complete system, both live. If hubs and internet fail together, screens only queue orders (ADR 6).</td><td>3, 4</td></tr>
       <tr><td>Menu engine</td><td>Mike's Menu Engine Design (24 Oct 2026) is the spec, used in full, with listed adaptations and extensions.</td><td>7</td></tr>
       <tr><td>Languages</td><td>Unlimited, with per-screen display lists and user-defined fallback chains.</td><td>7</td></tr>
       <tr><td>Media</td><td>Photos and short videos on items, options, ingredients, recipes and more.</td><td>7</td></tr>
@@ -229,9 +229,13 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <tr><td>Takeout</td><td>Future orders, an "order ready" text, a pickup board and curbside check-in.</td><td>12</td></tr>
       <tr><td>Owner app and feedback</td><td>An owner role of the same app on a phone with live numbers and alerts; a rating link on digital receipts.</td><td>14</td></tr>
       <tr><td>Own channels</td><td>Delivery marketplaces in phase 2 through an aggregator; own storefront, QR and kiosk ordering and on-demand courier dispatch in phase 3.</td><td>13, 17</td></tr>
+      <tr><td>Discounts and charges</td><td>One model for discounts, comps, promotions, promo codes and service charges, with approval rules and a fixed order of operations.</td><td>9</td></tr>
+      <tr><td>Counter mode</td><td>A second mode of the order screen beside table service: name and phone first, pay before fire, an order number.</td><td>12</td></tr>
+      <tr><td>Kitchen stations</td><td>Station groups with least-busy routing, a start queue from prep times, an all-day view at every station.</td><td>12</td></tr>
+      <tr><td>Capture-only terminals</td><td>With no backend reachable a terminal queues orders against its cached menu; no tickets, no cards (ADR 6).</td><td>4</td></tr>
     </tbody>
   </table></div>
-  <p><strong>Still open:</strong> the accounting system (QuickBooks, Xero or other), server banking versus shared drawers, whether tips are pooled, the order aggregator (Otter, Chowly, Deliverect or direct), and team size (the plan assumes 2 to 4 developers). Each can change without rework.</p>
+  <p><strong>Still open:</strong> the accounting system (QuickBooks, Xero or other), server banking versus shared drawers, whether tips are pooled, the order aggregator (Otter, Chowly, Deliverect or direct), team size (the plan assumes 2 to 4 developers), and two things every major competitor now ships that this design leaves for later: upsell prompts at the register and online, and a natural-language assistant over reports and settings. Each can change without rework.</p>
 </section>
 
 <section id="stack">
@@ -310,7 +314,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <div class="scroll"><table class="wide">
     <thead><tr><th>Component</th><th>Runs on</th><th>Does</th></tr></thead>
     <tbody>
-      <tr><td>POS app</td><td>Every terminal</td><td>Screens only: orders, table map, payments, sign-in. Camera and NFC are inputs (a tag, a face signature) that the backend judges. Can relay print jobs. Kitchen, bar, expo and customer-display modes are the same app in other roles.</td></tr>
+      <tr><td>POS app</td><td>Every terminal</td><td>Screens only: orders, table map, payments, sign-in. Camera and NFC are inputs (a tag, a face signature) that the backend judges. Can relay print jobs. Counter, kitchen, bar, expo, pickup-board and customer-display modes are the same app in other roles.</td></tr>
       <tr><td>Remote unit</td><td>An off-site worker's device, same app</td><td>Takes phone orders for one or more locations over the VPN; no cash, no card-present actions.</td></tr>
       <tr><td>Hubs</td><td>Two mini PCs per location</td><td>The complete backend for the location: menu engine, pricing, taxes, live orders, kitchen and print routing, payment router, 86 board, table leases, ticket number blocks, sync to cloud. Runs with no internet.</td></tr>
       <tr><td>Cloud backend</td><td>Two regions</td><td>The same backend: system of record for the group, virtual hub for any location that cannot reach its own, public endpoint for integrations and webhooks.</td></tr>
@@ -325,14 +329,14 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="resilience">
   <h2><span class="n">4</span>Staying up</h2>
-  <p>Every terminal holds a ranked list of backends and checks them every couple of seconds: primary hub, standby hub, main cloud region, backup region. Switching is automatic and shows as a status light, not a pop-up. Hubs and cloud speak the same protocol and merge the same way, so a terminal can move between them mid-order. The hubs and the cloud are not a main system and a spare: each alone is complete, both accept orders for a location at the same moment, and each hub keeps an always-on outbound connection to the cloud, so an operation taken on either side reaches the other within a second or two and the kitchen gets every ticket whichever side took it.</p>
+  <p>Every terminal holds a ranked list of backends and checks them every couple of seconds: primary hub, standby hub, main cloud region, backup region. Switching is automatic and shows as a status light, not a pop-up. Hubs and cloud speak the same protocol and merge the same way, so a terminal can move between them mid-order. The hubs and the cloud are not a main system and a spare: each alone is complete, both accept orders for a location at the same moment, and each hub keeps an always-on outbound connection to the cloud, so an operation taken on either side reaches the other within a second or two and the kitchen gets every ticket whichever side took it. A phone with cellular service keeps the same list working when the restaurant's Wi-Fi fails: it reaches the cloud over cellular, and the cloud forwards to the hubs over their own link.</p>
   <div class="scroll"><table class="wide">
     <thead><tr><th>Failure</th><th>Staff notice</th><th>System does</th><th>Recovery</th></tr></thead>
     <tbody>
       <tr><td>Internet down</td><td>Nothing, except card limits below</td><td>Hubs run the location alone; printing, kitchen screens and handhelds keep working; cloud-bound operations queue at the hub.</td><td>Hub drains its outbox; reports catch up in minutes.</td></tr>
       <tr><td>Primary hub down</td><td>Nothing</td><td>Standby takes over in about five seconds with every order already copied, with or without internet.</td><td>Repaired hub rejoins as standby.</td></tr>
       <tr><td>Both hubs down</td><td>Amber status light</td><td>Terminals use the cloud, which runs the location in full; print jobs go through a terminal relay (below).</td><td>Hubs pull state from the cloud; terminals switch back.</td></tr>
-      <tr><td>Hubs and internet down</td><td>"No connection to server"; no new orders</td><td>By design, terminals do not run alone. Needs two hubs and the line to fail at once; a cellular backup on the router makes it rarer.</td><td>Reconnects when either side is back; nothing sent is lost.</td></tr>
+      <tr><td>Hubs and internet down</td><td>Red banner: orders queue, no tickets, no cards</td><td>Terminals enter capture-only mode (ADR 6): new orders and lines against the cached menu with estimated prices, queued in the outbox; cash only, written on the check; nothing prints and nothing is shared between terminals. Needs two hubs and the line to fail at once; a cellular backup on the router makes it rarer.</td><td>The queue drains to whichever side returns; the backend prices the lines and prints every ticket, headed "late".</td></tr>
       <tr><td>One terminal dies</td><td>That device only</td><td>Its open orders are on the hub; any terminal picks them up.</td><td>Enroll a replacement; ready in a minute.</td></tr>
       <tr><td>VPN or firewall broken</td><td>Remote staff notice nothing</td><td>Remote units switch to the cloud; the cloud forwards their orders over the hub's own outbound link.</td><td>Back to the VPN when it works.</td></tr>
       <tr><td>FreePBX unreachable</td><td>Phones work, no call card</td><td>Calls follow the PBX's own fallback; staff look customers up by number.</td><td>Call cards resume when the connector reconnects.</td></tr>
@@ -391,13 +395,13 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <li><b>Menu · Section · MenuEntry</b> <span>channels, schedules, numbers, prices</span></li>
       <li><b>Ingredient · Recipe · Component · Unit</b> <span>versioned, roles, yields</span></li>
       <li><b>Allergen · declarations · overrides</b> <span>reviewed or unknown</span></li>
-      <li><b>Station · AvailabilityState · Keg · Tap</b> <span>routing, 86, volume per tap</span></li>
+      <li><b>Station · StationGroup · AvailabilityState · Keg · Tap</b> <span>routing, load balancing, 86, volume per tap</span></li>
       <li><b>Media · MediaAttachment</b> <span>photos on anything</span></li>
     </ul></div>
     <div class="entity"><h4>Orders</h4><ul>
       <li><b>Order · OrderOp · Check</b> <span>channel, type, table, the operation log</span></li>
       <li><b>Line · Seat · Course</b> <span>resolved line as JSON, seat and course</span></li>
-      <li><b>Discount · Comp · Void · Waste</b> <span>reason, approver</span></li>
+      <li><b>Discount · Promotion · PromoCode · ServiceCharge · Comp · Void · Waste</b> <span>rules, reason, approver</span></li>
       <li><b>TaxLine · Exemption</b> <span>what was charged, per jurisdiction</span></li>
       <li><b>Payment · Refund · Tip · Tab · PreAuth</b> <span>provider reference, fees</span></li>
       <li><b>CateringEvent · Deposit · Invoice</b> <span>date, address, headcount, balance</span></li>
@@ -409,6 +413,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <li><b>Staff · Role · Permission</b> <span>per location, screen language</span></li>
       <li><b>StaffCredential · BiometricConsent · EventPhoto</b> <span>PINs, tags, face signatures, action photos</span></li>
       <li><b>Shift · TimePunch · TipPool · TipOut</b> <span>clock, breaks, pooling</span></li>
+      <li><b>ManagerLog · Checklist · ChecklistRun</b> <span>shift notes, opening and closing with photo proof</span></li>
       <li><b>CashDrawer · PaidInOut</b> <span>counts, drops, server banks</span></li>
       <li><b>Customer · LoyaltyAccount · GiftCard</b> <span>language, consent, balances</span></li>
       <li><b>Feedback</b> <span>rating, comment, order, server, channel</span></li>
@@ -439,7 +444,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   </table></div>
 
   <h3>Languages: unlimited, with fallback chains</h3>
-  <p>Every name, description and label is a map from language tag to text (<code>en</code>, <code>zh-Hans</code>, <code>zh-Hant</code>, <code>es</code>, <code>vi</code>…) with no limit; Simplified and Traditional Chinese are separate languages, and the kitchen label keeps its own key. Every surface has an ordered list of languages set per location: POS screens, customer display, receipts (two languages side by side if wanted), kitchen tickets per station, storefront, kiosk, boards and text messages. Staff pick their own screen language; a customer's preferred language lives in their profile. The owner defines fallback chains per language (<code>zh-Hant → zh-Hans → en</code>, <code>kitchen → zh-Hans → en</code>); nothing assumes English. The engine walks the chain, returns the first text found and which language it came from, which feeds a translation gap report and a <code>menu check</code> warning per enabled language. Search covers every language at once, including pinyin (<code>zzt</code> finds <span class="zh">左宗棠鸡</span>). The apps bundle fonts for every enabled script, handle right-to-left, and print a kitchen ticket as an image when a printer cannot render its script. The same chains apply to the apps' own buttons and labels.</p>
+  <p>Every name, description and label is a map from language tag to text (<code>en</code>, <code>zh-Hans</code>, <code>zh-Hant</code>, <code>es</code>, <code>vi</code>…) with no limit; Simplified and Traditional Chinese are separate languages, and the kitchen label keeps its own key. Every surface has an ordered list of languages set per location: POS screens, customer display, receipts (two languages side by side if wanted), kitchen tickets per station, storefront, kiosk, boards and text messages. Staff pick their own screen language, text size and a high-contrast setting, which follow them to any device they sign in on; a customer's preferred language lives in their profile. The owner defines fallback chains per language (<code>zh-Hant → zh-Hans → en</code>, <code>kitchen → zh-Hans → en</code>); nothing assumes English. The engine walks the chain, returns the first text found and which language it came from, which feeds a translation gap report and a <code>menu check</code> warning per enabled language. Search covers every language at once, including pinyin (<code>zzt</code> finds <span class="zh">左宗棠鸡</span>). The apps bundle fonts for every enabled script, handle right-to-left, and print a kitchen ticket as an image when a printer cannot render its script. The same chains apply to the apps' own buttons and labels.</p>
 
   <h3>Media: photos on anything</h3>
   <p>Photos and short videos attach to items, variants, options, categories and sections, combos, ingredients, recipes and their steps, stations and locations, several per thing, each with a purpose (menu photo, POS tile, plating reference, prep step, ingredient label, receiving photo, gallery), limited to channels and overridable per location. They show as POS photo tiles, on the storefront, kiosk, boards and customer display, in marketplace menus through the channel adapters, on the kitchen screen when a cook taps a ticket, and in the allergen review queue, where a label photo is the <em>source</em> on a declaration. Uploads come from the admin portal, a camera button on any terminal (manager approval before anything customer-facing), or the spreadsheet round-trip with a zip. The cloud strips camera metadata, makes every size once, and names files by content hash; the sizes a location uses travel with its menu snapshot and stay on its hubs, so tiles and plating photos work without internet and terminals fetch only what changed. Alt text per language, a usage-rights note, "where used" before deletion, and a missing-photo report per channel round it out. Two tables, <code>media</code> and <code>media_attachment</code>, join the design's nineteen; <code>item_detail</code> and <code>menu_for</code> return ready-to-use URLs per channel. Menu media is content with no retention limit, kept apart from the staff audit photos in section 10.</p>
@@ -507,6 +512,15 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <p><strong>Routing to the lowest cost.</strong> When staff press <em>Pay by card</em>, a router on the hub keeps only providers that are reachable with a reader at this station, picks the lowest estimated fee for the amount from each provider's rate table (small tickets favor a low fixed fee, large ones a low percentage), applies your preferences (a default per location, a volume target), and names the reader or sends the payment to it. A provider that is down is skipped. The limit: once a card is tapped on a reader, that reader's provider processes it, so the cost choice happens when the reader is chosen. Bar tabs need pre-authorization, incremental authorization and capture with tip, and go only to providers whose readers support it.</p>
   <p><strong>What is recorded.</strong> Provider, reference, method (tap, chip, wallet, QR), estimated fee, and later the actual fee. Refunds and tip adjustments return to the original provider. A nightly reconciliation pulls each provider's payout reports and shows the real cost per provider, so the routing rules are proven or corrected. Orders from ezCater and other marketplaces arrive paid and are recorded as external payments with the channel's commission as a fee. Each provider has its own merchant account; keys stay in the cloud and on hubs, never on terminals.</p>
   <p><strong>Passing card fees to guests.</strong> Each location picks one card-fee mode: none, a <em>surcharge</em> added to credit card payments, or <em>dual pricing</em>, where every price has a cash and a card amount and the POS, customer display, receipts and online menus show both. The rules are data per state with effective dates: a state that bans surcharges blocks that mode, the rate is capped at the lower of the state limit and the card networks' limit (about 3%) and never above the provider's real cost, and debit and prepaid cards are never surcharged, so the reader's card type decides at the moment of payment. Surcharges need notice: a line on the menu, at the door and at the register (printable from the portal), the amount as its own line on the receipt, and registration with the card networks where they require it. The surcharge goes through the tax rules with its own class, tips are calculated before it, refunds return it in proportion, and reports show it apart from sales so it never inflates sales or tip-outs. Cash, gift cards, house accounts and external marketplace payments carry no surcharge.</p>
+  <h3>Discounts, promotions and charges</h3>
+  <p>Everything that moves a price after the engine has set it is one model: set per location in the portal, applied by the order module, recorded on the check with who did it and why. The engine's own combo, schedule and channel pricing stays in the engine; this layer never edits a resolved line.</p>
+  <ul>
+    <li><strong>Discounts.</strong> A percentage, an amount, a price override or a buy-one-get-one, on a line, a seat or the whole check, with a fixed list of reasons (manager comp, staff meal, loyalty reward, promotion, service recovery). Each says who may apply it, a role or a manager's PIN or tag on the spot, its maximum, and whether it may stack with others.</li>
+    <li><strong>Promotions and promo codes.</strong> A discount with a schedule, channels, a minimum spend, eligible items or categories, a use limit per customer, and optionally a code typed at the register, on the storefront or at the kiosk. Codes search by name on the order screen.</li>
+    <li><strong>Service charges.</strong> A percentage or a fixed amount by order type, channel or party size (the automatic gratuity above is one), each with its own tax class and a flag for whether it is a gratuity that goes to staff or revenue that does not. The delivery fee and the card surcharge are charges of this kind.</li>
+    <li><strong>Order of operations.</strong> Line discounts, then check discounts, then charges on the discounted subtotal, then the surcharge on what is paid by card, then tax on whatever each state taxes. The receipt shows one line per discount, the screen groups the same discount applied to several dishes, and suggested tips use the pre-discount subtotal or the total as the location chooses.</li>
+    <li><strong>Reports and control.</strong> Discounts and comps by reason, employee and approver, each with its photo from section 10; a day whose discounts pass a set share of sales alerts the owner app.</li>
+  </ul>
 </section>
 
 <section id="identity">
@@ -575,13 +589,19 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <p>All of this sits on the order model and the menu engine; the extensions are the six listed in section 7, plus kitchen pacing below.</p>
   <h3>Table service</h3>
   <ul>
-    <li><strong>Seats and courses.</strong> Every line carries a seat and a course (drinks, appetizers, entrées, dessert, custom). Tickets and the expo screen show both; a check splits by seat with one tap. Courses are held and fired by the server, after a set delay, or by the expo when the previous course is bumped; the kitchen screen shows what is held and for how long. Rush and VIP tags and the allergy note print on every station's copy.</li>
-    <li><strong>Moving things.</strong> Transfer a table or check to another server, move or merge tables, combine checks, split by seat, item, amount or evenly, reopen a closed check with approval. Each is an operation, so it merges and audits like everything else.</li>
+    <li><strong>Seats and courses.</strong> Every line carries a seat and a course (drinks, appetizers, entrées, dessert, custom). Tickets and the expo screen show both; a check splits by seat with one tap. Courses are held and fired by the server, after a set delay, or by the expo when the previous course is bumped; the kitchen screen shows what is held and for how long. Sending has two forms: fire and leave the check, or fire and stay on it for the next round. Rush and VIP tags and the allergy note print on every station's copy.</li>
+    <li><strong>Moving things.</strong> Transfer a table or check to another server, move or merge tables, combine checks, split by seat, item, amount or evenly, a shared dish divided across the seats it was shared by, reopen a closed check with approval. Each is an operation, so it merges and audits like everything else.</li>
     <li><strong>Paying.</strong> At the table on a handheld, or by a QR code on the receipt that lets the guest pay and tip on their phone. Suggested tips on receipts and readers. Automatic gratuity above a party size, as a service charge with its own tax class. Tips adjustable until the nightly batch.</li>
     <li><strong>Cash.</strong> Server banking or cashier banking per location. The server close-out shows cash due, card tips, sales by category and open checks to close first.</li>
-    <li><strong>Tips and payroll.</strong> Pooling by role and shift, tip-outs to bartenders, bussers and sushi chefs, card tip fees where passed on, declared cash tips at clock-out, a per-employee tip report for payroll and IRS reporting, and the ADP export.</li>
+    <li><strong>Tips and payroll.</strong> Pooling by role and shift, tip-outs to bartenders, bussers and sushi chefs, a tip above a set percentage or amount held for a manager's approval, card tip fees where passed on, declared cash tips at clock-out, a per-employee tip report for payroll and IRS reporting, and the ADP export.</li>
     <li><strong>Hosting.</strong> Floor plan with sections and server assignments, table status (open, ordered, entrées fired, check dropped, paid, needs bussing), turn times, a waitlist with text paging, and a built-in reservation book, with the Resy adapter in section 13.</li>
     <li><strong>Expo and runners.</strong> An expo mode shows every ticket, bumps per item, paces courses, and prints runner slips with table and seat.</li>
+  </ul>
+  <h3>Counter service</h3>
+  <ul>
+    <li><strong>A second mode of the order screen.</strong> Table service starts from the floor plan; counter mode starts from the menu, for the takeout register, the bar and the kiosk. The first tap asks for a name and phone (a known customer fills in from the profile, with the usual order one tap away), the check carries an order number, and nothing goes to the kitchen until the check is paid, unless the location allows pay at pickup for phone orders.</li>
+    <li><strong>Fast tender.</strong> Exact cash, the next bill up, card to the nearest reader, a text link, or pay at pickup; the drawer opens on cash only. The receipt prints or texts, the ticket prints with the name and number, and the screen returns to the menu, or to the sign-in screen where the location says so.</li>
+    <li><strong>The number.</strong> On the ticket, the receipt, the pickup board and the customer display, and called at the shelf; from there the order moves to ready and picked up as below.</li>
   </ul>
   <h3>Takeout and pickup</h3>
   <ul>
@@ -598,6 +618,9 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Quote times.</strong> A new takeout or delivery order gets the first slot whose stations all have room, plus packing time, and delivery adds the courier's estimate. That time shows on the order screen, the call card, the storefront and in confirmations. Phase 1 starts with a quote time the manager sets by hand per channel; the automatic quote replaces it in phase 2.</li>
     <li><strong>Throttling.</strong> When a slot is full, later orders move to the next open one; above a set backlog the storefront and kiosk offer only later times, and the marketplaces get a longer prep time or a pause through their adapter. A manager can pause or slow any channel with one tap, and the change shows on the status bar of every station.</li>
     <li><strong>Learning.</strong> Actual bump times per station feed back into the loads every week, so the quotes match the kitchen rather than a guess. Quoted versus actual times are reported per channel.</li>
+    <li><strong>Station groups.</strong> Two woks are one group: a line routed to the group goes to the station with the least work in front of it, and the ticket says which. A cook can pull a ticket from the other station, and a group collapses to one station on a slow night.</li>
+    <li><strong>Start queue.</strong> Each item carries a prep time. When a course fires, the kitchen screen orders its items by prep time and shows each as "start now" or "start in 4 min", so a table's dishes finish together rather than start together; the expo sees the course as one unit.</li>
+    <li><strong>All-day view.</strong> Every station screen switches to counts of what is fired and not yet bumped, by item and modifier; the sushi piece counts are one case of it.</li>
   </ul>
   <h3>Sushi bar</h3>
   <ul>
@@ -659,6 +682,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Guest feedback.</strong> Digital receipts and the ready text carry a link to rate the visit from one to five with an optional comment, in the guest's language and with no account. Each rating records the order, location, channel, server or cashier, and the items, so a low score points at a shift or a dish. A low score alerts the manager, who can reply by text or email from the portal, and a guest who left a phone number can be sent a make-good offer through loyalty. Ratings never touch tips or tip-outs, servers see their own average but not individual comments, and scores are reported by location, server, item and channel.</li>
     <li><strong>Your data is yours.</strong> Every report exports to a spreadsheet, every table is reachable through a documented API under the same roles, and a full export is available on request.</li>
     <li><strong>Labor.</strong> Time clock, roles and tip reporting are built in because they are tied to sign-in; scheduling connects through the adapter in section 13 and could be built in later by replacing it. Meal and rest break reminders and attestations, overtime alerts before they happen, minor work-hour limits and predictive-scheduling notices are set per location.</li>
+    <li><strong>Manager log and checklists.</strong> A log per business day and location for shift notes, incidents, 86 reasons and maintenance, written on any station or in the owner app and read in the owner app and the daily summary. Opening, closing and line-check checklists with a photo as proof of each item, since every station has a camera; a missed or late checklist shows in the owner app.</li>
     <li><strong>Loyalty and gift cards.</strong> Points or visits, rewards redeemed as discounts the engine already handles, tiers, birthday and win-back offers. A gift card liability ledger in the cloud, physical cards and e-gifts, redeemable at every location. Points earned offline post when the order reaches the cloud; redemptions offline are allowed up to a set amount and settle on reconnect.</li>
     <li><strong>Marketing and privacy.</strong> Text and email campaigns from the CRM with consent per channel and customer, opt-out everywhere, quiet hours respected. Customer data encrypted, access logged, and a customer's request to see or delete their data handled from one screen.</li>
     <li><strong>Customer-facing screens.</strong> A customer display at the register shows the order, prompts for tip and signature, offers a text or email receipt and loyalty sign-up by phone number, and never takes photos. Tap lists, specials and menu boards run on the menu engine, in the location's languages, and change the moment a price or an 86 changes.</li>
@@ -676,6 +700,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Security.</strong> Card data never enters the system (simplest PCI category; readers are the processors' certified devices). A closed POS network per location, device certificates, encrypted disks on hubs, secrets in a vault, encryption at rest and in transit, a yearly penetration test, and audit logs for every data access by staff and support.</li>
     <li><strong>Support.</strong> Support reaches hubs over the VPN and sees a terminal's screen with the operator's consent, never through an opened port. A "help" button sends a diagnostic bundle and opens a ticket with location and device filled in.</li>
     <li><strong>Day-to-day details.</strong> A business day ends at a set hour (say 4 am) so a 1 am tab lands on the right night in every report and batch. Training mode on any terminal runs the full system with nothing posted, printed or charged, under a watermark. Opening a location is a portal checklist: create it, copy menus and tax rules from a similar one, image two hubs, enroll devices by code, discover printers, set languages, run printer and payment tests, go live, in about a day.</li>
+    <li><strong>Offline runbook.</strong> A one-page card at every station, in the location's languages, for each failure row in section 4: what still works, what to tell the guest, what not to press while card payments are settling, and who to call. Printed before go-live and shown in the app from the status icon.</li>
     <li><strong>Testing and rollout.</strong> The engine and order model are tested like a calculator: the design's worked examples and property tests, plus operation logs replayed out of order, duplicated and with pulled cables, on every change. A simulated restaurant of twenty virtual terminals, kitchen screens and printers runs a scripted Friday night against a real hub and the cloud, with hubs killed and the internet cut mid-service, as the release gate. A hardware lab holds one of every device, reader and printer model. One real location, or a test tenant, gets every release first. Phase 1 ends with a shadow week beside the old system, totals compared nightly.</li>
   </ul>
   <p>Every row carries a tenant id, so the same cloud could host another restaurant group with full separation. Nothing depends on it; it costs nothing now.</p>
@@ -687,7 +712,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Hubs:</strong> two fanless mini PCs (8 GB RAM, SSD, Linux), each on its own small UPS in different spots, about $300 to $500 each, plus a small witness device (a Raspberry Pi) for failover votes.</li>
     <li><strong>Printers:</strong> Ethernet ESC/POS printers (Epson TM series or compatible) with reserved IP addresses, one per kitchen station plus a backup, a receipt printer with cash drawer at each register. USB-only printers do not fit, since nothing could reach them when their host is down.</li>
     <li><strong>Fixed stations:</strong> iPads or Android tablets on stands, or a Mac mini with a touch screen, with the front camera (or a USB webcam) and a USB NFC reader.</li>
-    <li><strong>Handhelds:</strong> iPhones, iPad minis or Android handhelds with a paired card reader for pay at the table; iPhones and most Android handhelds read NFC tags on their own.</li>
+    <li><strong>Handhelds:</strong> iPhones, iPad minis or Android handhelds (phones in cases, or rugged Android handhelds with a built-in scanner) with a paired card reader for pay at the table; iPhones and most Android handhelds read NFC tags on their own.</li>
     <li><strong>NFC tags:</strong> fobs, cards or phone stickers (NTAG 424 DNA or DESFire), $1 to $3 each.</li>
     <li><strong>Kitchen and bar screens (KDS):</strong> iPads or Android tablets in wall mounts, or a Mac mini driving a large display, one per station plus expo.</li>
     <li><strong>Card readers:</strong> one from each provider you want to route between at the stations where it matters, or one default reader everywhere with the others as backup.</li>
@@ -710,20 +735,20 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <div class="phase"><span class="when">Phase 1 · months 1 to 4</span><h3>One restaurant, full service</h3>
       <ul>
         <li><b>Menu:</b> layers 1 and 2 of the design (sell, configure): catalog, variants, modifiers, combos, menus with numbers and schedules, kitchen labels, 86 board, spreadsheet import of the current item list; languages with fallback chains, English and Chinese loaded first; media library with POS photo tiles; market and open price.</li>
-        <li><b>Orders:</b> order entry, table map, seats and courses with hold and fire, transfers and merges, split checks, kitchen and receipt printing, service bar routing, catering orders with event details, deposits, invoices and prep sheets; future takeout orders, manual quote times per channel, and the ready text.</li>
-        <li><b>Money:</b> Stripe then GoDaddy through the payment layer, bar tabs with pre-authorization, auto-gratuity, age-check prompt, server banking and close-out, end of day; taxes set up for the first location.</li>
-        <li><b>People:</b> sign-in by PIN and NFC tag, event photos with retention, roles.</li>
-        <li><b>Platform:</b> hubs with offline mode, business-day cutoff, printer failover, training mode, basic health alerts, text links and receipts.</li>
+        <li><b>Orders:</b> order entry, table map, seats and courses with hold and fire, transfers and merges, split checks, kitchen and receipt printing, service bar routing, catering orders with event details, deposits, invoices and prep sheets; future takeout orders, manual quote times per channel, and the ready text; counter mode with order numbers; on tablets the categories collapse to a strip once one is open, tiles carry a color or photo and the customization mark only where a tap needs a choice, the floor map shows time seated, spend and server on busy tables, and the item sheet has a one-tap no, extra, on the side and light row.</li>
+        <li><b>Money:</b> Stripe then GoDaddy through the payment layer, bar tabs with pre-authorization, discounts, comps and service charges with approval rules, auto-gratuity, age-check prompt, server banking and close-out, end of day; taxes set up for the first location.</li>
+        <li><b>People:</b> sign-in by PIN and NFC tag, event photos with retention, roles, text size and contrast per user.</li>
+        <li><b>Platform:</b> hubs with offline mode, capture-only mode on terminals (ADR 6) and the offline runbook, business-day cutoff, printer failover, training mode, basic health alerts, text links and receipts.</li>
       </ul>
       <p class="exit"><b>Done when:</b> your restaurant runs a full week on it beside the old system, then without it.</p></div>
     <div class="phase"><span class="when">Phase 2 · months 4 to 6</span><h3>Cloud, kitchen screens, handhelds</h3>
       <ul>
         <li><b>Platform:</b> standby hub with automatic takeover, cloud sync with the cloud as a live second backend, admin portal, staged updates, status board and alerting, reporting replica.</li>
-        <li><b>Floor and kitchen:</b> kitchen display with bump and recall, expo mode, plating photos on screens, handheld ordering and pay at the table, QR pay, customer display at the register, keg and tap tracking, tray labels; automatic kitchen pacing and quote times, the pickup board and curbside check-in.</li>
-        <li><b>People and money:</b> face sign-in and session guard after the first state's legal review, time clock, tip pooling and tip-outs, ADP and accounting exports, tax reports by jurisdiction; card surcharge or dual pricing after a review of the first state's rules.</li>
+        <li><b>Floor and kitchen:</b> kitchen display with bump and recall, expo mode, plating photos on screens, handheld ordering and pay at the table, QR pay, customer display at the register, keg and tap tracking, tray labels; automatic kitchen pacing and quote times, the pickup board and curbside check-in; station groups with least-busy routing, the start queue and the all-day view.</li>
+        <li><b>People and money:</b> face sign-in and session guard after the first state's legal review, time clock, tip pooling and tip-outs, ADP and accounting exports, tax reports by jurisdiction; card surcharge or dual pricing after a review of the first state's rules; promotions and promo codes; tip approval thresholds.</li>
         <li><b>Menu:</b> ingredients and recipes for the top fifty sellers, with food cost and margin in the portal.</li>
         <li><b>Channels:</b> the order aggregator carrying ezCater, DoorDash and Uber Eats, with pacing driving their prep times.</li>
-        <li><b>Owners:</b> the owner app with live numbers and push alerts.</li>
+        <li><b>Owners:</b> the owner app with live numbers, push alerts, the manager log and checklists.</li>
       </ul>
       <p class="exit"><b>Done when:</b> unplugging either hub, or the internet, mid-service goes unnoticed by guests.</p></div>
     <div class="phase"><span class="when">Phase 3 · months 6 to 10</span><h3>Customers, own channels and multiple locations</h3>
@@ -755,9 +780,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><strong>Surcharge rules.</strong> State laws and card-network rules change, and a wrong surcharge means refunds and fines. The mode is off by default, the rules are effective-dated data checked at every payment, and each location's setup is reviewed before it goes live.</li>
     <li><strong>Pacing needs good numbers.</strong> Quotes are only as good as the prep loads. Manual quote times come first, the automatic quote learns from real bump times, and a manager can override it at any moment.</li>
     <li><strong>A bigger phase 3.</strong> Own channels and multiple locations land together, so phase 3 runs a month longer. The storefront goes live at the first location before the second opens, so the two never debut at once.</li>
+    <li><strong>Discounts are where money leaks.</strong> Every discount has a reason, a role or an approval, a cap and a photo, and the owner app flags a day whose discounts pass a set share of sales.</li>
   </ul>
 </section>
 
-<footer>Draft 7 for review. Phase 0 spikes and the start of phase 1 are in the repository.</footer>
+<footer>Draft 8, 1 Nov 2026. The source lives in the repository at docs/architecture.html; decisions are recorded as ADRs in docs/adr, and the competitive review behind this draft in docs/competitive-review-2026-11-01.md.</footer>
 </main>
 </div>
