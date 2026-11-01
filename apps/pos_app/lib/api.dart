@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'cache.dart';
 import 'floor.dart';
 import 'menu.dart';
 import 'settings.dart';
@@ -139,12 +140,32 @@ class AppendResult {
   final Map<String, String> refused; // op id -> why
 }
 
-/// What the status bar shows: which address answers, or none.
+/// How a screen stands with its backends: green on the usual one, amber on a backup, red when nothing
+/// answers. Red splits in two: capturing only (ADR 6: a menu is saved here, so orders can still be taken and
+/// queued) and lost (no menu saved: nothing can be done until a backend answers).
+enum ConnectionLevel { usual, backup, capturing, lost }
+
+/// What the status icon shows: which address answers, whether it is the usual one, or none, and since when.
 class Connection {
-  const Connection({this.endpoint, this.error});
+  const Connection({this.endpoint, this.error, this.capturing = false, this.since});
   final String? endpoint;
   final String? error;
+
+  /// No backend answers, but the menu saved on this device still lets it take orders (ADR 6).
+  final bool capturing;
+
+  /// When this state began.
+  final DateTime? since;
+
   bool get isOnline => endpoint != null;
+
+  /// Which backend answers: `usual` is the first on the list, anything else is a backup.
+  ConnectionLevel levelWith(List<String> endpoints) {
+    if (endpoint == null) return capturing ? ConnectionLevel.capturing : ConnectionLevel.lost;
+    return endpoint == endpoints.firstOrNull ? ConnectionLevel.usual : ConnectionLevel.backup;
+  }
+
+  Connection _since(DateTime? at) => Connection(endpoint: endpoint, error: error, capturing: capturing, since: at);
 }
 
 class ApiException implements Exception {
@@ -161,14 +182,17 @@ class ApiException implements Exception {
 /// The backend's three order log calls plus the list, with failover between addresses.
 ///
 /// Every call tries the address that answered last, then the others in the configured order. A call that
-/// reaches a backend but is refused (4xx) is not retried elsewhere: the answer would be the same.
+/// reaches a backend but is refused (4xx) is not retried elsewhere: the answer would be the same. With a
+/// [ReadCache], the reads a screen needs to take an order (menu, dishes, floor, tax rates) are saved as they
+/// come and served from disk when nothing answers at all (ADR 6).
 class PosApi {
-  PosApi(this.settings, {http.Client? client, this.timeout = const Duration(seconds: 2)})
+  PosApi(this.settings, {http.Client? client, this.timeout = const Duration(seconds: 2), this.cache})
     : _client = client ?? http.Client();
 
   final Settings settings;
   final http.Client _client;
   final Duration timeout;
+  final ReadCache? cache;
   final ValueNotifier<Connection> connection = ValueNotifier(const Connection());
 
   Future<Map<String, dynamic>> health() => _get('/health');
@@ -180,18 +204,47 @@ class PosApi {
 
   Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
 
-  /// The floor plan with every table's open checks.
-  Future<FloorPlan> floor() async => FloorPlan.fromJson(await _get('/floor'));
+  /// The floor plan with every table's open checks; the last one read when nothing answers.
+  Future<FloorPlan> floor() async => FloorPlan.fromJson(await _remembered('floor', '/floor'));
 
   /// 86 a size or option (`sold_out`), or bring it back (`available`).
   Future<void> set86(String targetId, {required bool soldOut, String? by}) =>
       _post('/menu/86', {'target_id': targetId, 'status': soldOut ? 'sold_out' : 'available', 'by': ?by});
 
-  Future<Check> check(String orderId) async => Check.fromJson(await _get('/orders/$orderId/check'));
+  /// What the table owes. The tax rates on every answer are kept for [savedTaxes].
+  Future<Check> check(String orderId) async {
+    final json = await _get('/orders/$orderId/check');
+    await cache?.put('taxes', {
+      'tax_lines': [
+        for (final t in json['tax_lines'] as List? ?? const []) {...t as Map<String, dynamic>, 'amount': '0.00'},
+      ],
+      'tax_rate_pct': json['tax_rate_pct'] ?? '',
+    });
+    return Check.fromJson(json);
+  }
 
-  /// The menus open now on this channel, in the given language, and the revision they were read at.
+  /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
+  /// no backend works a new check's tax from. Null until a check has been read on this device.
+  Check? get savedTaxes {
+    final json = cache?.get('taxes');
+    if (json == null) return null;
+    return Check(
+      lines: const [],
+      subtotal: '0.00',
+      taxLines: (json['tax_lines'] as List? ?? const [])
+          .map((t) => TaxLine.fromJson(t as Map<String, dynamic>))
+          .toList(),
+      tax: '0.00',
+      taxRatePct: json['tax_rate_pct'] as String? ?? '',
+      total: '0.00',
+      estimated: true,
+    );
+  }
+
+  /// The menus open now on this channel, in the given language, and the revision they were read at; the
+  /// last ones read when nothing answers.
   Future<(int, List<Menu>)> menus({String channel = 'pos', String locale = 'en'}) async {
-    final json = await _get('/menu', query: {'channel': channel, 'locale': locale});
+    final json = await _remembered('menu:$channel:$locale', '/menu', query: {'channel': channel, 'locale': locale});
     final menus = (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
     return (json['revision'] as int? ?? 0, menus);
   }
@@ -199,8 +252,52 @@ class PosApi {
   /// Moves whenever a manager saves the menu: a screen showing the menu reloads when it does.
   Future<int> menuRevision() async => (await _get('/menu/revision'))['revision'] as int? ?? 0;
 
-  Future<ItemDetail> item(String itemId, {String? entryId, String locale = 'en'}) async =>
-      ItemDetail.fromJson(await _get('/menu/items/$itemId', query: {'entry': ?entryId, 'locale': locale}));
+  /// A dish's sizes and choices; the saved ones when nothing answers (any size of the dish, if this entry
+  /// was never read: the backend prices the line for real once it is back).
+  Future<ItemDetail> item(String itemId, {String? entryId, String locale = 'en'}) async {
+    final name = _itemName(itemId, entryId, locale);
+    try {
+      return ItemDetail.fromJson(
+        await _remembered(name, '/menu/items/$itemId', query: {'entry': ?entryId, 'locale': locale}),
+      );
+    } on ApiException catch (err) {
+      if (err.status != null || cache == null) rethrow;
+      final any = cache!.names('item:$itemId|').firstOrNull;
+      if (any == null) rethrow;
+      return ItemDetail.fromJson(cache!.get(any)!);
+    }
+  }
+
+  /// Saves every dish's sizes and choices with the menu, in one read, so a dish can still be configured
+  /// when no backend answers. Returns how many were saved; nothing without a cache.
+  Future<int> prefetchItems({String channel = 'pos', String locale = 'en'}) async {
+    if (cache == null) return 0;
+    final json = await _get(
+      '/menu/items',
+      query: {'channel': channel, 'locale': locale},
+      timeout: const Duration(seconds: 15),
+    );
+    final items = (json['items'] as List).cast<Map<String, dynamic>>();
+    await cache!.putAll({for (final d in items) _itemName(d['item'] as String, d['entry_id'] as String?, locale): d});
+    return items.length;
+  }
+
+  static String _itemName(String itemId, String? entryId, String locale) => 'item:$itemId|${entryId ?? ''}:$locale';
+
+  /// A read served from the cache when no backend answers. A backend that answers and refuses is not
+  /// papered over: the saved answer would be wrong.
+  Future<Map<String, dynamic>> _remembered(String name, String path, {Map<String, String>? query}) async {
+    try {
+      final json = await _get(path, query: query);
+      await cache?.put(name, json);
+      return json;
+    } on ApiException catch (err) {
+      if (err.status != null) rethrow;
+      final saved = cache?.get(name);
+      if (saved == null) rethrow;
+      return saved;
+    }
+  }
 
   /// The backend's price for a configured line, before it is added.
   Future<Priced> price(LineRequest request) async => Priced.fromJson(await _post('/menu/price', request.toJson()));
@@ -321,7 +418,7 @@ class PosApi {
           lastError = ApiException('server error at $base', status: response.statusCode);
           continue;
         }
-        if (connection.value.endpoint != base) connection.value = Connection(endpoint: base);
+        if (connection.value.endpoint != base) _become(Connection(endpoint: base));
         final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
         if (response.statusCode >= 400) {
           final detail = decoded is Map ? decoded['detail'] : null;
@@ -339,8 +436,16 @@ class PosApi {
       }
     }
     final message = settings.endpoints.isEmpty ? 'no backend address configured' : 'no backend answers: $lastError';
-    connection.value = Connection(error: message);
+    _become(Connection(error: message, capturing: cache?.hasMenu ?? false));
     throw ApiException(message);
+  }
+
+  /// Moves to `next`, keeping `since` while the state is the same one (another failed poll, say).
+  void _become(Connection next) {
+    final was = connection.value;
+    final endpoints = settings.endpoints;
+    final same = was.endpoint == next.endpoint && was.levelWith(endpoints) == next.levelWith(endpoints);
+    connection.value = next._since(same ? was.since : DateTime.now());
   }
 
   static String _detail(Object? decoded) {

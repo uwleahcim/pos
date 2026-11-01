@@ -40,6 +40,7 @@ class Ticket:
     course: str | None = None
     at: datetime = field(default_factory=datetime.now)
     reprinted_from: str | None = None  # "Wok" on a backup printer's copy
+    late: datetime | None = None  # when the operator took it, if it reached the backend late (ADR 6)
 
 
 def render(
@@ -48,14 +49,24 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void") else 1)
+        b.beep(3 if ticket.kind in ("modify", "void") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
         "void": f"*** VOID *** {ticket.station}",
         "reprint": f"REPRINT {ticket.station}",
     }
+    if ticket.late:
+        # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
+        # kitchen may have cooked it from a handwritten note already, so the ticket says so first.
+        b.line("*** LATE ***", big=True, bold=True, center=True, invert=True)
     b.line(header.get(ticket.kind, ticket.station).upper(), big=True, bold=True, center=True)
+    if ticket.late:
+        b.line(
+            f"taken {ticket.late.strftime('%H:%M')} offline, printed {ticket.at.strftime('%H:%M')}",
+            center=True,
+            bold=True,
+        )
     if ticket.reprinted_from:
         b.line(f"reprinted from {ticket.reprinted_from}", center=True, bold=True)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))

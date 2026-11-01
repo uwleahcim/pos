@@ -314,6 +314,14 @@ def create_app(
         menu.refresh()
         return {"revision": menu.revision}
 
+    @app.get("/menu/items")
+    def read_items(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
+        """Every dish on the menus open now with its sizes and choices, in one read. A terminal saves them
+        with the menu, so it can still take orders when no backend answers (ADR 6, capture-only mode)."""
+        menu: MenuService = app.state.menu
+        menu.refresh()
+        return {"revision": menu.revision, "items": menu.details(channel, locale)}
+
     @app.get("/menu/items/{item_id}")
     def read_item(item_id: str, entry: str | None = None, locale: str = "en") -> dict[str, Any]:
         menu: MenuService = app.state.menu

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../camera.dart';
 import '../floor.dart';
+import '../local_order.dart';
 import '../outbox.dart';
 import '../photos.dart';
 import '../print_relay.dart';
@@ -56,13 +57,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+    widget.outbox.addListener(_onOutbox);
     _refresh();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    widget.outbox.removeListener(_onOutbox);
     super.dispose();
+  }
+
+  void _onOutbox() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _refresh() async {
@@ -72,6 +79,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // The status bar already shows the outage; the list keeps its last picture.
     }
+  }
+
+  /// The checks to list: the backend's, and before them the ones opened on this screen that no backend has
+  /// heard of yet (their create is still queued), so a check taken offline can be reopened.
+  List<(Order, bool)> get _listed {
+    final queued = queuedOrders(widget.outbox).where((q) => !_orders.any((o) => o.orderId == q.orderId));
+    return [for (final q in queued) (q, true), for (final o in _orders) (o, false)];
   }
 
   Future<void> _newOrder() async {
@@ -163,6 +177,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final scheme = theme.colorScheme;
     final posColors = PosColors.of(context);
     final small = compact(context);
+    final listed = _listed;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
       (
@@ -248,14 +263,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
       body: Column(
         children: [
+          CaptureBanner(api: widget.api, outbox: widget.outbox),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
               switchInCurve: Curves.easeOutCubic,
               switchOutCurve: Curves.easeInCubic,
               child: _floor
-                  ? FloorView(key: _floorKey, api: widget.api, onTable: _onTable)
-                  : _orders.isEmpty
+                  ? FloorView(key: _floorKey, api: widget.api, outbox: widget.outbox, onTable: _onTable)
+                  : listed.isEmpty
                   ? Center(
                       key: const ValueKey('empty-orders'),
                       child: Column(
@@ -274,10 +290,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   : ListView.separated(
                       key: const ValueKey('orders-list'),
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
-                      itemCount: _orders.length,
+                      itemCount: listed.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, i) {
-                        final order = _orders[i];
+                        final (order, queued) = listed[i];
                         final lines = order.activeLines;
                         final items = lines.fold<int>(0, (n, l) => n + l.qty);
                         final isTakeout = order.table.isEmpty;
@@ -300,8 +316,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 style: theme.textTheme.titleMedium,
                               ),
                               subtitle: Text(
-                                '$items items · ${order.status}${order.isFired ? ' · fired' : ''}',
-                                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                                '$items items · ${order.status}${order.isFired ? ' · fired' : ''}'
+                                '${queued ? ' · waiting to send' : ''}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: queued ? scheme.error : scheme.onSurfaceVariant,
+                                ),
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () => _open(order.orderId),

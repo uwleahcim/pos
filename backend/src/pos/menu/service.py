@@ -242,6 +242,26 @@ class MenuService:
         out["second_name"] = self._second_name(item_id, locale)
         return out
 
+    def details(self, channel: str = "pos", locale: str = "en", at: datetime | None = None) -> list[dict[str, Any]]:
+        """`item` for every entry on the menus open now, each with its `entry_id`: what a terminal keeps on
+        disk so a dish with choices can still be configured when no backend answers (ADR 6)."""
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def walk(sections: list[dict[str, Any]]) -> None:
+            for section in sections:
+                for entry in section["entries"]:
+                    key = (entry["item"], entry["entry_id"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({**self.item(entry["item"], entry["entry_id"], locale), "entry_id": entry["entry_id"]})
+                walk(section["sections"])
+
+        for menu in self.menus(channel, locale, at):
+            walk(menu["sections"])
+        return out
+
     def search(self, query: str, channel: str = "pos", locale: str = "en") -> list[dict[str, Any]]:
         return [asdict(h) for h in self.engine.search(query, channel, locale=locale)]
 

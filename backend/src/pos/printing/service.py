@@ -14,13 +14,18 @@ import itertools
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import datetime
 
+from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
 from .ticket import DIALECTS, Ticket, TicketLine, render
+
+LATE_AFTER_MS = 10 * 60 * 1000
+"""An operation stamped this long before it arrives was queued through an outage, flagged or not."""
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,16 @@ def kitchen_changes(before: OrderState | None, after: OrderState) -> tuple[list[
     return sent, voided
 
 
+def taken_offline(ops: Iterable[Op], now_ms: int, late_after_ms: int = LATE_AFTER_MS) -> datetime | None:
+    """When the operator took a batch that reaches the backend late: a terminal with no backend flagged the
+    operations `offline` (ADR 6), or their stamps are older than `late_after_ms` (an app that did not say
+    so). None for a batch that arrived in good time. The kitchen ticket is headed "late" with that time."""
+    late = [op for op in ops if op.data.get("offline") or now_ms - op.hlc.wall_ms > late_after_ms]
+    if not late:
+        return None
+    return datetime.fromtimestamp(min(op.hlc.wall_ms for op in late) / 1000)
+
+
 def ticket_for(
     state: OrderState,
     sent: list[Line],
@@ -68,10 +83,11 @@ def ticket_for(
     ticket_no: int,
     routes: Callable[[str | None], bool] | None = None,
     course: str | None = None,
+    late: datetime | None = None,
 ) -> Ticket | None:
     """One station's ticket: voided lines first, printed in reverse, then the lines being sent.
     `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
-    every line does."""
+    every line does. `late` is when the operator took it, for a batch that reached the backend late."""
     lines = [*_ticket_lines(voided or [], routes, void=True), *_ticket_lines(sent, routes, void=False)]
     if not lines:
         return None
@@ -92,6 +108,7 @@ def ticket_for(
         order_type=str(fields.get("order_type", "dine in")),
         guests=fields.get("guests"),
         course=course,
+        late=late,
     )
 
 
@@ -154,6 +171,8 @@ class PrintService:
         send: Callable[[str, bytes], None] = send_raw,
         font: str | None = None,
         dots: int = 576,
+        now: Callable[[], int] = wall_clock_ms,
+        late_after_ms: int = LATE_AFTER_MS,
     ) -> None:
         self.printers = printers
         self.store = store or JobStore()
@@ -161,6 +180,8 @@ class PrintService:
         self._send = send
         self._font = font or find_font()
         self._dots = dots
+        self._now = now
+        self._late_after_ms = late_after_ms
         self._tickets = itertools.count(1)
         self._lock = threading.Lock()
 
@@ -174,7 +195,8 @@ class PrintService:
     def on_ops(self, ops_of: Callable[[str], list[Op]], ops: list[Op]) -> list[PrintJob]:
         """Called after operations are stored. Each order's tickets come from comparing the order before and
         after this batch, so a fire prints only lines not sent yet, a void of a sent line prints at once,
-        and a change (void plus a new line plus a fire, sent together) prints as one ticket."""
+        and a change (void plus a new line plus a fire, sent together) prints as one ticket. A batch taken
+        while no backend answered prints headed "late", with the time the operator took it."""
         if not self.printers:
             return []
         jobs: list[PrintJob] = []
@@ -189,10 +211,19 @@ class PrintService:
             sent, voided = kitchen_changes(before, after)
             if sent or voided:
                 key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
-                jobs.extend(self.send(after, sent, voided, key=key.op_id))
+                late = taken_offline(batch, self._now(), self._late_after_ms)
+                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late))
         return jobs
 
-    def send(self, state: OrderState, sent: list[Line], voided: list[Line], *, key: str) -> list[PrintJob]:
+    def send(
+        self,
+        state: OrderState,
+        sent: list[Line],
+        voided: list[Line],
+        *,
+        key: str,
+        late: datetime | None = None,
+    ) -> list[PrintJob]:
         with self._lock:
             ticket_no = next(self._tickets)
         jobs = []
@@ -205,6 +236,7 @@ class PrintService:
                 station=printer.name,
                 ticket_no=ticket_no,
                 routes=self._routes(printer, i == 0, named),
+                late=late,
             )
             if ticket is None:
                 continue

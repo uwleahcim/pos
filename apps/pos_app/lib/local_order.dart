@@ -7,7 +7,9 @@
 library;
 
 import 'api.dart';
+import 'floor.dart';
 import 'menu.dart';
+import 'outbox.dart';
 
 /// What the screen knew about a line it added: the price the menu showed, the choices picked, and the dish,
 /// so the line can be shown priced and reopened before the backend has answered.
@@ -129,6 +131,69 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
     total: money(subtotal + tax),
     estimated: true,
   );
+}
+
+/// This screen's own price for a configured line, from the menu it has: the size's price plus every chosen
+/// extra that costs something (a choice marked "no" is free, as the backend makes it), with a problem for
+/// each required choice still missing. Used only while no backend answers (ADR 6); the backend prices the
+/// line for real once it is back.
+Priced localPrice(String name, List<VariantOffer> variants, ItemDetail? detail, LineRequest request) {
+  final variant = variants.where((v) => v.variantId == request.variantId).firstOrNull ?? variants.firstOrNull;
+  var unit = variant == null ? 0 : cents(variant.price);
+  final problems = <String>[];
+  for (final g in detail?.groups ?? const <GroupDetail>[]) {
+    final picked = request.selections[g.groupId] ?? const <String>[];
+    if (g.required && picked.length < g.minSelect) problems.add('Choose ${g.name.toLowerCase()}');
+    for (final o in g.options) {
+      if (picked.contains(o.optionId) && !o.free && request.prefixes[o.optionId] != 'no') unit += cents(o.price);
+    }
+  }
+  return Priced(name: name, unitPrice: money(unit), problems: problems, estimated: true);
+}
+
+/// Orders this device opened that no backend has heard of yet (their `create` is still queued): the list
+/// and the floor map show them while the screen is capturing only, so a check can be reopened to add to it.
+List<Order> queuedOrders(Outbox outbox) {
+  final byOrder = <String, List<Map<String, dynamic>>>{};
+  for (final op in outbox.pendingOps) {
+    byOrder.putIfAbsent(op['order_id'] as String, () => []).add(op);
+  }
+  return [
+    for (final MapEntry(key: id, value: ops) in byOrder.entries)
+      if (ops.any((op) => op['kind'] == 'create')) withLocalOps(Order.empty(id), ops),
+  ];
+}
+
+/// The same orders as checks on their tables, for the floor map.
+Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
+  final out = <String, List<TableCheck>>{};
+  final opened = <String, int>{}; // order id -> when its create was stamped
+  final firedCourses = <String, Set<String>>{};
+  for (final op in outbox.pendingOps) {
+    final id = op['order_id'] as String;
+    final wall = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
+    if (op['kind'] == 'create' && wall != null) opened[id] = wall;
+    if (op['kind'] == 'fire') {
+      firedCourses.putIfAbsent(id, () => {}).add((op['data'] as Map?)?['course'] as String? ?? '*');
+    }
+  }
+  for (final order in queuedOrders(outbox)) {
+    if (order.table.isEmpty || !order.isOpen) continue;
+    out
+        .putIfAbsent(order.table, () => [])
+        .add(
+          TableCheck(
+            orderId: order.orderId,
+            guests: order.fields['guests'] as int?,
+            server: order.fields['server'] as String?,
+            openedMs: opened[order.orderId],
+            items: order.activeLines.fold(0, (n, l) => n + l.qty),
+            fired: [...?firedCourses[order.orderId]],
+            held: order.heldCourses.toList(),
+          ),
+        );
+  }
+  return out;
 }
 
 /// "17.95" -> 1795.

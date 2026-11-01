@@ -278,7 +278,7 @@ class LineRequest {
 
 /// The backend's price for a configured line: what it costs and anything wrong with it.
 class Priced {
-  const Priced({required this.name, required this.unitPrice, required this.problems});
+  const Priced({required this.name, required this.unitPrice, required this.problems, this.estimated = false});
 
   factory Priced.fromJson(Map<String, dynamic> json) => Priced(
     name: json['name'] as String? ?? '',
@@ -291,6 +291,9 @@ class Priced {
   final String name;
   final String unitPrice;
   final List<String> problems;
+
+  /// Worked out on this screen from the menu it has, because no backend answered (ADR 6).
+  final bool estimated;
 
   bool get ok => problems.isEmpty;
 }

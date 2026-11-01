@@ -196,3 +196,26 @@ def test_an_empty_check_still_names_its_tax_rates():
     check = c.get("/orders/o1/check").json()
     assert (check["subtotal"], check["tax"], check["tax_rate_pct"]) == ("0", "0.00", "7.00")
     assert [t["rate_pct"] for t in check["tax_lines"]] == ["6.25", "0.75"]
+
+
+def test_every_dish_on_the_open_menus_comes_with_its_choices_in_one_read():
+    """ADR 6: a terminal saves these with the menu so it can still configure a dish with no backend."""
+    c = client()
+    menus = c.get("/menu").json()["menus"]
+    entries = set()
+
+    def walk(sections):
+        for s in sections:
+            entries.update((e["item"], e["entry_id"]) for e in s["entries"])
+            walk(s["sections"])
+
+    for m in menus:
+        walk(m["sections"])
+    bulk = c.get("/menu/items").json()
+    assert bulk["revision"] == c.get("/menu/revision").json()["revision"]
+    details = {(d["item"], d["entry_id"]): d for d in bulk["items"]}
+    assert set(details) == entries and len(bulk["items"]) == len(entries)
+    gtc = details[("GTC", "dinner:87")]
+    one = c.get("/menu/items/GTC", params={"entry": "dinner:87"}).json()
+    assert gtc["name"] == one["name"] and gtc["variants"] == one["variants"] and gtc["groups"] == one["groups"]
+    assert {g["group_id"] for g in gtc["groups"]} >= {"spice", "rice"}

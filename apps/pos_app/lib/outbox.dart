@@ -78,6 +78,9 @@ class Outbox extends ChangeNotifier {
   /// the backend in one batch and the kitchen gets one ticket. Returns the op ids.
   Future<List<String>> addAll(String orderId, List<(String, Map<String, dynamic>)> ops) async {
     final ids = <String>[];
+    // Taken while no backend answered (ADR 6): the backend heads the kitchen ticket "late" and the day's
+    // report lists it.
+    final offline = api.connection.value.capturing;
     for (final (kind, data) in ops) {
       final op = {
         'op_id': newId(),
@@ -85,7 +88,7 @@ class Outbox extends ChangeNotifier {
         'hlc': _clock.next(),
         'device': settings.device,
         'kind': kind,
-        'data': data,
+        'data': offline ? {...data, 'offline': true} : data,
       };
       _pending.add(op);
       ids.add(op['op_id'] as String);

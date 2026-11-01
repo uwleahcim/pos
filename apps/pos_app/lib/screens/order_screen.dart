@@ -297,7 +297,9 @@ class _OrderScreenState extends State<OrderScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final order = _order;
-    final check = order == null ? null : estimateCheck(_readCheck, order, _local);
+    // With no check from a backend yet (a check opened while nothing answers), the tax comes from the rates
+    // the last priced check carried, and the total shows as an estimate until a backend prices it.
+    final check = order == null ? null : estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local);
     final open = order?.isOpen ?? true;
     final seats = _seats(order);
     final ticket = _TicketPanel(
@@ -350,6 +352,7 @@ class _OrderScreenState extends State<OrderScreen> {
       ),
       body: Column(
         children: [
+          CaptureBanner(api: widget.api, outbox: widget.outbox),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {

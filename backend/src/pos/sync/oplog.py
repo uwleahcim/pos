@@ -30,6 +30,8 @@ KINDS = frozenset(
         "void_order",  # data: reason?
     }
 )
+"""Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
+(ADR 6, capture-only mode). The replay ignores it; the printer heads the ticket "late" and reports list it."""
 ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "server_id", "ticket_no"})
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
 
