@@ -40,6 +40,8 @@ jobs:
         run: .venv/bin/pytest
       - name: Sync simulation (pulled cables)
         run: .venv/bin/python -m pos.sync.simulate --replicas 4 --rounds 400 --drop 0.4 --dup 0.2 --seed 7
+      - name: Sync simulation (every backend dead mid-service, ADR 6)
+        run: .venv/bin/python -m pos.sync.simulate --outage --replicas 4 --rounds 300 --drop 0.4 --dup 0.2 --seed 7
 
   hub:
     runs-on: ubuntu-latest

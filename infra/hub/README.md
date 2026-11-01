@@ -96,6 +96,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | What | Where |
 | --- | --- |
 | Secrets (database password, node name) and `POS_PRINTERS` | `/opt/pos/.env`, readable by root only |
+| `POS_LOCATION` (the restaurant's name in texts to customers) and `POS_MESSAGING` (`log` until a provider is wired in; see `docs/counter-mode.md`) | `/opt/pos/.env`, optional |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |

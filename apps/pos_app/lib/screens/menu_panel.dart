@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../local_order.dart' show localPrice;
 import '../menu.dart';
 import 'compact.dart';
 import 'drill_down.dart';
@@ -158,8 +159,22 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           _itemCache.clear();
         });
       }
+      if (_prefetched != revision) unawaited(_prefetch(revision));
     } on ApiException catch (err) {
       if (mounted) setState(() => _error = err.toString());
+    }
+  }
+
+  int? _prefetched; // the revision whose dishes are saved on this device
+
+  /// Saves every dish's sizes and choices with the menu, so the screen can still configure a dish when no
+  /// backend answers (ADR 6). Quietly skipped when nothing answers or the hub is older than this call.
+  Future<void> _prefetch(int revision) async {
+    try {
+      await widget.api.prefetchItems();
+      _prefetched = revision;
+    } on ApiException {
+      // next load tries again
     }
   }
 
@@ -1559,7 +1574,13 @@ class _ItemSheetState extends State<ItemSheet> {
         final priced = await widget.api.price(_request);
         if (mounted) setState(() => _priced = priced);
       } on ApiException catch (err) {
-        if (mounted) setState(() => _error = err.toString());
+        if (!mounted) return;
+        if (err.status == null) {
+          // No backend answers (ADR 6): the menu's own prices, marked estimated, so the dish still goes on.
+          setState(() => _priced = localPrice(_lineName, widget.entry.variants, _detail, _request));
+        } else {
+          setState(() => _error = err.toString());
+        }
       }
     });
   }
@@ -1766,13 +1787,24 @@ class _ItemSheetState extends State<ItemSheet> {
                           if (total != null)
                             Padding(
                               padding: const EdgeInsets.only(right: 6),
-                              child: Text(
-                                '\$$total',
-                                style: theme.textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  color: scheme.primary,
-                                  fontFeatures: PosTheme.tabular,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '\$$total',
+                                    style: theme.textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      color: scheme.primary,
+                                      fontFeatures: PosTheme.tabular,
+                                    ),
+                                  ),
+                                  if (priced!.estimated)
+                                    Text(
+                                      'estimated',
+                                      key: const ValueKey('price-estimated'),
+                                      style: theme.textTheme.labelSmall?.copyWith(color: scheme.error),
+                                    ),
+                                ],
                               ),
                             ),
                         ],

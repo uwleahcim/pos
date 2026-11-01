@@ -5,15 +5,19 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../floor.dart';
+import '../local_order.dart';
+import '../outbox.dart';
 import 'theme.dart';
 
 /// The restaurant's floor as drawn on its plan: tables coloured by what is happening at them, a room picker,
-/// and a tap that opens the table's check (or seats a new party).
+/// and a tap that opens the table's check (or seats a new party). With an [outbox], the checks this device
+/// opened that no backend knows yet are on their tables too (ADR 6).
 class FloorView extends StatefulWidget {
-  const FloorView({super.key, required this.api, required this.onTable});
+  const FloorView({super.key, required this.api, required this.onTable, this.outbox});
 
   final PosApi api;
   final void Function(FloorPlan plan, TableSpot table) onTable;
+  final Outbox? outbox;
 
   @override
   State<FloorView> createState() => FloorViewState();
@@ -28,13 +32,19 @@ class FloorViewState extends State<FloorView> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => refresh());
+    widget.outbox?.addListener(_onOutbox);
     refresh();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    widget.outbox?.removeListener(_onOutbox);
     super.dispose();
+  }
+
+  void _onOutbox() {
+    if (mounted) setState(() {});
   }
 
   Future<void> refresh() async {
@@ -48,7 +58,8 @@ class FloorViewState extends State<FloorView> {
 
   @override
   Widget build(BuildContext context) {
-    final plan = _plan;
+    final outbox = widget.outbox;
+    final plan = outbox == null ? _plan : _plan?.withChecks(queuedChecks(outbox));
     if (plan == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;

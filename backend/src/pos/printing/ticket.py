@@ -40,6 +40,11 @@ class Ticket:
     course: str | None = None
     at: datetime = field(default_factory=datetime.now)
     reprinted_from: str | None = None  # "Wok" on a backup printer's copy
+    late: datetime | None = None  # when the operator took it, if it reached the backend late (ADR 6)
+    order_no: int | None = None  # counter mode: the number called at the shelf
+    customer: str = ""  # the name on a takeout order
+    channel: str = ""  # counter | phone | online | delivery | catering
+    promised: datetime | None = None  # a takeout order's promised time
 
 
 def render(
@@ -48,20 +53,40 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void") else 1)
+        b.beep(3 if ticket.kind in ("modify", "void") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
         "void": f"*** VOID *** {ticket.station}",
         "reprint": f"REPRINT {ticket.station}",
     }
+    if ticket.late:
+        # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
+        # kitchen may have cooked it from a handwritten note already, so the ticket says so first.
+        b.line("*** LATE ***", big=True, bold=True, center=True, invert=True)
     b.line(header.get(ticket.kind, ticket.station).upper(), big=True, bold=True, center=True)
+    if ticket.late:
+        b.line(
+            f"taken {ticket.late.strftime('%H:%M')} offline, printed {ticket.at.strftime('%H:%M')}",
+            center=True,
+            bold=True,
+        )
     if ticket.reprinted_from:
         b.line(f"reprinted from {ticket.reprinted_from}", center=True, bold=True)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))
-    table = f"Table {ticket.table}" if ticket.table else "No table"
-    guests = f"  {ticket.guests} guests" if ticket.guests else ""
-    b.line(f"{table}{guests}", bold=True)
+    if ticket.order_no is not None or ticket.customer:
+        # A takeout order is called by number and name at the shelf, so they are the biggest thing on it.
+        number = f"#{ticket.order_no}  " if ticket.order_no is not None else ""
+        b.line(f"{number}{ticket.customer}".strip().upper(), big=True, bold=True)
+    if ticket.promised is not None:
+        b.line(f"READY BY {ticket.promised:%H:%M}", bold=True)
+    if ticket.table:
+        guests = f"  {ticket.guests} guests" if ticket.guests else ""
+        b.line(f"Table {ticket.table}{guests}", bold=True)
+    elif ticket.channel:
+        b.line(ticket.channel.replace("_", " ").capitalize(), bold=True)
+    else:
+        b.line("No table", bold=True)
     if ticket.server:
         b.line(f"Server {ticket.server}")
     if ticket.course:

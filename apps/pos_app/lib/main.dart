@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'cache.dart';
 import 'camera.dart';
 import 'outbox.dart';
 import 'photos.dart';
@@ -15,7 +16,9 @@ import 'settings.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = await Settings.load();
-  final api = PosApi(settings);
+  // The last menu, dishes, floor and tax rates read stay on disk, so the screen can still take orders when
+  // no backend answers (ADR 6).
+  final api = PosApi(settings, cache: await ReadCache.load());
   final outbox = Outbox(api, settings);
   await outbox.restore();
   final session = Session(api);

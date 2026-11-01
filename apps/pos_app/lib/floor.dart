@@ -144,4 +144,17 @@ class FloorPlan {
   final Map<String, List<TableCheck>> status;
 
   List<TableCheck> checksAt(String tableId) => status[tableId] ?? const [];
+
+  /// The same plan with more checks on its tables: the ones this device opened that no backend knows yet.
+  FloorPlan withChecks(Map<String, List<TableCheck>> extra) {
+    if (extra.isEmpty) return this;
+    final merged = {
+      for (final e in status.entries) e.key: [...e.value],
+    };
+    for (final MapEntry(key: table, value: checks) in extra.entries) {
+      final here = merged.putIfAbsent(table, () => []);
+      here.addAll(checks.where((c) => !here.any((h) => h.orderId == c.orderId)));
+    }
+    return FloorPlan(width: width, height: height, rooms: rooms, tables: tables, status: merged, courses: courses);
+  }
 }

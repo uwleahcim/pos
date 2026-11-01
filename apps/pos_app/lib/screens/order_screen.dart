@@ -9,8 +9,12 @@ import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../photos.dart';
+import '../pricing.dart';
+import '../takeout.dart';
 import 'compact.dart';
+import 'discount_sheet.dart';
 import 'menu_panel.dart';
+import 'pay_dialog.dart';
 import 'status_bar.dart';
 import 'theme.dart';
 
@@ -23,6 +27,7 @@ class OrderScreen extends StatefulWidget {
     required this.photos,
     required this.orderId,
     this.courses = Course.defaults,
+    this.staffName,
   });
 
   final PosApi api;
@@ -30,6 +35,9 @@ class OrderScreen extends StatefulWidget {
   final PhotoQueue photos;
   final String orderId;
   final List<Course> courses;
+
+  /// Who is signed in, named on each discount they apply.
+  final String? staffName;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -96,7 +104,18 @@ class _OrderScreenState extends State<OrderScreen> {
     return base == null ? null : withLocalOps(base, local);
   }
 
-  static const _photographed = {'fire', 'close', 'reopen', 'void_line', 'void_order'};
+  static const _photographed = {
+    'fire',
+    'close',
+    'reopen',
+    'void_line',
+    'void_order',
+    'discount',
+    'remove_discount',
+    'charge',
+    'remove_charge',
+    'pay',
+  };
 
   Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) => _appendAll([(kind, data)]);
 
@@ -129,11 +148,124 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
 
+  /// A discount or a charge from the location's rules. The hub refuses what its rules do not allow, so the
+  /// sheet shows them first; a reason that needs a manager asks for the PIN before anything is sent.
+  Future<void> _discount() async {
+    if (!widget.api.connection.value.isOnline) {
+      _say('Discounts need a hub or the cloud, and none answers now.');
+      return;
+    }
+    final PricingRules rules;
+    try {
+      rules = await widget.api.pricingRules();
+    } on ApiException catch (err) {
+      _say(err.message);
+      return;
+    }
+    if (!mounted) return;
+    final check = _readCheck;
+    final choice = await showDialog<Adjustment>(
+      context: context,
+      builder: (_) =>
+          DiscountSheet(rules: rules, lines: check?.lines ?? const [], existing: check?.discounts ?? const []),
+    );
+    if (choice == null || !mounted) return;
+    String? approval;
+    if (choice.needsManager) {
+      approval = await _approve(choice.label);
+      if (approval == null) return;
+    }
+    final id = widget.outbox.newId();
+    await _append(choice.op, {
+      choice.op == 'discount' ? 'discount_id' : 'charge_id': id,
+      ...choice.data,
+      'applied_by': ?widget.staffName,
+      'approval': ?approval,
+    });
+  }
+
+  /// A manager's PIN for one adjustment on this order; null when they walk away.
+  Future<String?> _approve(String what) => showDialog<String>(
+    context: context,
+    builder: (_) =>
+        ApprovalDialog(api: widget.api, device: widget.api.settings.device, orderId: widget.orderId, what: what),
+  );
+
+  Future<void> _removeDiscount(CheckDiscount discount) =>
+      _append('remove_discount', {'discount_id': discount.discountId});
+
+  /// An automatic charge (the gratuity on a large party) comes off only with a manager when the rules say
+  /// so; one that staff put on comes off freely.
+  Future<void> _removeCharge(CheckCharge charge) async {
+    String? approval;
+    if (charge.automatic) {
+      final bool needsManager;
+      try {
+        needsManager = (await widget.api.pricingRules()).charge(charge.chargeId)?.needsManagerToRemove ?? true;
+      } on ApiException catch (err) {
+        _say(err.message);
+        return;
+      }
+      if (!mounted) return;
+      if (needsManager) {
+        approval = await _approve('Taking off ${charge.name}');
+        if (approval == null) return;
+      }
+    }
+    await _append('remove_charge', {'charge_id': charge.chargeId, 'approval': ?approval});
+  }
+
   /// Sends a held course (or everything) to the kitchen. Sending has two forms: stay on the check for the
   /// next round, or leave it for the next table.
   Future<void> _fire(String course, {bool leave = false}) async {
     await _append('fire', {'course': course});
     if (leave && mounted) Navigator.of(context).pop();
+  }
+
+  /// Counter mode (architecture section 12): the check is paid before the kitchen sees it, the change shows,
+  /// and the screen goes back for the next customer. Where the location lets the channel pay at pickup (a
+  /// phone order), the order can go to the kitchen unpaid and the ready text says so.
+  Future<void> _payAndSend(Order order, Check check) async {
+    var payAtPickup = false;
+    try {
+      payAtPickup = (await widget.api.quotes()).mayPayAtPickup(order.channel);
+    } on ApiException {
+      // nothing answers: cash and paid elsewhere need nothing from a backend
+    }
+    if (!mounted) return;
+    final choice = await showDialog<PayChoice>(
+      context: context,
+      builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup),
+    );
+    if (choice == null || !mounted) return;
+    await _appendAll([
+      if (choice.takesMoney)
+        (
+          'pay',
+          {
+            'payment_id': widget.outbox.newId(),
+            'method': choice.method,
+            'amount': check.due,
+            'tendered': ?choice.tendered,
+            if (choice.note.isNotEmpty) 'note': choice.note,
+            'by': ?widget.staffName,
+          },
+        ),
+      ('fire', {'course': '*'}),
+    ]);
+    if (!mounted) return;
+    final change = choice.tendered == null ? 0 : cents(choice.tendered!) - cents(check.due);
+    if (change > 0) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
+          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+        ),
+      );
+      if (!mounted) return;
+    }
+    Navigator.of(context).pop();
   }
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -297,7 +429,9 @@ class _OrderScreenState extends State<OrderScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final order = _order;
-    final check = order == null ? null : estimateCheck(_readCheck, order, _local);
+    // With no check from a backend yet (a check opened while nothing answers), the tax comes from the rates
+    // the last priced check carried, and the total shows as an estimate until a backend prices it.
+    final check = order == null ? null : estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local);
     final open = order?.isOpen ?? true;
     final seats = _seats(order);
     final ticket = _TicketPanel(
@@ -309,20 +443,23 @@ class _OrderScreenState extends State<OrderScreen> {
       onEdit: _edit,
       onQty: _setQty,
       onTypeQty: _typeQty,
+      onRemoveDiscount: _removeDiscount,
+      onRemoveCharge: _removeCharge,
     );
     final menu = open
         ? Column(
             children: [
-              _SeatCourseBar(
-                seats: seats,
-                seat: _seat,
-                course: _course,
-                courses: widget.courses,
-                onSeat: (seat) => setState(() => _seat = seat),
-                onAddSeat: () => _setSeats(order, seats + 1),
-                onRemoveSeat: () => _setSeats(order, seats - 1),
-                onCourse: (course) => setState(() => _course = course),
-              ),
+              if (order?.isTakeout != true) // a table's seats and courses; a to-go order has neither
+                _SeatCourseBar(
+                  seats: seats,
+                  seat: _seat,
+                  course: _course,
+                  courses: widget.courses,
+                  onSeat: (seat) => setState(() => _seat = seat),
+                  onAddSeat: () => _setSeats(order, seats + 1),
+                  onRemoveSeat: () => _setSeats(order, seats - 1),
+                  onCourse: (course) => setState(() => _course = course),
+                ),
               Expanded(
                 child: MenuPanel(api: widget.api, onChosen: _add, qtyOf: (entry) => _entryQty(order, entry)),
               ),
@@ -340,16 +477,30 @@ class _OrderScreenState extends State<OrderScreen> {
           );
     return Scaffold(
       appBar: AppBar(
-        title: Text(order == null ? 'Order' : 'Table ${order.table} · ${order.status}'),
+        title: Text(
+          order == null
+              ? 'Order'
+              : order.isTakeout
+              ? _takeoutTitle(order)
+              : 'Table ${order.table} · ${order.status}',
+        ),
         actions: [
           StatusIcon(api: widget.api, outbox: widget.outbox),
-          if (order != null && open) _FireMenu(order: order, courses: widget.courses, onFire: _fire),
+          if (order != null && open && !order.isTakeout)
+            _FireMenu(order: order, courses: widget.courses, onFire: _fire),
+          // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
+          if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
+            check != null && cents(check.due) > 0
+                ? _Action('Pay & send', Icons.point_of_sale, () => _payAndSend(order, check))
+                : _Action('Send', Icons.send, () => _fire('*', leave: true)),
+          if (order != null && open) _Action('Discount', Icons.percent, _discount),
           if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
           if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
         ],
       ),
       body: Column(
         children: [
+          CaptureBanner(api: widget.api, outbox: widget.outbox),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -400,6 +551,8 @@ class _TicketPanel extends StatefulWidget {
     required this.onEdit,
     required this.onQty,
     required this.onTypeQty,
+    required this.onRemoveDiscount,
+    required this.onRemoveCharge,
   });
 
   final Order? order;
@@ -410,6 +563,8 @@ class _TicketPanel extends StatefulWidget {
   final ValueChanged<Line> onEdit;
   final void Function(Line line, int qty) onQty;
   final ValueChanged<Line> onTypeQty;
+  final ValueChanged<CheckDiscount> onRemoveDiscount;
+  final ValueChanged<CheckCharge> onRemoveCharge;
 
   @override
   State<_TicketPanel> createState() => _TicketPanelState();
@@ -632,10 +787,29 @@ class _TicketPanelState extends State<_TicketPanel> {
               child: Column(
                 children: [
                   _TotalRow('Subtotal', check.subtotal),
+                  // Each discount and charge is its own row; a tap takes it off (a manager's PIN when the
+                  // rules ask for one). The receipt shows them the same way.
+                  for (final d in check.discounts)
+                    _TotalRow(
+                      _discountLabel(d, check),
+                      '−${d.amount}',
+                      key: ValueKey('discount-${d.discountId}'),
+                      onTap: open ? () => widget.onRemoveDiscount(d) : null,
+                    ),
+                  for (final c in check.charges)
+                    _TotalRow(
+                      c.name,
+                      c.amount,
+                      key: ValueKey('charge-${c.chargeId}'),
+                      onTap: open ? () => widget.onRemoveCharge(c) : null,
+                    ),
                   const SizedBox(height: 2),
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
                   _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
+                  for (final p in order.payments)
+                    _TotalRow(_paymentLabel(p), '−${p.amount}', key: ValueKey('paid-${p.paymentId}')),
+                  if (order.payments.isNotEmpty) _TotalRow('Due', check.due, strong: true, key: const ValueKey('due')),
                 ],
               ),
             ),
@@ -962,6 +1136,23 @@ class _FireMenu extends StatelessWidget {
   }
 }
 
+/// "#42 Linda · 18:05" for the app bar of a to-go order; the hub gives the number when the create lands.
+String _takeoutTitle(Order order) => [
+  '#${order.orderNo ?? '…'} ${order.customerName.isEmpty ? 'To go' : order.customerName}',
+  if (order.promisedAt != null) clockTime(order.promisedAt!),
+  if (!order.isOpen) order.status,
+].join(' · ');
+
+/// "Paid cash (tendered 20.00)", "Paid elsewhere · sending".
+String _paymentLabel(Payment p) =>
+    ['Paid ${p.method}${p.tendered != null ? ' (tendered ${p.tendered})' : ''}', if (p.pending) 'sending'].join(' · ');
+
+/// "Manager comp · on Peking Duck · Mike approved".
+String _discountLabel(CheckDiscount d, Check check) {
+  final on = d.lineId == null ? null : check.line(d.lineId!)?.name;
+  return [d.name, if (on != null) 'on $on', if (d.approvedBy != null) '${d.approvedBy} approved'].join(' · ');
+}
+
 /// 7.00 -> 7, 6.25 -> 6.25.
 String _rate(String pct) {
   final value = double.tryParse(pct);
@@ -970,11 +1161,14 @@ String _rate(String pct) {
 }
 
 class _TotalRow extends StatelessWidget {
-  const _TotalRow(this.label, this.amount, {this.strong = false});
+  const _TotalRow(this.label, this.amount, {super.key, this.strong = false, this.onTap});
 
   final String label;
   final String amount;
   final bool strong;
+
+  /// Set on a discount or charge row: a tap takes it off.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -982,12 +1176,23 @@ class _TotalRow extends StatelessWidget {
     final baseStyle = strong
         ? theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)
         : theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
-    return Row(
+    final row = Row(
       children: [
-        Text(label, style: baseStyle),
-        const Spacer(),
+        Expanded(
+          child: Text(label, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         Text(amount, style: baseStyle?.copyWith(fontFeatures: PosTheme.tabular)),
+        if (onTap != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
+          ),
       ],
+    );
+    if (onTap == null) return row;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: row),
     );
   }
 }

@@ -28,9 +28,38 @@ KINDS = frozenset(
         "close",
         "reopen",
         "void_order",  # data: reason?
+        "discount",  # data: discount_id, reason, kind (percent|amount|comp), value?, line_id?, note?, applied_by?
+        "remove_discount",  # data: discount_id
+        "charge",  # data: charge_id, code (a charge rule), + the rule's snapshot the hub fills in
+        "remove_charge",  # data: charge_id (a rule's code takes off the automatic charge it applies)
+        "pay",  # data: payment_id, method (cash|elsewhere|card), amount, tendered?, note?, by?
     }
 )
-ORDER_FIELDS = frozenset({"table", "guests", "note", "order_type", "server", "server_id", "ticket_no"})
+"""Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
+(ADR 6, capture-only mode). The replay ignores it; the printer heads the ticket "late" and reports list it.
+A `discount`, `charge` or `remove_charge` may carry `approval`, a manager's token; the hub swaps it for
+`approved_by` (who) before storing (pos.orders.adjustments)."""
+ORDER_FIELDS = frozenset(
+    {
+        "table",
+        "guests",
+        "note",
+        "order_type",
+        "server",
+        "server_id",
+        "ticket_no",
+        # Counter mode and takeout (architecture section 12): the hub numbers the order, the terminal names the
+        # customer, the channel it came in on, when it was promised for and how long was quoted.
+        "order_no",
+        "customer_name",
+        "phone",
+        "channel",  # counter | phone | online | delivery | catering
+        "promised_at",  # wall-clock ms; a future order waits on the hub until its lead time
+        "quoted_minutes",
+        "stage",  # new | ready | picked_up
+        "locale",  # the customer's language for texts
+    }
+)
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
 
 
@@ -76,6 +105,89 @@ class Line:
 
 
 @dataclass
+class Discount:
+    """A price brought down after the engine set it: a percentage, an amount or a comp, on one line or
+    the whole check, with its reason and who stood behind it. Removed ones stay, inactive, for the audit."""
+
+    discount_id: str
+    reason: str = ""
+    kind: str = "percent"  # percent | amount | comp
+    value: str = "0"
+    line_id: str | None = None
+    note: str = ""
+    applied_by: str = ""
+    approved_by: dict[str, Any] | None = None
+    active: bool = True
+    stamp: HLC | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "reason": self.reason,
+            "kind": self.kind,
+            "value": self.value,
+            "line_id": self.line_id,
+            "note": self.note,
+            "applied_by": self.applied_by,
+            "approved_by": self.approved_by,
+            "active": self.active,
+        }
+
+
+@dataclass
+class Charge:
+    """A service charge staff put on (with the rule's snapshot the hub filled in), or an automatic one
+    taken off: an inactive charge under a rule's code keeps that rule's charge off the check."""
+
+    charge_id: str
+    code: str = ""
+    name: str = ""
+    kind: str = "amount"  # percent | amount
+    value: str = "0"
+    tax_class: str = "service_charge"
+    gratuity: bool = False
+    applied_by: str = ""
+    approved_by: dict[str, Any] | None = None
+    active: bool = True
+    stamp: HLC | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "name": self.name,
+            "kind": self.kind,
+            "value": self.value,
+            "tax_class": self.tax_class,
+            "gratuity": self.gratuity,
+            "applied_by": self.applied_by,
+            "approved_by": self.approved_by,
+            "active": self.active,
+        }
+
+
+@dataclass
+class Payment:
+    """Money taken on the order: cash at the counter, or settled elsewhere (a phone order paid through
+    another system). Refunds and card payments through a provider come with the payments phase."""
+
+    payment_id: str
+    method: str = "cash"  # cash | elsewhere | card
+    amount: str = "0"
+    tendered: str | None = None  # cash handed over; the change is tendered - amount
+    note: str = ""
+    by: str = ""
+    stamp: HLC | None = None
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "method": self.method,
+            "amount": self.amount,
+            "tendered": self.tendered,
+            "note": self.note,
+            "by": self.by,
+        }
+
+
+@dataclass
 class OrderState:
     order_id: str
     status: str = "open"  # open | closed | void
@@ -83,6 +195,9 @@ class OrderState:
     stamps: dict[str, HLC] = field(default_factory=dict)
     lines: dict[str, Line] = field(default_factory=dict)
     fired: dict[str, HLC] = field(default_factory=dict)  # course -> first fire stamp
+    discounts: dict[str, Discount] = field(default_factory=dict)
+    charges: dict[str, Charge] = field(default_factory=dict)
+    payments: dict[str, Payment] = field(default_factory=dict)
     applied: list[str] = field(default_factory=list)  # op ids in replay order
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
@@ -110,6 +225,9 @@ class OrderState:
                 for line_id, line in sorted(self.lines.items())
             },
             "fired": {course: str(stamp) for course, stamp in sorted(self.fired.items())},
+            "discounts": {did: d.as_json() for did, d in sorted(self.discounts.items())},
+            "charges": {cid: c.as_json() for cid, c in sorted(self.charges.items())},
+            "payments": {pid: p.as_json() for pid, p in sorted(self.payments.items())},
         }
 
     def _fired_before(self, course: str | None) -> bool:
@@ -190,6 +308,62 @@ def apply(state: OrderState, op: Op) -> None:
 
     elif kind == "void_order":
         state.status = "void"
+
+    elif kind == "discount":
+        did = data["discount_id"]
+        if did not in state.discounts:  # already there, or removed first: a removal always wins
+            state.discounts[did] = Discount(
+                discount_id=did,
+                reason=str(data.get("reason", "")),
+                kind=str(data.get("kind", "percent")),
+                value=str(data.get("value", "0")),
+                line_id=data.get("line_id"),
+                note=str(data.get("note", "")),
+                applied_by=str(data.get("applied_by", "")),
+                approved_by=data.get("approved_by"),
+                stamp=op.hlc,
+            )
+
+    elif kind == "remove_discount":
+        did = data["discount_id"]
+        discount = state.discounts.setdefault(did, Discount(discount_id=did, stamp=op.hlc))
+        discount.active = False
+
+    elif kind == "charge":
+        cid = data["charge_id"]
+        if cid not in state.charges:  # a removal always wins here too
+            state.charges[cid] = Charge(
+                charge_id=cid,
+                code=str(data.get("code", cid)),
+                name=str(data.get("name", "")),
+                kind=str(data.get("kind", "amount")),
+                value=str(data.get("value", "0")),
+                tax_class=str(data.get("tax_class", "service_charge")),
+                gratuity=bool(data.get("gratuity", False)),
+                applied_by=str(data.get("applied_by", "")),
+                approved_by=data.get("approved_by"),
+                stamp=op.hlc,
+            )
+
+    elif kind == "remove_charge":
+        cid = data["charge_id"]
+        charge = state.charges.setdefault(cid, Charge(charge_id=cid, code=str(data.get("code", cid)), stamp=op.hlc))
+        charge.active = False
+        if data.get("approved_by") is not None:
+            charge.approved_by = data["approved_by"]
+
+    elif kind == "pay":
+        pid = data["payment_id"]
+        if pid not in state.payments:  # the same payment sent twice is one payment
+            state.payments[pid] = Payment(
+                payment_id=pid,
+                method=str(data.get("method", "cash")),
+                amount=str(data.get("amount", "0")),
+                tendered=None if data.get("tendered") is None else str(data["tendered"]),
+                note=str(data.get("note", "")),
+                by=str(data.get("by", "")),
+                stamp=op.hlc,
+            )
 
     state.applied.append(op.op_id)
     if state.first is None:

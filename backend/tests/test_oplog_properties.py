@@ -7,7 +7,7 @@ from hypothesis import strategies as st
 
 from pos.sync.hlc import HLC
 from pos.sync.oplog import Op, replay
-from pos.sync.simulate import run
+from pos.sync.simulate import run, run_outage
 
 from .conftest import T0
 
@@ -103,3 +103,15 @@ def test_a_void_always_wins_and_last_writer_wins_per_field(ops):
 def test_terminals_converge_once_the_cables_are_back(seed, replicas, rounds, drop, dup, lose_ack):
     report = run(seed=seed, replicas=replicas, rounds=rounds, drop=drop, dup=dup, lose_ack=lose_ack)
     assert report.converged, report
+
+
+@given(seed=st.integers(0, 2**31), replicas=st.integers(2, 4), outage_rounds=st.integers(5, 60))
+@settings(max_examples=25, deadline=None)
+def test_orders_captured_with_every_backend_dead_replay_on_the_hub_as_the_terminal_saw_them(
+    seed, replicas, outage_rounds
+):
+    """ADR 6: a terminal keeps ringing its own tables while nothing answers; when the hub is back, each of
+    those orders must come out of the hub's replay exactly as the terminal showed it, flagged for printing."""
+    report = run_outage(seed=seed, replicas=replicas, rounds=40, outage_rounds=outage_rounds)
+    assert report.ok, report
+    assert report.flagged == report.captured_ops

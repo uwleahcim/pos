@@ -22,6 +22,7 @@ from ..menu import admin
 from ..menu.defs import Definitions, StaleMenu
 from ..menu.service import MenuService
 from ..menu.sheet import export_workbook, import_workbook
+from .auth import manager_from
 
 MENU_EDITORS = frozenset({"manager", "owner"})
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -50,13 +51,7 @@ def add_menu_admin(app: FastAPI) -> None:
     app.state.tokens = getattr(app.state, "tokens", None) or Tokens()
 
     def manager(authorization: str | None) -> Grant:
-        token = (authorization or "").removeprefix("Bearer ").strip()
-        grant = app.state.tokens.verify(token) if token else None
-        if grant is None:
-            raise HTTPException(401, {"error": "sign_in", "message": "sign in with a manager PIN"})
-        if grant.role not in MENU_EDITORS:
-            raise HTTPException(403, {"error": "not_allowed", "role": grant.role})
-        return grant
+        return manager_from(app.state.tokens, authorization)
 
     def save(menu: MenuService, defs: Definitions, grant: Grant, revision: int | None) -> dict[str, Any]:
         checked = _checked(defs)

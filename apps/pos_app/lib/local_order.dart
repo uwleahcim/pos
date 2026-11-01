@@ -7,7 +7,9 @@
 library;
 
 import 'api.dart';
+import 'floor.dart';
 import 'menu.dart';
+import 'outbox.dart';
 
 /// What the screen knew about a line it added: the price the menu showed, the choices picked, and the dish,
 /// so the line can be shown priced and reopened before the backend has answered.
@@ -24,6 +26,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
   var status = order.status;
   final fields = {...order.fields};
   final lines = {for (final l in order.lines) l.lineId: l};
+  final payments = [...order.payments];
   for (final op in ops) {
     final data = (op['data'] as Map?)?.cast<String, dynamic>() ?? const {};
     switch (op['kind']) {
@@ -69,6 +72,21 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         if (status == 'closed') status = 'open';
       case 'void_order':
         status = 'void';
+      case 'pay':
+        final id = data['payment_id'] as String? ?? '';
+        if (id.isNotEmpty && !payments.any((p) => p.paymentId == id)) {
+          payments.add(
+            Payment(
+              paymentId: id,
+              method: data['method'] as String? ?? 'cash',
+              amount: data['amount']?.toString() ?? '0',
+              tendered: data['tendered']?.toString(),
+              note: data['note'] as String? ?? '',
+              by: data['by'] as String? ?? '',
+              pending: true,
+            ),
+          );
+        }
     }
   }
   return Order(
@@ -77,16 +95,23 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     fields: fields,
     lines: lines.values.toList(),
     fired: order.fired,
+    payments: payments,
   );
 }
 
 /// The backend's check, adjusted for lines this screen added or took off since: `estimated` until the backend
 /// has priced them. Tax uses the backend's own rates and rounding (half up, per component, on the check).
+///
+/// The discounts and charges the backend last applied are worked out again on the new lines in its order:
+/// on a line first (a comp is the line, a percentage of it, an amount up to it), then on the check, then
+/// charges on what is left, then tax on the discounted lines and the taxed charges.
 Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   final active = order.activeLines;
   final known = {for (final l in check?.lines ?? const <CheckLine>[]) l.lineId: l};
   final changed =
-      active.any((l) => known[l.lineId]?.qty != l.qty) || known.keys.any((id) => !active.any((l) => l.lineId == id));
+      active.any((l) => known[l.lineId]?.qty != l.qty) ||
+      known.keys.any((id) => !active.any((l) => l.lineId == id)) ||
+      order.payments.length != (check?.payments.length ?? 0);
   if (check != null && !changed) return check;
 
   final lines = <CheckLine>[];
@@ -117,18 +142,127 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
       ),
     );
   }
+
+  final net = {for (final l in lines) l.lineId: cents(l.total)}; // what each line is worth after its discounts
+  final off = {for (final l in lines) l.lineId: 0};
+  var checkOff = 0;
+  final discounts = <CheckDiscount>[];
+  for (final d in check?.discounts ?? const <CheckDiscount>[]) {
+    final lineId = d.lineId;
+    if (lineId != null && !net.containsKey(lineId)) continue; // its line came off
+    final base = lineId == null ? net.values.fold(0, (a, b) => a + b) - checkOff : net[lineId]!;
+    var amount = switch (d.kind) {
+      'comp' => base,
+      'percent' => _percentOf(base, d.value),
+      _ => cents(d.value),
+    };
+    amount = amount.clamp(0, base);
+    if (lineId == null) {
+      checkOff += amount;
+    } else {
+      net[lineId] = base - amount;
+      off[lineId] = off[lineId]! + amount;
+    }
+    discounts.add(d.withAmount(money(amount)));
+  }
+  final discounted = net.values.fold(0, (a, b) => a + b) - checkOff;
+  final charges = <CheckCharge>[];
+  var chargeTotal = 0;
+  var taxedCharges = 0;
+  for (final c in check?.charges ?? const <CheckCharge>[]) {
+    final amount = c.kind == 'percent' ? _percentOf(discounted, c.value) : cents(c.value);
+    chargeTotal += amount;
+    if (c.taxed) taxedCharges += amount;
+    charges.add(c.withAmount(money(amount)));
+  }
+
   final rates = [for (final t in check?.taxLines ?? const <TaxLine>[]) t.ratePct];
   if (rates.isEmpty && (check?.taxRatePct ?? '').isNotEmpty) rates.add(check!.taxRatePct);
-  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(subtotal, rate));
+  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(discounted + taxedCharges, rate));
+  final total = discounted + chargeTotal + tax;
+  final paid = order.payments.fold(0, (sum, p) => sum + cents(p.amount));
   return Check(
-    lines: lines,
+    lines: [
+      for (final l in lines)
+        off[l.lineId] == 0 && !l.isDiscounted ? l : l.withQty(l.qty, l.total, discount: money(off[l.lineId]!)),
+    ],
     subtotal: money(subtotal),
+    discounts: discounts,
+    discountTotal: money(subtotal - discounted),
+    charges: charges,
+    chargeTotal: money(chargeTotal),
     taxLines: check?.taxLines ?? const [],
     tax: money(tax),
     taxRatePct: check?.taxRatePct ?? '',
-    total: money(subtotal + tax),
+    total: money(total),
+    payments: check?.payments ?? const [],
+    paid: money(paid),
+    due: money(total - paid < 0 ? 0 : total - paid),
     estimated: true,
   );
+}
+
+/// This screen's own price for a configured line, from the menu it has: the size's price plus every chosen
+/// extra that costs something (a choice marked "no" is free, as the backend makes it), with a problem for
+/// each required choice still missing. Used only while no backend answers (ADR 6); the backend prices the
+/// line for real once it is back.
+Priced localPrice(String name, List<VariantOffer> variants, ItemDetail? detail, LineRequest request) {
+  final variant = variants.where((v) => v.variantId == request.variantId).firstOrNull ?? variants.firstOrNull;
+  var unit = variant == null ? 0 : cents(variant.price);
+  final problems = <String>[];
+  for (final g in detail?.groups ?? const <GroupDetail>[]) {
+    final picked = request.selections[g.groupId] ?? const <String>[];
+    if (g.required && picked.length < g.minSelect) problems.add('Choose ${g.name.toLowerCase()}');
+    for (final o in g.options) {
+      if (picked.contains(o.optionId) && !o.free && request.prefixes[o.optionId] != 'no') unit += cents(o.price);
+    }
+  }
+  return Priced(name: name, unitPrice: money(unit), problems: problems, estimated: true);
+}
+
+/// Orders this device opened that no backend has heard of yet (their `create` is still queued): the list
+/// and the floor map show them while the screen is capturing only, so a check can be reopened to add to it.
+List<Order> queuedOrders(Outbox outbox) {
+  final byOrder = <String, List<Map<String, dynamic>>>{};
+  for (final op in outbox.pendingOps) {
+    byOrder.putIfAbsent(op['order_id'] as String, () => []).add(op);
+  }
+  return [
+    for (final MapEntry(key: id, value: ops) in byOrder.entries)
+      if (ops.any((op) => op['kind'] == 'create')) withLocalOps(Order.empty(id), ops),
+  ];
+}
+
+/// The same orders as checks on their tables, for the floor map.
+Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
+  final out = <String, List<TableCheck>>{};
+  final opened = <String, int>{}; // order id -> when its create was stamped
+  final firedCourses = <String, Set<String>>{};
+  for (final op in outbox.pendingOps) {
+    final id = op['order_id'] as String;
+    final wall = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
+    if (op['kind'] == 'create' && wall != null) opened[id] = wall;
+    if (op['kind'] == 'fire') {
+      firedCourses.putIfAbsent(id, () => {}).add((op['data'] as Map?)?['course'] as String? ?? '*');
+    }
+  }
+  for (final order in queuedOrders(outbox)) {
+    if (order.table.isEmpty || !order.isOpen) continue;
+    out
+        .putIfAbsent(order.table, () => [])
+        .add(
+          TableCheck(
+            orderId: order.orderId,
+            guests: order.fields['guests'] as int?,
+            server: order.fields['server'] as String?,
+            openedMs: opened[order.orderId],
+            items: order.activeLines.fold(0, (n, l) => n + l.qty),
+            fired: [...?firedCourses[order.orderId]],
+            held: order.heldCourses.toList(),
+          ),
+        );
+  }
+  return out;
 }
 
 /// "17.95" -> 1795.
