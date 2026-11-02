@@ -48,8 +48,9 @@ known by its table. Offline (ADR 6) the check shows `#…` until the create reac
 
 ## Quote times
 
-A manager sets the minutes per channel, and which channels may pay at pickup, under **Quote times**
-(manager PIN). The hub keeps them for every terminal: `GET /settings/quotes`, `PUT` with a manager
+A manager sets the minutes per channel, and which channels may pay at pickup, under **Location** ›
+**Quote times** (manager PIN; see `location-settings.md`). The hub keeps them for every terminal:
+`GET /settings/quotes`, `PUT` with a manager
 session token. Defaults: counter 15, phone 20, online 25, delivery 45 minutes; phone orders may pay at
 pickup. Kitchen pacing will quote the times itself in phase 2.
 

@@ -2,7 +2,8 @@
 
 The plan is data (`data/floor.json`, or `POS_FLOOR`): rooms, and tables with a label, seat count, shape and
 position in the plan's own frame, so the app can draw it at any size. Which tables are busy is never stored:
-it is read from the open orders, whose `table` field holds the table id.
+it is read from the open orders, whose `table` field holds the table id. The courses a line can belong to
+are a location setting (`pos.settings`, key `coursing`), not part of the plan.
 """
 
 from __future__ import annotations
@@ -18,14 +19,6 @@ from typing import Any
 from ..sync.oplog import OrderState
 
 DEFAULT = Path(__file__).with_name("data") / "floor.json"
-
-COURSES = (
-    {"id": "drinks", "name": "Drinks"},
-    {"id": "1", "name": "Appetizers"},
-    {"id": "2", "name": "Entrees"},
-    {"id": "3", "name": "Dessert"},
-)
-"""Courses a line can belong to. A line with no course fires with the first `fire`."""
 
 
 @dataclass(frozen=True)
@@ -59,7 +52,6 @@ class FloorPlan:
             "height": self.height,
             "rooms": self.rooms,
             "tables": [asdict(t) for t in self.tables],
-            "courses": list(COURSES),
         }
 
     @classmethod

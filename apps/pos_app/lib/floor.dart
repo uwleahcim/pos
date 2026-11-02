@@ -1,19 +1,9 @@
 /// The floor plan as the backend serves it, with the open checks on each table.
 library;
 
-class Course {
-  const Course(this.id, this.name);
-  factory Course.fromJson(Map<String, dynamic> json) => Course(json['id'] as String, json['name'] as String? ?? '');
-  final String id;
-  final String name;
+import 'coursing.dart';
 
-  static const defaults = [
-    Course('drinks', 'Drinks'),
-    Course('1', 'Appetizers'),
-    Course('2', 'Entrees'),
-    Course('3', 'Dessert'),
-  ];
-}
+export 'coursing.dart' show Course;
 
 class Room {
   const Room({
@@ -140,6 +130,9 @@ class FloorPlan {
   final double width, height;
   final List<Room> rooms;
   final List<TableSpot> tables;
+
+  /// The courses a line can be coursed by now (`/settings/coursing`, as the backend applies it): empty
+  /// while coursing is off. The order screen reads the setting itself; this is what the floor was told.
   final List<Course> courses;
   final Map<String, List<TableCheck>> status;
 

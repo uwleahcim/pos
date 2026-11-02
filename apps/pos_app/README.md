@@ -36,4 +36,5 @@ Layout:
 - `lib/print_relay.dart` the print relay: with the switch on in settings, this terminal claims queued print
   jobs from the backend and writes them to the printers on the LAN when the hub cannot.
 - `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.
-- `lib/screens/` orders list, one order, settings, the menu editor.
+- `lib/coursing.dart` the location's coursing as the hub serves it: on or off, the courses, the default.
+- `lib/screens/` orders list, one order, settings, the menu editor, the location settings.

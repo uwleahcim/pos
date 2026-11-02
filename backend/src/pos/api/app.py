@@ -10,6 +10,7 @@ import base64
 import binascii
 import os
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,7 @@ from ..orders.numbers import OrderNumbers
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
-from ..settings import SettingStore, clean_quotes, default_settings
+from ..settings import SettingStore, clean_coursing, clean_quotes, default_settings
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
 from ..tax import TaxProfile, load_profile
@@ -175,6 +176,19 @@ class QuotesIn(BaseModel):
 
     minutes: dict[str, int] = Field(default_factory=dict)
     pay_at_pickup: list[str] = Field(default_factory=list)
+
+
+class CourseIn(BaseModel):
+    id: str | None = Field(None, description="left out for a course new on the screen: the hub names it from the name")
+    name: str
+
+
+class CoursingIn(BaseModel):
+    """Whether dishes are coursed, the courses in kitchen order (any number), and where a new dish goes."""
+
+    enabled: bool = True
+    default: str | None = Field(None, description="the course a new dish goes to; the first one when left out")
+    courses: list[CourseIn] = Field(default_factory=list)
 
 
 PAYMENT_METHODS = frozenset({"cash", "elsewhere", "card"})
@@ -368,6 +382,10 @@ def create_app(
         location=app.state.location,
         unpaid=lambda state: Decimal(check_for(state, app.state.taxes, app.state.pricing)["due"]) > 0,
     )
+    # The kitchen ticket says "Course: Appetizers", as the manager named it, where a line only carries the id.
+    app.state.printing.course_names = lambda: {
+        c["id"]: c["name"] for c in app.state.settings.get("coursing")["courses"]
+    }
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -448,9 +466,26 @@ def create_app(
         open_states = [s for s in states if s.status == "open"]
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
         plan: FloorPlan = app.state.floor
-        return {**plan.as_json(), "status": table_status(open_states, totals), "cursor": store.cursor}
+        coursing = app.state.settings.get("coursing")
+        return {
+            **plan.as_json(),
+            "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
+            "status": table_status(open_states, totals),
+            "cursor": store.cursor,
+        }
 
-    # Counter mode and takeout: the quote per channel, and the texts that went out --------------------------
+    # Location settings: a manager (token from /admin/session) sets them, every terminal reads them ---------
+    def write_setting(key: str, data: Mapping[str, Any], clean: Callable[[Mapping[str, Any]], dict[str, Any]]) -> Any:
+        try:
+            cleaned = clean(data)
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        settings: SettingStore = app.state.settings
+        try:
+            return settings.put(key, cleaned)
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+
     @app.get("/settings/quotes")
     def read_quotes() -> dict[str, Any]:
         """Minutes each channel promises a takeout order, and which channels may pay at pickup."""
@@ -459,17 +494,25 @@ def create_app(
 
     @app.put("/settings/quotes")
     def write_quotes(body: QuotesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
-        """A manager (token from /admin/session) sets the quote times by hand; kitchen pacing takes over in phase 2."""
+        """A manager sets the quote times by hand; kitchen pacing takes over in phase 2."""
         manager_from(app.state.tokens, authorization)
-        try:
-            cleaned = clean_quotes(body.model_dump())
-        except ValueError as err:
-            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        return write_setting("quotes", body.model_dump(), clean_quotes)
+
+    @app.get("/settings/coursing")
+    def read_coursing() -> dict[str, Any]:
+        """Whether dishes are coursed, the courses by name in kitchen order, and which one a new dish goes to."""
         settings: SettingStore = app.state.settings
-        try:
-            return settings.put("quotes", cleaned)
-        except ReadOnlyError as err:
-            raise HTTPException(503, {"error": "read_only"}) from err
+        return settings.get("coursing")
+
+    @app.put("/settings/coursing")
+    def write_coursing(body: CoursingIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns coursing on or off and names the courses, as many as the kitchen serves. A course
+        sent without an id is new and gets one from its name; the rest keep theirs, since order lines carry
+        them. Every terminal follows on its next order."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("coursing", body.model_dump(), clean_coursing)
+
+    # Counter mode and takeout: the texts that went out -----------------------------------------------------
 
     @app.get("/messages")
     def read_messages(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
