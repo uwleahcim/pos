@@ -1,8 +1,13 @@
 /// The rows of the check as a list that is rearranged by hand. Hold a line by its dish and it lifts into a
-/// stack in hand; while it is held, tap other lines and they fold out of the list and stack under it. The
-/// rows open room for the whole stack where it would land and move out of its way as it passes them, and
-/// once let go the stack comes down onto that room, the lines taking their places in the order stacked.
+/// stack in hand; while it is held, tap other lines and they fold out of the list and stack behind it, each
+/// a step below the one before, like a deck of cards. The rows open room for the stack where it would land
+/// and move out of its way as it passes them, and once let go the stack comes down onto that room and
+/// spreads into full rows, the rows around it moving apart to fit them; then the lines take their places in
+/// the order stacked.
 library;
+
+import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -40,8 +45,14 @@ class CheckList extends StatefulWidget {
   /// A row folding away or back, the rows making room, the stack growing.
   static const settle = Duration(milliseconds: 150);
 
-  /// The stack coming down onto its room once let go.
+  /// The stack coming down onto its room and spreading into rows once let go.
   static const land = Duration(milliseconds: 220);
+
+  /// How much of each card behind the held one shows under it, in the stack in hand.
+  static const peek = 14.0;
+
+  /// How far each card behind the held one steps in from the sides, to sit behind the one before it.
+  static const step = 4.0;
 
   @override
   State<CheckList> createState() => CheckListState();
@@ -87,8 +98,14 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
 
   double get _shift => _shiftFrom * (1 - _shifted.value);
 
-  /// Where the stack was last drawn on the screen (its top).
-  double? _drawnTop;
+  /// The stack, let go, coming down onto its room and spreading into full rows; at its end the lines take
+  /// their places.
+  late final AnimationController _landing = AnimationController(vsync: this, duration: CheckList.land)
+    ..addListener(() => setState(() {}))
+    ..addStatusListener((status) {
+      if (status == AnimationStatus.completed && (_hold?.landing ?? false)) _commit();
+    });
+  late final CurvedAnimation _landed = CurvedAnimation(parent: _landing, curve: Curves.easeOutCubic);
 
   /// The gesture of the finger on a dish: a hold lifts the row, then the finger carries it.
   DelayedMultiDragGestureRecognizer? _finger;
@@ -114,7 +131,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     };
     if (!ids.contains(hold.held) || !hold.picked.every(ids.contains)) {
       // a line in hand is gone (another terminal's change): nothing to put down
-      _ticker.stop();
+      _letGo();
       _hold = null;
       _generation++;
       return;
@@ -122,7 +139,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _hold != hold) return;
       _measure(hold);
-      _settle(hold);
+      if (!hold.landing) _settle(hold); // coming down, the stack has its room
       setState(() {});
     });
   }
@@ -133,6 +150,8 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     _ticker.dispose();
     _shifted.dispose();
     _shifting.dispose();
+    _landed.dispose();
+    _landing.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -171,7 +190,18 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     ];
   }
 
+  /// How tall the lines in hand are laid out as rows: what they take once landed.
   double _stackHeight(_Hold hold) => _stack(hold).fold(0.0, (sum, row) => sum + (hold.heights[row.rowId] ?? 0));
+
+  /// How tall the stack in hand is: the held dish's card, with each card behind it showing by a step.
+  double _deckHeight(_Hold hold) {
+    final stacked = _stack(hold);
+    var height = 0.0;
+    for (var i = 0; i < stacked.length; i++) {
+      height = math.max(height, i * CheckList.peek + (hold.heights[stacked[i].rowId] ?? 0));
+    }
+    return height;
+  }
 
   int _slotOf(_Hold hold, List<CheckRow> remaining) {
     if (hold.roomBefore == null) return remaining.length;
@@ -218,7 +248,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   void _settle(_Hold hold) {
     final remaining = _remaining(hold);
     final h = [for (final row in remaining) hold.heights[row.rowId] ?? 0];
-    final height = _stackHeight(hold);
+    final height = _deckHeight(hold);
     final head = hold.top;
     final foot = head + height;
     var slot = _slotOf(hold, remaining);
@@ -276,7 +306,8 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     _shifting.forward(from: 0);
   }
 
-  /// Let go: the stack comes down onto its room, then the lines take their places.
+  /// Let go: the stack comes down onto its room and spreads into full rows, the room growing to fit them;
+  /// then the lines take their places.
   void _end() {
     final hold = _hold;
     if (hold == null || hold.landing) return;
@@ -288,15 +319,17 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     for (var i = 0; i < slot; i++) {
       roomTop += hold.heights[remaining[i].rowId] ?? 0;
     }
-    final target = roomTop - _offset;
-    if ((target - (_drawnTop ?? hold.top - _offset)).abs() < 0.5) {
-      _commit(); // it is there already: nothing to animate, so no end of an animation to wait for
+    final from = hold.top + _shift;
+    if (hold.picked.isEmpty && (roomTop - from).abs() < 0.5) {
+      _commit(); // one dish, in its place already: nothing to come down or spread out
       return;
     }
     setState(() {
       hold.landing = true;
-      hold.landingTop = target;
+      hold.landFrom = from;
+      hold.landTo = roomTop;
     });
+    _landing.forward(from: 0);
   }
 
   void _commit() {
@@ -311,16 +344,21 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   void _cancel() => _putDown();
 
   void _putDown() {
-    _ticker.stop();
-    _shifting.stop();
-    _shiftFrom = 0;
-    _drawnTop = null;
+    _letGo();
     _finger?.dispose();
     _finger = null;
     setState(() {
       _hold = null;
       _generation++;
     });
+  }
+
+  /// Nothing in hand moves any more.
+  void _letGo() {
+    _ticker.stop();
+    _shifting.stop();
+    _landing.stop();
+    _shiftFrom = 0;
   }
 
   static const _edge = 56.0;
@@ -409,46 +447,64 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   }
 
   /// The room above a row (or at the end of the check, for null): the stack's height where the stack
-  /// would land, nothing elsewhere. Every row has one, so the room slides from row to row.
+  /// would land, nothing elsewhere. Every row has one, so the room slides from row to row. Once the stack
+  /// is let go the room grows to fit its lines as rows, moving the rows around it apart.
   Widget _room(_Hold hold, String? rowId) => AnimatedContainer(
     key: ValueKey('room:${rowId ?? ''}'),
-    duration: CheckList.settle,
+    duration: hold.landing ? CheckList.land : CheckList.settle,
     curve: Curves.easeOutCubic,
-    height: hold.roomBefore == rowId ? _stackHeight(hold) : 0,
+    height: hold.roomBefore != rowId
+        ? 0
+        : hold.landing
+        ? _stackHeight(hold)
+        : _deckHeight(hold),
   );
 
+  /// The stack in hand: the held dish's card in front, the ones picked up behind it, each a step in and
+  /// [CheckList.peek] down from the one before it, like a deck of cards. Coming down onto its room, the
+  /// cards spread into full rows, so that the lines can take their places under them without a jump.
   Widget _stackInHand(BuildContext context, _Hold hold, CheckDrag drag) {
     final rows = widget.rows;
     final stacked = _stack(hold);
-    final top = _drawnTop = hold.landing ? hold.landingTop! : hold.top + _shift - _offset;
-    return AnimatedPositioned(
+    final t = hold.landing ? _landed.value : 0.0;
+    final top = (hold.landing ? lerpDouble(hold.landFrom, hold.landTo, t)! : hold.top + _shift) - _offset;
+    // a card moves to its place in the stack on its own; coming down, it moves with the landing instead
+    final onItsOwn = hold.landing ? Duration.zero : CheckList.settle;
+    final cards = <Widget>[];
+    var flatTop = 0.0;
+    for (var i = 0; i < stacked.length; i++) {
+      final row = stacked[i];
+      cards.add(
+        AnimatedPositioned(
+          key: ValueKey('stacked:${row.rowId}'),
+          duration: onItsOwn,
+          curve: Curves.easeOutCubic,
+          top: lerpDouble(i * CheckList.peek, flatTop, t),
+          left: lerpDouble(i * CheckList.step, 0, t),
+          right: lerpDouble(i * CheckList.step, 0, t),
+          child: _Joined(
+            fresh: row.line.lineId != hold.held,
+            child: Material(
+              color: widget.paper,
+              elevation: 6,
+              child: widget.rowBuilder(context, rows.indexOf(row), row, drag),
+            ),
+          ),
+        ),
+      );
+      flatTop += hold.heights[row.rowId] ?? 0;
+    }
+    return Positioned(
       key: const ValueKey('check-stack'),
-      duration: hold.landing ? CheckList.land : Duration.zero,
-      curve: Curves.easeOutCubic,
       left: 0,
       right: 0,
       top: top,
-      onEnd: hold.landing ? _commit : null,
-      child: Material(
-        color: widget.paper,
-        elevation: 6,
-        child: AnimatedSize(
-          duration: CheckList.settle,
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final row in stacked)
-                _Joined(
-                  key: ValueKey('stacked:${row.rowId}'),
-                  fresh: row.line.lineId != hold.held,
-                  child: widget.rowBuilder(context, rows.indexOf(row), row, drag),
-                ),
-            ],
-          ),
-        ),
+      child: AnimatedContainer(
+        duration: onItsOwn,
+        curve: Curves.easeOutCubic,
+        height: lerpDouble(_deckHeight(hold), flatTop, t),
+        // the held card in front: painted last
+        child: Stack(clipBehavior: Clip.none, children: cards.reversed.toList()),
       ),
     );
   }
@@ -456,7 +512,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
 
 /// A line that has joined the stack fades in under the others.
 class _Joined extends StatelessWidget {
-  const _Joined({super.key, required this.fresh, required this.child});
+  const _Joined({required this.fresh, required this.child});
 
   final bool fresh;
   final Widget child;
@@ -496,9 +552,10 @@ class _Hold {
   /// The top of the stack, as a height down the check's rows.
   double top;
 
-  /// Let go: the stack is coming down onto its room, at [landingTop] on the screen.
+  /// Let go: the stack is coming down onto its room, from [landFrom] to [landTo] down the check's rows.
   bool landing = false;
-  double? landingTop;
+  double landFrom = 0;
+  double landTo = 0;
 
   bool moves(CheckRow row) => row is LineRow && (row.line.lineId == held || picked.contains(row.line.lineId));
 }
