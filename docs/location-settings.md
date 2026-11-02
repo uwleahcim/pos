@@ -47,11 +47,12 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   on the ticket of the course it joins (Mike, 2026-11-02). The course a sent dish shows under is the check's
   business; the kitchen keeps it on the ticket it went out on.
 - To move several at once, hold one and, with another finger, tap the others: each tap folds a dish out of
-  the list and stacks it under the one in hand (a tap on a dish in the stack puts it back). The rows open
-  room for the whole stack where it would land and move out of its way as it passes them, and once let go
-  the stack comes down onto that room, the dishes taking their places in the order stacked: the one held,
-  then the others as they were tapped. This takes a second finger, so it is for the phones and the iPads;
-  on the Mac, dishes move one at a time.
+  the list and stacks it behind the one in hand, a little below it like a card in a deck, so the stack
+  stays short (a tap on a card's edge puts that dish back). The rows open room for the stack where it would
+  land and move out of its way as it passes them, and once let go the stack comes down onto that room and
+  spreads into full rows, the rows around it moving apart to fit them; the dishes take their places in the
+  order stacked: the one held, then the others as they were tapped. This takes a second finger, so it is
+  for the phones and the iPads; on the Mac, dishes move one at a time.
 
 ## On the wire
 
