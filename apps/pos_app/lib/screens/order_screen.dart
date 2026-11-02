@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
-import '../floor.dart';
+import '../coursing.dart';
 import '../line_ops.dart';
 import '../local_order.dart';
 import '../menu.dart';
@@ -26,7 +26,7 @@ class OrderScreen extends StatefulWidget {
     required this.outbox,
     required this.photos,
     required this.orderId,
-    this.courses = Course.defaults,
+    this.coursing = Coursing.defaults,
     this.staffName,
   });
 
@@ -34,7 +34,9 @@ class OrderScreen extends StatefulWidget {
   final Outbox outbox;
   final PhotoQueue photos;
   final String orderId;
-  final List<Course> courses;
+
+  /// The location's coursing: whether dishes are coursed, the courses by name, where a new dish goes.
+  final Coursing coursing;
 
   /// Who is signed in, named on each discount they apply.
   final String? staffName;
@@ -51,7 +53,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _reading = false;
   Timer? _timer;
   int? _seat; // null: for the table, shared
-  late String _course = widget.courses.length > 1 ? widget.courses[1].id : widget.courses.first.id;
+  late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
   void initState() {
@@ -438,7 +440,7 @@ class _OrderScreenState extends State<OrderScreen> {
       order: order,
       check: check,
       open: open,
-      courses: widget.courses,
+      coursing: widget.coursing,
       lastAdded: _lastAdded,
       onEdit: _edit,
       onQty: _setQty,
@@ -454,7 +456,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   seats: seats,
                   seat: _seat,
                   course: _course,
-                  courses: widget.courses,
+                  courses: widget.coursing.active,
                   onSeat: (seat) => setState(() => _seat = seat),
                   onAddSeat: () => _setSeats(order, seats + 1),
                   onRemoveSeat: () => _setSeats(order, seats - 1),
@@ -487,7 +489,7 @@ class _OrderScreenState extends State<OrderScreen> {
         actions: [
           StatusIcon(api: widget.api, outbox: widget.outbox),
           if (order != null && open && !order.isTakeout)
-            _FireMenu(order: order, courses: widget.courses, onFire: _fire),
+            _FireMenu(order: order, coursing: widget.coursing, onFire: _fire),
           // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
           if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
             check != null && cents(check.due) > 0
@@ -546,7 +548,7 @@ class _TicketPanel extends StatefulWidget {
     required this.order,
     required this.check,
     required this.open,
-    required this.courses,
+    required this.coursing,
     required this.lastAdded,
     required this.onEdit,
     required this.onQty,
@@ -558,7 +560,7 @@ class _TicketPanel extends StatefulWidget {
   final Order? order;
   final Check? check;
   final bool open;
-  final List<Course> courses;
+  final Coursing coursing;
   final String? lastAdded;
   final ValueChanged<Line> onEdit;
   final void Function(Line line, int qty) onQty;
@@ -821,8 +823,9 @@ class _TicketPanelState extends State<_TicketPanel> {
 
 extension on _TicketPanel {
   /// Lines grouped by course in service order: (course name, held | fired | "N to fire", lines by seat).
+  /// With coursing off the check is one group, "Items"; a course no longer on the list shows by its id.
   List<(String, String, List<Line>)> _byCourse(Order order) {
-    final known = [for (final c in courses) c.id];
+    final known = [for (final c in coursing.courses) c.id];
     final shown = order.shownLines;
     final ids = {for (final l in shown) l.course ?? ''}.toList()
       ..sort((a, b) {
@@ -839,7 +842,7 @@ extension on _TicketPanel {
     (String, String, List<Line>) group(String id) {
       final lines = shown.where((l) => (l.course ?? '') == id).toList()
         ..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0));
-      final name = courses.where((c) => c.id == id).firstOrNull?.name ?? (id.isEmpty ? 'No course' : id);
+      final name = id.isEmpty ? (coursing.enabled ? 'No course' : 'Items') : coursing.nameOf(id);
       return (name, state(lines), lines);
     }
 
@@ -983,7 +986,7 @@ class _CourseHeader extends StatelessWidget {
 }
 
 /// Which seat and course the next dish goes to, and the seats at the table: + adds one, − takes the last
-/// one away once nothing is on it.
+/// one away once nothing is on it. With coursing off ([courses] empty) the row is the seats alone.
 class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
     required this.seats,
@@ -998,7 +1001,7 @@ class _SeatCourseBar extends StatelessWidget {
 
   final int seats;
   final int? seat;
-  final String course;
+  final String? course;
   final List<Course> courses;
   final ValueChanged<int?> onSeat;
   final VoidCallback onAddSeat;
@@ -1035,7 +1038,7 @@ class _SeatCourseBar extends StatelessWidget {
       ),
     ];
     final courseChips = [
-      const Text('Course  '),
+      if (courses.isNotEmpty) const Text('Course  '),
       for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
     ];
     Widget row(List<Widget> children) => SingleChildScrollView(
@@ -1049,20 +1052,21 @@ class _SeatCourseBar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-      child: compact(context)
+      child: compact(context) || courseChips.isEmpty
           // a phone: both on one line that scrolls, to leave the screen to the menu
-          ? row([...seatChips, const SizedBox(width: 8), ...courseChips])
+          ? row([...seatChips, if (courseChips.isNotEmpty) const SizedBox(width: 8), ...courseChips])
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [row(seatChips), row(courseChips)]),
     );
   }
 }
 
-/// Fire one held course, or everything at once: and stay on the check, or leave it.
+/// Fire one held course, or everything at once: and stay on the check, or leave it. With coursing off
+/// (or dishes not coursed) only everything can go, and the button counts the dishes still to send.
 class _FireMenu extends StatelessWidget {
-  const _FireMenu({required this.order, required this.courses, required this.onFire});
+  const _FireMenu({required this.order, required this.coursing, required this.onFire});
 
   final Order order;
-  final List<Course> courses;
+  final Coursing coursing;
   final void Function(String course, {bool leave}) onFire;
 
   @override
@@ -1070,9 +1074,16 @@ class _FireMenu extends StatelessWidget {
     final posColors = PosColors.of(context);
     final waiting = order.heldCourses;
     final held = [
-      for (final c in courses)
+      for (final c in coursing.courses)
         if (waiting.contains(c.id)) c,
     ];
+    final unsent = order.activeLines.where((l) => !l.fired).length;
+    final anyHeld = unsent > 0;
+    final label = held.isNotEmpty
+        ? 'Fire (${held.length} held)'
+        : anyHeld
+        ? 'Fire ($unsent to send)'
+        : 'Fire';
     return PopupMenuButton<(String, bool)>(
       tooltip: 'Fire',
       onSelected: (choice) => onFire(choice.$1, leave: choice.$2),
@@ -1106,27 +1117,25 @@ class _FireMenu extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: compact(context)
             ? Badge(
-                isLabelVisible: held.isNotEmpty,
-                label: Text('${held.length}'),
+                isLabelVisible: anyHeld,
+                label: Text('${held.isNotEmpty ? held.length : unsent}'),
                 child: const Icon(Icons.local_fire_department),
               )
             : AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: held.isNotEmpty ? posColors.waiting : Colors.transparent,
+                  color: anyHeld ? posColors.waiting : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
-                  border: held.isNotEmpty ? Border.all(color: posColors.waitingBorder.withValues(alpha: 0.6)) : null,
+                  border: anyHeld ? Border.all(color: posColors.waitingBorder.withValues(alpha: 0.6)) : null,
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.local_fire_department, size: 18, color: held.isNotEmpty ? posColors.waitingText : null),
+                    Icon(Icons.local_fire_department, size: 18, color: anyHeld ? posColors.waitingText : null),
                     const SizedBox(width: 4),
                     Text(
-                      held.isEmpty ? 'Fire' : 'Fire (${held.length} held)',
-                      style: held.isNotEmpty
-                          ? TextStyle(color: posColors.waitingText, fontWeight: FontWeight.w700)
-                          : null,
+                      label,
+                      style: anyHeld ? TextStyle(color: posColors.waitingText, fontWeight: FontWeight.w700) : null,
                     ),
                   ],
                 ),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../camera.dart';
+import '../coursing.dart';
 import '../floor.dart';
 import '../local_order.dart';
 import '../outbox.dart';
@@ -15,9 +16,9 @@ import '../takeout.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
 import 'floor_view.dart';
+import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
-import 'quotes_dialog.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'theme.dart';
@@ -127,37 +128,27 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ]);
   }
 
-  Future<void> _quoteTimes() async {
+  /// What a manager sets for the whole location (coursing, quote times), behind the manager PIN.
+  Future<void> _location() async {
     final token = await showDialog<String>(
       context: context,
       builder: (_) => ManagerPinDialog(
         api: widget.api,
         device: widget.settings.device,
-        action: 'Set quote times',
-        what: 'set the quote times',
+        action: 'Open location settings',
+        what: 'change location settings',
       ),
     );
     if (token == null || !mounted) return;
-    Quotes quotes;
-    try {
-      quotes = await widget.api.quotes();
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err.message)));
-      return;
-    }
-    if (!mounted) return;
-    final saved = await showDialog<Quotes>(
-      context: context,
-      builder: (_) => QuotesDialog(api: widget.api, token: token, quotes: quotes),
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => LocationSettingsScreen(api: widget.api, token: token),
+      ),
     );
-    if (saved != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote times saved')));
-    }
   }
 
   /// Opens a new check with these fields, stamped with the signed-in server, and shows it.
-  Future<void> _create(Map<String, dynamic> fields, {List<Course> courses = Course.defaults}) async {
+  Future<void> _create(Map<String, dynamic> fields) async {
     final staff = widget.session.staff;
     final orderId = widget.outbox.newId();
     final opId = await widget.outbox.add(orderId, 'create', {
@@ -167,10 +158,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
     });
     unawaited(widget.photos.capture('create', opId: opId));
     if (!mounted) return;
-    await _open(orderId, courses: courses);
+    await _open(orderId);
   }
 
-  Future<void> _open(String orderId, {List<Course> courses = Course.defaults}) async {
+  Future<void> _open(String orderId) async {
+    // The location's coursing as the hub has it now, or as last read: a manager's change reaches every
+    // terminal on the next order it opens. With nothing read yet, the standard courses.
+    Coursing coursing;
+    try {
+      coursing = await widget.api.coursing();
+    } on ApiException {
+      coursing = Coursing.defaults;
+    }
+    if (!mounted) return;
     await Navigator.of(context).push(
       PosPageRoute(
         builder: (_) => OrderScreen(
@@ -178,7 +178,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           outbox: widget.outbox,
           photos: widget.photos,
           orderId: orderId,
-          courses: courses,
+          coursing: coursing,
           staffName: widget.session.staff?.name,
         ),
       ),
@@ -190,7 +190,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// A free table seats a party; a busy one opens its check, or asks which one when it has several.
   Future<void> _onTable(FloorPlan plan, TableSpot table) async {
     final checks = plan.checksAt(table.id);
-    if (checks.length == 1) return _open(checks.single.orderId, courses: plan.courses);
+    if (checks.length == 1) return _open(checks.single.orderId);
     if (checks.length > 1) {
       final picked = await showModalBottomSheet<String>(
         context: context,
@@ -223,7 +223,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ),
       );
       if (picked == null || !mounted) return;
-      if (picked.isNotEmpty) return _open(picked, courses: plan.courses);
+      if (picked.isNotEmpty) return _open(picked);
     }
     if (!mounted) return;
     final guests = await showDialog<int>(
@@ -231,7 +231,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       builder: (_) => _GuestsDialog(table: table),
     );
     if (guests == null || !mounted) return;
-    await _create({'table': table.id, 'guests': guests, 'order_type': 'dine_in'}, courses: plan.courses);
+    await _create({'table': table.id, 'guests': guests, 'order_type': 'dine_in'});
   }
 
   @override
@@ -252,7 +252,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         }),
       ),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
-        ('Quote times', Icons.timer_outlined, _quoteTimes),
+        ('Location', Icons.storefront_outlined, _location),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
         (
           'Menu editor',

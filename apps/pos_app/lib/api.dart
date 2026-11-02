@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'cache.dart';
+import 'coursing.dart';
 import 'floor.dart';
 import 'menu.dart';
 import 'pricing.dart';
@@ -278,6 +279,22 @@ class PosApi {
 
   /// Minutes each channel promises a takeout order, and which channels may pay at pickup.
   Future<Quotes> quotes() async => Quotes.fromJson(await _get('/settings/quotes'));
+
+  /// Whether dishes are coursed, the courses by name and where a new dish goes; the last answer read when
+  /// nothing answers, so a check can still be coursed the usual way (ADR 6).
+  Future<Coursing> coursing() async => Coursing.fromJson(await _remembered('coursing', '/settings/coursing'));
+
+  /// A manager (token from [adminSession]) sets the coursing for every terminal. A course without an id is
+  /// new; the answer carries the id the hub gave it.
+  Future<Coursing> saveCoursing(String token, Coursing coursing) async => Coursing.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/coursing'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(coursing.toJson()),
+      ),
+    ),
+  );
 
   /// A manager (token from [adminSession]) sets the quote times for every terminal.
   Future<Quotes> saveQuotes(String token, Quotes quotes) async => Quotes.fromJson(

@@ -1,7 +1,11 @@
-"""Per-location settings a manager changes from the app and every terminal reads. Phase 1 holds one set,
-`quotes`: how many minutes each channel promises a takeout order (architecture section 12, "Quote times":
-set by hand until kitchen pacing quotes them in phase 2) and which channels may pay at pickup instead of
-before the kitchen sees the order (counter mode pays first).
+"""Per-location settings a manager changes from the app and every terminal reads. Phase 1 holds two sets:
+
+- `quotes`: how many minutes each channel promises a takeout order (architecture section 12, "Quote times":
+  set by hand until kitchen pacing quotes them in phase 2) and which channels may pay at pickup instead of
+  before the kitchen sees the order (counter mode pays first).
+- `coursing`: whether dishes are coursed at all, the courses by name in the order the kitchen serves them
+  (any number of them; the standard four to start) and which course a new dish goes to. A line in the order
+  log carries only its course's id, so a course can be renamed or moved without touching any order.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -9,7 +13,9 @@ Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub
 from __future__ import annotations
 
 import copy
+import itertools
 import os
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -21,12 +27,22 @@ from psycopg_pool import ConnectionPool
 from .sync.pgstore import ReadOnlyError
 
 CHANNELS = ("counter", "phone", "online", "delivery", "catering")
+STANDARD_COURSES = [
+    {"id": "drinks", "name": "Drinks"},
+    {"id": "1", "name": "Appetizers"},
+    {"id": "2", "name": "Entrees"},
+    {"id": "3", "name": "Dessert"},
+]
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
         "pay_at_pickup": ["phone"],
-    }
+    },
+    "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
 }
+COURSE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+"""A course's id: short, no spaces, never `*` (which a `fire` uses for every course)."""
+COURSE_NAME_MAX = 40
 
 
 def clean_quotes(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -53,6 +69,60 @@ def clean_quotes(data: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError(f"unknown channel {channel!r} in pay_at_pickup")
     out["pay_at_pickup"] = sorted(set(pay))
     return out
+
+
+def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The coursing settings as the app may set them, checked: `enabled`, `courses` as a list of `{id, name}`
+    in kitchen order, and `default`, the course a new dish goes to (the first course when not named). A
+    course without an id is new on the screen and gets one from its name, unique among the rest; ids never
+    change after that, since order lines carry them. Raises ValueError on a bad value."""
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be true or false")
+    raw = data.get("courses") or []
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("courses must be a list of {id, name}")
+    names: set[str] = set()
+    taken: set[str] = set()
+    for entry in raw:
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise ValueError("every course needs a name")
+        if len(name) > COURSE_NAME_MAX:
+            raise ValueError(f"a course name is at most {COURSE_NAME_MAX} characters")
+        if name.casefold() in names:
+            raise ValueError(f"the course {name!r} is listed twice")
+        names.add(name.casefold())
+        ident = entry.get("id")
+        if ident not in (None, ""):
+            if not isinstance(ident, str) or not COURSE_ID.match(ident):
+                raise ValueError(f"a course id is letters, digits, - or _, not {ident!r}")
+            if ident in taken:
+                raise ValueError(f"the course id {ident!r} is listed twice")
+            taken.add(ident)
+    courses: list[dict[str, str]] = []
+    for entry in raw:
+        ident = entry.get("id")
+        if ident in (None, ""):
+            ident = _new_course_id(str(entry["name"]), taken)
+            taken.add(ident)
+        courses.append({"id": str(ident), "name": str(entry["name"]).strip()})
+    if enabled and not courses:
+        raise ValueError("coursing needs at least one course, or turn it off")
+    default = data.get("default")
+    if default in (None, ""):
+        default = courses[0]["id"] if courses else None
+    elif not any(c["id"] == default for c in courses):
+        raise ValueError(f"the default course {default!r} is not on the list")
+    return {"enabled": enabled, "default": default, "courses": courses}
+
+
+def _new_course_id(name: str, taken: set[str]) -> str:
+    """An id from the name (`Soup & Salad` -> `soup-salad`), numbered when that one is taken."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:28] or "course"
+    if base not in taken:
+        return base
+    return next(f"{base}-{n}" for n in itertools.count(2) if f"{base}-{n}" not in taken)
 
 
 def _merged(key: str, stored: Mapping[str, Any] | None) -> dict[str, Any]:

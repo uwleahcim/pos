@@ -478,19 +478,22 @@ void main() {
 
   testWidgets('a manager sets the quote times for every terminal; a server has no such button', (tester) async {
     final t = await pumpOrders(tester, const []);
-    await tester.tap(find.byTooltip('Quote times'));
+    await tester.tap(find.byTooltip('Location'));
     await tester.pumpAndSettle();
     expect(find.text('Manager PIN'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, '1111');
-    await tester.tap(find.widgetWithText(FilledButton, 'Set quote times'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
-    expect(find.text('Only a manager can set the quote times'), findsOneWidget);
+    expect(find.text('Only a manager can change location settings'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, '9999');
-    await tester.tap(find.widgetWithText(FilledButton, 'Set quote times'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
     expect(t.hub.pins, ['1111', '9999']);
+    expect(find.text('Location settings'), findsOneWidget);
 
-    expect(find.text('Quote times'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('quote-times')));
+    await tester.pumpAndSettle();
+    expect(find.text('Quote times'), findsNWidgets(2)); // the row and the dialog
     expect(tester.widget<TextField>(find.byKey(const ValueKey('quote:phone'))).controller!.text, '20');
     await tester.enterText(find.byKey(const ValueKey('quote:phone')), '25');
     await tester.tap(find.byKey(const ValueKey('pickup:online')));
@@ -507,7 +510,7 @@ void main() {
     await stop(tester);
 
     await pumpOrders(tester, const [], role: 'server');
-    expect(find.byTooltip('Quote times'), findsNothing);
+    expect(find.byTooltip('Location'), findsNothing);
     await stop(tester);
   });
 }

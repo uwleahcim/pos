@@ -14,8 +14,8 @@ import itertools
 import os
 import threading
 import time
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -209,6 +209,9 @@ class PrintService:
         self._late_after_ms = late_after_ms
         self._tickets = itertools.count(1)
         self._lock = threading.Lock()
+        self.course_names: Callable[[], Mapping[str, str]] | None = None
+        """Course id -> name as the manager set it (the API wires the coursing setting in); a ticket prints
+        the name, or the id of a course that is no longer on the list."""
 
     @classmethod
     def from_env(cls) -> PrintService:
@@ -258,6 +261,7 @@ class PrintService:
             ticket_no = next(self._tickets)
         jobs = []
         named = {p.name for p in self.printers}
+        courses = self.course_names() if self.course_names is not None else {}
         for i, printer in enumerate(self.printers):
             ticket = ticket_for(
                 state,
@@ -270,6 +274,8 @@ class PrintService:
             )
             if ticket is None:
                 continue
+            if ticket.course in courses:
+                ticket = replace(ticket, course=courses[ticket.course])
             jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.name}", delay=delay))
         return jobs
 
