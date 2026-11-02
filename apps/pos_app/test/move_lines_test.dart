@@ -5,14 +5,17 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/check_order.dart';
 import 'package:pos_app/coursing.dart';
 import 'package:pos_app/line_ops.dart';
+import 'package:pos_app/screens/check_list.dart';
 import 'package:pos_app/screens/order_screen.dart';
 
 import 'hub.dart';
 
-/// Arranging the check: hold a dish and drag it to another place, or under another course; while it is
-/// held, tap other dishes to take them along. A line carries its place (`set_line` with `rank`, and `course`
-/// when the course changes), sent to the kitchen or not: a dish the kitchen has keeps its place on the
-/// ticket it went out on (Mike, 2026-11-02).
+/// Arranging the check: hold a dish and it lifts into a stack in hand; drag it to another place, or under
+/// another course; while it is held, tap other dishes and they fold out of the list and stack under it. The
+/// rows make room for the whole stack where it would land, and once let go it comes down onto that room,
+/// the lines taking their places in the order they are stacked. A line carries its place (`set_line` with
+/// `rank`, and `course` when the course changes), sent to the kitchen or not: a dish the kitchen has keeps
+/// its place on the ticket it went out on (Mike, 2026-11-02).
 
 Line l(String id, String item, {String? course, double rank = 0, bool fired = false}) =>
     Line(lineId: id, item: item, qty: 1, status: 'active', course: course, rank: rank, fired: fired);
@@ -27,13 +30,27 @@ String rowOf(CheckRow row) => switch (row) {
 
 Finder header(String id) => find.byKey(ValueKey('course-row:$id'));
 
+/// Text on the check: in its rows, or in the stack in hand.
 Finder inCheck(String text) => find.descendant(of: find.byKey(const ValueKey('check-rows')), matching: find.text(text));
 
-/// The dishes on the check that can be held and dragged (the one in hand, drawn over the list, is not one).
-Finder holdable() => find.descendant(
-  of: find.byKey(const ValueKey('check-rows')),
-  matching: find.byType(ReorderableDelayedDragStartListener),
-);
+/// Text in the rows of the check (the list under a stack in hand).
+Finder inList(String text) => find.descendant(of: find.byKey(const ValueKey('check-list')), matching: find.text(text));
+
+/// Text in the stack in hand.
+Finder inStack(String text) => find.descendant(of: stack(), matching: find.text(text));
+
+Finder stack() => find.byKey(const ValueKey('check-stack'));
+
+/// The dishes on the check that can be held and dragged (none while one is in hand).
+Finder holdable() => find.descendant(of: find.byKey(const ValueKey('check-rows')), matching: find.byType(HoldToDrag));
+
+/// How tall a line's row on the check is: nothing while the line is in hand.
+double rowHeight(WidgetTester tester, String lineId) =>
+    tester.getSize(find.byKey(ValueKey('check-row:line:$lineId'))).height;
+
+/// How much room the rows leave between a course's header and the line under it.
+double roomUnder(WidgetTester tester, String courseId, String lineId) =>
+    tester.getTopLeft(find.byKey(ValueKey('check-row:line:$lineId'))).dy - tester.getBottomLeft(header(courseId)).dy;
 
 const noChoices = 'This line has no menu choices to change. Remove it and add it again.';
 
@@ -49,15 +66,21 @@ Future<Terminal> pumpOrder(WidgetTester tester, Map<String, dynamic> lines) asyn
   return t;
 }
 
-/// Holds a row by the dish's name until the list picks it up.
+/// Lets the rows fold away, make room or come back after a tap: the frame that starts it, then its time.
+Future<void> settleRows(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 200));
+}
+
+/// Holds a row by the dish's name until it lifts.
 Future<TestGesture> holdRow(WidgetTester tester, Finder row) async {
   final gesture = await tester.startGesture(tester.getCenter(row));
   await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
   return gesture;
 }
 
-/// Carries a held row from [from] to [to] in steps, so the list makes room as it passes the others, and
-/// lets go.
+/// Carries what is in hand from [from] to [to] in steps, so the rows make room as it passes them, and lets
+/// go.
 Future<void> carry(WidgetTester tester, TestGesture gesture, Offset from, Offset to) async {
   for (var i = 1; i <= 12; i++) {
     await gesture.moveTo(Offset.lerp(from, to, i / 12)!);
@@ -76,11 +99,8 @@ Future<void> dragRow(WidgetTester tester, Finder row, Offset to) async {
 /// The whole row a dish's name is on.
 Finder tileOf(Finder text) => find.ancestor(of: text, matching: find.byType(ListTile)).first;
 
-/// Whether a dish on the check is picked up, to go with the one in hand.
-bool pickedUp(WidgetTester tester, String dish) => tester.widget<ListTile>(tileOf(inCheck(dish))).selected;
-
-/// Where to let go of a dish held by its name so that its row lands just before [target]'s: the slot the
-/// list opens for it there (above the target going down, in the target's place going up).
+/// Where to let go of a dish held by its name so that its row lands just before [target]'s: the room the
+/// rows open for it there (above the target going down, in the target's place going up).
 Offset dropBefore(WidgetTester tester, Finder text, Finder target) {
   final row = tileOf(text);
   final height = tester.getSize(row).height;
@@ -117,6 +137,11 @@ void main() {
       const off = Coursing(enabled: false);
       final order = orderOf([l('L1', 'Duck', rank: 2), l('L2', 'Egg roll', rank: 1)]);
       expect(checkRows(order, off).map(rowOf), ['[Items held]', 'Egg roll', 'Duck']);
+    });
+
+    test('tell a course from a line', () {
+      final rows = checkRows(orderOf([l('L1', 'Duck', course: '2')]), Coursing.defaults);
+      expect(rows.map((r) => r.rowId), ['course:drinks', 'course:1', 'course:2', 'line:L1', 'course:3']);
     });
   });
 
@@ -160,7 +185,7 @@ void main() {
     });
   });
 
-  group('where rows picked up together land', () {
+  group('where a stack in hand lands', () {
     // 0 [Drinks] 1 [Appetizers] 2 Egg roll 3 Spring roll 4 Wonton 5 [Entrees] 6 Duck 7 [Dessert]
     final rows = checkRows(
       orderOf([
@@ -173,38 +198,38 @@ void main() {
     );
     List<String> ids(Drop drop) => [for (final line in drop.lines) line.lineId];
 
-    test('they go with the held one, in the order the check had them, spread between its neighbours', () {
-      final drop = dropOf(rows, 6, 3, picked: {'L2'}); // the duck up to where the spring roll is
+    test('the lines land in the order they are stacked, spread between the neighbours of the room', () {
+      // the duck in hand with the spring roll under it, let go between the egg roll and the wonton
+      final drop = dropOf(rows, held: 'L4', picked: ['L2'], at: 3);
       expect(drop.course, '1');
-      expect(ids(drop), ['L2', 'L4']);
+      expect(ids(drop), ['L4', 'L2']);
       expect(drop.ranks, [2.0, 3.0]); // between the egg roll (1) and the wonton (4)
       expect(drop.at, 3);
     });
 
-    test('a dish picked up is not counted as a neighbour of the drop', () {
-      final drop = dropOf(rows, 6, 2, picked: {'L1'}); // the top of the appetizers, where the egg roll was
-      expect(ids(drop), ['L1', 'L4']);
-      expect(drop.ranks, [0.0, 1.0]); // before the spring roll (2), the egg roll being in hand
+    test('as they were picked up, not as the check had them', () {
+      final drop = dropOf(rows, held: 'L4', picked: ['L3', 'L1'], at: 5); // under Dessert
+      expect(drop.course, '3');
+      expect(ids(drop), ['L4', 'L3', 'L1']);
+      expect(drop.ranks, [6.0, 7.0, 8.0]); // alone under the header: the first keeps its rank, the rest follow
+    });
+
+    test('at the top of a course: all before its first dish', () {
+      final drop = dropOf(rows, held: 'L4', picked: ['L1'], at: 2); // before the spring roll
+      expect(ids(drop), ['L4', 'L1']);
+      expect(drop.ranks, [0.0, 1.0]);
       expect(drop.at, 2);
     });
 
-    test('alone under a header, the first keeps its rank and the rest follow', () {
-      final drop = dropOf(rows, 6, 7, picked: {'L1'}); // under Dessert
-      expect(drop.course, '3');
-      expect(ids(drop), ['L1', 'L4']);
-      expect(drop.ranks, [1.0, 2.0]);
-      expect(drop.at, 6); // the Dessert header is row 5 once the egg roll and the duck have left
-    });
-
-    test('let go where it was, the others gather to it', () {
-      final drop = dropOf(rows, 3, 3, picked: {'L4'}); // the spring roll held in place, the duck picked up
+    test('let go where it was, with others picked up: they gather to it', () {
+      final drop = dropOf(rows, held: 'L2', picked: ['L4'], at: 3); // the spring roll held in place
       expect(drop.course, '1');
       expect(ids(drop), ['L2', 'L4']);
-      expect(drop.ranks, [2.0, 3.0]);
+      expect(drop.ranks, [2.0, 3.0]); // between the egg roll (1) and the wonton (4)
     });
 
     test('one line alone lands as a plain drop', () {
-      final drop = dropOf(rows, 6, 3);
+      final drop = dropOf(rows, held: 'L4', at: 3);
       expect(drop.course, '1');
       expect(ids(drop), ['L4']);
       expect(drop.ranks, [1.5]);
@@ -314,7 +339,7 @@ void main() {
     await stop(tester);
   });
 
-  testWidgets('while a dish is held, tapping others picks them up; they land together where it is let go', (
+  testWidgets('a held dish lifts into a stack; dishes tapped join it, the rows make room, and all land together', (
     tester,
   ) async {
     final t = await pumpOrder(tester, {
@@ -323,37 +348,59 @@ void main() {
       'L3': line('Jasmine tea', course: 'drinks', rank: 3, fired: true),
       'L4': line('Scallion pancake', course: '1', rank: 4),
     });
-    final from = tester.getCenter(inCheck('Pot stickers'));
-    final to = dropBefore(tester, inCheck('Pot stickers'), inCheck('Walnut shrimp'));
-    final hold = await holdRow(tester, inCheck('Pot stickers'));
+    final pot = inCheck('Pot stickers');
+    final from = tester.getCenter(pot);
+    final potHeight = rowHeight(tester, 'L1');
+    final teaHeight = rowHeight(tester, 'L3');
+    final pancakeHeight = rowHeight(tester, 'L4');
 
-    // while one is in hand, a tap picks a dish up instead of opening it, and a second tap puts it down
-    await tester.tap(inCheck('Jasmine tea'));
-    await tester.pump();
-    expect(pickedUp(tester, 'Jasmine tea'), isTrue);
+    // held, the dish lifts off the check into a stack in hand, its room left behind under it
+    final hold = await holdRow(tester, pot);
+    expect(inStack('Pot stickers'), findsOneWidget);
+    expect(rowHeight(tester, 'L1'), 0);
+    expect(roomUnder(tester, '1', 'L4'), moreOrLessEquals(potHeight, epsilon: 0.5));
+    expect(holdable(), findsNothing); // nothing else can be held while one is
+
+    // a tap on another dish picks it up instead of opening it: its row folds away, it stacks under the one
+    // in hand, and the rows make room for both
+    await tester.tap(inList('Jasmine tea'));
+    await settleRows(tester);
     expect(find.text(noChoices), findsNothing);
-    expect(find.text('+1'), findsOneWidget); // on the dish in hand
-    await tester.tap(inCheck('Scallion pancake'));
-    await tester.pump();
-    expect(find.text('+2'), findsOneWidget);
-    await tester.tap(inCheck('Scallion pancake'));
-    await tester.pump();
-    expect(pickedUp(tester, 'Scallion pancake'), isFalse);
-    expect(find.text('+1'), findsOneWidget);
+    expect(inStack('Jasmine tea'), findsOneWidget);
+    expect(rowHeight(tester, 'L3'), 0);
+    final stackHeight = tester.getSize(stack()).height;
+    expect(stackHeight, moreOrLessEquals(potHeight + teaHeight, epsilon: 0.5));
+    // the room stays where it was, and the stack stays on its room as the rows above close over the tea's
+    expect(roomUnder(tester, '1', 'L4'), moreOrLessEquals(stackHeight, epsilon: 0.5));
+    expect(tester.getTopLeft(stack()).dy, moreOrLessEquals(tester.getBottomLeft(header('1')).dy, epsilon: 0.5));
 
-    await carry(tester, hold, from, to);
+    // a tap on a stacked dish puts it back
+    await tester.tap(inList('Scallion pancake'));
+    await settleRows(tester);
+    expect(inStack('Scallion pancake'), findsOneWidget);
+    expect(rowHeight(tester, 'L4'), 0);
+    await tester.tap(inStack('Scallion pancake'));
+    await settleRows(tester);
+    expect(inStack('Scallion pancake'), findsNothing);
+    expect(rowHeight(tester, 'L4'), moreOrLessEquals(pancakeHeight, epsilon: 0.5));
+    expect(tester.getSize(stack()).height, moreOrLessEquals(stackHeight, epsilon: 0.5));
+
+    // let go with the foot of the stack just above the shrimp: it comes down there, under Entrees, the tea
+    // under the pot stickers as stacked
+    final shrimpTop = tester.getTopLeft(tileOf(inList('Walnut shrimp'))).dy;
+    final stackTop = tester.getTopLeft(stack()).dy;
+    await carry(tester, hold, from, from + Offset(0, shrimpTop - stackHeight - stackTop));
     final ops = t.hub.opsFor('o1');
     expect(ops.map((op) => op['kind']), ['set_line', 'set_line']);
-    expect(ops[0]['data'], {'line_id': 'L3', 'course': '2', 'rank': 0.0}); // the tea first: it was above
-    expect(ops[1]['data'], {'line_id': 'L1', 'course': '2', 'rank': 1.0});
-    // under Entrees: the tea, the pot stickers, the shrimp; nothing is picked up any more
+    expect(ops[0]['data'], {'line_id': 'L1', 'course': '2', 'rank': 0.0});
+    expect(ops[1]['data'], {'line_id': 'L3', 'course': '2', 'rank': 1.0});
     final ys = [
-      for (final f in [header('2'), inCheck('Jasmine tea'), inCheck('Pot stickers'), inCheck('Walnut shrimp')])
+      for (final f in [header('2'), inCheck('Pot stickers'), inCheck('Jasmine tea'), inCheck('Walnut shrimp')])
         tester.getCenter(f).dy,
     ];
     expect(ys, orderedEquals([...ys]..sort()));
-    expect(find.text('+1'), findsNothing);
-    expect(tester.widgetList<ListTile>(find.byType(ListTile)).any((tile) => tile.selected), isFalse);
+    expect(stack(), findsNothing);
+    expect(holdable(), findsWidgets);
     // and a tap opens a dish again
     await tester.tap(inCheck('Scallion pancake'));
     await tester.pump();
@@ -361,20 +408,38 @@ void main() {
     await stop(tester);
   });
 
-  testWidgets('a hold that is cut short puts every dish down', (tester) async {
+  testWidgets('a hold that is cut short puts every dish back', (tester) async {
     final t = await pumpOrder(tester, {
       'L1': line('Pot stickers', course: '1', rank: 1),
       'L3': line('Jasmine tea', course: 'drinks', rank: 3, fired: true),
     });
+    final potHeight = rowHeight(tester, 'L1');
+    final teaHeight = rowHeight(tester, 'L3');
     final hold = await holdRow(tester, inCheck('Pot stickers'));
-    await tester.tap(inCheck('Jasmine tea'));
-    await tester.pump();
-    expect(pickedUp(tester, 'Jasmine tea'), isTrue);
-    expect(holdable(), findsNothing); // nothing else can be held while one is
+    await tester.tap(inList('Jasmine tea'));
+    await settleRows(tester);
+    expect(inStack('Jasmine tea'), findsOneWidget);
+    // the room (under Appetizers, above the Entrees header) is still there, grown for the tea
+    expect(
+      tester.getTopLeft(header('2')).dy - tester.getBottomLeft(header('1')).dy,
+      moreOrLessEquals(potHeight + teaHeight, epsilon: 0.5),
+    );
+    expect(tester.getTopLeft(stack()).dy, moreOrLessEquals(tester.getBottomLeft(header('1')).dy, epsilon: 0.5));
+    // put back, the tea opens its row above the stack again, and the stack goes down with its room
+    await tester.tap(inStack('Jasmine tea'));
+    await settleRows(tester);
+    expect(inStack('Jasmine tea'), findsNothing);
+    expect(rowHeight(tester, 'L3'), moreOrLessEquals(teaHeight, epsilon: 0.5));
+    expect(tester.getSize(stack()).height, moreOrLessEquals(potHeight, epsilon: 0.5));
+    expect(tester.getTopLeft(stack()).dy, moreOrLessEquals(tester.getBottomLeft(header('1')).dy, epsilon: 0.5));
+    await tester.tap(inList('Jasmine tea'));
+    await settleRows(tester);
+    expect(inStack('Jasmine tea'), findsOneWidget);
     await hold.cancel();
     await tester.pumpAndSettle();
     expect(t.hub.opsFor('o1'), isEmpty);
-    expect(pickedUp(tester, 'Jasmine tea'), isFalse);
+    expect(stack(), findsNothing);
+    expect(rowHeight(tester, 'L3'), moreOrLessEquals(teaHeight, epsilon: 0.5));
     expect(holdable(), findsWidgets);
     await stop(tester);
   });

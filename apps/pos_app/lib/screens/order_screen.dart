@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../api.dart';
 import '../check_order.dart';
@@ -14,6 +12,7 @@ import '../outbox.dart';
 import '../photos.dart';
 import '../pricing.dart';
 import '../takeout.dart';
+import 'check_list.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'menu_panel.dart';
@@ -597,7 +596,7 @@ class _TicketPanel extends StatefulWidget {
   final ValueChanged<CheckDiscount> onRemoveDiscount;
   final ValueChanged<CheckCharge> onRemoveCharge;
 
-  /// Lines dragged to another place or course on the check.
+  /// Lines let go at another place or course on the check.
   final Future<void> Function(Drop drop) onMove;
 
   @override
@@ -606,28 +605,13 @@ class _TicketPanel extends StatefulWidget {
 
 class _TicketPanelState extends State<_TicketPanel> {
   final _keys = <String, GlobalKey>{};
-  List<CheckRow>? _rows; // where dropped rows show until their move lands
-  int _rowCount = 0;
-
-  // A drag on the check: the row in hand, the pointer holding it, and the lines tapped while it is held,
-  // which go along with it. The list says when a drag starts and when the row is let go, but not when the
-  // pointer is cut short by the system (nor when it gives the drag up because its rows changed), so the
-  // pointers down on the list are watched as well.
-  int? _heldRow;
-  int? _heldPointer;
-  final _down = <int>{};
-  final _picked = ValueNotifier<Set<String>>(const {});
+  List<CheckRow>? _rows; // where lines let go show until their move lands
+  List<CheckRow> _built = const []; // the rows as last laid out
 
   @override
   void initState() {
     super.initState();
     _showLastAdded(); // the phone's Check tab opens on it too
-  }
-
-  @override
-  void dispose() {
-    _picked.dispose();
-    super.dispose();
   }
 
   @override
@@ -676,63 +660,28 @@ class _TicketPanelState extends State<_TicketPanel> {
     final shown = {for (final l in order.shownLines) l.lineId};
     _keys.removeWhere((id, _) => !shown.contains(id));
     final check = widget.check;
-    final rows = _rows ?? checkRows(order, widget.coursing);
-    if (_heldRow != null && rows.length != _rowCount) _putDown(); // the list gives a drag up when its rows change
-    _rowCount = rows.length;
+    final rows = _built = _rows ?? checkRows(order, widget.coursing);
     return Material(
       color: posColors.checkPaper,
       child: Column(
         children: [
           Expanded(
             // Every row is built (a check is short), so the line added last exists to scroll to. A line is
-            // held and dragged to another place, or under another course's header; other lines tapped while
-            // it is held go along with it.
-            child: Listener(
-              onPointerDown: (e) => _down.add(e.pointer),
-              onPointerUp: (e) => _down.remove(e.pointer),
-              onPointerCancel: (e) {
-                _down.remove(e.pointer);
-                if (e.pointer != _heldPointer) return;
-                setState(() {
-                  // cut short (a call, a palm, the app sent to the background): the list drops the drag
-                  _putDown();
-                  _picked.value = const {};
-                });
-              },
-              child: ReorderableListView.builder(
-                key: const ValueKey('check-rows'),
-                buildDefaultDragHandles: false,
-                scrollCacheExtent: const ScrollCacheExtent.pixels(10000),
-                itemCount: rows.length,
-                onReorderStart: (i) => setState(() {
-                  _heldRow = i;
-                  _heldPointer = _down.isEmpty ? null : _down.reduce(math.min); // the first one down holds it
-                  _picked.value = const {};
-                }),
-                onReorderEnd: (insertAt) {
-                  final from = _heldRow;
-                  setState(_putDown);
-                  if (from == null) return;
-                  // let go where it was, the list says nothing more; what was picked up still gathers to it
-                  final to = insertAt > from ? insertAt - 1 : insertAt;
-                  if (to == from && _picked.value.isNotEmpty) _dropped(rows, from, to);
-                },
-                onReorderItem: (from, to) => _dropped(rows, from, to),
-                proxyDecorator: (child, _, animation) => AnimatedBuilder(
-                  animation: animation,
-                  builder: (context, child) =>
-                      Material(color: posColors.checkPaper, elevation: 6 * animation.value, child: child),
-                  child: child,
+            // held by its dish and carried to another place, or under another course's header; other lines
+            // tapped while it is held stack under it and go along.
+            child: CheckList(
+              key: const ValueKey('check-rows'),
+              rows: rows,
+              paper: posColors.checkPaper,
+              onDrop: _dropped,
+              rowBuilder: (context, i, row, drag) => switch (row) {
+                CourseRow(:final id, :final name, :final state) => _CourseHeader(
+                  key: ValueKey('course-row:$id'),
+                  name: name,
+                  state: state,
                 ),
-                itemBuilder: (context, i) => switch (rows[i]) {
-                  CourseRow(:final id, :final name, :final state) => _CourseHeader(
-                    key: ValueKey('course-row:$id'),
-                    name: name,
-                    state: state,
-                  ),
-                  final LineRow row => _lineTile(context, i, row),
-                },
-              ),
+                final LineRow row => _lineTile(context, i, row, drag),
+              },
             ),
           ),
           if (check != null)
@@ -776,21 +725,21 @@ class _TicketPanelState extends State<_TicketPanel> {
     );
   }
 
-  /// A line: its quantity and seat, the dish, its price and the bin. Held by the dish, it can be dragged to
-  /// another place or course (the quantity and the bin keep their own tap and hold). While another dish is
-  /// in hand, a tap on the line picks it up to go along with it, and the one in hand counts them.
-  Widget _lineTile(BuildContext context, int index, LineRow row) {
+  /// A line: its quantity and seat, the dish, its price and the bin. Held by the dish, it lifts into the
+  /// hand and can be carried to another place or course (the quantity and the bin keep their own tap and
+  /// hold). While a dish is in hand, a tap on a line picks it up to go along, and a tap on a line in the
+  /// stack puts it back.
+  Widget _lineTile(BuildContext context, int index, LineRow row, CheckDrag? drag) {
     final line = row.line;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final posColors = PosColors.of(context);
     final priced = widget.check?.line(line.lineId);
     final changeable = widget.open && line.isActive;
-    final held = _heldRow != null; // a dish is in hand
-    final picked = held && _picked.value.contains(line.lineId);
+    final held = drag != null; // a dish is in hand
     final isLatest = line.lineId == widget.lastAdded;
     Widget holdable(Widget child) => changeable && !held
-        ? ReorderableDelayedDragStartListener(
+        ? HoldToDrag(
             index: index,
             child: SizedBox(width: double.infinity, child: child),
           )
@@ -798,12 +747,10 @@ class _TicketPanelState extends State<_TicketPanel> {
     final tile = ListTile(
       key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
       dense: true,
-      selected: picked,
-      selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
       onTap: !changeable
           ? null
           : held
-          ? () => _togglePicked(line.lineId)
+          ? () => drag.toggle(line.lineId)
           : () => widget.onEdit(line),
       leading: _Hold(
         key: ValueKey('qty-${line.lineId}'),
@@ -884,24 +831,6 @@ class _TicketPanelState extends State<_TicketPanel> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          ValueListenableBuilder<Set<String>>(
-            // on the dish in hand, drawn over the list as it is dragged: how many go along with it
-            valueListenable: _picked,
-            builder: (context, picked, _) => _heldRow != index || picked.isEmpty
-                ? const SizedBox.shrink()
-                : Container(
-                    margin: const EdgeInsets.only(right: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(10)),
-                    child: Text(
-                      '+${picked.length}',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: scheme.onPrimary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-          ),
           // a fixed width, so a longer price does not push the name onto another line
           SizedBox(
             width: 60,
@@ -943,36 +872,19 @@ class _TicketPanelState extends State<_TicketPanel> {
     );
   }
 
-  /// A tap on a dish while another is in hand: it goes along with it, or stays if tapped again.
-  void _togglePicked(String id) {
-    final picked = {..._picked.value};
-    if (!picked.remove(id)) picked.add(id);
-    _picked.value = picked;
-    setState(() {}); // the row's tint
-  }
-
-  /// The hold is over: nothing is in hand any more.
-  void _putDown() {
-    _heldRow = null;
-    _heldPointer = null;
-  }
-
-  /// A row let go at [to], with whatever was picked up while it was held: the check shows them there
-  /// while their move is sent.
-  Future<void> _dropped(List<CheckRow> rows, int from, int to) async {
-    if (rows[from] is! LineRow) return;
-    final drop = dropOf(rows, from, to, picked: _picked.value);
-    _picked.value = const {};
+  /// The stack has come down: the check shows its lines there while their move is sent.
+  Future<void> _dropped(Drop drop) async {
+    final rows = _built;
     final moving = {for (final line in drop.lines) line.lineId};
-    bool moves(CheckRow row) => row is LineRow && moving.contains(row.line.lineId);
+    final byId = {
+      for (final row in rows)
+        if (row is LineRow) row.line.lineId: row,
+    };
     final shown = [
       for (final row in rows)
-        if (!moves(row)) row,
+        if (row is! LineRow || !moving.contains(row.line.lineId)) row,
     ];
-    shown.insertAll(drop.at.clamp(0, shown.length), [
-      for (final row in rows)
-        if (moves(row)) row,
-    ]);
+    shown.insertAll(drop.at.clamp(0, shown.length), [for (final line in drop.lines) ?byId[line.lineId]]);
     setState(() => _rows = shown);
     try {
       await widget.onMove(drop);
