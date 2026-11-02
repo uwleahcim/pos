@@ -43,4 +43,6 @@ Layout:
   jobs from the backend and writes them to the printers on the LAN when the hub cannot.
 - `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.
 - `lib/coursing.dart` the location's coursing as the hub serves it: on or off, the courses, the default.
+- `lib/check_order.dart` the check as the order screen lays it out: a header per course, the lines under each
+  by rank, and where a line dragged to another row lands (its course and rank).
 - `lib/screens/` orders list, one order, settings, the menu editor, the location settings.

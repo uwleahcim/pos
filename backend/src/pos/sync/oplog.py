@@ -7,6 +7,7 @@ hub, a terminal or the cloud needs to agree on is in this module, so it can be t
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -21,8 +22,8 @@ KINDS = frozenset(
     {
         "create",  # data: any order fields
         "set_field",  # data: any order fields
-        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, request?, priced?
-        "set_line",  # data: line_id + any line fields
+        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?
+        "set_line",  # data: line_id + any line fields (a drag on the check: course and rank)
         "void_line",  # data: line_id, reason? (removes a line the kitchen has not seen, voids one it has)
         "fire",  # data: course ("*" = everything); sends that course's lines not yet sent
         "close",
@@ -60,7 +61,10 @@ ORDER_FIELDS = frozenset(
         "locale",  # the customer's language for texts
     }
 )
-LINE_FIELDS = frozenset({"qty", "seat", "course", "note"})
+LINE_FIELDS = frozenset({"qty", "seat", "course", "note", "rank"})
+KITCHEN_FIELDS = frozenset({"qty", "seat", "course", "note"})
+"""The line fields the kitchen cares about: changing one of them after the line was sent marks the line
+modified. A line's `rank` (its place on the check) is not one: a line can be arranged freely once sent."""
 
 
 class ClockDriftError(ValueError):
@@ -91,6 +95,7 @@ class Line:
     seat: int | None = None
     course: str | None = None
     note: str = ""
+    rank: float = 0.0  # its place on the check: lines show, print and are charged in rank order
     status: str = "active"  # active | removed (taken off before the kitchen saw it) | void (after)
     void_reason: str | None = None
     modified_after_fire: bool = False
@@ -202,19 +207,25 @@ class OrderState:
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
 
+    def ordered_lines(self) -> list[Line]:
+        """The lines as the check shows them: by rank (the order they were added, until a drag moves one)."""
+        return sorted(self.lines.values(), key=lambda line: (line.rank, line.line_id))
+
     def snapshot(self) -> dict[str, Any]:
-        """A plain, comparable picture of the order; two replicas agree when their snapshots are equal."""
+        """A plain, comparable picture of the order; two replicas agree when their snapshots are equal. The
+        lines come in check order."""
         return {
             "order_id": self.order_id,
             "status": self.status,
             "fields": dict(sorted(self.fields.items())),
             "lines": {
-                line_id: {
+                line.line_id: {
                     "item": line.item,
                     "qty": line.qty,
                     "seat": line.seat,
                     "course": line.course,
                     "note": line.note,
+                    "rank": line.rank,
                     "status": line.status,
                     "void_reason": line.void_reason,
                     "modified_after_fire": line.modified_after_fire,
@@ -222,7 +233,7 @@ class OrderState:
                     "request": line.request,
                     "priced": line.priced,
                 }
-                for line_id, line in sorted(self.lines.items())
+                for line in self.ordered_lines()
             },
             "fired": {course: str(stamp) for course, stamp in sorted(self.fired.items())},
             "discounts": {did: d.as_json() for did, d in sorted(self.discounts.items())},
@@ -261,6 +272,10 @@ def apply(state: OrderState, op: Op) -> None:
             request=data.get("request"),
             priced=data.get("priced"),
         )
+        rank = _rank(data.get("rank"))
+        if rank is None:  # after everything on the check so far
+            rank = max((other.rank for other in state.lines.values()), default=0.0) + 1
+        line.rank = rank
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
         line.modified_after_fire = state._fired_before(line.course)
         state.lines[line_id] = line
@@ -272,9 +287,12 @@ def apply(state: OrderState, op: Op) -> None:
         was_fired = state._fired_before(line.course)
         for name in LINE_FIELDS:
             if name in data and line.stamps.get(name, _MIN) <= op.hlc:
-                setattr(line, name, data[name])
+                value = _rank(data[name]) if name == "rank" else data[name]
+                if value is None and name == "rank":
+                    continue  # not a number: the line keeps its place
+                setattr(line, name, value)
                 line.stamps[name] = op.hlc
-        if was_fired or state._fired_before(line.course):
+        if KITCHEN_FIELDS & data.keys() and (was_fired or state._fired_before(line.course)):
             line.modified_after_fire = True
 
     elif kind == "void_line":
@@ -372,6 +390,13 @@ def apply(state: OrderState, op: Op) -> None:
 
 
 _MIN = HLC(0, 0, "")
+
+
+def _rank(value: Any) -> float | None:
+    """A rank as a terminal sent it, or None when it is not a finite number (a sort must never fail on it)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 def replay(ops: Iterable[Op], order_id: str | None = None) -> OrderState:

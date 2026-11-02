@@ -36,7 +36,7 @@ def check_for(
     tax_classes: dict[str, str] = {}
     subtotal = ZERO
     unpriced = []
-    for line in sorted(state.lines.values(), key=lambda line: (line.seat or 0, line.line_id)):
+    for line in state.ordered_lines():  # as the check shows them, so the receipt reads the same
         if line.status != "active":
             continue
         priced = line.priced or {}

@@ -22,6 +22,7 @@ class Line {
     this.seat,
     this.course,
     this.note = '',
+    this.rank = 0,
     this.modifiedAfterFire = false,
     this.fired = false,
     this.request,
@@ -38,6 +39,7 @@ class Line {
     seat: json['seat'] as int?,
     course: json['course'] as String?,
     note: json['note'] as String? ?? '',
+    rank: (json['rank'] as num?)?.toDouble() ?? 0,
     modifiedAfterFire: json['modified_after_fire'] as bool? ?? false,
     fired: json['fired'] as bool? ?? false,
     request: json['request'] == null ? null : LineRequest.fromJson(json['request'] as Map<String, dynamic>),
@@ -52,6 +54,10 @@ class Line {
   final int? seat;
   final String? course;
   final String note;
+
+  /// Its place on the check: lines show, print and are charged in rank order (the order they were added,
+  /// until a drag on the check moves one).
+  final double rank;
   final bool modifiedAfterFire;
 
   /// Sent to the kitchen. Until then a line can simply come off; after, taking it off is a void.
@@ -72,14 +78,26 @@ class Line {
   /// Shown from this device's own operations; the backend has not confirmed it yet.
   final bool pending;
 
-  Line copyWith({String? status, bool? fired, bool? pending, int? qty, String? note}) => Line(
+  /// The same line with some fields changed; [clearCourse] takes the course off.
+  Line copyWith({
+    String? status,
+    bool? fired,
+    bool? pending,
+    int? qty,
+    String? note,
+    int? seat,
+    String? course,
+    bool clearCourse = false,
+    double? rank,
+  }) => Line(
     lineId: lineId,
     item: item,
     qty: qty ?? this.qty,
     status: status ?? this.status,
-    seat: seat,
-    course: course,
+    seat: seat ?? this.seat,
+    course: clearCourse ? null : course ?? this.course,
     note: note ?? this.note,
+    rank: rank ?? this.rank,
     modifiedAfterFire: modifiedAfterFire,
     fired: fired ?? this.fired,
     request: request,

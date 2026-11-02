@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../api.dart';
+import '../check_order.dart';
 import '../coursing.dart';
 import '../line_ops.dart';
 import '../local_order.dart';
@@ -280,36 +282,69 @@ class _OrderScreenState extends State<OrderScreen> {
     final change = qtyChange(line, qty, newId: widget.outbox.newId);
     if (change.isEmpty) return;
     if (change.voidsFired) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(qty == 0 ? 'Void ${line.item}?' : 'Void ${line.item} and send $qty again?'),
-          content: Text(
-            qty == 0
-                ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
-                : 'It has gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for $qty.',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError,
-              ),
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Void'),
-            ),
-          ],
-        ),
+      final ok = await _confirmVoid(
+        title: qty == 0 ? 'Void ${line.item}?' : 'Void ${line.item} and send $qty again?',
+        body: qty == 0
+            ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
+            : 'It has gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for $qty.',
+        action: 'Void',
       );
-      if (ok != true) return;
+      if (!ok) return;
     }
+    await _send(change, line);
+  }
+
+  /// A line dragged on the check: to another place in its course, or under another course. A dish the
+  /// kitchen already has is voided (a VOID ticket prints) and goes again with the new course, so the
+  /// operator confirms first.
+  Future<void> _move(Line line, {required String? course, required double rank}) async {
+    final change = moveChange(line, course: course, rank: rank, newId: widget.outbox.newId);
+    if (change.isEmpty) return;
+    if (change.voidsFired) {
+      final from = line.course == null ? '' : ' with ${widget.coursing.nameOf(line.course!)}';
+      final to = course == null ? 'no course' : widget.coursing.nameOf(course);
+      final again = course == null ? 'with the next Fire everything' : 'when you fire $to';
+      final ok = await _confirmVoid(
+        title: 'Void ${line.item} and send it with $to?',
+        body: 'It has gone to the kitchen$from. A VOID ticket prints, and it goes again $again.',
+        action: 'Void and move',
+      );
+      if (!ok) return;
+    }
+    await _send(change, line);
+  }
+
+  /// Sends a change; the line it adds, if any, is priced like the line it copies and scrolled into view.
+  Future<void> _send(LineChange change, Line line) async {
     final copy = change.newLineId;
     if (copy != null) {
       _local[copy] = _localFor(line);
       _lastAdded = copy;
     }
     await _appendAll(change.ops);
+  }
+
+  /// A VOID ticket is about to print: the operator's word first.
+  Future<bool> _confirmVoid({required String title, required String body, required String action}) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   /// What this screen knows of a line, to price a copy of it before the backend does.
@@ -447,6 +482,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onTypeQty: _typeQty,
       onRemoveDiscount: _removeDiscount,
       onRemoveCharge: _removeCharge,
+      onMove: _move,
     );
     final menu = open
         ? Column(
@@ -555,6 +591,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onTypeQty,
     required this.onRemoveDiscount,
     required this.onRemoveCharge,
+    required this.onMove,
   });
 
   final Order? order;
@@ -568,12 +605,16 @@ class _TicketPanel extends StatefulWidget {
   final ValueChanged<CheckDiscount> onRemoveDiscount;
   final ValueChanged<CheckCharge> onRemoveCharge;
 
+  /// A line dragged to another place or course on the check.
+  final Future<void> Function(Line line, {required String? course, required double rank}) onMove;
+
   @override
   State<_TicketPanel> createState() => _TicketPanelState();
 }
 
 class _TicketPanelState extends State<_TicketPanel> {
   final _keys = <String, GlobalKey>{};
+  List<CheckRow>? _rows; // where a dropped row shows until its move lands
 
   @override
   void initState() {
@@ -606,11 +647,7 @@ class _TicketPanelState extends State<_TicketPanel> {
   Widget build(BuildContext context) {
     final order = widget.order;
     final open = widget.open;
-    final onEdit = widget.onEdit;
-    final onQty = widget.onQty;
-    final onTypeQty = widget.onTypeQty;
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     final posColors = PosColors.of(context);
     if (order == null) return const Center(child: CircularProgressIndicator());
     if (order.shownLines.isEmpty) {
@@ -631,152 +668,34 @@ class _TicketPanelState extends State<_TicketPanel> {
     final shown = {for (final l in order.shownLines) l.lineId};
     _keys.removeWhere((id, _) => !shown.contains(id));
     final check = widget.check;
+    final rows = _rows ?? checkRows(order, widget.coursing);
     return Material(
       color: posColors.checkPaper,
       child: Column(
         children: [
           Expanded(
-            // not a lazy list: a check is short, and the line added last must exist to scroll to it
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  for (final group in widget._byCourse(order)) ...[
-                    _CourseHeader(name: group.$1, state: group.$2),
-                    for (final line in group.$3)
-                      Builder(
-                        builder: (context) {
-                          final priced = check?.line(line.lineId);
-                          final changeable = open && line.isActive;
-                          final isLatest = line.lineId == widget.lastAdded;
-                          final tile = ListTile(
-                            key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
-                            dense: true,
-                            onTap: changeable ? () => onEdit(line) : null,
-                            leading: _Hold(
-                              key: ValueKey('qty-${line.lineId}'),
-                              tooltip: 'Tap for one more, hold to type how many',
-                              onTap: changeable ? () => onQty(line, line.qty + 1) : null,
-                              onLongPress: changeable ? () => onTypeQty(line) : null,
-                              // the sync mark has its own fixed slot on the far left, so nothing moves when it shows
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 14,
-                                    child: line.pending
-                                        ? Icon(
-                                            Icons.cloud_upload_outlined,
-                                            key: ValueKey('sending-${line.lineId}'),
-                                            size: 12,
-                                            color: scheme.primary,
-                                          )
-                                        : null,
-                                  ),
-                                  SizedBox(
-                                    width: 40,
-                                    height: 34,
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        color: line.isVoid ? scheme.surfaceContainerHighest : scheme.surfaceContainer,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: scheme.outlineVariant),
-                                      ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                                        child: FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          child: Column(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              Text(
-                                                '${line.qty}×',
-                                                style: theme.textTheme.titleMedium?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                  fontFeatures: PosTheme.tabular,
-                                                ),
-                                              ),
-                                              Text(
-                                                line.seat == null ? 'table' : 'seat ${line.seat}',
-                                                style: theme.textTheme.labelSmall?.copyWith(
-                                                  color: scheme.onSurfaceVariant,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            title: Text(
-                              priced?.name ?? line.item,
-                              style: line.isVoid
-                                  ? TextStyle(decoration: TextDecoration.lineThrough, color: scheme.onSurfaceVariant)
-                                  : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              [
-                                ...?priced?.modifiers,
-                                if (line.isVoid) 'void',
-                                if (line.isActive && !line.fired && group.$2 != 'held') 'not sent yet',
-                                if (line.isActive && line.modifiedAfterFire) 'added after fire',
-                                if (line.note.isNotEmpty) line.note,
-                              ].join(' · '),
-                              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // a fixed width, so a longer price does not push the name onto another line
-                                SizedBox(
-                                  width: 60,
-                                  child: Text(
-                                    priced?.total ?? '',
-                                    textAlign: TextAlign.end,
-                                    maxLines: 1,
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                      fontFeatures: PosTheme.tabular,
-                                    ),
-                                  ),
-                                ),
-                                if (changeable)
-                                  _Hold(
-                                    key: ValueKey('bin-${line.lineId}'),
-                                    tooltip: line.qty > 1
-                                        ? 'Tap for one fewer, hold to take them all off'
-                                        : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
-                                    onTap: () => onQty(line, line.qty - 1),
-                                    onLongPress: () => onQty(line, 0),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(10),
-                                      child: Icon(
-                                        line.fired ? Icons.block : Icons.delete_outline,
-                                        size: 20,
-                                        color: line.fired ? scheme.error : scheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                          if (!isLatest) return tile;
-                          return TweenAnimationBuilder<Color?>(
-                            key: ValueKey('flash-${line.lineId}'),
-                            tween: ColorTween(begin: posColors.highlightFlash, end: posColors.checkPaper),
-                            duration: const Duration(milliseconds: 650),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, color, child) =>
-                                Material(color: color ?? posColors.checkPaper, child: child),
-                            child: tile,
-                          );
-                        },
-                      ),
-                  ],
-                ],
+            // Every row is built (a check is short), so the line added last exists to scroll to. A line is
+            // held and dragged to another place, or under another course's header.
+            child: ReorderableListView.builder(
+              key: const ValueKey('check-rows'),
+              buildDefaultDragHandles: false,
+              scrollCacheExtent: const ScrollCacheExtent.pixels(10000),
+              itemCount: rows.length,
+              onReorderItem: (from, to) => _dropped(rows, from, to),
+              proxyDecorator: (child, _, animation) => AnimatedBuilder(
+                animation: animation,
+                builder: (context, child) =>
+                    Material(color: posColors.checkPaper, elevation: 6 * animation.value, child: child),
+                child: child,
               ),
+              itemBuilder: (context, i) => switch (rows[i]) {
+                CourseRow(:final id, :final name, :final state) => _CourseHeader(
+                  key: ValueKey('course-row:$id'),
+                  name: name,
+                  state: state,
+                ),
+                final LineRow row => _lineTile(context, i, row),
+              },
             ),
           ),
           if (check != null)
@@ -819,34 +738,160 @@ class _TicketPanelState extends State<_TicketPanel> {
       ),
     );
   }
-}
 
-extension on _TicketPanel {
-  /// Lines grouped by course in service order: (course name, held | fired | "N to fire", lines by seat).
-  /// With coursing off the check is one group, "Items"; a course no longer on the list shows by its id.
-  List<(String, String, List<Line>)> _byCourse(Order order) {
-    final known = [for (final c in coursing.courses) c.id];
-    final shown = order.shownLines;
-    final ids = {for (final l in shown) l.course ?? ''}.toList()
-      ..sort((a, b) {
-        final ia = known.indexOf(a), ib = known.indexOf(b);
-        return (ia < 0 ? 99 : ia).compareTo(ib < 0 ? 99 : ib);
-      });
-    String state(List<Line> lines) {
-      final active = lines.where((l) => l.isActive);
-      final waiting = active.where((l) => !l.fired).length;
-      if (waiting == 0) return 'fired';
-      return waiting == active.length ? 'held' : '$waiting to fire';
+  /// A line: its quantity and seat, the dish, its price and the bin. Held by the dish, it can be dragged to
+  /// another place or course (the quantity and the bin keep their own tap and hold).
+  Widget _lineTile(BuildContext context, int index, LineRow row) {
+    final line = row.line;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final posColors = PosColors.of(context);
+    final priced = widget.check?.line(line.lineId);
+    final changeable = widget.open && line.isActive;
+    final isLatest = line.lineId == widget.lastAdded;
+    Widget held(Widget child) => changeable
+        ? ReorderableDelayedDragStartListener(
+            index: index,
+            child: SizedBox(width: double.infinity, child: child),
+          )
+        : child;
+    final tile = ListTile(
+      key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
+      dense: true,
+      onTap: changeable ? () => widget.onEdit(line) : null,
+      leading: _Hold(
+        key: ValueKey('qty-${line.lineId}'),
+        tooltip: 'Tap for one more, hold to type how many',
+        onTap: changeable ? () => widget.onQty(line, line.qty + 1) : null,
+        onLongPress: changeable ? () => widget.onTypeQty(line) : null,
+        // the sync mark has its own fixed slot on the far left, so nothing moves when it shows
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 14,
+              child: line.pending
+                  ? Icon(
+                      Icons.cloud_upload_outlined,
+                      key: ValueKey('sending-${line.lineId}'),
+                      size: 12,
+                      color: scheme.primary,
+                    )
+                  : null,
+            ),
+            SizedBox(
+              width: 40,
+              height: 34,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: line.isVoid ? scheme.surfaceContainerHighest : scheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '${line.qty}×',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: PosTheme.tabular,
+                          ),
+                        ),
+                        Text(
+                          line.seat == null ? 'table' : 'seat ${line.seat}',
+                          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      title: held(
+        Text(
+          priced?.name ?? line.item,
+          style: line.isVoid
+              ? TextStyle(decoration: TextDecoration.lineThrough, color: scheme.onSurfaceVariant)
+              : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+      ),
+      subtitle: held(
+        Text(
+          [
+            ...?priced?.modifiers,
+            if (line.isVoid) 'void',
+            if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
+            if (line.isActive && line.modifiedAfterFire) 'added after fire',
+            if (line.note.isNotEmpty) line.note,
+          ].join(' · '),
+          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // a fixed width, so a longer price does not push the name onto another line
+          SizedBox(
+            width: 60,
+            child: Text(
+              priced?.total ?? '',
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontFeatures: PosTheme.tabular),
+            ),
+          ),
+          if (changeable)
+            _Hold(
+              key: ValueKey('bin-${line.lineId}'),
+              tooltip: line.qty > 1
+                  ? 'Tap for one fewer, hold to take them all off'
+                  : (line.fired ? 'Void (sent to the kitchen)' : 'Remove'),
+              onTap: () => widget.onQty(line, line.qty - 1),
+              onLongPress: () => widget.onQty(line, 0),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Icon(
+                  line.fired ? Icons.block : Icons.delete_outline,
+                  size: 20,
+                  color: line.fired ? scheme.error : scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!isLatest) return tile;
+    return TweenAnimationBuilder<Color?>(
+      key: ValueKey('flash-${line.lineId}'),
+      tween: ColorTween(begin: posColors.highlightFlash, end: posColors.checkPaper),
+      duration: const Duration(milliseconds: 650),
+      curve: Curves.easeOutCubic,
+      builder: (context, color, child) => Material(color: color ?? posColors.checkPaper, child: child),
+      child: tile,
+    );
+  }
+
+  /// A row let go at [to]: the check shows it there while its move is sent, or until the operator keeps it.
+  Future<void> _dropped(List<CheckRow> rows, int from, int to) async {
+    final row = rows[from];
+    if (row is! LineRow) return;
+    final where = placement(rows, from, to);
+    final shown = [...rows]..removeAt(from);
+    shown.insert(to.clamp(0, shown.length), row);
+    setState(() => _rows = shown);
+    try {
+      await widget.onMove(row.line, course: where.course, rank: where.rank);
+    } finally {
+      if (mounted) setState(() => _rows = null);
     }
-
-    (String, String, List<Line>) group(String id) {
-      final lines = shown.where((l) => (l.course ?? '') == id).toList()
-        ..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0));
-      final name = id.isEmpty ? (coursing.enabled ? 'No course' : 'Items') : coursing.nameOf(id);
-      return (name, state(lines), lines);
-    }
-
-    return [for (final id in ids) group(id)];
   }
 }
 
@@ -936,8 +981,10 @@ class _QtyDialogState extends State<_QtyDialog> {
   }
 }
 
+/// A course on the check: its name and state, or the name alone, dimmed, while nothing is under it (a
+/// line can be dragged there).
 class _CourseHeader extends StatelessWidget {
-  const _CourseHeader({required this.name, required this.state});
+  const _CourseHeader({super.key, required this.name, required this.state});
   final String name;
   final String state;
 
@@ -946,6 +993,7 @@ class _CourseHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final posColors = PosColors.of(context);
     final fired = state == 'fired';
+    final empty = state.isEmpty;
     final badgeBg = fired ? posColors.fired : posColors.waiting;
     final badgeFg = fired ? posColors.firedText : posColors.waitingText;
     final badgeBorder = fired ? posColors.firedBorder : posColors.waitingBorder;
@@ -957,28 +1005,37 @@ class _CourseHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [
-          Text(name, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-          const Spacer(),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: badgeBg,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: badgeBorder.withValues(alpha: 0.5)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 14, color: badgeFg),
-                const SizedBox(width: 4),
-                Text(
-                  state,
-                  style: theme.textTheme.labelSmall?.copyWith(color: badgeFg, fontWeight: FontWeight.w700),
-                ),
-              ],
+          Text(
+            name,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: empty ? theme.colorScheme.onSurfaceVariant : null,
             ),
           ),
+          const Spacer(),
+          if (empty)
+            const SizedBox(height: 20) // the row keeps the height of the state it will show
+          else
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: badgeBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: badgeBorder.withValues(alpha: 0.5)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(fired ? Icons.local_fire_department : Icons.pause_circle_outline, size: 14, color: badgeFg),
+                  const SizedBox(width: 4),
+                  Text(
+                    state,
+                    style: theme.textTheme.labelSmall?.copyWith(color: badgeFg, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

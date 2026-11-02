@@ -53,6 +53,9 @@ def ops(draw):
             }
         elif kind == "set_line":
             data = {"line_id": draw(line_ids), "qty": draw(st.integers(1, 5))}
+            if draw(st.booleans()):  # a drag on the check: another place, another course
+                data["rank"] = draw(st.sampled_from([0.5, 1.5, 2.0, 7.0]))
+                data["course"] = draw(st.sampled_from(["apps", "entrees"]))
         elif kind == "void_line":
             data = {"line_id": draw(line_ids)}
         elif kind == "fire":

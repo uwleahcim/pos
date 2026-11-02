@@ -59,8 +59,8 @@ def kitchen_changes(before: OrderState | None, after: OrderState) -> tuple[list[
     """What the kitchen must hear about between two replays of an order: lines sent for the first time,
     and lines it already had that are now off the order (a void, or the old half of a change)."""
     sent, voided = [], []
-    for line_id, line in after.lines.items():
-        was = before.lines.get(line_id) if before is not None else None
+    for line in after.ordered_lines():
+        was = before.lines.get(line.line_id) if before is not None else None
         if line.active and line.fired_at is not None and (was is None or was.fired_at is None):
             sent.append(line)
         elif not line.active and was is not None and was.active and was.fired_at is not None:
@@ -173,7 +173,7 @@ def ticket_for_fire(
     course = op.data.get("course", "*")
     lines = [
         line
-        for line in state.lines.values()
+        for line in state.ordered_lines()
         if line.active and (course == "*" or line.course == course) and line.fired_at in (None, op.hlc)
     ]
     return ticket_for(
