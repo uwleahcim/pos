@@ -31,6 +31,28 @@ its sizes and prices, where it sits on the menus and its option groups. Option g
 the same way. Save sends only what changed; the backend checks the whole menu and either saves it or says
 what is wrong. Screens showing the menu ask every five seconds whether it changed and reload when it has.
 
+## Android tablets and phones
+
+Two ways to put the app on a Galaxy tablet or phone. Neither needs a signing key: the APK is signed with the
+debug key (the TODO in `android/app/build.gradle.kts`), which is fine for the restaurant's own devices.
+
+1. **No cable: the APK that CI builds.** Every push builds `app-release.apk` and keeps it for 30 days as the
+   `pos-app-apk` artifact of the `ci` workflow. On the tablet, signed in to GitHub, open the latest green run under
+   Actions, download the artifact (a zip), open it from My Files and tap the APK inside. Android asks once to let
+   that app install unknown apps. A Samsung with Auto Blocker on (Settings, Security and privacy) refuses the
+   install until it is off.
+2. **From a Mac with a USB cable.** On the tablet turn on Developer options (Settings, About tablet, Software
+   information, tap Build number seven times) and USB debugging, plug it in, accept the prompt on the tablet, then
+   from `apps/pos_app` run `flutter devices` and `flutter run --release -d <its id>`. A release build stays installed
+   when the cable comes out. `flutter build apk --release` writes the same APK to `build/app/outputs/flutter-apk/`.
+
+Then set it up like any terminal: a device name (letters and digits), the hub address, Save, sign in with a PIN.
+The tablet must be on the Wi-Fi that reaches the hub; the hub answers plain HTTP, which the Android manifest
+allows. The sign-in screen asks for the camera the first time ("While using the app"); without it the audit photos
+are skipped and the dot by the preview stays orange. A tablet gets the same layout as an iPad (anything 600 px wide
+or more); a Galaxy phone gets the phone layout. Android takes the audit photo as an ordinary silent still, so a
+device that plays a shutter sound should be reported: iOS already takes the frame off the preview instead.
+
 Layout:
 
 - `lib/api.dart` the backend client: the three order log calls, with the failover between addresses.
