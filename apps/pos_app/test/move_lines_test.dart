@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/gestures.dart' show kLongPressTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -97,10 +95,11 @@ Future<void> carry(WidgetTester tester, TestGesture gesture, Offset from, Offset
   await tester.pumpAndSettle();
 }
 
-/// Taps a dish stacked in hand by the edge of its card that shows under the one in front of it.
+/// Taps a dish stacked in hand on the part of its card that shows under the one in front of it.
 Future<void> tapStacked(WidgetTester tester, String text) async {
   final card = tileOf(inStack(text));
-  await tester.tapAt(tester.getBottomLeft(card) + Offset(tester.getSize(card).width / 2, -CheckList.peek / 2));
+  final size = tester.getSize(card);
+  await tester.tapAt(tester.getBottomLeft(card) + Offset(size.width / 2, -(size.height - CheckList.cover) / 2));
 }
 
 /// Holds a row of the check, drags it to [to] and lets go.
@@ -374,32 +373,33 @@ void main() {
     expect(roomUnder(tester, '1', 'L4'), moreOrLessEquals(potHeight, epsilon: 0.5));
     expect(holdable(), findsNothing); // nothing else can be held while one is
 
-    // a tap on another dish picks it up instead of opening it: its row folds away and it stacks behind and
-    // a little below the one in hand, so the stack grows by a card's edge, not a row; the rows make room
-    // for the stack
+    // a tap on another dish picks it up instead of opening it: its row folds away and it stacks behind the
+    // one in hand, its top edge under that card and the rest showing, so the stack grows by less than a row
+    // and the dish's name can still be read; the rows make room for the stack
     await tester.tap(inList('Jasmine tea'));
     await settleRows(tester);
     expect(find.text(noChoices), findsNothing);
     expect(inStack('Jasmine tea'), findsOneWidget);
     expect(rowHeight(tester, 'L3'), 0);
     final stackHeight = tester.getSize(stack()).height;
-    expect(stackHeight, moreOrLessEquals(potHeight + CheckList.peek, epsilon: 0.5));
+    expect(stackHeight, moreOrLessEquals(potHeight + teaHeight - CheckList.cover, epsilon: 0.5));
+    final potCardBottom = tester.getBottomLeft(tileOf(inStack('Pot stickers'))).dy;
     expect(
-      tester.getBottomLeft(tileOf(inStack('Jasmine tea'))).dy -
-          tester.getBottomLeft(tileOf(inStack('Pot stickers'))).dy,
-      moreOrLessEquals(CheckList.peek, epsilon: 0.5),
+      tester.getBottomLeft(tileOf(inStack('Jasmine tea'))).dy - potCardBottom,
+      moreOrLessEquals(teaHeight - CheckList.cover, epsilon: 0.5),
     );
+    expect(tester.getTopLeft(inStack('Jasmine tea')).dy, greaterThanOrEqualTo(potCardBottom - 4)); // readable
     // the room stays where it was, and the stack stays on its room as the rows above close over the tea's
     expect(roomUnder(tester, '1', 'L4'), moreOrLessEquals(stackHeight, epsilon: 0.5));
     expect(tester.getTopLeft(stack()).dy, moreOrLessEquals(tester.getBottomLeft(header('1')).dy, epsilon: 0.5));
 
-    // a tap on the edge of a stacked dish puts it back
+    // a tap on the showing part of a stacked dish puts it back
     await tester.tap(inList('Scallion pancake'));
     await settleRows(tester);
     expect(inStack('Scallion pancake'), findsOneWidget);
     expect(rowHeight(tester, 'L4'), 0);
-    // the stack is as tall as its tallest card needs, each card a step further down
-    final deck = [potHeight, CheckList.peek + teaHeight, 2 * CheckList.peek + pancakeHeight].reduce(math.max);
+    // each card behind adds all but its covered top edge
+    final deck = potHeight + (teaHeight - CheckList.cover) + (pancakeHeight - CheckList.cover);
     expect(tester.getSize(stack()).height, moreOrLessEquals(deck, epsilon: 0.5));
     await tapStacked(tester, 'Scallion pancake');
     await settleRows(tester);
@@ -452,10 +452,10 @@ void main() {
     await tester.tap(inList('Jasmine tea'));
     await settleRows(tester);
     expect(inStack('Jasmine tea'), findsOneWidget);
-    // the room (under Appetizers, above the Entrees header) is still there, grown for the tea's edge
+    // the room (under Appetizers, above the Entrees header) is still there, grown for the tea's card
     expect(
       tester.getTopLeft(header('2')).dy - tester.getBottomLeft(header('1')).dy,
-      moreOrLessEquals(potHeight + CheckList.peek, epsilon: 0.5),
+      moreOrLessEquals(potHeight + teaHeight - CheckList.cover, epsilon: 0.5),
     );
     expect(tester.getTopLeft(stack()).dy, moreOrLessEquals(tester.getBottomLeft(header('1')).dy, epsilon: 0.5));
     // put back, the tea opens its row above the stack again, and the stack goes down with its room

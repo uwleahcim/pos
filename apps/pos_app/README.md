@@ -48,5 +48,6 @@ Layout:
   order stacked).
 - `lib/screens/` orders list, one order, settings, the menu editor, the location settings.
 - `lib/screens/check_list.dart` the check's rows as a list arranged by hand: a held dish lifts into a stack,
-  dishes tapped fold out of the list and stack behind it like a deck of cards, the rows open room where it
-  would land, and once let go it comes down onto that room and spreads into full rows.
+  dishes tapped fold out of the list and stack behind it like a fanned deck of cards (each still readable),
+  the rows open room where it would land, and once let go it comes down onto that room and spreads into
+  full rows.

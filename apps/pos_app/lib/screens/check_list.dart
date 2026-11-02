@@ -1,12 +1,12 @@
 /// The rows of the check as a list that is rearranged by hand. Hold a line by its dish and it lifts into a
 /// stack in hand; while it is held, tap other lines and they fold out of the list and stack behind it, each
-/// a step below the one before, like a deck of cards. The rows open room for the stack where it would land
+/// showing from under the one before it but for its top edge, so that its dish can still be read, like a
+/// fanned deck of cards. The rows open room for the stack where it would land
 /// and move out of its way as it passes them, and once let go the stack comes down onto that room and
 /// spreads into full rows, the rows around it moving apart to fit them; then the lines take their places in
 /// the order stacked.
 library;
 
-import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/gestures.dart';
@@ -48,8 +48,9 @@ class CheckList extends StatefulWidget {
   /// The stack coming down onto its room and spreading into rows once let go.
   static const land = Duration(milliseconds: 220);
 
-  /// How much of each card behind the held one shows under it, in the stack in hand.
-  static const peek = 14.0;
+  /// How much of each card behind the held one is hidden under the card in front of it: its top edge, so
+  /// that the dish and its quantity can still be read.
+  static const cover = 18.0;
 
   /// How far each card behind the held one steps in from the sides, to sit behind the one before it.
   static const step = 4.0;
@@ -193,12 +194,12 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   /// How tall the lines in hand are laid out as rows: what they take once landed.
   double _stackHeight(_Hold hold) => _stack(hold).fold(0.0, (sum, row) => sum + (hold.heights[row.rowId] ?? 0));
 
-  /// How tall the stack in hand is: the held dish's card, with each card behind it showing by a step.
+  /// How tall the stack in hand is: the held dish's card, and each card behind it but for its covered top.
   double _deckHeight(_Hold hold) {
     final stacked = _stack(hold);
     var height = 0.0;
     for (var i = 0; i < stacked.length; i++) {
-      height = math.max(height, i * CheckList.peek + (hold.heights[stacked[i].rowId] ?? 0));
+      height += (hold.heights[stacked[i].rowId] ?? 0) - (i == 0 ? 0 : CheckList.cover);
     }
     return height;
   }
@@ -460,9 +461,10 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
         : _deckHeight(hold),
   );
 
-  /// The stack in hand: the held dish's card in front, the ones picked up behind it, each a step in and
-  /// [CheckList.peek] down from the one before it, like a deck of cards. Coming down onto its room, the
-  /// cards spread into full rows, so that the lines can take their places under them without a jump.
+  /// The stack in hand: the held dish's card in front, the ones picked up behind it, each a step in from
+  /// the sides and showing but for its top edge ([CheckList.cover]) under the one before it, like a fanned
+  /// deck of cards. Coming down onto its room, the cards spread into full rows, so that the lines can take
+  /// their places under them without a jump.
   Widget _stackInHand(BuildContext context, _Hold hold, CheckDrag drag) {
     final rows = widget.rows;
     final stacked = _stack(hold);
@@ -471,7 +473,8 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     // a card moves to its place in the stack on its own; coming down, it moves with the landing instead
     final onItsOwn = hold.landing ? Duration.zero : CheckList.settle;
     final cards = <Widget>[];
-    var flatTop = 0.0;
+    var deckTop = 0.0; // where the card sits in the deck
+    var flatTop = 0.0; // where it sits once the deck has spread into rows
     for (var i = 0; i < stacked.length; i++) {
       final row = stacked[i];
       cards.add(
@@ -479,7 +482,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
           key: ValueKey('stacked:${row.rowId}'),
           duration: onItsOwn,
           curve: Curves.easeOutCubic,
-          top: lerpDouble(i * CheckList.peek, flatTop, t),
+          top: lerpDouble(deckTop, flatTop, t),
           left: lerpDouble(i * CheckList.step, 0, t),
           right: lerpDouble(i * CheckList.step, 0, t),
           child: _Joined(
@@ -492,6 +495,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
           ),
         ),
       );
+      deckTop += (hold.heights[row.rowId] ?? 0) - CheckList.cover;
       flatTop += hold.heights[row.rowId] ?? 0;
     }
     return Positioned(
