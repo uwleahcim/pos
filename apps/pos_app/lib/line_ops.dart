@@ -3,8 +3,9 @@
 ///
 /// Before the kitchen has a line, it simply changes. After, the kitchen is already cooking it: more of it
 /// is a new line of the extra, held like any dish just added until the operator fires it; fewer is a void
-/// of the line (a VOID ticket prints) and the rest sent again on the same ticket; another course is a void
-/// and the same dish again, held for the new course. A void is confirmed by the operator first.
+/// of the line (a VOID ticket prints) and the rest sent again on the same ticket. A void is confirmed by
+/// the operator first. Its place and its course are the check's business alone: a dish moves freely, sent
+/// or not, and keeps its place on the ticket it went out on.
 library;
 
 import 'api.dart';
@@ -55,10 +56,10 @@ LineChange qtyChange(Line line, int qty, {required String Function() newId}) {
 }
 
 /// The operations that put `line` under `course` (null: none) at `rank`, after a drag on the check. Within
-/// its course a line just takes its place, sent or not: the kitchen is not told. Into another course, a
-/// line the kitchen has not seen takes the course with it; one it has is voided and the same dish added
-/// again under the new course, held until that course fires.
-LineChange moveChange(Line line, {required String? course, required double rank, required String Function() newId}) {
+/// its course a line just takes its place; into another it takes the course with it. Sent to the kitchen or
+/// not: a dish the kitchen has keeps its place on the ticket it went out on (nothing is voided or sent
+/// again), and one it has not seen goes when its new course fires.
+LineChange moveChange(Line line, {required String? course, required double rank}) {
   if (!line.isActive) return const LineChange([]);
   final id = line.lineId;
   if ((line.course ?? '') == (course ?? '')) {
@@ -67,23 +68,12 @@ LineChange moveChange(Line line, {required String? course, required double rank,
       ('set_line', {'line_id': id, 'rank': rank}),
     ]);
   }
-  if (!line.fired) {
-    return LineChange([
-      ('set_line', {'line_id': id, 'course': course, 'rank': rank}),
-    ]);
-  }
-  final copy = newId();
-  return LineChange(
-    [
-      ('void_line', {'line_id': id, 'reason': 'moved'}),
-      ('add_line', _copyOf(line, copy, line.qty, course: course, rank: rank)),
-    ],
-    newLineId: copy,
-    voidsFired: true,
-  );
+  return LineChange([
+    ('set_line', {'line_id': id, 'course': course, 'rank': rank}),
+  ]);
 }
 
-Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? course, double? rank}) => {
+Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? course}) => {
   'line_id': id,
   'item': line.item,
   'qty': qty,
@@ -91,5 +81,4 @@ Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? co
   'course': ?course,
   if (line.note.isNotEmpty) 'note': line.note,
   if (line.request != null) 'request': line.request!.toJson(),
-  'rank': ?rank,
 };

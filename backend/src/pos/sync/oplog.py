@@ -63,8 +63,10 @@ ORDER_FIELDS = frozenset(
 )
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note", "rank"})
 KITCHEN_FIELDS = frozenset({"qty", "seat", "course", "note"})
-"""The line fields the kitchen cares about: changing one of them after the line was sent marks the line
-modified. A line's `rank` (its place on the check) is not one: a line can be arranged freely once sent."""
+"""The line fields the kitchen cares about. Changing the quantity, seat or note of a line it has marks the
+line modified; a line not sent yet counts as a late addition while its course has already gone. A line's
+`rank` (its place on the check) is not one, and neither is the course of a line already sent: a dish the
+kitchen has can be arranged freely on the check and keeps its place on the ticket it went out on."""
 
 
 class ClockDriftError(ValueError):
@@ -284,7 +286,6 @@ def apply(state: OrderState, op: Op) -> None:
         line = state.lines.get(data["line_id"])
         if line is None or not line.active:
             return  # unknown line, or a void: a void always wins
-        was_fired = state._fired_before(line.course)
         for name in LINE_FIELDS:
             if name in data and line.stamps.get(name, _MIN) <= op.hlc:
                 value = _rank(data[name]) if name == "rank" else data[name]
@@ -292,7 +293,14 @@ def apply(state: OrderState, op: Op) -> None:
                     continue  # not a number: the line keeps its place
                 setattr(line, name, value)
                 line.stamps[name] = op.hlc
-        if KITCHEN_FIELDS & data.keys() and (was_fired or state._fired_before(line.course)):
+        if not KITCHEN_FIELDS & data.keys():
+            return  # its place on the check alone: nothing the kitchen hears about
+        if line.fired_at is None:
+            # not sent yet: it is a late addition while it sits under a course that has already gone
+            line.modified_after_fire = state._fired_before(line.course)
+        elif (KITCHEN_FIELDS - {"course"}) & data.keys():
+            # the kitchen is cooking it: a new quantity, seat or note is a change it hears about; a new
+            # course on the check is not (Mike, 2026-11-02): the dish stays on the ticket it went out on
             line.modified_after_fire = True
 
     elif kind == "void_line":

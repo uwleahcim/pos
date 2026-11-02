@@ -41,11 +41,15 @@ a header on the check (dimmed while nothing is under it), so a dish can go into 
 empty. The kitchen ticket, the check on every terminal and the receipt list the lines in that order.
 
 - Within its course, a line just moves, sent to the kitchen or not: the kitchen is not told.
-- Into another course before the kitchen has it, the line takes the new course with it and goes when that
-  course fires (into a course already fired, it waits there as "1 to fire", like any dish added late).
-- Into another course once the kitchen has it, the rule for every change to a fired line applies: the app
-  asks first, then voids the line (a VOID ticket prints) and adds the same dish again under the new course,
-  held until that course fires. "Keep it" leaves everything as it was.
+- Into another course, a line takes the new course with it. Before the kitchen has it, it goes when that
+  course fires (into a course already fired, it waits there as "1 to fire", like any dish added late). Once
+  the kitchen has it, it moves just the same and stays sent: nothing is voided or sent again, and it is not
+  on the ticket of the course it joins (Mike, 2026-11-02). The course a sent dish shows under is the check's
+  business; the kitchen keeps it on the ticket it went out on.
+- To move several at once, hold one and, with another finger, tap the others: each tap picks a dish up (it
+  tints, and the one in hand counts them, "+2"); a second tap puts it down. Let go, and they all land
+  together where the one in hand was dropped, in the order the check had them. This takes a second finger,
+  so it is for the phones and the iPads; on the Mac, dishes move one at a time.
 
 ## On the wire
 
@@ -64,5 +68,7 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
 - A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
   carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
   with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the
-  lines it lands between. A rank that is not a number is ignored. Moving a sent line within its course
-  does not mark it modified; changing its course does.
+  lines it lands between (several dropped together take ranks spread evenly between them). A rank that is
+  not a number is ignored. Moving a sent line, within its course or to another, does not mark it modified
+  and does not touch when it was fired: it stays as it went out. A line not yet sent is marked a late
+  addition while it sits under a course that has already fired, wherever it came from.

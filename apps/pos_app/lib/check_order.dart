@@ -1,5 +1,5 @@
 /// The check as the order screen lays it out: a header per course and the lines under each, in rank order,
-/// and where a line lands when it is dragged to another row.
+/// and where lines land when one is dragged to another row (with any picked up to go along with it).
 library;
 
 import 'api.dart';
@@ -75,33 +75,79 @@ String _stateOf(List<Line> lines) {
   return waiting == active.length ? 'held' : '$waiting to fire';
 }
 
+/// Where lines let go on the check land: the course they go under, the row the first of them takes, and
+/// the lines themselves (the one in hand and any picked up while it was held, in the order the check had
+/// them) with a rank each.
+class Drop {
+  const Drop({required this.course, required this.at, required this.lines, required this.ranks});
+
+  /// The course they land in; null for none.
+  final String? course;
+
+  /// The row the first of them takes, counted once they have all left their rows.
+  final int at;
+
+  /// The lines, in the order the check had them.
+  final List<Line> lines;
+
+  /// A rank each, in the same order.
+  final List<double> ranks;
+}
+
 /// Where the row at [from] lands when it is dropped at [to], counted after it has left [from] (as a
-/// ReorderableListView's onReorderItem counts): the course whose header is above it, and a rank between
-/// the lines around it there. Dropped above the first header, it goes to the top of the first course.
-({String? course, double rank}) placement(List<CheckRow> rows, int from, int to) {
-  final moved = rows[from] as LineRow;
+/// ReorderableListView's onReorderItem counts), with the lines [picked] up while it was held: the course
+/// whose header is above the drop, and ranks between the lines around it there. Dropped above the first
+/// header, they go to the top of the first course. The picked lines leave their rows as well, so none of
+/// them counts as a neighbour of the drop.
+Drop dropOf(List<CheckRow> rows, int from, int to, {Set<String> picked = const {}}) {
+  final held = rows[from] as LineRow;
+  final moving = {held.line.lineId, ...picked};
+  final lines = [
+    for (final row in rows)
+      if (row is LineRow && moving.contains(row.line.lineId)) row.line,
+  ];
   final rest = [...rows]..removeAt(from);
-  var at = to.clamp(0, rest.length);
+  final slot = to.clamp(0, rest.length);
+  var at = slot;
+  final kept = <CheckRow>[];
+  for (var i = 0; i < rest.length; i++) {
+    final row = rest[i];
+    if (row is LineRow && moving.contains(row.line.lineId)) {
+      if (i < slot) at--;
+      continue;
+    }
+    kept.add(row);
+  }
+  final ranks = [for (final line in lines) line.rank];
   var head = at - 1;
-  while (head >= 0 && rest[head] is! CourseRow) {
+  while (head >= 0 && kept[head] is! CourseRow) {
     head--;
   }
   if (head < 0) {
-    head = rest.indexWhere((r) => r is CourseRow);
-    if (head < 0) return (course: moved.line.course, rank: moved.line.rank);
+    head = kept.indexWhere((r) => r is CourseRow);
+    if (head < 0) return Drop(course: held.line.course, at: at, lines: lines, ranks: ranks);
     at = head + 1;
   }
-  final course = (rest[head] as CourseRow).id;
-  final before = at - 1 > head ? (rest[at - 1] as LineRow).line.rank : null;
-  final after = at < rest.length && rest[at] is LineRow ? (rest[at] as LineRow).line.rank : null;
-  return (course: course.isEmpty ? null : course, rank: rankBetween(before, after, keep: moved.line.rank));
+  final course = (kept[head] as CourseRow).id;
+  final before = at - 1 > head ? (kept[at - 1] as LineRow).line.rank : null;
+  final after = at < kept.length && kept[at] is LineRow ? (kept[at] as LineRow).line.rank : null;
+  return Drop(course: course.isEmpty ? null : course, at: at, lines: lines, ranks: ranksBetween(before, after, ranks));
 }
 
-/// A rank between two neighbours: halfway between them, one past the only one there is, or [keep] when
-/// the line is alone under its header.
-double rankBetween(double? before, double? after, {required double keep}) {
-  if (before == null && after == null) return keep;
-  if (before == null) return after! - 1;
-  if (after == null) return before + 1;
-  return (before + after) / 2;
+/// Where the row at [from] lands, on its own, when it is dropped at [to]: see [dropOf].
+({String? course, double rank}) placement(List<CheckRow> rows, int from, int to) {
+  final drop = dropOf(rows, from, to);
+  return (course: drop.course, rank: drop.ranks.single);
+}
+
+/// Ranks for lines let go between two neighbours, in order: spread evenly between the two, one apart past
+/// the only one there is, or, with no neighbour at all, the first line's own rank (from [keep], the lines'
+/// ranks now) and the rest one apart after it.
+List<double> ranksBetween(double? before, double? after, List<double> keep) {
+  final n = keep.length;
+  if (n == 0) return const [];
+  if (before == null && after == null) return [for (var i = 0; i < n; i++) keep.first + i];
+  if (before == null) return [for (var i = 0; i < n; i++) after! - n + i];
+  if (after == null) return [for (var i = 0; i < n; i++) before + 1 + i];
+  return [for (var i = 0; i < n; i++) before + (after - before) * (i + 1) / (n + 1)];
 }
