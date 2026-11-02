@@ -44,5 +44,6 @@ Layout:
 - `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.
 - `lib/coursing.dart` the location's coursing as the hub serves it: on or off, the courses, the default.
 - `lib/check_order.dart` the check as the order screen lays it out: a header per course, the lines under each
-  by rank, and where a line dragged to another row lands (its course and rank).
+  by rank, and where lines dragged to another row land (the course, and a rank for the dish in hand and any
+  picked up to go along with it).
 - `lib/screens/` orders list, one order, settings, the menu editor, the location settings.

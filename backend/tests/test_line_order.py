@@ -51,7 +51,9 @@ def test_a_terminal_may_place_a_line_as_it_adds_it_and_a_rank_that_is_not_a_numb
     assert (state.lines["L1"].rank, state.lines["L1"].qty) == (1.0, 2)
 
 
-def test_moving_a_sent_line_within_its_course_is_not_a_change_the_kitchen_hears_about(op):
+def test_a_sent_line_moved_on_the_check_is_not_a_change_the_kitchen_hears_about(op):
+    """Within its course or into another one: the dish keeps its place on the ticket it went out on
+    (Mike, 2026-11-02). No void, no modify, and it is not on the ticket of the course it joins."""
     ops = [
         op("create", at=0),
         op("add_line", at=1, line_id="L1", item="x", course="1"),
@@ -61,8 +63,29 @@ def test_moving_a_sent_line_within_its_course_is_not_a_change_the_kitchen_hears_
     arranged = replay(ops + [op("set_line", at=4, line_id="L2", rank=0.5)])
     assert [line.line_id for line in arranged.ordered_lines()] == ["L2", "L1"]
     assert arranged.lines["L2"].modified_after_fire is False
-    recoursed = replay(ops + [op("set_line", at=4, line_id="L2", course="2", rank=0.5)])
-    assert recoursed.lines["L2"].modified_after_fire is True  # the kitchen has it as an appetizer
+
+    fire_entrees = op("fire", at=5, course="2")
+    recoursed = replay(ops + [op("set_line", at=4, line_id="L2", course="2", rank=0.5), fire_entrees])
+    line = recoursed.lines["L2"]
+    assert (line.course, line.modified_after_fire) == ("2", False)
+    assert line.fired_at == replay(ops).lines["L2"].fired_at  # sent when the appetizers went, still
+    assert ticket_for_fire(recoursed, fire_entrees, station="kitchen", ticket_no=1) is None  # nothing new
+
+
+def test_a_line_not_yet_sent_is_a_late_addition_only_while_it_sits_under_a_course_that_has_fired(op):
+    ops = [
+        op("create", at=0),
+        op("add_line", at=1, line_id="L1", item="x", course="1"),
+        op("fire", at=2, course="1"),
+        op("add_line", at=3, line_id="L2", item="y", course="1"),  # after the appetizers went: flagged
+    ]
+    assert replay(ops).lines["L2"].modified_after_fire is True
+    to_entrees = op("set_line", at=4, line_id="L2", course="2", rank=0.5)
+    assert replay(ops + [to_entrees]).lines["L2"].modified_after_fire is False  # it goes when the entrees do
+    more = replay(ops + [to_entrees, op("set_line", at=5, line_id="L2", qty=2)])
+    assert more.lines["L2"].modified_after_fire is False  # the entrees have not gone: nothing is late
+    back = replay(ops + [to_entrees, op("set_line", at=5, line_id="L2", course="1")])
+    assert back.lines["L2"].modified_after_fire is True
 
 
 def test_the_ticket_the_check_and_the_order_follow_the_arranged_order():
