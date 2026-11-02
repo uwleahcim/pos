@@ -101,3 +101,12 @@ jobs:
       - run: flutter pub get
       - name: Build Android (debug-signed APK)
         run: flutter build apk --release
+      # The APK stays with the run for 30 days: Actions, the run, Artifacts, pos-app-apk. Install it on a tablet or
+      # phone from there (apps/pos_app/README.md, "Android tablets and phones").
+      - name: Keep the APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: pos-app-apk
+          path: apps/pos_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+          if-no-files-found: error
