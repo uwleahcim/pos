@@ -15,6 +15,10 @@ build/
 **/.flutter-plugins-dependencies
 **/build/
 **/.packages
+# Rewritten per machine by `flutter pub get` and the platform builds; a tracked copy blocks `git pull` elsewhere.
+**/flutter/ephemeral/
+**/Flutter/ephemeral/
+**/android/local.properties
 
 # Local
 .env

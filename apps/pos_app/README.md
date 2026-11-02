@@ -10,6 +10,12 @@ flutter run -d macos          # or an iPad, iPhone or Android id from `flutter d
 flutter test
 ```
 
+Flutter and Xcode rewrite some files for the machine they run on: `build/`, `.dart_tool/`, every `ephemeral/`
+folder and `android/local.properties`. They are ignored and must stay out of git, because a tracked copy makes
+`git pull` refuse on every other machine. `ios/Runner.xcodeproj/project.pbxproj` is tracked and carries the
+iOS signing team on purpose, so Xcode has no reason to rewrite it. If a pull is still refused over a generated
+file, run `git checkout -- <the paths it lists>` from the repository root and pull again.
+
 On first start the app asks for the backend addresses. Give it the hub first and the cloud after, one per
 line, for example `http://172.19.1.179:8000`. It talks to the first address that answers and moves down the
 list when one stops answering, then back up when it returns.
