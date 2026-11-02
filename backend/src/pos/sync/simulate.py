@@ -14,6 +14,7 @@ import argparse
 import random
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 from .hlc import Clock
@@ -157,8 +158,16 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
             **flag,
         )
     if kind == "set_line":
-        name = rng.choice(["qty", "seat", "note"])
-        value = rng.randint(1, 5) if name != "note" else rng.choice(["extra spicy", "no MSG", ""])
+        name = rng.choice(["qty", "seat", "note", "course", "rank"])
+        value: Any
+        if name == "note":
+            value = rng.choice(["extra spicy", "no MSG", ""])
+        elif name == "course":
+            value = rng.choice(COURSES)
+        elif name == "rank":  # a drag on the check
+            value = round(rng.uniform(0, 10), 2)
+        else:
+            value = rng.randint(1, 5)
         return replica.emit(order_id, kind, line_id=rng.choice(live), **{name: value}, **flag)
     if kind == "void_line":
         return replica.emit(order_id, kind, line_id=rng.choice(live), reason="guest changed mind", **flag)

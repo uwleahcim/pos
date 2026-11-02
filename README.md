@@ -10,7 +10,8 @@ merges after any disconnect.
 - Offline runbook (the cards the app shows from its status icon, to print for every station): `docs/offline-runbook.md`
 - Discounts, comps and service charges (reasons, who approves, the rules file, the report): `docs/discounts.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
-- Location settings (coursing on or off, the courses by name, quote times; manager only): `docs/location-settings.md`
+- Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
+  by dragging its lines: `docs/location-settings.md`
 - Competitive review against Toast, Square, Clover, Lightspeed and TouchBistro (1 Nov 2026): `docs/competitive-review-2026-11-01.md`
 - Phase 0 plan and spike status: `docs/phase0/README.md` and `spikes/`
 

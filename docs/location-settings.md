@@ -33,6 +33,20 @@ counts the dishes still to send.
 A course taken off the list keeps its id on the lines that already carry it: they show under that id on the
 check and on the ticket, and still fire. Turning coursing off keeps the courses for when it comes back.
 
+## Arranging the check
+
+Every line has a place on the check: the order it was added, until someone moves it. Hold a dish by its
+name and drag it to another place, or under another course's header. Every course the location serves has
+a header on the check (dimmed while nothing is under it), so a dish can go into a course that is still
+empty. The kitchen ticket, the check on every terminal and the receipt list the lines in that order.
+
+- Within its course, a line just moves, sent to the kitchen or not: the kitchen is not told.
+- Into another course before the kitchen has it, the line takes the new course with it and goes when that
+  course fires (into a course already fired, it waits there as "1 to fire", like any dish added late).
+- Into another course once the kitchen has it, the rule for every change to a fired line applies: the app
+  asks first, then voids the line (a VOID ticket prints) and adds the same dish again under the new course,
+  held until that course fires. "Keep it" leaves everything as it was.
+
 ## On the wire
 
 - `GET /settings/coursing`: `{"enabled": true, "default": "1", "courses": [{"id": "drinks", "name":
@@ -47,3 +61,8 @@ check and on the ticket, and still fire. Turning coursing off keeps the courses 
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
 - `GET /settings/quotes` and `PUT /settings/quotes` as before.
+- A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
+  carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
+  with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the
+  lines it lands between. A rank that is not a number is ignored. Moving a sent line within its course
+  does not mark it modified; changing its course does.

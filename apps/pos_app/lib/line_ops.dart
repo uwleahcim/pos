@@ -1,17 +1,18 @@
-/// Changing how many of a dish a line holds, as the operations the backend needs.
+/// Changing a line on the check, as the operations the backend needs: how many of a dish it holds, and
+/// where it sits (its place and its course) after a drag.
 ///
-/// Before the kitchen has a line, its quantity simply changes. After, the kitchen is already cooking it:
-/// more of it is a new line of the extra, held like any dish just added until the operator fires it; fewer
-/// is a void of the line (a VOID ticket prints) and the rest sent again on the same ticket, which the
-/// operator confirms first.
+/// Before the kitchen has a line, it simply changes. After, the kitchen is already cooking it: more of it
+/// is a new line of the extra, held like any dish just added until the operator fires it; fewer is a void
+/// of the line (a VOID ticket prints) and the rest sent again on the same ticket; another course is a void
+/// and the same dish again, held for the new course. A void is confirmed by the operator first.
 library;
 
 import 'api.dart';
 
 typedef Op = (String, Map<String, dynamic>);
 
-class QtyChange {
-  const QtyChange(this.ops, {this.newLineId, this.voidsFired = false});
+class LineChange {
+  const LineChange(this.ops, {this.newLineId, this.voidsFired = false});
 
   final List<Op> ops;
 
@@ -25,27 +26,27 @@ class QtyChange {
 }
 
 /// The operations that make `line` hold `qty`. Zero takes it off (a void once fired).
-QtyChange qtyChange(Line line, int qty, {required String Function() newId}) {
-  if (!line.isActive || qty == line.qty || qty < 0) return const QtyChange([]);
+LineChange qtyChange(Line line, int qty, {required String Function() newId}) {
+  if (!line.isActive || qty == line.qty || qty < 0) return const LineChange([]);
   final id = line.lineId;
   if (qty == 0) {
-    return QtyChange([
+    return LineChange([
       ('void_line', {'line_id': id, if (line.fired) 'reason': 'void'}),
     ], voidsFired: line.fired);
   }
   if (!line.fired) {
-    return QtyChange([
+    return LineChange([
       ('set_line', {'line_id': id, 'qty': qty}),
     ]);
   }
   final copy = newId();
   if (qty > line.qty) {
-    return QtyChange([('add_line', _copyOf(line, copy, qty - line.qty))], newLineId: copy);
+    return LineChange([('add_line', _copyOf(line, copy, qty - line.qty, course: line.course))], newLineId: copy);
   }
-  return QtyChange(
+  return LineChange(
     [
       ('void_line', {'line_id': id, 'reason': 'fewer'}),
-      ('add_line', _copyOf(line, copy, qty)),
+      ('add_line', _copyOf(line, copy, qty, course: line.course)),
       ('fire', {'course': line.course ?? '*'}),
     ],
     newLineId: copy,
@@ -53,12 +54,42 @@ QtyChange qtyChange(Line line, int qty, {required String Function() newId}) {
   );
 }
 
-Map<String, dynamic> _copyOf(Line line, String id, int qty) => {
+/// The operations that put `line` under `course` (null: none) at `rank`, after a drag on the check. Within
+/// its course a line just takes its place, sent or not: the kitchen is not told. Into another course, a
+/// line the kitchen has not seen takes the course with it; one it has is voided and the same dish added
+/// again under the new course, held until that course fires.
+LineChange moveChange(Line line, {required String? course, required double rank, required String Function() newId}) {
+  if (!line.isActive) return const LineChange([]);
+  final id = line.lineId;
+  if ((line.course ?? '') == (course ?? '')) {
+    if (rank == line.rank) return const LineChange([]);
+    return LineChange([
+      ('set_line', {'line_id': id, 'rank': rank}),
+    ]);
+  }
+  if (!line.fired) {
+    return LineChange([
+      ('set_line', {'line_id': id, 'course': course, 'rank': rank}),
+    ]);
+  }
+  final copy = newId();
+  return LineChange(
+    [
+      ('void_line', {'line_id': id, 'reason': 'moved'}),
+      ('add_line', _copyOf(line, copy, line.qty, course: course, rank: rank)),
+    ],
+    newLineId: copy,
+    voidsFired: true,
+  );
+}
+
+Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? course, double? rank}) => {
   'line_id': id,
   'item': line.item,
   'qty': qty,
   'seat': ?line.seat,
-  'course': ?line.course,
+  'course': ?course,
   if (line.note.isNotEmpty) 'note': line.note,
   if (line.request != null) 'request': line.request!.toJson(),
+  'rank': ?rank,
 };

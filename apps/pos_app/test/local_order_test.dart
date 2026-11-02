@@ -12,8 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> op(String kind, Map<String, dynamic> data) => {'order_id': 'o1', 'kind': kind, 'data': data};
 
-Line hubLine(String id, {bool fired = false, String course = '2'}) =>
-    Line(lineId: id, item: 'Spring Roll', qty: 1, status: 'active', course: course, fired: fired);
+Line hubLine(String id, {bool fired = false, String course = '2', double rank = 0}) =>
+    Line(lineId: id, item: 'Spring Roll', qty: 1, status: 'active', course: course, fired: fired, rank: rank);
 
 const taxes = [
   TaxLine(name: 'Massachusetts meals tax', ratePct: '6.25', amount: '0.00'),
@@ -57,6 +57,33 @@ void main() {
     expect(order.shownLines.map((l) => l.lineId), ['L2', 'L3']);
     expect(order.heldCourses, isEmpty);
     expect(withLocalOps(hub, const []), same(hub));
+  });
+
+  test('a dragged line takes its new course and place at once; a new line goes after everything', () {
+    final hub = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [
+        hubLine('L1', course: '1', rank: 1),
+        hubLine('L2', course: '1', rank: 2),
+        hubLine('L3', rank: 3),
+      ],
+      fired: const {},
+    );
+    final order = withLocalOps(hub, [
+      op('set_line', {'line_id': 'L1', 'course': '2', 'rank': 2.5}),
+      op('set_line', {'line_id': 'L2', 'rank': 0.5}),
+      op('set_line', {'line_id': 'L3', 'course': null}),
+      op('add_line', {'line_id': 'L4', 'item': 'Tea'}),
+    ]);
+    final byId = {for (final l in order.lines) l.lineId: l};
+    expect((byId['L1']!.course, byId['L1']!.rank), ('2', 2.5));
+    expect((byId['L2']!.course, byId['L2']!.rank), ('1', 0.5));
+    expect(byId['L3']!.course, isNull);
+    expect(byId['L4']!.rank, 4.0); // after the highest rank the hub gave, as the hub itself would place it
+    expect(Line.fromJson('L9', {'item': 'x', 'rank': 7}).rank, 7.0);
+    expect(Line.fromJson('L9', {'item': 'x'}).rank, 0.0);
   });
 
   test('the estimate adds local lines at the menu price and taxes like the hub', () {

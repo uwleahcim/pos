@@ -6,6 +6,8 @@
 /// backend prices lines and computes tax: the totals here are an estimate, marked as such, until it answers.
 library;
 
+import 'dart:math' as math;
+
 import 'api.dart';
 import 'floor.dart';
 import 'menu.dart';
@@ -45,6 +47,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           seat: data['seat'] as int?,
           course: data['course'] as String?,
           note: data['note'] as String? ?? '',
+          // after everything on the check, as the hub places it
+          rank: (data['rank'] as num?)?.toDouble() ?? lines.values.fold(0.0, (top, l) => math.max(top, l.rank)) + 1,
           entryId: req?.entryId,
           request: req,
           pending: true,
@@ -52,7 +56,15 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
       case 'set_line':
         final line = lines[data['line_id']];
         if (line != null && line.isActive) {
-          lines[line.lineId] = line.copyWith(qty: data['qty'] as int?, note: data['note'] as String?, pending: true);
+          lines[line.lineId] = line.copyWith(
+            qty: data['qty'] as int?,
+            note: data['note'] as String?,
+            seat: data['seat'] as int?,
+            course: data['course'] as String?,
+            clearCourse: data.containsKey('course') && data['course'] == null,
+            rank: (data['rank'] as num?)?.toDouble(),
+            pending: true,
+          );
         }
       case 'void_line':
         final line = lines[data['line_id']];
