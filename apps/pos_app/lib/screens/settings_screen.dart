@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../phone.dart';
 import '../print_relay.dart';
 import '../settings.dart';
 
-/// Device name and backend addresses. Shown on first start, and from the orders screen afterwards.
+/// Device name, backend addresses and the phone. Shown on first start, and from the orders screen afterwards.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.settings, this.firstRun = false, this.api, this.relay});
+  const SettingsScreen({super.key, required this.settings, this.firstRun = false, this.api, this.relay, this.phone});
 
   final Settings settings;
   final bool firstRun;
   final PosApi? api;
   final PrintRelay? relay;
+  final PhoneClient? phone;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -21,17 +23,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _device = TextEditingController(text: widget.settings.device);
   late final TextEditingController _endpoints = TextEditingController(text: widget.settings.endpoints.join('\n'));
   late bool _relay = widget.settings.printRelay;
+  late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
+  late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
+  late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
+  late bool _phoneOn = widget.settings.phone.enabled;
   String? _printMessage;
 
   @override
   void dispose() {
     _device.dispose();
     _endpoints.dispose();
+    _pbx.dispose();
+    _extension.dispose();
+    _secret.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     await widget.settings.save(device: _device.text, endpoints: _endpoints.text.split('\n'), printRelay: _relay);
+    await widget.settings.savePhone(
+      PhoneSettings.clean(
+        enabled: _phoneOn,
+        server: _pbx.text,
+        extension: _extension.text,
+        secret: _secret.text,
+        port: widget.settings.phone.port,
+      ),
+    );
     if (!mounted) return;
     if (widget.firstRun) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
@@ -55,6 +73,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (err) {
       setState(() => _printMessage = 'Test print failed: $err');
     }
+  }
+
+  static String _phoneStatus(PhoneClient phone) {
+    final s = phone.settings;
+    return switch (phone.state) {
+      PhoneState.off => 'Off. Switch on, fill in the PBX, extension and secret, then save',
+      PhoneState.connecting => 'Connecting to ${s.server}${phone.problem == null ? '' : ' · ${phone.problem}'}',
+      PhoneState.registered => 'Registered as ${s.extension} on ${s.server}',
+      PhoneState.failed => 'Not registered: ${phone.problem}',
+      PhoneState.ringing => 'Ringing',
+      PhoneState.inCall => 'On a call',
+    };
   }
 
   @override
@@ -137,6 +167,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ],
                           ),
                         ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _phoneOn,
+                        onChanged: (v) => setState(() => _phoneOn = v),
+                        title: const Text('Phone'),
+                        subtitle: widget.phone == null
+                            ? const Text('Take the restaurant\'s calls in this app: ring, answer, mute, hang up')
+                            : ListenableBuilder(
+                                listenable: widget.phone!,
+                                builder: (context, _) => Text(_phoneStatus(widget.phone!)),
+                              ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _pbx,
+                        decoration: const InputDecoration(
+                          labelText: 'PBX address',
+                          helperText:
+                              'The FreePBX host, e.g. freepbx.chinasky.org (port 8089 unless written as host:port)',
+                          prefixIcon: Icon(Icons.dns_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _extension,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Extension',
+                                helperText: 'This terminal\'s own, e.g. 301',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              controller: _secret,
+                              obscureText: true,
+                              decoration: const InputDecoration(labelText: 'Secret', helperText: 'From the extension'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),

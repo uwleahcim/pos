@@ -36,7 +36,11 @@
 	<key>NSCameraUsageDescription</key>
 	<string>The POS takes a small photo of the operator when an order is created, fired, closed or voided, for the audit log.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Not used; required by the camera plugin.</string>
+	<string>The microphone carries your voice on phone calls taken in the POS.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -3,17 +3,32 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// What this device remembers: its name and where the backend is. Nothing else lives on a terminal.
+import 'phone.dart';
+
+/// What this device remembers: its name, where the backend is and, when it is a phone, its PBX extension.
+/// Nothing else lives on a terminal.
 class Settings extends ChangeNotifier {
-  Settings({required this.device, required List<String> endpoints, this.printRelay = false, this._prefs})
-    : _endpoints = List.of(endpoints);
+  Settings({
+    required this.device,
+    required List<String> endpoints,
+    this.printRelay = false,
+    this._phone = const PhoneSettings(),
+    this._prefs,
+  }) : _endpoints = List.of(endpoints);
 
   static Future<Settings> load() async {
     final prefs = await SharedPreferences.getInstance();
     final device = prefs.getString('device') ?? '';
     final endpoints = prefs.getStringList('endpoints') ?? const [];
     final relay = prefs.getBool('print_relay') ?? false;
-    return Settings(device: device, endpoints: endpoints, printRelay: relay, prefs: prefs);
+    final phone = PhoneSettings(
+      enabled: prefs.getBool('phone_enabled') ?? false,
+      server: prefs.getString('phone_server') ?? '',
+      port: prefs.getInt('phone_port') ?? 8089,
+      extension: prefs.getString('phone_extension') ?? '',
+      secret: prefs.getString('phone_secret') ?? '',
+    );
+    return Settings(device: device, endpoints: endpoints, printRelay: relay, phone: phone, prefs: prefs);
   }
 
   final SharedPreferences? _prefs;
@@ -24,6 +39,11 @@ class Settings extends ChangeNotifier {
 
   /// Print relay: this terminal writes queued print jobs to the printers when the hub cannot.
   bool printRelay;
+
+  PhoneSettings _phone;
+
+  /// The phone: FreePBX address, extension and secret, with this device's name as the name the PBX shows.
+  PhoneSettings get phone => _phone.copyWith(displayName: device);
 
   /// Backend addresses in failover order: hub, standby hub, cloud.
   List<String> get endpoints => List.unmodifiable(_endpoints);
@@ -37,6 +57,16 @@ class Settings extends ChangeNotifier {
     await _prefs?.setString('device', this.device);
     await _prefs?.setStringList('endpoints', _endpoints);
     await _prefs?.setBool('print_relay', this.printRelay);
+    notifyListeners();
+  }
+
+  Future<void> savePhone(PhoneSettings phone) async {
+    _phone = phone;
+    await _prefs?.setBool('phone_enabled', phone.enabled);
+    await _prefs?.setString('phone_server', phone.server);
+    await _prefs?.setInt('phone_port', phone.port);
+    await _prefs?.setString('phone_extension', phone.extension);
+    await _prefs?.setString('phone_secret', phone.secret);
     notifyListeners();
   }
 

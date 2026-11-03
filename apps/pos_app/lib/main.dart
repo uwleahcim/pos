@@ -1,17 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'cache.dart';
 import 'camera.dart';
 import 'outbox.dart';
+import 'phone.dart';
 import 'photos.dart';
 import 'print_relay.dart';
 import 'screens/orders_screen.dart';
+import 'screens/phone_bar.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
 import 'screens/theme.dart';
 import 'session.dart';
 import 'settings.dart';
+import 'sip_ua_stack.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +31,10 @@ Future<void> main() async {
   final photos = PhotoQueue(api, settings, camera, session);
   await photos.restore();
   final relay = PrintRelay(api, settings)..bind();
+  // The phone follows the settings: registered with the PBX while switched on and filled in, off otherwise.
+  final phone = PhoneClient(SipUaStack());
+  unawaited(phone.apply(settings.phone));
+  settings.addListener(() => unawaited(phone.apply(settings.phone)));
   runApp(
     PosApp(
       settings: settings,
@@ -35,6 +44,7 @@ Future<void> main() async {
       camera: camera,
       photos: photos,
       relay: relay,
+      phone: phone,
     ),
   );
 }
@@ -49,6 +59,7 @@ class PosApp extends StatelessWidget {
     required this.camera,
     required this.photos,
     required this.relay,
+    required this.phone,
   });
 
   final Settings settings;
@@ -58,6 +69,7 @@ class PosApp extends StatelessWidget {
   final EventCamera camera;
   final PhotoQueue photos;
   final PrintRelay relay;
+  final PhoneClient phone;
 
   @override
   Widget build(BuildContext context) {
@@ -72,16 +84,22 @@ class PosApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           theme: PosTheme.light(highContrast: prefs.highContrast),
           darkTheme: PosTheme.dark(highContrast: prefs.highContrast),
+          // The call banner and strip sit over every screen and dialog.
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            child: child ?? const SizedBox.shrink(),
+            child: PhoneBar(client: phone, child: child ?? const SizedBox.shrink()),
           ),
           home: Builder(
             builder: (context) {
               final Widget screen;
               if (!settings.isConfigured) {
-                screen = SettingsScreen(key: const ValueKey('first-run-settings'), settings: settings, firstRun: true);
+                screen = SettingsScreen(
+                  key: const ValueKey('first-run-settings'),
+                  settings: settings,
+                  firstRun: true,
+                  phone: phone,
+                );
               } else if (!session.signedIn) {
                 screen = SignInScreen(
                   key: const ValueKey('sign-in'),
@@ -90,7 +108,7 @@ class PosApp extends StatelessWidget {
                   camera: camera,
                   onSettings: () => Navigator.of(context).push(
                     PosPageRoute(
-                      builder: (_) => SettingsScreen(settings: settings, api: api, relay: relay),
+                      builder: (_) => SettingsScreen(settings: settings, api: api, relay: relay, phone: phone),
                     ),
                   ),
                 );
