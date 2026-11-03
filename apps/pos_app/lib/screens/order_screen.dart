@@ -13,6 +13,7 @@ import '../photos.dart';
 import '../pricing.dart';
 import '../takeout.dart';
 import 'check_list.dart';
+import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'menu_panel.dart';
@@ -174,6 +175,42 @@ class _OrderScreenState extends State<OrderScreen> {
           DiscountSheet(rules: rules, lines: check?.lines ?? const [], existing: check?.discounts ?? const []),
     );
     if (choice == null || !mounted) return;
+    await _apply(choice);
+  }
+
+  /// A comp on one dish, from a hold on its price: the menu at the price offers the reasons the rules allow
+  /// on an item (and takes off one already there); a reason that needs a manager asks for the PIN first.
+  Future<void> _compLine(Line line, BuildContext anchor) async {
+    if (!widget.api.connection.value.isOnline) {
+      _say('Comps need a hub or the cloud, and none answers now.');
+      return;
+    }
+    final PricingRules rules;
+    try {
+      rules = await widget.api.pricingRules();
+    } on ApiException catch (err) {
+      _say(err.message);
+      return;
+    }
+    if (!mounted || !anchor.mounted) return;
+    final check = _readCheck;
+    final priced = check?.line(line.lineId);
+    final choice = await showCompMenu(
+      anchor,
+      dish: priced?.name ?? line.item,
+      price: priced?.total ?? '',
+      lineId: line.lineId,
+      rules: rules,
+      existing: check?.discounts ?? const [],
+    );
+    if (choice == null || !mounted) return;
+    await _apply(choice);
+  }
+
+  /// Sends a discount or charge chosen from the sheet or the comp menu, after the manager's PIN when the
+  /// reason needs one; a removal goes as it is.
+  Future<void> _apply(Adjustment choice) async {
+    if (choice.op == 'remove_discount') return _append(choice.op, choice.data);
     String? approval;
     if (choice.needsManager) {
       approval = await _approve(choice.label);
@@ -471,6 +508,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onEdit: _edit,
       onQty: _setQty,
       onTypeQty: _typeQty,
+      onComp: _compLine,
       onRemoveDiscount: _removeDiscount,
       onRemoveCharge: _removeCharge,
       onMove: _move,
@@ -580,6 +618,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onEdit,
     required this.onQty,
     required this.onTypeQty,
+    required this.onComp,
     required this.onRemoveDiscount,
     required this.onRemoveCharge,
     required this.onMove,
@@ -593,6 +632,9 @@ class _TicketPanel extends StatefulWidget {
   final ValueChanged<Line> onEdit;
   final void Function(Line line, int qty) onQty;
   final ValueChanged<Line> onTypeQty;
+
+  /// The price of a line held: the comp menu opens at [anchor], the price's own context.
+  final void Function(Line line, BuildContext anchor) onComp;
   final ValueChanged<CheckDiscount> onRemoveDiscount;
   final ValueChanged<CheckCharge> onRemoveCharge;
 
@@ -726,15 +768,19 @@ class _TicketPanelState extends State<_TicketPanel> {
   }
 
   /// A line: its quantity and seat, the dish, its price and the bin. Held by the dish, it lifts into the
-  /// hand and can be carried to another place or course (the quantity and the bin keep their own tap and
-  /// hold). While a dish is in hand, a tap on a line picks it up to go along, and a tap on a line in the
-  /// stack puts it back.
+  /// hand and can be carried to another place or course (the quantity, the price and the bin keep their own
+  /// tap and hold: the price held opens the comp menu). While a dish is in hand, a tap on a line picks it up
+  /// to go along, and a tap on a line in the stack puts it back.
   Widget _lineTile(BuildContext context, int index, LineRow row, CheckDrag? drag) {
     final line = row.line;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final posColors = PosColors.of(context);
     final priced = widget.check?.line(line.lineId);
+    final comps = [
+      for (final d in widget.check?.discounts ?? const <CheckDiscount>[])
+        if (d.lineId == line.lineId) d,
+    ];
     final changeable = widget.open && line.isActive;
     final held = drag != null; // a dish is in hand
     final isLatest = line.lineId == widget.lastAdded;
@@ -824,6 +870,7 @@ class _TicketPanelState extends State<_TicketPanel> {
             if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
             if (line.isActive && line.modifiedAfterFire) 'added after fire',
             if (line.note.isNotEmpty) line.note,
+            for (final d in comps) compLabel(d),
           ].join(' · '),
           style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
@@ -831,14 +878,18 @@ class _TicketPanelState extends State<_TicketPanel> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // a fixed width, so a longer price does not push the name onto another line
+          // a fixed width, so a longer price does not push the name onto another line; held, the price
+          // opens the comp menu (tapped, it opens the dish like the rest of the line)
           SizedBox(
             width: 60,
-            child: Text(
-              priced?.total ?? '',
-              textAlign: TextAlign.end,
-              maxLines: 1,
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontFeatures: PosTheme.tabular),
+            child: Builder(
+              builder: (anchor) => _Hold(
+                key: ValueKey('price-${line.lineId}'),
+                tooltip: 'Hold to comp',
+                onTap: changeable && !held ? () => widget.onEdit(line) : null,
+                onLongPress: changeable && !held ? () => widget.onComp(line, anchor) : null,
+                child: _Price(total: priced?.total, discount: priced?.discount),
+              ),
             ),
           ),
           if (changeable)
@@ -906,6 +957,42 @@ class _Action extends StatelessWidget {
   Widget build(BuildContext context) => compact(context)
       ? IconButton(tooltip: label, onPressed: onPressed, icon: Icon(icon))
       : TextButton.icon(onPressed: onPressed, icon: Icon(icon), label: Text(label));
+}
+
+/// A line's price: what it is worth, or, with a comp or discount on it, that struck through over what is
+/// left to pay.
+class _Price extends StatelessWidget {
+  const _Price({required this.total, required this.discount});
+
+  final String? total;
+  final String? discount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontFeatures: PosTheme.tabular);
+    final total = this.total;
+    final off = discount == null ? 0 : cents(discount!);
+    if (total == null || off == 0) {
+      return Text(total ?? '', textAlign: TextAlign.end, maxLines: 1, style: style);
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          total,
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            decoration: TextDecoration.lineThrough,
+            fontFeatures: PosTheme.tabular,
+          ),
+        ),
+        Text(money(cents(total) - off), maxLines: 1, style: style),
+      ],
+    );
+  }
 }
 
 /// A tap target that also answers holding it down, which an [IconButton] does not.

@@ -33,6 +33,29 @@ comes off freely.
 Discounts need a hub or the cloud: a screen taking orders offline (red cloud) cannot apply one, because
 nobody can check the PIN. Each discount takes the audit photo like a fire or a void.
 
+## On the check: hold a price
+
+The quick path for one dish. **Hold the price of a line** and a menu opens there with the reasons the rules
+allow on one item, each with what it gives and a lock where a manager must approve. With this restaurant's
+defaults: Manager comp (free), Staff meal (50% off), Loyalty reward (up to 20% or $20, no PIN), Promotion
+(up to 50% or $50), Service recovery (any amount).
+
+- A reason that is complete in itself (a comp, a fixed staff meal) goes straight to the manager's PIN, when
+  one is needed, and onto the item.
+- A reason with a range asks how much first: a percentage (presets within the cap, or typed), an amount, or
+  the whole item where the reason allows it.
+- A dish that already carries a discount shows it at the top of the menu with **Take off**; reasons that
+  cannot go on top of it are greyed out, as the hub would refuse them.
+
+The line stays on the check: its price shows the original struck through over what is left, and the line
+says what came off ("Comped · Manager comp", "50% off · Staff meal"). The row under the subtotal is there
+as before, and a tap on it still takes the discount off.
+
+The rest of the line's gestures are unchanged: a tap on the price opens the dish like a tap anywhere on
+the line, holding the dish's name drags it, and the quantity and the bin keep their own tap and hold.
+Nothing happens on a price while a dish is in hand. Like the Discount button, the menu needs a hub or the
+cloud, because somebody has to check the PIN.
+
 ## Service charges
 
 - **Automatic**: the hub puts them on by itself when their conditions hold. Defaults: 18% gratuity on

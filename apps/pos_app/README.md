@@ -73,3 +73,5 @@ Layout:
   dishes tapped fold out of the list and stack behind it like a fanned deck of cards (each still readable),
   the rows open room where it would land, and once let go it comes down onto that room and spreads into
   full rows.
+- `lib/screens/comp_menu.dart` the comp menu a held price opens: the reasons the rules allow on one dish,
+  what each gives, how much when the reason has a range, and taking a comp off again.
