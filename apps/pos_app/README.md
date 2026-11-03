@@ -79,3 +79,10 @@ Layout:
   what it took off, "(30.00)", and the dish's old price is struck through over the new one. A comp follows
   the dish through an edit: the new line says which line it replaces (`Line.replaces`), on the hub and in
   the estimate here.
+
+## Phone
+
+The app can be a phone on the restaurant's FreePBX: Settings, Phone, then the PBX address, this terminal's
+extension and its secret. It registers over a secure WebSocket (port 8089) and carries the audio as WebRTC
+media; a call rings as a banner over any screen. The PBX side, the device steps and what is not there yet are
+in [`spikes/softphone`](../../spikes/softphone/README.md).
