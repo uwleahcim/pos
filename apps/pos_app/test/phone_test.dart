@@ -12,6 +12,9 @@ class FakeStack implements SipStack {
   final hungUp = <String>[];
   final declined = <String>[];
   final muted = <(String, bool)>[];
+  final held = <(String, bool)>[];
+  final tones = <(String, String)>[];
+  final transferred = <(String, String)>[];
 
   @override
   Future<void> start(PhoneSettings settings, SipEvents events) async {
@@ -36,6 +39,15 @@ class FakeStack implements SipStack {
 
   @override
   void setMuted(String callId, bool on) => muted.add((callId, on));
+
+  @override
+  void setHeld(String callId, bool on) => held.add((callId, on));
+
+  @override
+  void sendDtmf(String callId, String tones) => this.tones.add((callId, tones));
+
+  @override
+  void transfer(String callId, String target) => transferred.add((callId, target));
 }
 
 const active = PhoneSettings(
@@ -261,6 +273,56 @@ void main() {
       phone.startOrder();
       expect(phone.orderRequests, 2);
       expect(heard, 2);
+    });
+
+    test('holds and resumes the call', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      phone.toggleHold(); // not before the call is on
+      expect(stack.held, isEmpty);
+      stack.events!.callAccepted('c1');
+      phone.toggleHold();
+      expect(phone.held, isTrue);
+      expect(stack.held, [('c1', true)]);
+      phone.toggleHold();
+      expect(phone.held, isFalse);
+      expect(stack.held.last, ('c1', false));
+      stack.events!.callEnded('c1', 'Terminated');
+      expect(phone.held, isFalse);
+    });
+
+    test('types on the keypad, then sends the tones or transfers the call to what was typed', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      stack.events!.callAccepted('c1');
+      phone.type('2');
+      phone.type('x'); // not a key
+      phone.type('0');
+      phone.type('0');
+      phone.type('#');
+      expect(phone.typed, '200#');
+      phone.backspace();
+      expect(phone.typed, '200');
+      phone.sendTones();
+      expect(stack.tones, [('c1', '200')]);
+      expect(phone.typed, '');
+      phone.sendTones(); // nothing typed, nothing sent
+      expect(stack.tones, hasLength(1));
+      phone.type('2');
+      phone.type('1');
+      phone.type('0');
+      phone.transfer();
+      expect(stack.transferred, [('c1', '210')]);
+      expect(phone.typed, '');
+    });
+
+    test('what was typed goes with the call', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      stack.events!.callAccepted('c1');
+      phone.type('5');
+      stack.events!.callEnded('c1', 'Terminated');
+      expect(phone.typed, '');
     });
 
     test('a refreshed registration during a call changes nothing', () async {

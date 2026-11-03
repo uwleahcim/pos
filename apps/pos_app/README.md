@@ -86,5 +86,7 @@ The app can be a phone on the restaurant's FreePBX: Settings, Phone, then the PB
 extension and its secret. It registers over a secure WebSocket (port 8089) and carries the audio as WebRTC
 media; a call rings as a banner over any screen, with a ring of its own on Mac, iPad, iPhone and Android alike
 (`assets/sounds/ring.wav`, made by `python3 tool/make_ring.py`; it follows the ring volume on Android and plays
-over the silent switch on iOS, since a terminal that is a phone has to ring). The PBX side, the device steps and
-what is not there yet are in [`spikes/softphone`](../../spikes/softphone/README.md).
+over the silent switch on iOS, since a terminal that is a phone has to ring). On a call the strip at the top
+has Hold, Hang up, To go (a to-go order with the caller's number filled in) and More: a keypad whose digits go
+to the other side as tones or name the extension to transfer the call to, and Mute. The PBX side, the device
+steps and what is not there yet are in [`spikes/softphone`](../../spikes/softphone/README.md).

@@ -159,6 +159,8 @@ What it took, all found the same day: the PBX's HTTPS server was bound to `127.0
 over SSH and in a SIP capture; steps 2 and 4 now say so). On the app side the Mac's release build needed the
 `network.server` entitlement for audio, and the call strip's tooltips had no overlay above the navigator.
 
-Still open for the first version: a ringtone on iPad and Android (silent today), the caller's number into a
-takeout order, hold, transfer and a keypad, the phone's state in the status icon, and the restaurant's own
-public address in the firewall's Trusted zone before the terminals move there.
+The first version built on this the same day (the Phone section of [`apps/pos_app/README.md`](../../apps/pos_app/README.md)):
+a ring on every platform, the caller's number into a to-go order, hold, a keypad and transfer on the call
+strip, and the phone's state in the status icon. Still open: the restaurant's own public address in the
+firewall's Trusted zone before the terminals move there (step 6), a call through the queue (step 7), and
+ringing a locked iPad or phone (a push relay).
