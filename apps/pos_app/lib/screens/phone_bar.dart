@@ -191,17 +191,17 @@ class _CallStrip extends StatelessWidget {
               const SizedBox(width: 8),
               Text(_clock(client.callDuration), style: theme.textTheme.bodySmall?.copyWith(color: onDark)),
               const SizedBox(width: 4),
+              // No tooltips: the strip sits above the navigator (MaterialApp.builder), where a tooltip finds no
+              // overlay to open in, which is a red box in a debug build and an exception on hover in a release.
               IconButton(
-                tooltip: client.muted ? 'Unmute' : 'Mute',
                 onPressed: client.toggleMute,
                 color: client.muted ? scheme.inversePrimary : onDark,
-                icon: Icon(client.muted ? Icons.mic_off : Icons.mic),
+                icon: Icon(client.muted ? Icons.mic_off : Icons.mic, semanticLabel: client.muted ? 'Unmute' : 'Mute'),
               ),
               IconButton(
-                tooltip: 'Hang up',
                 onPressed: client.hangUp,
                 color: Colors.red.shade300,
-                icon: const Icon(Icons.call_end),
+                icon: const Icon(Icons.call_end, semanticLabel: 'Hang up'),
               ),
             ],
           ),

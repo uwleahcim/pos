@@ -13,4 +13,4 @@ the answer and the date. Status is tracked in the phase 0 plan.
 | `payments-readers` | Can the POS drive Stripe and GoDaddy readers, including offline sales and pre-authorized tabs? |
 | `hub-failover` | Does the standby hub take over in about five seconds without losing an order? |
 | `partner-terms` | What do GoDaddy, ezCater, Resy and FreePBX allow, in writing? |
-| `softphone` | Can a terminal register with FreePBX as a phone and take a call inside the app? (phase 3, started 2026-11-03) |
+| `softphone` | Can a terminal register with FreePBX as a phone and take a call inside the app? (phase 3, passed 2026-11-03 on the iPhone and the Mac) |
