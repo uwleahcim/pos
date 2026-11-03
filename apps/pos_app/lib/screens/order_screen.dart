@@ -9,6 +9,7 @@ import '../line_ops.dart';
 import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
+import '../phone.dart';
 import '../photos.dart';
 import '../pricing.dart';
 import '../takeout.dart';
@@ -31,12 +32,16 @@ class OrderScreen extends StatefulWidget {
     required this.orderId,
     this.coursing = Coursing.defaults,
     this.staffName,
+    this.phone,
   });
 
   final PosApi api;
   final Outbox outbox;
   final PhotoQueue photos;
   final String orderId;
+
+  /// The terminal's phone, when it is one, for the status icon.
+  final PhoneClient? phone;
 
   /// The location's coursing: whether dishes are coursed, the courses by name, where a new dish goes.
   final Coursing coursing;
@@ -558,7 +563,7 @@ class _OrderScreenState extends State<OrderScreen> {
               : 'Table ${order.table} · ${order.status}',
         ),
         actions: [
-          StatusIcon(api: widget.api, outbox: widget.outbox),
+          StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
           if (order != null && open && !order.isTakeout)
             _FireMenu(order: order, coursing: widget.coursing, onFire: _fire),
           // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
