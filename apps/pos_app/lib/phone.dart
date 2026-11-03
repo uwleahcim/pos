@@ -140,6 +140,19 @@ class Caller {
 
 enum PhoneState { off, connecting, registered, failed, ringing, inCall }
 
+/// One line on what the phone is doing, for the settings screen and the status details.
+String phoneStatusLine(PhoneClient phone) {
+  final s = phone.settings;
+  return switch (phone.state) {
+    PhoneState.off => 'Off. Switch on, fill in the PBX, extension and secret, then save',
+    PhoneState.connecting => 'Connecting to ${s.server}${phone.problem == null ? '' : ' · ${phone.problem}'}',
+    PhoneState.registered => 'Registered as ${s.extension} on ${s.server}',
+    PhoneState.failed => 'Not registered: ${phone.problem}',
+    PhoneState.ringing => 'Ringing · ${formatPhoneNumber(phone.callerNumber)}',
+    PhoneState.inCall => 'On a call · ${formatPhoneNumber(phone.callerNumber)}',
+  };
+}
+
 /// What the SIP stack tells the phone.
 abstract interface class SipEvents {
   void registered();
@@ -190,6 +203,10 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
 
   /// Why the phone is not registered, from the PBX or the network; null when all is well.
   String? get problem => _problem;
+
+  /// Switched on but not registered for a reason: refused, or the connection dropped. Shown in the status bar.
+  bool get inTrouble =>
+      _settings.enabled && (_state == PhoneState.failed || (_state == PhoneState.connecting && _problem != null));
   String? get callerNumber => _callerNumber;
   String? get callerName => _callerName;
   bool get muted => _muted;

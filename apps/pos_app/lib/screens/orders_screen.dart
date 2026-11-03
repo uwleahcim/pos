@@ -212,6 +212,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           orderId: orderId,
           coursing: coursing,
           staffName: widget.session.staff?.name,
+          phone: widget.phone,
         ),
       ),
     );
@@ -321,7 +322,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               : 'Orders · ${widget.session.staff?.name ?? ''} · ${widget.settings.device}',
         ),
         actions: [
-          StatusIcon(api: widget.api, outbox: widget.outbox),
+          StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: Container(

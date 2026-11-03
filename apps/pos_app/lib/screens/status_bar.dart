@@ -2,17 +2,20 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../outbox.dart';
+import '../phone.dart';
 import 'theme.dart';
 
 /// Which backend answers and how many taps still wait to be sent, as one small icon for the app bar: green
 /// on the usual backend, amber on a backup, red when nothing answers. A tap opens the details and the card
 /// for what still works in that state. A line the backend refused shows once as a message and keeps a red
-/// mark here.
+/// mark here. With a [phone], a red phone mark appears beside the icon only while the phone is on but cannot
+/// register; the details list the phone whenever it is on.
 class StatusIcon extends StatefulWidget {
-  const StatusIcon({super.key, required this.api, required this.outbox});
+  const StatusIcon({super.key, required this.api, required this.outbox, this.phone});
 
   final PosApi api;
   final Outbox outbox;
+  final PhoneClient? phone;
 
   @override
   State<StatusIcon> createState() => _StatusIconState();
@@ -49,8 +52,9 @@ class _StatusIconState extends State<StatusIcon> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final posColors = PosColors.of(context);
+    final phone = widget.phone;
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.api.connection, widget.outbox]),
+      listenable: Listenable.merge([widget.api.connection, widget.outbox, ?phone]),
       builder: (context, _) {
         final conn = widget.api.connection.value;
         final level = conn.levelWith(widget.api.settings.endpoints);
@@ -62,19 +66,33 @@ class _StatusIconState extends State<StatusIcon> {
           ConnectionLevel.usual when pending > 0 => (Icons.cloud_upload_outlined, scheme.onSurfaceVariant),
           ConnectionLevel.usual => (Icons.cloud_done_outlined, scheme.primary),
         };
-        return IconButton(
-          key: const ValueKey('status'),
-          tooltip: statusTitle(level),
-          onPressed: () => showStatusDetails(context, api: widget.api, outbox: widget.outbox),
-          icon: Badge(
-            isLabelVisible: refused || pending > 0,
-            backgroundColor: refused ? scheme.error : scheme.secondary,
-            label: Text(refused ? '!' : '$pending'),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 200),
-              child: Icon(icon, key: ValueKey(icon), color: color),
+        void details() => showStatusDetails(context, api: widget.api, outbox: widget.outbox, phone: phone);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Only while the phone is on and cannot register: in every other state it takes no space here.
+            if (phone != null && phone.inTrouble)
+              IconButton(
+                key: const ValueKey('phone-status'),
+                tooltip: phoneStatusLine(phone),
+                onPressed: details,
+                icon: Icon(Icons.phone_disabled, color: scheme.error),
+              ),
+            IconButton(
+              key: const ValueKey('status'),
+              tooltip: statusTitle(level),
+              onPressed: details,
+              icon: Badge(
+                isLabelVisible: refused || pending > 0,
+                backgroundColor: refused ? scheme.error : scheme.secondary,
+                label: Text(refused ? '!' : '$pending'),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(icon, key: ValueKey(icon), color: color),
+                ),
+              ),
             ),
-          ),
+          ],
         );
       },
     );
@@ -133,103 +151,120 @@ String statusTitle(ConnectionLevel level) => switch (level) {
   ConnectionLevel.lost => 'Not connected',
 };
 
-/// The connection, the queue, the saved menu's age and the runbook card for this state, as a bottom sheet.
-Future<void> showStatusDetails(BuildContext context, {required PosApi api, required Outbox outbox}) =>
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => ListenableBuilder(
-        listenable: Listenable.merge([api.connection, outbox]),
-        builder: (context, _) {
-          final theme = Theme.of(context);
-          final scheme = theme.colorScheme;
-          final posColors = PosColors.of(context);
-          final conn = api.connection.value;
-          final endpoints = api.settings.endpoints;
-          final level = conn.levelWith(endpoints);
-          final refusal = outbox.lastRefusal;
-          final cache = api.cache;
-          final now = DateTime.now();
-          final (icon, color) = switch (level) {
-            ConnectionLevel.usual => (Icons.cloud_done_outlined, scheme.primary),
-            ConnectionLevel.backup => (Icons.cloud_sync_outlined, posColors.waitingText),
-            _ => (Icons.cloud_off, scheme.error),
-          };
-          final since = conn.since == null ? '' : _forHowLong(now.difference(conn.since!));
-          final subtitle = switch (level) {
-            ConnectionLevel.usual => null,
-            ConnectionLevel.backup => 'The usual backend (${endpoints.firstOrNull}) is not answering$since',
-            ConnectionLevel.capturing => 'No backend answers$since; orders are kept on this screen',
-            ConnectionLevel.lost => conn.error ?? 'connecting',
-          };
-          return SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Card(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ListTile(
-                          leading: Icon(icon, color: color),
-                          title: Text(
-                            level == ConnectionLevel.usual || level == ConnectionLevel.backup
-                                ? '${statusTitle(level)}: ${conn.endpoint}'
-                                : statusTitle(level),
-                          ),
-                          subtitle: subtitle == null ? null : Text(subtitle),
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.outbox_outlined),
-                          title: Text(outbox.pending == 0 ? 'Everything is sent' : '${outbox.pending} waiting to send'),
-                          subtitle: outbox.pending == 0 ? null : const Text('They go as soon as a backend answers.'),
-                        ),
-                        if (cache != null && level != ConnectionLevel.usual) ...[
-                          const Divider(height: 1),
-                          ListTile(
-                            leading: const Icon(Icons.save_outlined),
-                            title: Text(
-                              cache.hasMenu ? 'Menu saved ${ago(cache.menuAt!, now)}' : 'No menu saved on this screen',
-                            ),
-                            subtitle: Text(
-                              cache.has('taxes')
-                                  ? 'Tax rates from ${ago(cache.readAt('taxes')!, now)}'
-                                  : 'Tax rates not saved yet: estimates show no tax',
-                            ),
-                          ),
-                        ],
-                        if (refusal != null) ...[
-                          const Divider(height: 1),
-                          ListTile(
-                            leading: Icon(Icons.block, color: scheme.error),
-                            title: Text('Not added: $refusal'),
-                            trailing: TextButton(onPressed: outbox.clearRefusal, child: const Text('Dismiss')),
-                          ),
-                        ],
-                        if (endpoints.length > 1) ...[
-                          const Divider(height: 1),
-                          ListTile(
-                            leading: const Icon(Icons.swap_vert),
-                            title: const Text('Backends, in failover order'),
-                            subtitle: Text(endpoints.join('\n')),
-                          ),
-                        ],
-                      ],
+/// The connection, the queue, the saved menu's age, the phone while it is on, and the runbook card for this
+/// state, as a bottom sheet.
+Future<void> showStatusDetails(
+  BuildContext context, {
+  required PosApi api,
+  required Outbox outbox,
+  PhoneClient? phone,
+}) => showModalBottomSheet<void>(
+  context: context,
+  showDragHandle: true,
+  isScrollControlled: true,
+  builder: (context) => ListenableBuilder(
+    listenable: Listenable.merge([api.connection, outbox, ?phone]),
+    builder: (context, _) {
+      final theme = Theme.of(context);
+      final scheme = theme.colorScheme;
+      final posColors = PosColors.of(context);
+      final conn = api.connection.value;
+      final endpoints = api.settings.endpoints;
+      final level = conn.levelWith(endpoints);
+      final refusal = outbox.lastRefusal;
+      final cache = api.cache;
+      final now = DateTime.now();
+      final (icon, color) = switch (level) {
+        ConnectionLevel.usual => (Icons.cloud_done_outlined, scheme.primary),
+        ConnectionLevel.backup => (Icons.cloud_sync_outlined, posColors.waitingText),
+        _ => (Icons.cloud_off, scheme.error),
+      };
+      final since = conn.since == null ? '' : _forHowLong(now.difference(conn.since!));
+      final subtitle = switch (level) {
+        ConnectionLevel.usual => null,
+        ConnectionLevel.backup => 'The usual backend (${endpoints.firstOrNull}) is not answering$since',
+        ConnectionLevel.capturing => 'No backend answers$since; orders are kept on this screen',
+        ConnectionLevel.lost => conn.error ?? 'connecting',
+      };
+      return SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: Icon(icon, color: color),
+                      title: Text(
+                        level == ConnectionLevel.usual || level == ConnectionLevel.backup
+                            ? '${statusTitle(level)}: ${conn.endpoint}'
+                            : statusTitle(level),
+                      ),
+                      subtitle: subtitle == null ? null : Text(subtitle),
                     ),
-                  ),
-                  RunbookCard(level: level, endpoint: conn.endpoint),
-                ],
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.outbox_outlined),
+                      title: Text(outbox.pending == 0 ? 'Everything is sent' : '${outbox.pending} waiting to send'),
+                      subtitle: outbox.pending == 0 ? null : const Text('They go as soon as a backend answers.'),
+                    ),
+                    if (cache != null && level != ConnectionLevel.usual) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.save_outlined),
+                        title: Text(
+                          cache.hasMenu ? 'Menu saved ${ago(cache.menuAt!, now)}' : 'No menu saved on this screen',
+                        ),
+                        subtitle: Text(
+                          cache.has('taxes')
+                              ? 'Tax rates from ${ago(cache.readAt('taxes')!, now)}'
+                              : 'Tax rates not saved yet: estimates show no tax',
+                        ),
+                      ),
+                    ],
+                    if (refusal != null) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: Icon(Icons.block, color: scheme.error),
+                        title: Text('Not added: $refusal'),
+                        trailing: TextButton(onPressed: outbox.clearRefusal, child: const Text('Dismiss')),
+                      ),
+                    ],
+                    if (phone != null && phone.settings.enabled) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: Icon(switch (phone.state) {
+                          PhoneState.ringing || PhoneState.inCall => Icons.phone_in_talk,
+                          PhoneState.registered => Icons.phone_outlined,
+                          _ => Icons.phone_disabled,
+                        }, color: phone.inTrouble ? scheme.error : null),
+                        title: const Text('Phone'),
+                        subtitle: Text(phoneStatusLine(phone)),
+                      ),
+                    ],
+                    if (endpoints.length > 1) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.swap_vert),
+                        title: const Text('Backends, in failover order'),
+                        subtitle: Text(endpoints.join('\n')),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-            ),
-          );
-        },
-      ),
-    );
+              RunbookCard(level: level, endpoint: conn.endpoint),
+            ],
+          ),
+        ),
+      );
+    },
+  ),
+);
 
 /// The offline runbook: for the state the screen is in, what still works, what to tell the guest, what not
 /// to do, and who to call (architecture section 15; the capture-only card from ADR 6). The printed card at

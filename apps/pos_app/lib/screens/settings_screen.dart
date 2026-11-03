@@ -75,18 +75,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  static String _phoneStatus(PhoneClient phone) {
-    final s = phone.settings;
-    return switch (phone.state) {
-      PhoneState.off => 'Off. Switch on, fill in the PBX, extension and secret, then save',
-      PhoneState.connecting => 'Connecting to ${s.server}${phone.problem == null ? '' : ' · ${phone.problem}'}',
-      PhoneState.registered => 'Registered as ${s.extension} on ${s.server}',
-      PhoneState.failed => 'Not registered: ${phone.problem}',
-      PhoneState.ringing => 'Ringing',
-      PhoneState.inCall => 'On a call',
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -187,7 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ? const Text('Take the restaurant\'s calls in this app: ring, answer, mute, hang up')
                             : ListenableBuilder(
                                 listenable: widget.phone!,
-                                builder: (context, _) => Text(_phoneStatus(widget.phone!)),
+                                builder: (context, _) => Text(phoneStatusLine(widget.phone!)),
                               ),
                       ),
                       const SizedBox(height: 8),
