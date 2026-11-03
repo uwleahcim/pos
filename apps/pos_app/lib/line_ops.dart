@@ -3,8 +3,8 @@
 ///
 /// Before the kitchen has a line, it simply changes. After, the kitchen is already cooking it: more of it
 /// is a new line of the extra, held like any dish just added until the operator fires it; fewer is a void
-/// of the line (a VOID ticket prints) and the rest sent again on the same ticket. A void is confirmed by
-/// the operator first. Its place and its course are the check's business alone: a dish moves freely, sent
+/// of the line (a VOID ticket prints) and the rest sent again on the same ticket, in the line's place (a
+/// comp on the line follows the rest). A void is confirmed by the operator first. Its place and its course are the check's business alone: a dish moves freely, sent
 /// or not, and keeps its place on the ticket it went out on.
 library;
 
@@ -47,7 +47,7 @@ LineChange qtyChange(Line line, int qty, {required String Function() newId}) {
   return LineChange(
     [
       ('void_line', {'line_id': id, 'reason': 'fewer'}),
-      ('add_line', _copyOf(line, copy, qty, course: line.course)),
+      ('add_line', _copyOf(line, copy, qty, course: line.course, replaces: true)),
       ('fire', {'course': line.course ?? '*'}),
     ],
     newLineId: copy,
@@ -73,12 +73,14 @@ LineChange moveChange(Line line, {required String? course, required double rank}
   ]);
 }
 
-Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? course}) => {
+/// A new line of `qty` of the dish; [replaces] when it takes the line's place rather than adding to it.
+Map<String, dynamic> _copyOf(Line line, String id, int qty, {required String? course, bool replaces = false}) => {
   'line_id': id,
   'item': line.item,
   'qty': qty,
   'seat': ?line.seat,
   'course': ?course,
+  if (replaces) 'replaces': line.lineId,
   if (line.note.isNotEmpty) 'note': line.note,
   if (line.request != null) 'request': line.request!.toJson(),
 };

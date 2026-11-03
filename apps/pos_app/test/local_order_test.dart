@@ -107,11 +107,11 @@ void main() {
       fired: const {},
     );
     final check = estimateCheck(read, order, {
-      'L2': const LocalLine(unitPrice: '8.50', modifiers: ['no cucumber']),
+      'L2': const LocalLine(unitPrice: '8.50', modifiers: [CheckModifier('no cucumber')]),
     });
     expect(check.estimated, isTrue);
     expect(check.lines.map((l) => (l.lineId, l.total)), [('L1', '25.95'), ('L2', '8.50')]);
-    expect(check.line('L2')!.modifiers, ['no cucumber']);
+    expect(check.line('L2')!.modifiers.map((m) => m.label), ['no cucumber']);
     // 34.45: 6.25% = 2.153 -> 2.15, 0.75% = 0.258 -> 0.26, the hub's own answer for this table
     expect((check.subtotal, check.tax, check.total), ('34.45', '2.41', '36.86'));
 
@@ -121,6 +121,115 @@ void main() {
       op('void_line', {'line_id': 'L1'}),
     ]);
     expect(estimateCheck(read, removed, const {}).total, '0.00');
+  });
+
+  test('a check line reads its choices from a hub that sends labels alone or with what each adds', () {
+    final line = CheckLine.fromJson({
+      'line_id': 'L1',
+      'name': 'x',
+      'qty': 1,
+      'total': '1.00',
+      'modifiers': [
+        'Brown rice',
+        {'label': 'Add shrimp', 'price': '3.00', 'amount': '3.00'},
+      ],
+    });
+    expect(line.modifiers.map((m) => (m.label, m.amount, m.charged)), [
+      ('Brown rice', '0.00', false),
+      ('Add shrimp', '3.00', true),
+    ]);
+    expect(Line.fromJson('L4', {'item': 'x', 'replaces': 'L3'}).replaces, 'L3');
+    expect(Line.fromJson('L4', {'item': 'x'}).replaces, isNull);
+  });
+
+  test("the estimate scales a dish's choices with its quantity, on the hub's lines and this screen's own", () {
+    const read = Check(
+      lines: [
+        CheckLine(
+          lineId: 'L1',
+          name: 'GTC',
+          qty: 1,
+          total: '28.95',
+          modifiers: [
+            CheckModifier('Add shrimp', price: '3.00', amount: '3.00'),
+            CheckModifier('Brown rice'),
+          ],
+        ),
+      ],
+      subtotal: '28.95',
+      taxLines: taxes,
+      tax: '2.03',
+      taxRatePct: '7.00',
+      total: '30.98',
+    );
+    final order = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [
+        const Line(lineId: 'L1', item: 'GTC', qty: 2, status: 'active'),
+        const Line(lineId: 'L2', item: 'California Roll', qty: 2, status: 'active', pending: true),
+      ],
+      fired: const {},
+    );
+    final check = estimateCheck(read, order, {
+      'L2': const LocalLine(
+        unitPrice: '8.50',
+        modifiers: [CheckModifier('Add avocado', price: '1.50')],
+      ),
+    });
+    final gtc = check.line('L1')!;
+    expect(gtc.total, '57.90');
+    expect(gtc.modifiers.map((m) => (m.label, m.amount, m.charged)), [
+      ('Add shrimp', '6.00', true),
+      ('Brown rice', '0.00', false),
+    ]);
+    expect(check.line('L2')!.modifiers.map((m) => (m.label, m.amount)), [('Add avocado', '3.00')]);
+    expect(check.line('L2')!.total, '17.00');
+  });
+
+  test('the estimate keeps a comp on the line that replaced its line', () {
+    // an edit voids the dish and adds the changed one in its place; the comp goes with it
+    const read = Check(
+      lines: [CheckLine(lineId: 'L2', name: 'Peking Duck', qty: 1, total: '30.00', discount: '30.00')],
+      subtotal: '30.00',
+      discounts: [
+        CheckDiscount(
+          discountId: 'D1',
+          reason: 'comp',
+          name: 'Manager comp',
+          kind: 'comp',
+          value: '0',
+          amount: '30.00',
+          lineId: 'L2',
+        ),
+      ],
+      discountTotal: '30.00',
+      taxLines: taxes,
+      tax: '0.00',
+      taxRatePct: '7.00',
+      total: '0.00',
+    );
+    final order = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [
+        const Line(lineId: 'L2', item: 'Peking Duck', qty: 1, status: 'removed'),
+        const Line(lineId: 'L3', item: 'Peking Duck', qty: 1, status: 'active', replaces: 'L2', pending: true),
+      ],
+      fired: const {},
+    );
+    final check = estimateCheck(read, order, {'L3': const LocalLine(unitPrice: '32.00')});
+    expect(check.lines.map((l) => (l.lineId, l.total, l.discount)), [('L3', '32.00', '32.00')]);
+    expect((check.discounts.single.lineId, check.discounts.single.amount), ('L3', '32.00'));
+    expect((check.discountTotal, check.total), ('32.00', '0.00'));
+    // the local replay carries what a new line replaces
+    final replayed = withLocalOps(order, [
+      op('void_line', {'line_id': 'L3'}),
+      op('add_line', {'line_id': 'L4', 'item': 'Peking Duck', 'replaces': 'L3'}),
+    ]);
+    expect(replayed.lines.firstWhere((l) => l.lineId == 'L4').replaces, 'L3');
   });
 
   test('the estimate keeps the discounts and charges on the new lines, in the hub order', () {

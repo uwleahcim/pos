@@ -18,7 +18,9 @@ import 'outbox.dart';
 class LocalLine {
   const LocalLine({this.unitPrice, this.modifiers = const [], this.itemId, this.entryId});
   final String? unitPrice;
-  final List<String> modifiers;
+
+  /// Its choices with the price of each; the estimate works out what they add for the quantity.
+  final List<CheckModifier> modifiers;
   final String? itemId;
   final String? entryId;
 }
@@ -51,6 +53,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           rank: (data['rank'] as num?)?.toDouble() ?? lines.values.fold(0.0, (top, l) => math.max(top, l.rank)) + 1,
           entryId: req?.entryId,
           request: req,
+          replaces: data['replaces'] as String?,
           pending: true,
         );
       case 'set_line':
@@ -135,7 +138,11 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
       final total = priced.qty == line.qty || priced.qty == 0
           ? cents(priced.total)
           : cents(priced.total) ~/ priced.qty * line.qty;
-      lines.add(priced.qty == line.qty ? priced : priced.withQty(line.qty, money(total)));
+      lines.add(
+        priced.qty == line.qty
+            ? priced
+            : priced.withQty(line.qty, money(total), modifiers: _forQty(priced.modifiers, line.qty)),
+      );
       subtotal += total;
       continue;
     }
@@ -150,7 +157,7 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
         qty: line.qty,
         total: money(total),
         seat: line.seat,
-        modifiers: local[line.lineId]!.modifiers,
+        modifiers: _forQty(local[line.lineId]!.modifiers, line.qty),
       ),
     );
   }
@@ -160,7 +167,8 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
   var checkOff = 0;
   final discounts = <CheckDiscount>[];
   for (final d in check?.discounts ?? const <CheckDiscount>[]) {
-    final lineId = d.lineId;
+    // an edit voids a line and adds the changed dish as a new one: a comp on the old line is on the new
+    final lineId = d.lineId == null ? null : order.currentLine(d.lineId!);
     if (lineId != null && !net.containsKey(lineId)) continue; // its line came off
     final base = lineId == null ? net.values.fold(0, (a, b) => a + b) - checkOff : net[lineId]!;
     var amount = switch (d.kind) {
@@ -175,7 +183,7 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
       net[lineId] = base - amount;
       off[lineId] = off[lineId]! + amount;
     }
-    discounts.add(d.withAmount(money(amount)));
+    discounts.add(d.withAmount(money(amount), lineId: lineId));
   }
   final discounted = net.values.fold(0, (a, b) => a + b) - checkOff;
   final charges = <CheckCharge>[];
@@ -276,6 +284,11 @@ Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
   }
   return out;
 }
+
+/// A line's choices with what each adds for [qty] of the dish.
+List<CheckModifier> _forQty(List<CheckModifier> modifiers, int qty) => [
+  for (final m in modifiers) CheckModifier(m.label, price: m.price, amount: money(cents(m.price) * qty)),
+];
 
 /// "17.95" -> 1795.
 int cents(String amount) {

@@ -443,7 +443,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(result!.request.prefixes, {'addons:shrimp': 'no'});
     expect(result!.request.selections['addons'], ['addons:shrimp']);
-    expect(result!.modifiers, ['No Add shrimp']);
+    expect(result!.modifiers.map((m) => (m.label, m.price)), [('No Add shrimp', '0.00')]); // left off: free
   });
 
   testWidgets('a saved menu reaches the screen without reopening it', (tester) async {

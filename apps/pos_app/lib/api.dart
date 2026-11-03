@@ -28,6 +28,7 @@ class Line {
     this.request,
     this.itemId,
     this.entryId,
+    this.replaces,
     this.pending = false,
   });
 
@@ -45,6 +46,7 @@ class Line {
     request: json['request'] == null ? null : LineRequest.fromJson(json['request'] as Map<String, dynamic>),
     itemId: (json['priced'] as Map?)?['item'] as String?,
     entryId: (json['priced'] as Map?)?['entry_id'] as String?,
+    replaces: json['replaces'] as String?,
   );
 
   final String lineId;
@@ -67,6 +69,10 @@ class Line {
   final LineRequest? request;
   final String? itemId;
   final String? entryId;
+
+  /// The line this one took the place of: an edit (other choices, a kitchen note) voids a line and adds the
+  /// changed dish as a new one. A comp on the old line is on this one, here and on the hub.
+  final String? replaces;
 
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
@@ -103,6 +109,7 @@ class Line {
     request: request,
     itemId: itemId,
     entryId: entryId,
+    replaces: replaces,
     pending: pending ?? this.pending,
   );
 }
@@ -173,6 +180,23 @@ class Order {
     for (final l in activeLines)
       if (!l.fired) l.course ?? '',
   };
+
+  /// The line that stands for [lineId] now: itself while it is active, else the line that replaced it (an
+  /// edit voids a line and adds the changed dish as a new one), followed through further edits. A comp on
+  /// a line is shown and estimated on this one, as the hub does.
+  String currentLine(String lineId) {
+    final replacedBy = <String, String>{};
+    for (final line in lines) {
+      final old = line.replaces;
+      if (old != null && (!replacedBy.containsKey(old) || line.isActive)) replacedBy[old] = line.lineId;
+    }
+    final seen = <String>{};
+    while (replacedBy.containsKey(lineId) && seen.add(lineId)) {
+      if (lines.any((l) => l.lineId == lineId && l.isActive)) break;
+      lineId = replacedBy[lineId]!;
+    }
+    return lineId;
+  }
 }
 
 /// Money taken on an order: cash at the counter, or settled elsewhere (a phone order paid through another

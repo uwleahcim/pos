@@ -34,7 +34,7 @@ from ..printing.service import PrintService
 from ..printing.ticket import DEMO
 from ..settings import SettingStore, clean_coursing, clean_quotes, default_settings
 from ..sync.hlc import HLC
-from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore
+from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState
 from ..tax import TaxProfile, load_profile
 from .auth import manager_from
 from .menu_admin import add_menu_admin
@@ -285,6 +285,7 @@ def adjust_ops(
     out: list[Op] = []
     refused: list[dict[str, Any]] = []
     active: dict[str, dict[str, dict[str, Any]]] = {}  # order -> live discounts by id, as this batch leaves them
+    states: dict[str, OrderState] = {}
     for op in ops:
         if op.kind not in ADJUSTMENTS:
             out.append(op)
@@ -300,24 +301,33 @@ def adjust_ops(
             refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
             continue
         if op.order_id not in active:
-            state = store.state(op.order_id)
+            # a discount on a dish follows the dish through its edits: stacking is judged on the line that
+            # stands for each discounted line now
+            state = states[op.order_id] = store.state(op.order_id)
             active[op.order_id] = {
-                d.discount_id: {"reason": d.reason, "line_id": d.line_id} for d in state.discounts.values() if d.active
+                d.discount_id: {"reason": d.reason, "line_id": _current(state, d.line_id)}
+                for d in state.discounts.values()
+                if d.active
             }
         live = active[op.order_id]
         if op.kind == "remove_discount":
             live.pop(ident, None)
         else:
-            problems = rules.problems(op.kind, data, approved=approved, existing=live.values())
+            judged = {**data, "line_id": _current(states[op.order_id], data.get("line_id"))}
+            problems = rules.problems(op.kind, judged, approved=approved, existing=live.values())
             if problems:
                 refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
                 continue
             if op.kind == "discount":
-                live[ident] = {"reason": data.get("reason"), "line_id": data.get("line_id")}
+                live[ident] = {"reason": data.get("reason"), "line_id": judged["line_id"]}
             elif op.kind == "charge":
                 data.update(charge_snapshot(rules.charges[str(data["code"])]))
         out.append(replace(op, data=data))
     return out, refused
+
+
+def _current(state: OrderState, line_id: Any) -> str | None:
+    return state.current_line(line_id) if isinstance(line_id, str) and line_id else None
 
 
 def _tally(totals: dict[str, Decimal], key: str, amount: Decimal) -> None:

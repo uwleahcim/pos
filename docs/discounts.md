@@ -47,9 +47,18 @@ defaults: Manager comp (free), Staff meal (50% off), Loyalty reward (up to 20% o
 - A dish that already carries a discount shows it at the top of the menu with **Take off**; reasons that
   cannot go on top of it are greyed out, as the hub would refuse them.
 
-The line stays on the check: its price shows the original struck through over what is left, and the line
-says what came off ("Comped · Manager comp", "50% off · Staff meal"). The row under the subtotal is there
-as before, and a tap on it still takes the discount off.
+The line stays on the check. Each choice on a dish is a line of its own under it, with what it adds when
+it costs something (the dish's line carries the dish's own price, so the lines add up to the line's
+total). With a comp or discount on the line those amounts show struck through, and a last line says what
+came off ("Comped · Manager comp", "50% off · Staff meal") with what is left to pay. The row under the
+subtotal is there as before, and a tap on it still takes the discount off.
+
+A comp stays with the dish through an edit. Changing a dish (other options, a kitchen note, fewer of a
+sent dish) voids its line and adds the changed dish as a new line; the new line says which line it
+replaces (`replaces` on the `add_line`), and the hub puts the comp on the new line, on the check and in
+its stacking checks, without anyone approving it again. The log keeps both as they happened: the comp as
+it was approved, and the edit. The hub's check lists each choice with its label, the price of one and
+what it adds for the quantity (`modifiers`), and names the line a comp is on now (`line_id`).
 
 The rest of the line's gestures are unchanged: a tap on the price opens the dish like a tap anywhere on
 the line, holding the dish's name drags it, and the quantity and the bin keep their own tap and hold.
