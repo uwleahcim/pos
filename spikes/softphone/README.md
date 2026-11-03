@@ -52,12 +52,32 @@ All in the FreePBX admin, with **Apply Config** after each step.
    Address (144.202.2.62), the Local Networks and the RTP port range (10000 to 20000) stay as they are for the
    existing phones.
 4. **An extension for the terminal.** Applications, Extensions, + Add Extension, + Add New SIP [chan_pjsip]
-   Extension: User Extension `301`, Display Name `POS mac1`, Secret: keep the generated one and copy it (it goes
-   into the app). Advanced tab, set each of these by hand (the **Enable WebRTC defaults** switch does not
-   apply them, a [known FreePBX issue](https://community.freepbx.org/t/webrtc-default-toggle-doesnt-work/67281)):
-   **Media Encryption: DTLS-SRTP**, **Enable AVPF: Yes**, **Enable ICE Support: Yes**, **Enable rtcp Mux: Yes**,
-   **Media Use Received Transport: Yes**, DTLS Verify Fingerprint, DTLS Setup Act/Pass, **Direct Media: No**,
-   Max Contacts 1. Submit, Apply Config. One extension per terminal: 302 for the iPhone, and so on.
+   Extension. General tab: User Extension `301`, Display Name `POS mac1`, Secret: keep the generated one and
+   copy it (it goes into the app). Then the **Advanced** tab.
+
+   **About "Enable WebRTC defaults".** The Advanced tab has a switch of that name, meant to set the WebRTC
+   fields below at once. It does not: with the switch on, FreePBX 17.0.33 still generated extension 301 with
+   `ice_support=false` and `use_avpf=false` (a [known FreePBX
+   issue](https://community.freepbx.org/t/webrtc-default-toggle-doesnt-work/67281)), and the app then refuses
+   the PBX's media offer (the caller hears busy). Leave the switch as it is and set each field by hand, on a
+   new extension and on an existing one alike. They are in the *Advanced* section near the bottom of the tab:
+
+   | Field | Value |
+   | --- | --- |
+   | Media Encryption | DTLS-SRTP |
+   | Enable AVPF | Yes |
+   | Enable ICE Support | Yes |
+   | Enable rtcp Mux | Yes |
+   | Media Use Received Transport | Yes |
+   | DTLS Verify | Fingerprint |
+   | DTLS Setup | Act/Pass |
+   | DTLS Certificate | leave as it is (the PBX's own certificate works; the fingerprint travels in the offer) |
+   | Direct Media | No |
+   | Max Contacts | 1 |
+
+   Submit, then **Apply Config**. Confirm on the console (step 5): `pjsip show endpoint 301` must print
+   `use_avpf: true` and `ice_support: true`; `false` means the tab was not saved, so open it and check the
+   fields again. One extension per terminal, each with the same Advanced fields: 302 for the iPhone, and so on.
 5. **Check on the console.** `ssh root@144.202.2.62`, then `asterisk -rvvv`:
 
    ```
