@@ -95,7 +95,10 @@ All in the FreePBX admin, with **Apply Config** after each step.
 2. In the app: Settings, Phone: switch on, PBX address `freepbx.chinasky.org`, Extension `301`, Secret from
    PBX step 4. Save. The Phone line reads *Registered as 301 on freepbx.chinasky.org*; if not, it says what the
    PBX answered.
-3. macOS asks for the microphone on the first answered call. Allow.
+3. macOS asks for the microphone on the first answered call. Allow. The release build needs the
+   `com.apple.security.network.server` entitlement (in `macos/Runner/Release.entitlements` since this spike):
+   the sandbox counts the UDP packets of ICE and RTP as incoming, and without it a call connects with no
+   audio either way, while the debug build, which always has that entitlement, works.
 4. iPad: `flutter run -d <ipad> --release`, the same settings with the iPad's own extension (302). The iPad
    asks for the microphone once.
 
@@ -121,10 +124,21 @@ Settings, Phone shows the PBX's answer under the switch; a release build logs no
 | `… HandshakeException …` | certificate not trusted (step 1: Let's Encrypt, made the default, Apply Config) |
 | `Not registered: 401 Unauthorized` or `403 Forbidden` | extension or secret (step 4) |
 | Rings, but Answer gives the caller busy; app log `setRemoteDescription() failed` | the extension lacks AVPF or ICE (step 4; `pjsip show endpoint 301` must show `use_avpf: true`, `ice_support: true`) |
+| Mac: connected, no audio either way, the iPhone fine | the release build lacks the `network.server` entitlement (device step 3) |
+| Mac: red box or an error on hover over the call strip | tooltips above the navigator; fixed with this spike |
+| App log `trying to add null key` | harmless: the SIP library's SDP parser noting an `a=` line it does not know |
 
 ## Result
 
-Pending (2026-11-03). First attempt the same day: the app never reached the PBX, because the HTTPS server was
-bound to `127.0.0.1`, the HTTP Prefix was `8089` and extension 301 lacked AVPF and ICE (the WebRTC
-switch had not applied them); all found over SSH and in a SIP capture, none on the app side; the steps above
-now say so.
+**Passed, 2026-11-03.** With the PBX set up as above, the iPhone (extension 302) and the Mac (301) register,
+ring with the caller's number, answer with audio both ways, mute and hang up, called from a desk phone
+(extension 200). Not yet tried: a call from the restaurant's number through the queue (step 7).
+
+What it took, all found the same day: the PBX's HTTPS server was bound to `127.0.0.1`, the HTTP Prefix was
+`8089`, and extension 301 lacked AVPF and ICE because FreePBX's WebRTC switch had not applied them (found
+over SSH and in a SIP capture; steps 2 and 4 now say so). On the app side the Mac's release build needed the
+`network.server` entitlement for audio, and the call strip's tooltips had no overlay above the navigator.
+
+Still open for the first version: a ringtone on iPad and Android (silent today), the caller's number into a
+takeout order, hold, transfer and a keypad, the phone's state in the status icon, and the restaurant's own
+public address in the firewall's Trusted zone before the terminals move there.

@@ -6,6 +6,9 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Phone calls: ICE and RTP receive UDP on sockets the app opens, which the sandbox counts as incoming. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.device.camera</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
