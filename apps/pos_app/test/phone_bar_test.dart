@@ -97,6 +97,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('in a call offers To go when a screen can take the order, and not otherwise', (tester) async {
+    var orders = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PhoneBar(
+          client: phone,
+          onOrder: () => orders++,
+          child: const Scaffold(body: Text('orders')),
+        ),
+      ),
+    );
+    await phone.apply(active);
+    stack.events!.registered();
+    stack.events!.incomingCall('c1', number: '7815551234');
+    await tester.pump();
+    expect(find.bySemanticsLabel('To go'), findsNothing); // not before it is answered
+    stack.events!.callAccepted('c1');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.shopping_bag_outlined));
+    expect(orders, 1);
+    expect(find.byIcon(Icons.call_end), findsOneWidget); // the call goes on
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PhoneBar(
+          client: phone,
+          child: const Scaffold(body: Text('orders')),
+        ),
+      ),
+    );
+    expect(find.byIcon(Icons.shopping_bag_outlined), findsNothing);
+  });
+
   testWidgets('in a call shows the number, mute and hang up', (tester) async {
     await pumpBar(tester);
     stack.events!.incomingCall('c1', number: '7815551234');

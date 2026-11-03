@@ -86,6 +86,26 @@ void main() {
     });
   });
 
+  group('Caller', () {
+    test('shows the name the trunk sent, unless it is no name at all', () {
+      expect(const Caller(number: '7815551234', name: 'Linda Chen').displayName, 'Linda Chen');
+      expect(const Caller(number: '7815551234', name: ' Linda Chen ').displayName, 'Linda Chen');
+      expect(const Caller(number: '7815551234', name: '7815551234').displayName, isNull);
+      expect(const Caller(number: '+17815551234', name: '781-555-1234').displayName, isNull);
+      expect(const Caller(number: '7815551234', name: 'Unknown').displayName, isNull);
+      expect(const Caller(number: '7815551234', name: 'ANONYMOUS').displayName, isNull);
+      expect(const Caller(number: '7815551234', name: 'Unavailable').displayName, isNull);
+      expect(const Caller(number: '7815551234', name: '').displayName, isNull);
+      expect(const Caller(number: '7815551234').displayName, isNull);
+    });
+
+    test('formats the number for a form, or leaves it empty', () {
+      expect(const Caller(number: '+17815551234').formatted, '781 555 1234');
+      expect(const Caller(number: '301').formatted, '301');
+      expect(const Caller().formatted, '');
+    });
+  });
+
   group('Settings', () {
     test('remembers the phone settings', () async {
       SharedPreferences.setMockInitialValues({});
@@ -204,6 +224,43 @@ void main() {
       stack.events!.callEnded('c1', '488 Not Acceptable Here');
       expect(phone.answering, isFalse);
       expect(phone.state, PhoneState.registered);
+    });
+
+    test('offers the caller for an order during the call and for ten minutes after it', () async {
+      await register();
+      expect(phone.callerForOrder, isNull);
+      stack.events!.incomingCall('c1', number: '+17815551234', name: 'Linda Chen');
+      expect(phone.caller, const Caller(number: '+17815551234', name: 'Linda Chen'));
+      stack.events!.callAccepted('c1');
+      expect(phone.callerForOrder, const Caller(number: '+17815551234', name: 'Linda Chen'));
+      stack.events!.callEnded('c1', 'Terminated');
+      expect(phone.caller, isNull);
+      expect(phone.callerForOrder, const Caller(number: '+17815551234', name: 'Linda Chen'));
+      now = now.add(const Duration(minutes: 9));
+      expect(phone.callerForOrder, isNotNull);
+      now = now.add(const Duration(minutes: 2));
+      expect(phone.callerForOrder, isNull);
+    });
+
+    test('a call that rang and was declined is still the one to order for', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      phone.decline();
+      stack.events!.callEnded('c1', '486 Busy Here');
+      expect(phone.callerForOrder, const Caller(number: '7815551234'));
+    });
+
+    test('a To go tap on the call asks the screen for an order, each time', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      stack.events!.callAccepted('c1');
+      var heard = 0;
+      phone.addListener(() => heard++);
+      expect(phone.orderRequests, 0);
+      phone.startOrder();
+      phone.startOrder();
+      expect(phone.orderRequests, 2);
+      expect(heard, 2);
     });
 
     test('a refreshed registration during a call changes nothing', () async {

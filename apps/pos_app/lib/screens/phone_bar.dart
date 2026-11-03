@@ -5,13 +5,18 @@ import 'package:flutter/material.dart';
 import '../phone.dart';
 
 /// Sits over every screen. While a call rings: a banner with the caller, Answer and Decline. During a call:
-/// a small strip at the top with the caller, the call time, mute and hang up. Otherwise nothing. The ring itself
-/// is the [CallRinger]'s, wired beside the phone in main.dart.
+/// a small strip at the top with the caller, the call time, mute, hang up and, with [onOrder], To go: a to-go
+/// order for the caller. Otherwise nothing. The ring itself is the [CallRinger]'s, wired beside the phone in
+/// main.dart.
 class PhoneBar extends StatefulWidget {
-  const PhoneBar({super.key, required this.client, required this.child});
+  const PhoneBar({super.key, required this.client, required this.child, this.onOrder});
 
   final PhoneClient client;
   final Widget child;
+
+  /// To go on the call strip: starts a to-go order for the caller on the orders screen. Null hides the button
+  /// (nobody signed in, so no screen to take the order).
+  final VoidCallback? onOrder;
 
   @override
   State<PhoneBar> createState() => _PhoneBarState();
@@ -70,7 +75,7 @@ class _PhoneBarState extends State<PhoneBar> {
               bottom: false,
               child: Align(
                 alignment: Alignment.topCenter,
-                child: _CallStrip(client: client),
+                child: _CallStrip(client: client, onOrder: widget.onOrder),
               ),
             ),
           ),
@@ -150,9 +155,10 @@ class _RingingBanner extends StatelessWidget {
 }
 
 class _CallStrip extends StatelessWidget {
-  const _CallStrip({required this.client});
+  const _CallStrip({required this.client, this.onOrder});
 
   final PhoneClient client;
+  final VoidCallback? onOrder;
 
   static String _clock(Duration? d) {
     if (d == null) return '0:00';
@@ -193,6 +199,12 @@ class _CallStrip extends StatelessWidget {
               const SizedBox(width: 4),
               // No tooltips: the strip sits above the navigator (MaterialApp.builder), where a tooltip finds no
               // overlay to open in, which is a red box in a debug build and an exception on hover in a release.
+              if (onOrder != null)
+                IconButton(
+                  onPressed: onOrder,
+                  color: onDark,
+                  icon: const Icon(Icons.shopping_bag_outlined, semanticLabel: 'To go'),
+                ),
               IconButton(
                 onPressed: client.toggleMute,
                 color: client.muted ? scheme.inversePrimary : onDark,

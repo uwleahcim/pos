@@ -75,6 +75,14 @@ class PosApp extends StatelessWidget {
   final PrintRelay relay;
   final PhoneClient phone;
 
+  static final _navigator = GlobalKey<NavigatorState>();
+
+  /// To go on the call strip: back to the orders screen, which opens the to-go form for the caller.
+  void _orderForCaller() {
+    _navigator.currentState?.popUntil((route) => route.isFirst);
+    phone.startOrder();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -83,7 +91,9 @@ class PosApp extends StatelessWidget {
         // The signed-in person's own text size and contrast, on every screen and dialog; back to normal
         // when they sign out, so the next person starts from the defaults or their own settings.
         final prefs = session.prefs;
+        final canOrder = settings.isConfigured && session.signedIn;
         return MaterialApp(
+          navigatorKey: _navigator,
           title: 'POS',
           debugShowCheckedModeBanner: false,
           theme: PosTheme.light(highContrast: prefs.highContrast),
@@ -92,7 +102,11 @@ class PosApp extends StatelessWidget {
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            child: PhoneBar(client: phone, child: child ?? const SizedBox.shrink()),
+            child: PhoneBar(
+              client: phone,
+              onOrder: canOrder ? _orderForCaller : null,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
           home: Builder(
             builder: (context) {
@@ -126,6 +140,7 @@ class PosApp extends StatelessWidget {
                   camera: camera,
                   photos: photos,
                   relay: relay,
+                  phone: phone,
                 );
               }
               return AnimatedSwitcher(

@@ -101,6 +101,43 @@ String formatPhoneNumber(String? raw) {
   return '${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6)}';
 }
 
+/// Who is calling, as the PBX sent it: the number, and the name when the trunk gave one.
+@immutable
+class Caller {
+  const Caller({this.number, this.name});
+
+  final String? number;
+  final String? name;
+
+  /// The trunk's words for no name at all.
+  static const _noName = {'unknown', 'anonymous', 'unavailable', 'restricted', 'private'};
+
+  /// The name as an order's customer name: null when there is none, when it only repeats the number, or when it
+  /// is the trunk's word for no name (Unknown, Anonymous, Unavailable, Restricted, Private).
+  String? get displayName {
+    final text = name?.trim() ?? '';
+    if (text.isEmpty || _noName.contains(text.toLowerCase())) return null;
+    final digits = text.replaceAll(RegExp(r'\D'), '');
+    if (digits.isNotEmpty && digits == text.replaceAll(RegExp(r'[\s().+-]'), '')) {
+      final own = (number ?? '').replaceAll(RegExp(r'\D'), '');
+      if (own.endsWith(digits) || digits.endsWith(own)) return null;
+    }
+    return text;
+  }
+
+  /// The number as a form shows it (`781 555 1234`), or nothing when the PBX sent none.
+  String get formatted => number == null || number!.trim().isEmpty ? '' : formatPhoneNumber(number);
+
+  @override
+  bool operator ==(Object other) => other is Caller && other.number == number && other.name == name;
+
+  @override
+  int get hashCode => Object.hash(number, name);
+
+  @override
+  String toString() => 'Caller($number, $name)';
+}
+
 enum PhoneState { off, connecting, registered, failed, ringing, inCall }
 
 /// What the SIP stack tells the phone.
@@ -141,6 +178,12 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   bool _muted = false;
   bool _answering = false;
   DateTime? _answeredAt;
+  Caller? _recent;
+  DateTime? _recentAt;
+  int _orderRequests = 0;
+
+  /// How long after a call ends its caller is still the one to start an order for.
+  static const recentFor = Duration(minutes: 10);
 
   PhoneSettings get settings => _settings;
   PhoneState get state => _state;
@@ -157,6 +200,28 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   bool get running => _started;
   bool get onCall => _state == PhoneState.ringing || _state == PhoneState.inCall;
   Duration? get callDuration => _answeredAt == null ? null : _clock().difference(_answeredAt!);
+
+  /// The call's caller while one rings or is on.
+  Caller? get caller => _callId == null ? null : Caller(number: _callerNumber, name: _callerName);
+
+  /// The last call's caller for [recentFor] after it ended: the order often starts after the hang-up.
+  Caller? get recentCaller {
+    final at = _recentAt;
+    if (_recent == null || at == null || _clock().difference(at) > recentFor) return null;
+    return _recent;
+  }
+
+  /// Whom a to-go order started now is for: the caller on the line, else the one who just hung up.
+  Caller? get callerForOrder => caller ?? recentCaller;
+
+  /// How many times To go was tapped on a call; the orders screen opens the order form on each change.
+  int get orderRequests => _orderRequests;
+
+  /// To go tapped on the call banner or strip: asks whatever screen listens to start an order for the caller.
+  void startOrder() {
+    _orderRequests++;
+    notifyListeners();
+  }
 
   /// Registers with these settings, or stops when they are off or incomplete. Applying the same settings
   /// again changes nothing, so a saved settings screen does not drop a registration.
@@ -262,6 +327,8 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   @override
   void callEnded(String callId, String? reason) {
     if (callId != _callId) return;
+    _recent = caller;
+    _recentAt = _clock();
     _clearCall();
     if (_started) _state = _problem == null ? PhoneState.registered : PhoneState.connecting;
     notifyListeners();
