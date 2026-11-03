@@ -8,6 +8,7 @@ import '../coursing.dart';
 import '../floor.dart';
 import '../local_order.dart';
 import '../outbox.dart';
+import '../phone.dart';
 import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
@@ -35,6 +36,7 @@ class OrdersScreen extends StatefulWidget {
     required this.camera,
     required this.photos,
     this.relay,
+    this.phone,
   });
 
   final PosApi api;
@@ -44,6 +46,9 @@ class OrdersScreen extends StatefulWidget {
   final EventCamera camera;
   final PhotoQueue photos;
   final PrintRelay? relay;
+
+  /// The terminal's phone, when it is one: a caller on the line, or just off it, goes into a to-go order.
+  final PhoneClient? phone;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -55,12 +60,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _floor = true;
   final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
+  late int _orderRequests = widget.phone?.orderRequests ?? 0;
+  bool _ordering = false; // the to-go form is open
 
   @override
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
     widget.outbox.addListener(_onOutbox);
+    widget.phone?.addListener(_onPhone);
     _refresh();
   }
 
@@ -68,11 +76,23 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void dispose() {
     _timer?.cancel();
     widget.outbox.removeListener(_onOutbox);
+    widget.phone?.removeListener(_onPhone);
     super.dispose();
   }
 
   void _onOutbox() {
     if (mounted) setState(() {});
+  }
+
+  /// The caller changed, or To go was tapped on the call strip: the form opens for the caller, once.
+  void _onPhone() {
+    if (!mounted) return;
+    final phone = widget.phone!;
+    if (phone.orderRequests != _orderRequests) {
+      _orderRequests = phone.orderRequests;
+      if (!_ordering) unawaited(_newOrder());
+    }
+    setState(() {});
   }
 
   Future<void> _refresh() async {
@@ -92,20 +112,32 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   /// Counter mode (architecture section 12): name and phone first, the channel, when it is for. The hub
-  /// numbers the order when the create arrives; the quote comes from the hub's settings per channel.
+  /// numbers the order when the create arrives; the quote comes from the hub's settings per channel. With a
+  /// caller on the phone, or just off it, the form starts with the number, the channel and the caller-ID name.
   Future<void> _newOrder() async {
-    Quotes quotes;
+    if (_ordering) return;
+    _ordering = true;
     try {
-      quotes = await widget.api.quotes();
-    } on ApiException {
-      quotes = const Quotes(); // the hub's own defaults, until it answers
+      Quotes quotes;
+      try {
+        quotes = await widget.api.quotes();
+      } on ApiException {
+        quotes = const Quotes(); // the hub's own defaults, until it answers
+      }
+      if (!mounted) return;
+      final caller = widget.phone?.callerForOrder;
+      final request = await showDialog<TakeoutRequest>(
+        context: context,
+        builder: (context) => _TakeoutDialog(quotes: quotes, caller: caller),
+      );
+      if (request == null || !mounted) return;
+      await _startOrder(request, quotes);
+    } finally {
+      _ordering = false;
     }
-    if (!mounted) return;
-    final request = await showDialog<TakeoutRequest>(
-      context: context,
-      builder: (context) => _TakeoutDialog(quotes: quotes),
-    );
-    if (request == null || !mounted) return;
+  }
+
+  Future<void> _startOrder(TakeoutRequest request, Quotes quotes) async {
     final minutes = quotes.minutesFor(request.channel);
     final promised = request.promisedAt ?? DateTime.now().add(Duration(minutes: minutes));
     await _create({
@@ -428,29 +460,36 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ),
         ],
       ),
+      // With a caller on the phone, or just off it, the button names the caller: the order starts with the number.
       floatingActionButton: FloatingActionButton.extended(
+        key: const ValueKey('to-go'),
         onPressed: _newOrder,
         icon: const Icon(Icons.shopping_bag_outlined),
-        label: const Text('To go'),
+        label: Text(switch (widget.phone?.callerForOrder) {
+          null => 'To go',
+          final caller => caller.formatted.isEmpty ? 'To go' : 'To go · ${caller.formatted}',
+        }),
       ),
     );
   }
 }
 
 /// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is
-/// for now (the channel's quote) or a later time today or tomorrow.
+/// for now (the channel's quote) or a later time today or tomorrow. For a [caller] the number, the phone
+/// channel and the caller-ID name are filled in; all of it stays editable.
 class _TakeoutDialog extends StatefulWidget {
-  const _TakeoutDialog({required this.quotes});
+  const _TakeoutDialog({required this.quotes, this.caller});
   final Quotes quotes;
+  final Caller? caller;
 
   @override
   State<_TakeoutDialog> createState() => _TakeoutDialogState();
 }
 
 class _TakeoutDialogState extends State<_TakeoutDialog> {
-  final _name = TextEditingController();
-  final _phone = TextEditingController();
-  String _channel = 'counter';
+  late final _name = TextEditingController(text: widget.caller?.displayName ?? '');
+  late final _phone = TextEditingController(text: widget.caller?.formatted ?? '');
+  late String _channel = widget.caller == null ? 'counter' : 'phone';
   String _locale = 'en';
   bool _later = false;
   int _dayOffset = 0; // 0 today, 1 tomorrow

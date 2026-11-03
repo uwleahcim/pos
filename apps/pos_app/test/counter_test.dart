@@ -11,6 +11,7 @@ import 'package:pos_app/camera.dart';
 import 'package:pos_app/local_order.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
+import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/orders_screen.dart';
@@ -169,7 +170,12 @@ Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async 
 }
 
 /// The list of orders, with the hub listing [orders].
-Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orders, {String role = 'manager'}) async {
+Future<Terminal> pumpOrders(
+  WidgetTester tester,
+  List<Map<String, dynamic>> orders, {
+  String role = 'manager',
+  PhoneClient? phone,
+}) async {
   final t = await terminal(tester, role: role);
   t.hub.orders.addAll(orders);
   await tester.pumpWidget(
@@ -181,6 +187,7 @@ Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orde
         session: t.session,
         camera: NoCamera(),
         photos: t.photos,
+        phone: phone,
       ),
     ),
   );
