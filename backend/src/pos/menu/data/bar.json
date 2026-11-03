@@ -1,0 +1,1563 @@
+{
+  "_about": "The bar's menu: the spirits, liqueurs and aperitifs by the pour, the wine list, the sake, the cocktails and the beer prices. bar.py adds it to the menu after the GloriaFood export (gloriafood.py), cooked at the bar station and taxed as alcohol. A category is a shelf or a page of the printed menu, with the optional choices in its groups; an item sells in its sizes, or in the category's pour (the default one is the 1.5 oz pour) at its price. A category marked existing is one the export already has: its items join that category after the export's own. prices are the printed menu's prices for the export's own items. A new hub seeds its database from this file; a running hub takes additions, and the prices where the editor has not changed them, with `hubctl menu import --apply`; everything else changes through the menu editor. Pour prices (Nov 2026): the 750 mL retail price in the Boston area / 16.9 pours of 1.5 oz / 20% pour cost, rounded to the nearest .45 or .95, never below 7.95 (7.45 for well brands and cordials); retail_750 records that basis. Wine, sake, cocktail and beer prices are the printed menu's. An item with \"visible\": false stays in the catalog but off the order screen.",
+  "menu": "dinner",
+  "station": "bar",
+  "tax_class": "alcohol",
+  "pour": {
+    "code": "pour",
+    "name": {
+      "en": "1.5 oz"
+    },
+    "oz": 1.5
+  },
+  "groups": {
+    "served": {
+      "name": {
+        "en": "Served",
+        "zh": "喝法"
+      },
+      "options": [
+        {
+          "code": "rocks",
+          "name": {
+            "en": "On the rocks"
+          },
+          "kitchen_label": "ROCKS"
+        },
+        {
+          "code": "neat",
+          "name": {
+            "en": "Neat"
+          },
+          "kitchen_label": "NEAT"
+        },
+        {
+          "code": "up",
+          "name": {
+            "en": "Up"
+          },
+          "kitchen_label": "UP"
+        },
+        {
+          "code": "shot",
+          "name": {
+            "en": "Shot"
+          },
+          "kitchen_label": "SHOT"
+        }
+      ]
+    },
+    "temperature": {
+      "name": {
+        "en": "Temperature",
+        "zh": "温度"
+      },
+      "options": [
+        {
+          "code": "hot",
+          "name": {
+            "en": "Hot",
+            "zh": "热"
+          },
+          "kitchen_label": "HOT"
+        },
+        {
+          "code": "cold",
+          "name": {
+            "en": "Cold",
+            "zh": "冷"
+          },
+          "kitchen_label": "COLD"
+        }
+      ]
+    }
+  },
+  "categories": [
+    {
+      "code": "white_wine",
+      "name": {
+        "en": "White Wine",
+        "zh": "白葡萄酒"
+      },
+      "items": [
+        {
+          "code": "riesling_schlink_haus",
+          "name": "Riesling, Schlink Haus",
+          "description": "Germany",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 9
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 32
+            }
+          ]
+        },
+        {
+          "code": "pinot_grigio_davinci",
+          "name": "Pinot Grigio, DaVinci",
+          "description": "Veneto, Italy",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 35
+            }
+          ]
+        },
+        {
+          "code": "pinot_grigio_barone_fini",
+          "name": "Pinot Grigio, Barone Fini",
+          "description": "Italy",
+          "sizes": [
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 32
+            }
+          ]
+        },
+        {
+          "code": "pinot_grigio_santa_margherita",
+          "name": "Pinot Grigio, Santa Margherita",
+          "description": "Italy",
+          "sizes": [
+            {
+              "code": "half",
+              "name": {
+                "en": "Half bottle (375 mL)"
+              },
+              "price": 25
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 50
+            }
+          ]
+        },
+        {
+          "code": "sauvignon_blanc_brancott",
+          "name": "Sauvignon Blanc, Brancott",
+          "description": "New Zealand",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        },
+        {
+          "code": "chardonnay_harken",
+          "name": "Chardonnay, Harken",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        },
+        {
+          "code": "chardonnay_chateau_ste_michelle",
+          "name": "Chardonnay, Chateau Ste. Michelle",
+          "description": "Columbia Valley, Washington",
+          "sizes": [
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 55
+            }
+          ]
+        },
+        {
+          "code": "vouvray_sauvion",
+          "name": "Vouvray, Sauvion",
+          "description": "Loire Valley, France",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        },
+        {
+          "code": "white_zinfandel_ck_mondavi",
+          "name": "White Zinfandel, CK Mondavi",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 7
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 25
+            }
+          ]
+        },
+        {
+          "code": "rose_the_pale",
+          "name": "Rosé, The Pale",
+          "description": "Provence, France",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 11
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 40
+            }
+          ]
+        },
+        {
+          "code": "alvarinho_aveleda",
+          "name": "Albariño / Alvarinho, Aveleda",
+          "description": "Portugal",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "red_wine",
+      "name": {
+        "en": "Red Wine",
+        "zh": "红葡萄酒"
+      },
+      "items": [
+        {
+          "code": "cabernet_josh",
+          "name": "Cabernet Sauvignon, Josh Cellars",
+          "description": "Paso Robles, California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        },
+        {
+          "code": "cabernet_daou",
+          "name": "Cabernet Sauvignon, Daou",
+          "description": "Paso Robles, California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 15
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 50
+            }
+          ]
+        },
+        {
+          "code": "chianti_ruffino_riserva_ducale",
+          "name": "Chianti, Ruffino Riserva Ducale",
+          "description": "Tuscany, Italy (tan label)",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 15
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 55
+            }
+          ]
+        },
+        {
+          "code": "malbec_ruta_22",
+          "name": "Malbec, Ruta 22",
+          "description": "Patagonia, Argentina",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 10
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 39
+            }
+          ]
+        },
+        {
+          "code": "merlot_estancia",
+          "name": "Merlot, Estancia",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 9
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 35
+            }
+          ]
+        },
+        {
+          "code": "merlot_wente",
+          "name": "Merlot, Wente",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 38
+            }
+          ]
+        },
+        {
+          "code": "pinot_noir_angeline",
+          "name": "Pinot Noir, Angeline",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "glass",
+              "name": {
+                "en": "Glass"
+              },
+              "price": 9
+            },
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 35
+            }
+          ]
+        },
+        {
+          "code": "pinot_noir_lincourt",
+          "name": "Pinot Noir, Lincourt",
+          "description": "California",
+          "sizes": [
+            {
+              "code": "bottle",
+              "name": {
+                "en": "Bottle"
+              },
+              "price": 50
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "sparkling_wine",
+      "name": {
+        "en": "Sparkling Wine",
+        "zh": "起泡酒"
+      },
+      "items": [
+        {
+          "code": "prosecco_zonin",
+          "name": "Prosecco, Zonin",
+          "description": "Veneto, Italy",
+          "sizes": [
+            {
+              "code": "half",
+              "name": {
+                "en": "Half bottle (375 mL)"
+              },
+              "price": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "sake",
+      "name": {
+        "en": "Sake & Plum Wine",
+        "zh": "清酒和梅酒"
+      },
+      "groups": [
+        "temperature"
+      ],
+      "pour": {
+        "code": "regular",
+        "name": {
+          "en": "Regular"
+        }
+      },
+      "items": [
+        {
+          "code": "sake_gekkeikan",
+          "name": "Sake, Gekkeikan",
+          "description": "Served warm or cold",
+          "price": 8
+        },
+        {
+          "code": "sake_hakutsuru",
+          "name": "Sake, Hakutsuru Excellent",
+          "description": "Junmai, served warm or cold",
+          "price": 8
+        },
+        {
+          "code": "plum_wine_hakutsuru",
+          "name": "Plum Wine, Hakutsuru",
+          "description": "Umeshu",
+          "price": 8
+        }
+      ]
+    },
+    {
+      "code": "whiskey",
+      "name": {
+        "en": "Whiskey",
+        "zh": "威士忌"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "makers_mark",
+          "name": "Maker's Mark",
+          "description": "Kentucky straight bourbon",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "woodford_reserve",
+          "name": "Woodford Reserve",
+          "description": "Kentucky straight bourbon",
+          "price": 11.45,
+          "retail_750": 38
+        },
+        {
+          "code": "bulleit_bourbon",
+          "name": "Bulleit Bourbon",
+          "description": "Kentucky straight bourbon",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "knob_creek_9",
+          "name": "Knob Creek 9 Year",
+          "description": "Kentucky straight bourbon, 100 proof",
+          "price": 11.45,
+          "retail_750": 38
+        },
+        {
+          "code": "angels_envy",
+          "name": "Angel's Envy Bourbon",
+          "description": "Bourbon finished in port barrels",
+          "price": 14.95,
+          "retail_750": 50
+        },
+        {
+          "code": "bulleit_rye",
+          "name": "Bulleit 95 Rye",
+          "description": "Straight rye",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "angels_envy_rye",
+          "name": "Angel's Envy Rye",
+          "description": "Rye finished in rum casks",
+          "price": 25.95,
+          "retail_750": 88
+        },
+        {
+          "code": "jack_daniels",
+          "name": "Jack Daniel's Old No. 7",
+          "description": "Tennessee whiskey",
+          "price": 7.95,
+          "retail_750": 27
+        },
+        {
+          "code": "crown_royal",
+          "name": "Crown Royal",
+          "description": "Canadian whisky",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "canadian_club",
+          "name": "Canadian Club",
+          "description": "Canadian whisky",
+          "price": 7.95,
+          "retail_750": 18
+        },
+        {
+          "code": "seagrams_vo",
+          "name": "Seagram's V.O.",
+          "description": "Canadian whisky",
+          "price": 7.95,
+          "retail_750": 17
+        },
+        {
+          "code": "seagrams_7",
+          "name": "Seagram's 7 Crown",
+          "description": "American blended whiskey",
+          "price": 7.95,
+          "retail_750": 15
+        },
+        {
+          "code": "jameson",
+          "name": "Jameson",
+          "description": "Irish whiskey",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "tullamore_dew",
+          "name": "Tullamore D.E.W.",
+          "description": "Irish whiskey",
+          "price": 7.95,
+          "retail_750": 27
+        },
+        {
+          "code": "green_spot",
+          "name": "Green Spot",
+          "description": "Single pot still Irish whiskey",
+          "price": 18.45,
+          "retail_750": 63
+        },
+        {
+          "code": "johnnie_walker_red",
+          "name": "Johnnie Walker Red Label",
+          "description": "Blended Scotch",
+          "price": 7.95,
+          "retail_750": 25
+        },
+        {
+          "code": "johnnie_walker_black",
+          "name": "Johnnie Walker Black Label",
+          "description": "Blended Scotch, 12 years",
+          "price": 11.45,
+          "retail_750": 38
+        },
+        {
+          "code": "dewars_white",
+          "name": "Dewar's White Label",
+          "description": "Blended Scotch",
+          "price": 7.95,
+          "retail_750": 24
+        },
+        {
+          "code": "jb_rare",
+          "name": "J&B Rare",
+          "description": "Blended Scotch",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "glenlivet_12",
+          "name": "The Glenlivet 12",
+          "description": "Speyside single malt",
+          "price": 16.45,
+          "retail_750": 55
+        },
+        {
+          "code": "glenmorangie_14",
+          "name": "Glenmorangie 14 Quinta Ruban",
+          "description": "Highland single malt, port cask",
+          "price": 19.45,
+          "retail_750": 65
+        },
+        {
+          "code": "macallan_12",
+          "name": "The Macallan 12 Sherry Oak",
+          "description": "Speyside single malt",
+          "price": 27.95,
+          "retail_750": 95
+        },
+        {
+          "code": "hibiki_21",
+          "name": "Hibiki 21",
+          "description": "Japanese blended whisky, 21 years; 1 oz pour",
+          "sizes": [
+            {
+              "code": "pour",
+              "name": {
+                "en": "1 oz"
+              },
+              "price": 89.95
+            }
+          ],
+          "retail_750": 700
+        },
+        {
+          "code": "skrewball",
+          "name": "Skrewball",
+          "description": "Peanut butter whiskey",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "southern_comfort",
+          "name": "Southern Comfort",
+          "description": "Whiskey liqueur",
+          "price": 7.95,
+          "retail_750": 18
+        }
+      ]
+    },
+    {
+      "code": "vodka",
+      "name": {
+        "en": "Vodka",
+        "zh": "伏特加"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "titos",
+          "name": "Tito's Handmade",
+          "description": "Texas corn vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "absolut",
+          "name": "Absolut",
+          "description": "Swedish wheat vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "stoli",
+          "name": "Stoli",
+          "description": "Vodka",
+          "price": 7.95,
+          "retail_750": 20
+        },
+        {
+          "code": "ketel_one",
+          "name": "Ketel One",
+          "description": "Dutch wheat vodka",
+          "price": 7.95,
+          "retail_750": 27
+        },
+        {
+          "code": "grey_goose",
+          "name": "Grey Goose",
+          "description": "French wheat vodka",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "belvedere",
+          "name": "Belvedere",
+          "description": "Polish rye vodka",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "chopin",
+          "name": "Chopin",
+          "description": "Polish potato vodka",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "absolut_citron",
+          "name": "Absolut Citron",
+          "description": "Lemon vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "absolut_lime",
+          "name": "Absolut Lime",
+          "description": "Lime vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "absolut_vanilia",
+          "name": "Absolut Vanilia",
+          "description": "Vanilla vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "absolut_raspberri",
+          "name": "Absolut Raspberri",
+          "description": "Raspberry vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "absolut_mandrin",
+          "name": "Absolut Mandrin",
+          "description": "Mandarin vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "grey_goose_citron",
+          "name": "Grey Goose Le Citron",
+          "description": "Lemon vodka",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "grey_goose_orange",
+          "name": "Grey Goose L'Orange",
+          "description": "Orange vodka",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "grey_goose_poire",
+          "name": "Grey Goose La Poire",
+          "description": "Pear vodka",
+          "price": 9.45,
+          "retail_750": 32
+        },
+        {
+          "code": "stoli_ohranj",
+          "name": "Stoli Ohranj",
+          "description": "Orange vodka",
+          "price": 7.95,
+          "retail_750": 20
+        },
+        {
+          "code": "three_olives_blueberry",
+          "name": "Three Olives Blueberry",
+          "description": "Blueberry vodka",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "van_gogh_pomegranate",
+          "name": "Van Gogh Pomegranate",
+          "description": "Pomegranate vodka",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "van_gogh_double_espresso",
+          "name": "Van Gogh Double Espresso",
+          "description": "Espresso vodka",
+          "price": 7.95,
+          "retail_750": 22
+        }
+      ]
+    },
+    {
+      "code": "gin",
+      "name": {
+        "en": "Gin",
+        "zh": "金酒"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "barton_gin",
+          "name": "Barton London Extra Dry",
+          "description": "Well gin",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        },
+        {
+          "code": "beefeater",
+          "name": "Beefeater",
+          "description": "London dry gin",
+          "price": 7.95,
+          "retail_750": 23
+        },
+        {
+          "code": "tanqueray",
+          "name": "Tanqueray",
+          "description": "London dry gin",
+          "price": 7.95,
+          "retail_750": 26
+        },
+        {
+          "code": "bombay_dry",
+          "name": "Bombay Dry",
+          "description": "London dry gin",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "bombay_sapphire",
+          "name": "Bombay Sapphire",
+          "description": "London dry gin",
+          "price": 7.95,
+          "retail_750": 27
+        },
+        {
+          "code": "hendricks",
+          "name": "Hendrick's",
+          "description": "Scottish gin, cucumber and rose",
+          "price": 10.45,
+          "retail_750": 36
+        },
+        {
+          "code": "another_hendricks",
+          "name": "Another Hendrick's",
+          "description": "Scottish gin, orange blossom and cacao",
+          "price": 13.45,
+          "retail_750": 45
+        }
+      ]
+    },
+    {
+      "code": "rum",
+      "name": {
+        "en": "Rum",
+        "zh": "朗姆酒"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "ron_virgin_light",
+          "name": "Ron Virgin Light",
+          "description": "Well white rum",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        },
+        {
+          "code": "ron_virgin_dark",
+          "name": "Ron Virgin Dark",
+          "description": "Well dark rum",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        },
+        {
+          "code": "bacardi_superior",
+          "name": "Bacardí Superior",
+          "description": "White rum",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "bacardi_limon",
+          "name": "Bacardí Limón",
+          "description": "Citrus rum",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "captain_morgan",
+          "name": "Captain Morgan Original Spiced",
+          "description": "Spiced rum",
+          "price": 7.95,
+          "retail_750": 18
+        },
+        {
+          "code": "malibu",
+          "name": "Malibu",
+          "description": "Coconut rum",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "malibu_pineapple",
+          "name": "Malibu Pineapple",
+          "description": "Pineapple rum",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "goslings_black_seal",
+          "name": "Goslings Black Seal",
+          "description": "Bermuda black rum",
+          "price": 7.95,
+          "retail_750": 20
+        },
+        {
+          "code": "goslings_151",
+          "name": "Goslings 151",
+          "description": "Overproof black rum",
+          "price": 7.95,
+          "retail_750": 24
+        },
+        {
+          "code": "myerss_dark",
+          "name": "Myers's Original Dark",
+          "description": "Jamaican dark rum",
+          "price": 7.95,
+          "retail_750": 22
+        }
+      ]
+    },
+    {
+      "code": "tequila",
+      "name": {
+        "en": "Tequila",
+        "zh": "龙舌兰"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "el_toro_silver",
+          "name": "El Toro Silver",
+          "description": "Well tequila",
+          "price": 7.45,
+          "retail_750": 12,
+          "well": true
+        },
+        {
+          "code": "patron_silver",
+          "name": "Patrón Silver",
+          "description": "Blanco, 100% agave",
+          "price": 13.45,
+          "retail_750": 45
+        },
+        {
+          "code": "patron_reposado",
+          "name": "Patrón Reposado",
+          "description": "Reposado, 100% agave",
+          "price": 14.95,
+          "retail_750": 50
+        },
+        {
+          "code": "patron_anejo",
+          "name": "Patrón Añejo",
+          "description": "Añejo, 100% agave",
+          "price": 15.45,
+          "retail_750": 52
+        },
+        {
+          "code": "don_julio_blanco",
+          "name": "Don Julio Blanco",
+          "description": "Blanco, 100% agave",
+          "price": 14.95,
+          "retail_750": 50
+        },
+        {
+          "code": "casamigos_blanco",
+          "name": "Casamigos Blanco",
+          "description": "Blanco, 100% agave",
+          "price": 13.95,
+          "retail_750": 48
+        }
+      ]
+    },
+    {
+      "code": "cognac_brandy",
+      "name": {
+        "en": "Cognac & Brandy",
+        "zh": "干邑和白兰地"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "korbel_brandy",
+          "name": "Korbel Brandy",
+          "description": "Well California brandy",
+          "price": 7.45,
+          "retail_750": 14,
+          "well": true
+        },
+        {
+          "code": "hennessy_vsop",
+          "name": "Hennessy V.S.O.P",
+          "description": "Cognac",
+          "price": 19.45,
+          "retail_750": 65
+        },
+        {
+          "code": "dusse_vsop",
+          "name": "D'ussé V.S.O.P",
+          "description": "Cognac",
+          "price": 16.45,
+          "retail_750": 55
+        }
+      ]
+    },
+    {
+      "code": "liqueurs",
+      "name": {
+        "en": "Liqueurs & Cordials",
+        "zh": "利口酒"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "grand_marnier",
+          "name": "Grand Marnier",
+          "description": "Cognac and orange liqueur",
+          "price": 11.95,
+          "retail_750": 40
+        },
+        {
+          "code": "cointreau",
+          "name": "Cointreau",
+          "description": "Orange liqueur",
+          "price": 12.45,
+          "retail_750": 42
+        },
+        {
+          "code": "chambord",
+          "name": "Chambord",
+          "description": "Black raspberry liqueur",
+          "price": 11.45,
+          "retail_750": 38
+        },
+        {
+          "code": "st_germain",
+          "name": "St-Germain",
+          "description": "Elderflower liqueur",
+          "price": 11.45,
+          "retail_750": 38
+        },
+        {
+          "code": "benedictine",
+          "name": "Bénédictine D.O.M.",
+          "description": "Herbal liqueur",
+          "price": 11.95,
+          "retail_750": 40
+        },
+        {
+          "code": "disaronno",
+          "name": "Disaronno",
+          "description": "Amaretto",
+          "price": 8.95,
+          "retail_750": 30
+        },
+        {
+          "code": "frangelico",
+          "name": "Frangelico",
+          "description": "Hazelnut liqueur",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "kahlua",
+          "name": "Kahlúa",
+          "description": "Coffee liqueur",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "baileys",
+          "name": "Baileys Original",
+          "description": "Irish cream",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "baileys_chocolate",
+          "name": "Baileys Chocolate",
+          "description": "Irish cream with Belgian chocolate",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "romana_sambuca",
+          "name": "Romana Sambuca",
+          "description": "Anise liqueur",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "midori",
+          "name": "Midori",
+          "description": "Melon liqueur",
+          "price": 7.95,
+          "retail_750": 25
+        },
+        {
+          "code": "passoa",
+          "name": "Passoã",
+          "description": "Passion fruit liqueur",
+          "price": 7.95,
+          "retail_750": 25
+        },
+        {
+          "code": "soho_lychee",
+          "name": "Soho Lychee",
+          "description": "Lychee liqueur",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "stirrings_pomegranate",
+          "name": "Stirrings Pomegranate",
+          "description": "Pomegranate liqueur",
+          "price": 7.95,
+          "retail_750": 16
+        },
+        {
+          "code": "dekuyper_triple_sec",
+          "name": "DeKuyper Triple Sec",
+          "description": "Orange cordial",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        },
+        {
+          "code": "dekuyper_blue_curacao",
+          "name": "DeKuyper Blue Curaçao",
+          "description": "Orange cordial, blue",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        },
+        {
+          "code": "dekuyper_amaretto",
+          "name": "DeKuyper Amaretto",
+          "description": "Almond cordial",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        },
+        {
+          "code": "hiram_walker_peach",
+          "name": "Hiram Walker Peach Schnapps",
+          "description": "Peach schnapps",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        },
+        {
+          "code": "hiram_walker_sour_apple",
+          "name": "Hiram Walker Sour Apple Schnapps",
+          "description": "Sour apple schnapps",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        },
+        {
+          "code": "hiram_walker_creme_de_menthe",
+          "name": "Hiram Walker Crème de Menthe",
+          "description": "White crème de menthe",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        },
+        {
+          "code": "arrow_creme_de_banana",
+          "name": "Arrow Crème de Banana",
+          "description": "Banana cordial",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        },
+        {
+          "code": "arrow_apricot_brandy",
+          "name": "Arrow Apricot Brandy",
+          "description": "Apricot flavored brandy",
+          "price": 7.45,
+          "retail_750": 10,
+          "well": true
+        }
+      ]
+    },
+    {
+      "code": "aperitifs",
+      "name": {
+        "en": "Aperitifs & Vermouth",
+        "zh": "开胃酒和味美思"
+      },
+      "groups": [
+        "served"
+      ],
+      "items": [
+        {
+          "code": "aperol",
+          "name": "Aperol",
+          "description": "Italian aperitivo",
+          "price": 8.45,
+          "retail_750": 28
+        },
+        {
+          "code": "sarti_rosa",
+          "name": "Sarti Rosa",
+          "description": "Italian aperitivo",
+          "price": 7.95,
+          "retail_750": 25
+        },
+        {
+          "code": "carpano_classico",
+          "name": "Carpano Classico",
+          "description": "Sweet vermouth",
+          "price": 7.95,
+          "retail_750": 22
+        },
+        {
+          "code": "martini_extra_dry",
+          "name": "Martini & Rossi Extra Dry",
+          "description": "Dry vermouth",
+          "price": 7.45,
+          "retail_750": 9,
+          "well": true
+        }
+      ]
+    },
+    {
+      "code": "mixed_drinks",
+      "name": "Mixed Drinks",
+      "existing": true,
+      "pour": {
+        "code": "regular",
+        "name": {
+          "en": "Regular"
+        }
+      },
+      "items": [
+        {
+          "code": "zombie",
+          "name": "Zombie",
+          "price": 9.25,
+          "description": "Dark and light rums and fresh Polynesian flavored fruit juices"
+        },
+        {
+          "code": "melon_ball",
+          "name": "Melon Ball",
+          "price": 9.25,
+          "description": "Great for Midori lovers"
+        },
+        {
+          "code": "mai_tai",
+          "name": "Mai Tai",
+          "price": 9.25,
+          "description": "A little sweet, but strong. Never lets you down. Served with a Myers's float"
+        },
+        {
+          "code": "long_island_iced_tea",
+          "name": "Long Island Iced Tea",
+          "price": 9.25,
+          "description": "Rum, tequila, triple sec, vodka and sour mix"
+        },
+        {
+          "code": "malibu_punch",
+          "name": "Malibu Punch",
+          "price": 9.25,
+          "description": "Malibu coconut rum, fruit juices - the punch you'll want more of!"
+        },
+        {
+          "code": "pineapple_passion",
+          "name": "Pineapple Passion",
+          "price": 9.25,
+          "description": "Pineapple juice, combined with rare spices and a blend of light rum"
+        },
+        {
+          "code": "scorpion_bowl_for_two",
+          "name": "Scorpion Bowl for Two",
+          "price": 19.0,
+          "description": "Mixture of brandy and rum"
+        },
+        {
+          "code": "blue_hawaii",
+          "name": "Blue Hawaii",
+          "price": 9.25,
+          "description": "One sip makes you feel like you're in Hawaii, nice and cool!"
+        },
+        {
+          "code": "head_hunter",
+          "name": "Head Hunter",
+          "price": 9.25,
+          "description": "Rum, coconut, milk, fruit juices"
+        },
+        {
+          "code": "dark_n_stormy",
+          "name": "Dark 'N' Stormy",
+          "price": 10.0,
+          "description": "Goslings rum and ginger beer"
+        },
+        {
+          "code": "caribbean_crush",
+          "name": "Caribbean Crush",
+          "price": 9.25,
+          "description": "Malibu coconut rum with pineapple and cranberry juice"
+        },
+        {
+          "code": "seasonal_sangria",
+          "name": "Seasonal Sangria",
+          "price": 10.0
+        },
+        {
+          "code": "cosmopolitan",
+          "name": "Cosmopolitan",
+          "price": 14.0,
+          "description": "Absolut Citron vodka, Cointreau and fresh lime juice"
+        },
+        {
+          "code": "china_sky_paradise",
+          "name": "China Sky Paradise",
+          "price": 9.25,
+          "description": "House specialty featuring Chambord, Midori and fruit juices"
+        },
+        {
+          "code": "pomegranate_martini",
+          "name": "Pomegranate Martini",
+          "price": 14.0,
+          "description": "Tito's Handmade vodka, Passoã passion fruit"
+        },
+        {
+          "code": "singapore_sling",
+          "name": "Singapore Sling",
+          "price": 10.0,
+          "description": "Tanqueray gin, orange, cherry and herbal liqueur, pineapple, lime, bitters and club soda"
+        },
+        {
+          "code": "green_mist",
+          "name": "Green Mist",
+          "price": 9.25,
+          "description": "A mystical drink made with Midori, peach schnapps and pineapple juice"
+        },
+        {
+          "code": "raspberry_ripple",
+          "name": "Raspberry Ripple",
+          "price": 9.25,
+          "description": "Absolut Raspberri vodka, cranberry juice and Sprite"
+        },
+        {
+          "code": "chocolate_raspberry",
+          "name": "Chocolate Raspberry",
+          "price": 14.0,
+          "description": "Absolut vodka, chocolate liqueur and Chambord"
+        },
+        {
+          "code": "martini",
+          "name": "Martini",
+          "price": 14.0,
+          "description": "Tanqueray, dry vermouth"
+        },
+        {
+          "code": "chocolate_hazelnut_martini",
+          "name": "Chocolate Hazelnut Martini",
+          "price": 14.0,
+          "description": "Absolut vodka, chocolate liqueur and Frangelico"
+        },
+        {
+          "code": "french_tini",
+          "name": "French Tini",
+          "price": 14.0,
+          "description": "Absolut vodka, Chambord, pineapple juice"
+        },
+        {
+          "code": "china_sky_rita",
+          "name": "China Sky Rita",
+          "price": 14.0,
+          "description": "Casamigos Blanco, sour mix, orange liqueur"
+        }
+      ]
+    },
+    {
+      "code": "foreign_beer",
+      "name": "Foreign Beer",
+      "existing": true,
+      "pour": {
+        "code": "regular",
+        "name": {
+          "en": "Regular"
+        }
+      },
+      "items": [
+        {
+          "code": "na_beer",
+          "name": "Non-Alcoholic Beer",
+          "price": 6.5,
+          "tax_class": "prepared_food"
+        }
+      ]
+    }
+  ],
+  "prices": [
+    {
+      "variant": "E01:regular",
+      "name": "Budweiser",
+      "price": 5.5
+    },
+    {
+      "variant": "E02:regular",
+      "name": "Michelob Ultra",
+      "price": 5.5
+    },
+    {
+      "variant": "E03:regular",
+      "name": "Samuel Adams",
+      "price": 6.5
+    },
+    {
+      "variant": "E04:regular",
+      "name": "Sam Seasonal",
+      "price": 6.5
+    },
+    {
+      "variant": "E05:regular",
+      "name": "Miller Lite",
+      "price": 5.5
+    },
+    {
+      "variant": "E06:regular",
+      "name": "Bud Light",
+      "price": 5.5
+    },
+    {
+      "variant": "E07:regular",
+      "name": "Coors Light",
+      "price": 5.5
+    },
+    {
+      "variant": "E08:regular",
+      "name": "Harpoon IPA",
+      "price": 6.0
+    },
+    {
+      "variant": "E09:regular",
+      "name": "Tsing Tao",
+      "price": 6.5
+    },
+    {
+      "variant": "E10:regular",
+      "name": "Sapporo",
+      "price": 6.5
+    },
+    {
+      "variant": "E11:regular",
+      "name": "Kirin",
+      "price": 6.5
+    },
+    {
+      "variant": "E12:regular",
+      "name": "Heineken",
+      "price": 6.5
+    },
+    {
+      "variant": "E13:regular",
+      "name": "Amstel Light",
+      "price": 6.5
+    },
+    {
+      "variant": "E14:regular",
+      "name": "Corona",
+      "price": 6.5
+    }
+  ]
+}

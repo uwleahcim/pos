@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star]
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply]
 set -euo pipefail
 POS_HOME=/opt/pos
 
@@ -52,6 +52,13 @@ case "${1:-status}" in
     [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer] [escpos|star]" >&2; exit 2; }
     compose exec -T api python -m pos.printing --printer "$2" --dialect "${4:-escpos}" "${3:-demo}"
     ;;
+  menu)
+    # hubctl menu import           lists what the bundled menu files (a shelf of bottles, a printed price, say) would change
+    # hubctl menu import --apply   applies it to the hub's menu; what the editor changed stays as it is
+    [[ ${2:-} == import ]] || { echo "usage: hubctl menu import [--apply]" >&2; exit 2; }
+    shift 2
+    compose exec -T api python -m pos.menu.seed "$@"
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -59,7 +66,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star]" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply]" >&2
     exit 2
     ;;
 esac

@@ -113,6 +113,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
 | `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star` | Set the printers a fired order prints to (writes `POS_PRINTERS` to `.env`, restarts the API) |
+| `hubctl menu import` | List what the bundled menu files would add to the hub's menu after an update (a shelf of bottles, say) and which prices they would move (only prices still at the online export's); `--apply` does it and keeps every change made in the menu editor |
 | `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |
 
 ## Ports

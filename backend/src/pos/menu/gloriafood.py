@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .bar import add_bar
 from .defs import (
     Allergen,
     Attachment,
@@ -329,5 +330,8 @@ def settings_from(path: Path | str = STATIONS) -> ImportSettings:
 
 
 def load_restaurant_menu() -> tuple[Definitions, ImportReport]:
-    """The bundled export with the bundled stations: what a hub serves by default."""
-    return load_gloriafood(BUNDLED, settings_from(STATIONS))
+    """The bundled export with the bundled stations, then the bar's bottles (`bar.py`): what a hub serves by
+    default."""
+    defs, report = load_gloriafood(BUNDLED, settings_from(STATIONS))
+    report.notes.append(add_bar(defs).summary())
+    return defs, report
