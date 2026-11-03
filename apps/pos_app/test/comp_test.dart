@@ -13,8 +13,10 @@ import 'hub.dart';
 /// manager's PIN and onto the item; one with a range asks how much first. A comped line stays on the check
 /// and shows the comp, and the menu takes it off again. A tap on the price still opens the dish.
 ///
-/// On the check each choice on a dish is its own line with what it adds, and a comp follows the dish
-/// through an edit (which voids the line and adds the changed one in its place).
+/// On the check (Mike, 2026-11-03) the dish's line shows its full price, choices included; each choice is a
+/// line of its own with what it changes ("+0.50"); a discount is a line after the choices with what came
+/// off in parentheses, "(30.00)", and the dish's old price struck through over the new one. A comp follows
+/// the dish through an edit (which voids the line and adds the changed one in its place).
 
 const rules = {
   'discounts': [
@@ -319,40 +321,51 @@ void main() {
     expect(data.containsKey('value'), isFalse);
   });
 
-  testWidgets('each choice on a dish is its own line, with what it adds when it costs something', (tester) async {
+  testWidgets('the dish shows its full price; each choice is its own line with what it changes', (tester) async {
     await pump(tester);
-    expect(inTile('Egg roll', '2.50'), findsOneWidget); // the dish itself, without its choices
+    expect(inTile('Egg roll', '3.00'), findsOneWidget); // the dish with its choices
+    expect(decorationOf(tester, inTile('Egg roll', '3.00')), isNot(TextDecoration.lineThrough));
     expect(inTile('Egg roll', 'Extra sauce'), findsOneWidget);
-    expect(inTile('Egg roll', '0.50'), findsOneWidget);
+    expect(inTile('Egg roll', '+0.50'), findsOneWidget); // what the choice changes, not a new total
     expect(inTile('Egg roll', 'No scallions'), findsOneWidget);
     expect(inTile('Egg roll', '0.00'), findsNothing); // a free choice shows no amount
-    expect(inTile('Egg roll', '3.00'), findsNothing); // the line's total is the sum of its lines
-    expect(decorationOf(tester, inTile('Egg roll', '2.50')), isNot(TextDecoration.lineThrough));
+    expect(inTile('Egg roll', '+0.00'), findsNothing);
+    expect(inTile('Egg roll', '2.50'), findsNothing); // no price without the choices
     // a hub that still sends labels alone
     expect(inTile(gtc, 'Brown rice'), findsOneWidget);
     expect(find.text('Extra sauce · No scallions'), findsNothing); // no longer one line of text
   });
 
-  testWidgets('a comped line stays on the check with its amounts struck and what is left; the menu takes it off', (
-    tester,
-  ) async {
-    final t = await pump(tester);
-    expect(decorationOf(tester, inTile('Peking Duck', '30.00')), TextDecoration.lineThrough);
-    expect(inTile('Peking Duck', 'Comped · Manager comp'), findsOneWidget);
-    expect(inTile('Peking Duck', '0.00'), findsOneWidget);
-    expect(decorationOf(tester, inTile(gtc, '25.95')), TextDecoration.lineThrough);
-    expect(inTile(gtc, '0.00'), findsOneWidget);
+  testWidgets(
+    'a comped line shows its old price struck over the new one and what came off in (); the menu takes it off',
+    (tester) async {
+      final t = await pump(tester);
+      expect(decorationOf(tester, inTile('Peking Duck', '30.00')), TextDecoration.lineThrough);
+      expect(inTile('Peking Duck', '0.00'), findsOneWidget); // the new price, under the old one
+      expect(
+        tester.getTopLeft(inTile('Peking Duck', '0.00')).dy,
+        greaterThan(tester.getTopLeft(inTile('Peking Duck', '30.00')).dy),
+      );
+      expect(inTile('Peking Duck', 'Comped · Manager comp'), findsOneWidget);
+      expect(inTile('Peking Duck', '(30.00)'), findsOneWidget); // the accounting way to show what came off
+      expect(inTile('Peking Duck', '−30.00'), findsNothing);
+      expect(decorationOf(tester, inTile(gtc, '25.95')), TextDecoration.lineThrough);
+      expect(inTile(gtc, '(25.95)'), findsOneWidget);
+      expect(inTile(gtc, '0.00'), findsOneWidget);
+      // the footer says it the same way
+      expect(find.text('(30.00)'), findsNWidgets(2));
 
-    await holdPrice(tester, 'L2');
-    expect(find.byKey(const ValueKey('uncomp:D1')), findsOneWidget);
-    expect((tester.widget(reason('loyalty')) as PopupMenuItem).enabled, isFalse);
-    expect((tester.widget(reason('comp')) as PopupMenuItem).enabled, isFalse);
-    await tester.tap(find.byKey(const ValueKey('uncomp:D1')));
-    await tester.pumpAndSettle();
-    final op = t.hub.opsFor('o1').single;
-    expect(op['kind'], 'remove_discount');
-    expect(dataOf(op), {'discount_id': 'D1'});
-  });
+      await holdPrice(tester, 'L2');
+      expect(find.byKey(const ValueKey('uncomp:D1')), findsOneWidget);
+      expect((tester.widget(reason('loyalty')) as PopupMenuItem).enabled, isFalse);
+      expect((tester.widget(reason('comp')) as PopupMenuItem).enabled, isFalse);
+      await tester.tap(find.byKey(const ValueKey('uncomp:D1')));
+      await tester.pumpAndSettle();
+      final op = t.hub.opsFor('o1').single;
+      expect(op['kind'], 'remove_discount');
+      expect(dataOf(op), {'discount_id': 'D1'});
+    },
+  );
 
   testWidgets('changing a comped dish keeps its comp: the new line says which line it replaces', (tester) async {
     final t = await pump(tester);
@@ -369,14 +382,20 @@ void main() {
     final added = dataOf(ops.last);
     expect(added['replaces'], 'L3');
     expect(added['line_id'], isNot('L3'));
-    // the changed dish is still comped on the screen: the dish and its rice (the sheet's 26.95, on two
-    // lines) struck through, nothing left to pay; nobody was asked again
-    expect(inTile(gtc, 'Comped · Manager comp'), findsOneWidget);
-    expect(decorationOf(tester, inTile(gtc, '25.95')), TextDecoration.lineThrough);
-    expect(inTile(gtc, 'Brown rice'), findsOneWidget);
-    expect(decorationOf(tester, inTile(gtc, '1.00')), TextDecoration.lineThrough);
-    expect(inTile(gtc, '26.95'), findsNothing);
+    // the changed dish is still comped on the screen: the sheet's 26.95 (rice included) struck through over
+    // 0.00, the rice's +1.00 on its line, the comp after it with (26.95); nobody was asked again
+    expect(decorationOf(tester, inTile(gtc, '26.95')), TextDecoration.lineThrough);
     expect(inTile(gtc, '0.00'), findsOneWidget);
+    expect(inTile(gtc, 'Brown rice'), findsOneWidget);
+    expect(inTile(gtc, '+1.00'), findsOneWidget);
+    expect(decorationOf(tester, inTile(gtc, '+1.00')), isNot(TextDecoration.lineThrough));
+    expect(inTile(gtc, 'Comped · Manager comp'), findsOneWidget);
+    expect(inTile(gtc, '(26.95)'), findsOneWidget);
+    expect(inTile(gtc, '25.95'), findsNothing);
+    // the price lines in order: the choice, then the discount, then the line's state
+    final rows = [inTile(gtc, 'Brown rice'), inTile(gtc, 'Comped · Manager comp'), inTile(gtc, 'not sent yet')];
+    final tops = [for (final r in rows) tester.getTopLeft(r).dy];
+    expect(tops, [...tops]..sort());
     expect(find.text('Manager comp · on $gtc · Mike approved'), findsOneWidget);
     expect(t.hub.pins, isEmpty);
   });

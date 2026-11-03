@@ -250,7 +250,8 @@ void main() {
   testWidgets('each discount and charge is a row; a tap takes it off, the gratuity with a manager', (tester) async {
     final (sent, pins) = await pump(tester);
     expect(find.text('Manager comp · on Peking Duck · Mike approved'), findsOneWidget);
-    expect(find.text('−30.00'), findsOneWidget);
+    expect(find.text('(30.00)'), findsWidgets); // what came off, the accounting way (the line says it too)
+    expect(find.text('−30.00'), findsNothing);
     expect(find.text('Gratuity 18%'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('discount-D1')));

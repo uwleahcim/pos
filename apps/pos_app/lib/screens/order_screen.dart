@@ -747,7 +747,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                   for (final d in check.discounts)
                     _TotalRow(
                       _discountLabel(d, check),
-                      '−${d.amount}',
+                      inParens(d.amount),
                       key: ValueKey('discount-${d.discountId}'),
                       onTap: open ? () => widget.onRemoveDiscount(d) : null,
                     ),
@@ -773,12 +773,13 @@ class _TicketPanelState extends State<_TicketPanel> {
     );
   }
 
-  /// A line: its quantity and seat, the dish with its own price, and the bin; under the dish each of its
-  /// choices on a line of its own with what it adds, its state, and a comp or discount on it with what is
-  /// left to pay (the amounts it took off show struck through). Held by the dish, it lifts into the hand and
-  /// can be carried to another place or course (the quantity, the price and the bin keep their own tap and
-  /// hold: the price held opens the comp menu). While a dish is in hand, a tap on a line picks it up to go
-  /// along, and a tap on a line in the stack puts it back.
+  /// A line: its quantity and seat, the dish with its price (choices included; with a comp or discount on
+  /// it, the old price struck through over the new one), and the bin. Under the dish, a line for each of its
+  /// choices with what it changes ("+0.50"), then each comp or discount with what it took off, "(30.00)",
+  /// then the line's state. Held by the dish, it lifts into the hand and can be carried to another place or
+  /// course (the quantity, the price and the bin keep their own tap and hold: the price held opens the comp
+  /// menu). While a dish is in hand, a tap on a line picks it up to go along, and a tap on a line in the
+  /// stack puts it back.
   Widget _lineTile(BuildContext context, int index, LineRow row, CheckDrag? drag) {
     final line = row.line;
     final theme = Theme.of(context);
@@ -798,8 +799,6 @@ class _TicketPanelState extends State<_TicketPanel> {
             child: SizedBox(width: double.infinity, child: child),
           )
         : child;
-    final off = priced == null ? 0 : cents(priced.discount);
-    final struck = off > 0; // a comp or discount took the line's amounts off: they show struck through
     final words = [
       if (line.isVoid) 'void',
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
@@ -807,18 +806,13 @@ class _TicketPanelState extends State<_TicketPanel> {
       if (line.note.isNotEmpty) line.note,
     ];
     final below = <Widget>[
-      // each choice on its own line, with what it adds when it costs something
+      // each choice on its own line, with what it changes when it changes anything
       for (final m in priced?.modifiers ?? const <CheckModifier>[])
-        _SubLine(m.label, amount: m.charged ? m.amount : null, struck: struck),
+        _SubLine(m.label, amount: m.charged ? priceChange(m.amount) : null),
+      // then each comp or discount on the line (they come off after every choice), with what it took off
+      for (final d in comps) _SubLine(compLabel(d), amount: inParens(d.amount)),
       if (words.isNotEmpty) _SubLine(words.join(' · ')),
     ];
-    // each comp or discount on the line, with what is left to pay after it
-    var left = priced == null ? 0 : cents(priced.total);
-    for (final d in comps) {
-      left = (left - cents(d.amount)).clamp(0, left);
-      below.add(_SubLine(compLabel(d), amount: money(left), strong: true));
-    }
-    if (struck && comps.isEmpty) below.add(_SubLine('Discounted', amount: money(left - off), strong: true));
     final tile = ListTile(
       key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
       dense: true,
@@ -895,9 +889,9 @@ class _TicketPanelState extends State<_TicketPanel> {
               ),
             ),
           ),
-          // the dish's own price, without its choices (theirs line up under it), in a fixed width so a longer
-          // price does not push the name onto another line; held, the price opens the comp menu (tapped, it
-          // opens the dish like the rest of the line)
+          // the dish's price with its choices (what each changes lines up under it), in a fixed width so a
+          // longer price does not push the name onto another line; held, the price opens the comp menu
+          // (tapped, it opens the dish like the rest of the line)
           SizedBox(
             width: _amountWidth,
             child: Builder(
@@ -906,13 +900,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                 tooltip: 'Hold to comp',
                 onTap: changeable && !held ? () => widget.onEdit(line) : null,
                 onLongPress: changeable && !held ? () => widget.onComp(line, anchor) : null,
-                child: _Amount(
-                  priced == null
-                      ? ''
-                      : money(cents(priced.total) - priced.modifiers.fold(0, (sum, m) => sum + cents(m.amount))),
-                  struck: struck,
-                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                ),
+                child: _Price(total: priced?.total, discount: priced?.discount),
               ),
             ),
           ),
@@ -987,62 +975,71 @@ class _Action extends StatelessWidget {
       : TextButton.icon(onPressed: onPressed, icon: Icon(icon), label: Text(label));
 }
 
-/// The width of the check's price column: the dish's price, and under it what each choice adds and what
-/// is left after a comp, all lined up.
+/// The width of the check's price column: the dish's price, and under it what each choice changes and what
+/// a comp took off, all lined up.
 const _amountWidth = 60.0;
 
-/// An amount in the check's price column, struck through when a comp or discount took it off.
-class _Amount extends StatelessWidget {
-  const _Amount(this.text, {required this.style, this.struck = false});
+/// A line's price: what it costs with its choices, or, with a comp or discount on it, that struck through
+/// over what it costs now.
+class _Price extends StatelessWidget {
+  const _Price({required this.total, required this.discount});
 
-  final String text;
-  final TextStyle? style;
-  final bool struck;
-
-  @override
-  Widget build(BuildContext context) => Text(
-    text,
-    textAlign: TextAlign.end,
-    maxLines: 1,
-    style: struck
-        ? style?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-            decoration: TextDecoration.lineThrough,
-            fontFeatures: PosTheme.tabular,
-          )
-        : style?.copyWith(fontFeatures: PosTheme.tabular),
-  );
-}
-
-/// A line under a dish on the check: one of its choices and what it adds, its state ("not sent yet", a
-/// kitchen note), or a comp or discount on it and what is left to pay after it.
-class _SubLine extends StatelessWidget {
-  const _SubLine(this.label, {this.amount, this.struck = false, this.strong = false});
-
-  final String label;
-  final String? amount;
-  final bool struck;
-
-  /// What is left to pay: it stands out from the amounts struck through above it.
-  final bool strong;
+  final String? total;
+  final String? discount;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final style = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final style = theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, fontFeatures: PosTheme.tabular);
+    final total = this.total;
+    final off = discount == null ? 0 : cents(discount!);
+    if (total == null || off == 0) {
+      return Text(total ?? '', textAlign: TextAlign.end, maxLines: 1, style: style);
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          total,
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            decoration: TextDecoration.lineThrough,
+            fontFeatures: PosTheme.tabular,
+          ),
+        ),
+        Text(money(cents(total) - off), maxLines: 1, style: style),
+      ],
+    );
+  }
+}
+
+/// A line under a dish on the check: one of its choices and what it changes ("+0.50"), a comp or discount
+/// on it and what it took off ("(30.00)"), or its state ("not sent yet", a kitchen note).
+class _SubLine extends StatelessWidget {
+  const _SubLine(this.label, {this.amount});
+
+  final String label;
+  final String? amount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final amount = this.amount;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(child: Text(label, style: style)),
-        if (amount != null)
+        if (amount != null && amount.isNotEmpty)
           SizedBox(
             width: _amountWidth,
-            child: _Amount(
+            child: Text(
               amount,
-              struck: struck,
-              style: strong ? style?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600) : style,
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              style: style?.copyWith(fontFeatures: PosTheme.tabular),
             ),
           ),
       ],

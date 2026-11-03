@@ -47,11 +47,13 @@ defaults: Manager comp (free), Staff meal (50% off), Loyalty reward (up to 20% o
 - A dish that already carries a discount shows it at the top of the menu with **Take off**; reasons that
   cannot go on top of it are greyed out, as the hub would refuse them.
 
-The line stays on the check. Each choice on a dish is a line of its own under it, with what it adds when
-it costs something (the dish's line carries the dish's own price, so the lines add up to the line's
-total). With a comp or discount on the line those amounts show struck through, and a last line says what
-came off ("Comped · Manager comp", "50% off · Staff meal") with what is left to pay. The row under the
-subtotal is there as before, and a tap on it still takes the discount off.
+The line stays on the check, laid out the accounting way (Mike, 2026-11-03). The dish's line shows its
+full price, choices included. Under it, each choice that changes the price is a line of its own with what
+it changes ("+0.50", not a new total); then each comp or discount, after every choice, with what it took
+off in parentheses, "(30.00)"; then the line's state. With a comp or discount on the line, the dish's old
+price (choices included) is struck through and the new price sits under it; without one, the dish's line
+simply shows its price. The row under the subtotal says the same "(30.00)", and a tap on it still takes
+the discount off.
 
 A comp stays with the dish through an edit. Changing a dish (other options, a kitchen note, fewer of a
 sent dish) voids its line and adds the changed dish as a new line; the new line says which line it
