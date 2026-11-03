@@ -384,3 +384,71 @@ def test_the_report_says_who_took_what_off_and_why():
     assert [(x["order_id"], x["charge_id"]) for x in report["charges"]] == [("o2", "auto_gratuity")]
     assert report["charge_total"] == "5.04"  # 18% of 28.00
     assert c.get("/reports/adjustments", params={"since": T0 + 8}).json()["discounts"] == []
+
+
+# --- a comp follows an edited line; the check lists each choice with what it adds -----------------------
+
+
+def test_a_comp_follows_the_line_that_replaces_its_line():
+    """Changing a dish's options or note voids its line and adds the changed one in its place (`replaces`);
+    the comp on the old line goes on the new one (Mike, 2026-11-03), through any number of changes, and
+    comes off with the same removal."""
+    milk = {**TEA, "unit_price": "11.00"}
+    ops = [
+        make_op("create", at=0, table="5", guests=2, order_type="dine_in"),
+        make_op("add_line", at=1, line_id="L1", item="Tea", qty=2, priced=TEA),
+        adj("discount", 2, discount_id="D1", reason="comp", kind="comp", line_id="L1", applied_by="Amy"),
+        make_op("void_line", at=3, line_id="L1", reason="changed"),
+        make_op("add_line", at=4, line_id="L2", item="Tea", qty=2, priced=milk, replaces="L1"),
+    ]
+    state = state_with(*ops)
+    assert (state.current_line("L1"), state.current_line("L2"), state.current_line("L9")) == ("L2", "L2", "L9")
+    assert state.snapshot()["lines"]["L2"]["replaces"] == "L1"
+    check = check_for(state, massachusetts(), default_rules())
+    assert [(line["line_id"], line["total"], line["discount"]) for line in check["lines"]] == [("L2", "22.00", "22.00")]
+    assert (check["discounts"][0]["line_id"], check["discount_total"], check["total"]) == ("L2", "22.00", "0.00")
+
+    ops += [
+        make_op("void_line", at=5, line_id="L2", reason="changed"),
+        make_op("add_line", at=6, line_id="L3", item="Tea", qty=1, priced=TEA, replaces="L2"),
+    ]
+    check = check_for(state_with(*ops), massachusetts(), default_rules())
+    assert (check["lines"][0]["discount"], check["total"]) == ("10.00", "0.00")
+    check = check_for(state_with(*ops, adj("remove_discount", 7, discount_id="D1")), massachusetts(), default_rules())
+    assert check["discounts"] == [] and check["total"] == "10.71"  # 10.00 + 0.63 + 0.08
+
+
+def test_a_discount_on_the_replacing_line_does_not_stack_on_the_comp_that_followed():
+    c = client()
+    tea_and_duck(c)
+    ops = [
+        payload("d", "discount", 3, discount_id="D1", reason="comp", kind="comp", line_id="L1", approval=approval(c)),
+        payload("e", "void_line", 4, line_id="L1", reason="changed"),
+        payload("f", "add_line", 5, line_id="L3", item="Tea", qty=1, priced=TEA, replaces="L1"),
+    ]
+    assert c.post("/orders/o1/ops", json=ops).json()["refused"] == []
+    check = c.get("/orders/o1/check").json()
+    assert [(line["line_id"], line["discount"]) for line in check["lines"]] == [("L2", "0.00"), ("L3", "10.00")]
+    assert c.get("/orders/o1").json()["lines"]["L3"]["replaces"] == "L1"
+    second = payload("g", "discount", 6, discount_id="D2", reason="loyalty", kind="percent", value="10", line_id="L3")
+    r = c.post("/orders/o1/ops", json=[second]).json()
+    assert r["refused"][0]["problems"][0]["code"] == "no_stacking"
+
+
+def test_the_check_lists_each_choice_with_what_it_adds_for_the_quantity():
+    priced = {
+        **TEA,
+        "unit_price": "11.75",
+        "modifiers": [
+            {"label": "Oat milk", "price": "0.75", "defaulted": False},
+            {"label": "Hot", "price": "0", "defaulted": True},
+            {"label": "Large", "price": "1.00", "defaulted": False},
+        ],
+    }
+    ops = [make_op("create", at=0), make_op("add_line", at=1, line_id="L1", item="Tea", qty=2, priced=priced)]
+    line = check_for(state_with(*ops), massachusetts())["lines"][0]
+    assert line["total"] == "23.50"
+    assert line["modifiers"] == [
+        {"label": "Oat milk", "price": "0.75", "amount": "1.50"},
+        {"label": "Large", "price": "1.00", "amount": "2.00"},
+    ]

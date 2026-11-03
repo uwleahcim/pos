@@ -28,7 +28,9 @@ class ChosenLine {
 
   /// The price of one as the menu showed it, so the check can show the line before the hub prices it.
   final String? unitPrice;
-  final List<String> modifiers;
+
+  /// The choices that differ from the menu's defaults, each with the price of one, as the check lists them.
+  final List<CheckModifier> modifiers;
   final String? itemId;
 }
 
@@ -983,12 +985,12 @@ class _PendingItemSelection {
     );
     final name = entry.variants.length > 1 ? '${entry.name} (${variant.name})' : entry.name;
     var priceCents = _parseCents(variant.price);
-    final modifiers = <String>[];
+    final modifiers = <CheckModifier>[];
     for (final g in detail?.groups ?? const <GroupDetail>[]) {
       final pickedIds = selections[g.groupId] ?? const [];
       for (final o in g.options) {
         if (pickedIds.contains(o.optionId)) {
-          if (!o.isDefault) modifiers.add(o.name);
+          if (!o.isDefault) modifiers.add(CheckModifier(o.name, price: o.free ? '0.00' : o.price));
           if (!o.free && priceCents != null) {
             final extra = _parseCents(o.price);
             if (extra != null) priceCents += extra;
@@ -1443,14 +1445,18 @@ class _ItemSheetState extends State<ItemSheet> {
     _reprice();
   }
 
-  /// The choices that differ from the menu's defaults, as the check lists them; a marked choice is listed
-  /// with its word even when it is the default ("No white rice").
-  List<String> get _picked => [
+  /// The choices that differ from the menu's defaults, as the check lists them, each with its price; a
+  /// marked choice is listed with its word even when it is the default ("No white rice"), and a choice left
+  /// off ("no") is free, as the backend makes it.
+  List<CheckModifier> get _picked => [
     for (final g in _detail?.groups ?? const <GroupDetail>[])
       for (final o in g.options)
         if ((_request.selections[g.groupId] ?? const []).contains(o.optionId) &&
             (_request.prefixes[o.optionId] != null || !o.isDefault))
-          _request.prefixes[o.optionId] == null ? o.name : '${instructions[_request.prefixes[o.optionId]]} ${o.name}',
+          CheckModifier(
+            _request.prefixes[o.optionId] == null ? o.name : '${instructions[_request.prefixes[o.optionId]]} ${o.name}',
+            price: o.free || _request.prefixes[o.optionId] == 'no' ? '0.00' : o.price,
+          ),
   ];
 
   /// A choice's chip: its word when it has one, and its price unless the word is "no" (the backend charges

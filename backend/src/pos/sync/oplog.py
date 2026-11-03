@@ -103,6 +103,7 @@ class Line:
     modified_after_fire: bool = False
     request: dict[str, Any] | None = None  # what the operator chose, so a screen can reopen the choices
     priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
+    replaces: str | None = None  # the line this one took the place of: an edit voids a line and adds the changed one
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
 
@@ -213,6 +214,23 @@ class OrderState:
         """The lines as the check shows them: by rank (the order they were added, until a drag moves one)."""
         return sorted(self.lines.values(), key=lambda line: (line.rank, line.line_id))
 
+    def current_line(self, line_id: str) -> str:
+        """The line that stands for `line_id` now: itself while it is active, otherwise the line that took
+        its place (an edit voids a line and adds the changed one with `replaces`), followed through any
+        number of edits. A discount on a dish stays with the dish that way. Unknown ids come back as they are."""
+        replaced_by: dict[str, str] = {}
+        for line in self.ordered_lines():
+            if line.replaces and (line.replaces not in replaced_by or line.active):
+                replaced_by[line.replaces] = line.line_id
+        seen: set[str] = set()
+        while line_id in replaced_by and line_id not in seen:
+            line = self.lines.get(line_id)
+            if line is not None and line.active:
+                break
+            seen.add(line_id)
+            line_id = replaced_by[line_id]
+        return line_id
+
     def snapshot(self) -> dict[str, Any]:
         """A plain, comparable picture of the order; two replicas agree when their snapshots are equal. The
         lines come in check order."""
@@ -234,6 +252,7 @@ class OrderState:
                     "fired": line.fired_at is not None,
                     "request": line.request,
                     "priced": line.priced,
+                    "replaces": line.replaces,
                 }
                 for line in self.ordered_lines()
             },
@@ -273,6 +292,7 @@ def apply(state: OrderState, op: Op) -> None:
             note=data.get("note", ""),
             request=data.get("request"),
             priced=data.get("priced"),
+            replaces=data.get("replaces") if isinstance(data.get("replaces"), str) else None,
         )
         rank = _rank(data.get("rank"))
         if rank is None:  # after everything on the check so far

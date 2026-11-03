@@ -298,6 +298,28 @@ class Priced {
   bool get ok => problems.isEmpty;
 }
 
+/// One choice on a check line as the hub lists it: what it is called, the price of one, and what it adds
+/// for the line's quantity. A choice that costs nothing ("No scallions", the rice a dish comes with) has no
+/// amount to show. An older hub sends the label alone.
+class CheckModifier {
+  const CheckModifier(this.label, {this.price = '0.00', this.amount = '0.00'});
+
+  factory CheckModifier.fromJson(Object? json) {
+    if (json is! Map) return CheckModifier(json?.toString() ?? '');
+    final price = json['price']?.toString() ?? '0.00';
+    return CheckModifier(json['label'] as String? ?? '', price: price, amount: json['amount']?.toString() ?? price);
+  }
+
+  final String label;
+
+  /// Of one; [amount] is for the line's quantity.
+  final String price;
+  final String amount;
+
+  /// It costs something: the check shows its amount on its line.
+  bool get charged => (double.tryParse(price) ?? 0) != 0;
+}
+
 class CheckLine {
   const CheckLine({
     required this.lineId,
@@ -315,7 +337,7 @@ class CheckLine {
     qty: json['qty'] as int? ?? 1,
     total: json['total'] as String? ?? '0.00',
     seat: json['seat'] as int?,
-    modifiers: List<String>.from(json['modifiers'] as List? ?? const []),
+    modifiers: [for (final m in json['modifiers'] as List? ?? const []) CheckModifier.fromJson(m)],
     discount: json['discount'] as String? ?? '0.00',
   );
 
@@ -324,20 +346,22 @@ class CheckLine {
   final int qty;
   final String total;
   final int? seat;
-  final List<String> modifiers;
+
+  /// Its choices, each its own line on the check under the dish; [total] includes what they add.
+  final List<CheckModifier> modifiers;
 
   /// What came off this line itself (a comp, a percentage or an amount on it); a check discount is its own row.
   final String discount;
 
   bool get isDiscounted => discount != '0.00' && discount != '0';
 
-  CheckLine withQty(int qty, String total, {String? discount}) => CheckLine(
+  CheckLine withQty(int qty, String total, {String? discount, List<CheckModifier>? modifiers}) => CheckLine(
     lineId: lineId,
     name: name,
     qty: qty,
     total: total,
     seat: seat,
-    modifiers: modifiers,
+    modifiers: modifiers ?? this.modifiers,
     discount: discount ?? this.discount,
   );
 }
@@ -381,14 +405,16 @@ class CheckDiscount {
   final String appliedBy;
   final String? approvedBy;
 
-  CheckDiscount withAmount(String amount) => CheckDiscount(
+  /// The same discount worked out again: its amount on the lines as they are now, and, after an edit, on
+  /// the line that took its line's place.
+  CheckDiscount withAmount(String amount, {String? lineId}) => CheckDiscount(
     discountId: discountId,
     reason: reason,
     name: name,
     kind: kind,
     value: value,
     amount: amount,
-    lineId: lineId,
+    lineId: lineId ?? this.lineId,
     note: note,
     appliedBy: appliedBy,
     approvedBy: approvedBy,

@@ -57,22 +57,33 @@ def check_for(
                 "unit_price": str(unit),
                 "total": str(total),
                 "discount": "0.00",  # what came off this line itself, filled in below
-                "modifiers": [m["label"] for m in priced.get("modifiers", ()) if not m.get("defaulted")],
+                # each choice that is not the dish's default, with what it adds to the line for its quantity
+                "modifiers": [
+                    {
+                        "label": m["label"],
+                        "price": str(_money(m.get("price"))),
+                        "amount": str(cents(_money(m.get("price")) * line.qty)),
+                    }
+                    for m in priced.get("modifiers", ())
+                    if not m.get("defaulted")
+                ],
                 "tax_class": priced.get("tax_class"),
             }
         )
 
-    # Discounts: on a line first, then on the check, each capped at what is left to take off.
+    # Discounts: on a line first, then on the check, each capped at what is left to take off. A discount on
+    # a dish follows the dish through its edits (each one voids the line and adds the changed one).
     discount_rows: list[dict[str, Any]] = []
     discount_total = ZERO
     active = sorted((d for d in state.discounts.values() if d.active), key=lambda d: (d.line_id is None, d.stamp or ""))
     for discount in active:
-        amount = _discount_amount(discount, net)
-        if discount.line_id is not None:
+        line_id = None if discount.line_id is None else state.current_line(discount.line_id)
+        amount = _discount_amount(discount, net, line_id)
+        if line_id is not None:
             if amount > ZERO:
-                net[discount.line_id] -= amount
+                net[line_id] -= amount
                 for row in lines:
-                    if row["line_id"] == discount.line_id:
+                    if row["line_id"] == line_id:
                         row["discount"] = str(Decimal(row["discount"]) + amount)
         else:
             _spread(amount, net)
@@ -86,7 +97,7 @@ def check_for(
                 else discount.reason,
                 "kind": discount.kind,
                 "value": discount.value,
-                "line_id": discount.line_id,
+                "line_id": line_id,
                 "note": discount.note,
                 "amount": str(amount),
                 "applied_by": discount.applied_by,
@@ -154,10 +165,18 @@ def check_for(
     }
 
 
-def _discount_amount(discount: Discount, net: dict[str, Decimal]) -> Decimal:
-    """What this discount takes off, given what is left on its line or on the whole check."""
-    if discount.line_id is not None:
-        base = net.get(discount.line_id, ZERO)
+def _money(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else 0))
+    except ArithmeticError:
+        return ZERO
+
+
+def _discount_amount(discount: Discount, net: dict[str, Decimal], line_id: str | None) -> Decimal:
+    """What this discount takes off, given what is left on its line (`line_id`, the one standing for the
+    line it was put on) or on the whole check."""
+    if line_id is not None:
+        base = net.get(line_id, ZERO)
     else:
         base = sum(net.values(), ZERO)
     if base <= ZERO:

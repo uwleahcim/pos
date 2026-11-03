@@ -59,6 +59,10 @@ class Hub {
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
 
+  /// The check it serves for every order (it prices nothing itself), and its pricing rules.
+  Map<String, dynamic>? check;
+  Map<String, dynamic>? rules;
+
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
@@ -74,8 +78,9 @@ class Hub {
       return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
     }
     if (_check.hasMatch(path)) {
-      return json({'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
+      return json(check ?? {'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
     }
+    if (path.startsWith('/menu/items/')) return json(fixture('item_${path.split('/').last.toLowerCase()}'));
     if (_order.hasMatch(path)) {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
@@ -109,6 +114,26 @@ class Hub {
         return json(fixture('floor'));
       case '/menu':
         return json(fixture('menu'));
+      case '/menu/price':
+        return json({'name': "General Tso's Chicken (Quart)", 'unit_price': '26.95'});
+      case '/pricing/rules':
+        return json(rules ?? {'discounts': [], 'charges': []});
+      case '/approvals':
+        // a manager's PIN for a discount on one order: Mike (9999) approves, anyone else is no manager
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        pins.add(body['pin'] as String);
+        if (body['pin'] != '9999') {
+          return json({
+            'detail': {'error': 'not_allowed', 'role': 'server'},
+          }, 403);
+        }
+        return json({
+          'approval': 'tok-${body['order_id']}',
+          'staff_id': 's3',
+          'name': 'Mike',
+          'role': 'manager',
+          'expires': 1,
+        });
     }
     return json({'revision': 0});
   }
@@ -128,6 +153,9 @@ class Hub {
             'qty': data['qty'] ?? 1,
             'seat': data['seat'],
             'course': data['course'],
+            'note': data['note'] ?? '',
+            'request': data['request'],
+            'replaces': data['replaces'], // an edit: the line this one took the place of
             'status': 'active',
             'fired': false,
             'rank': data['rank'] ?? (ranks.isEmpty ? 1.0 : ranks.reduce(max) + 1),

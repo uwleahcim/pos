@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
+import 'package:pos_app/line_ops.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/screens/menu_panel.dart';
@@ -57,6 +58,16 @@ void main() {
     });
     expect(l3.request!.toJson(), line('active')['request']);
     expect(order.lines.firstWhere((l) => l.lineId == 'L2').canEdit, isFalse);
+  });
+
+  test('fewer of a sent dish re-adds the rest in its place; one more is a new line of the extra', () {
+    const sent = Line(lineId: 'L1', item: 'Duck', qty: 2, status: 'active', fired: true, course: '2');
+    final fewer = qtyChange(sent, 1, newId: () => 'L9');
+    expect(fewer.ops.map((o) => o.$1), ['void_line', 'add_line', 'fire']);
+    expect((fewer.ops[1].$2['line_id'], fewer.ops[1].$2['qty'], fewer.ops[1].$2['replaces']), ('L9', 1, 'L1'));
+    final more = qtyChange(sent, 3, newId: () => 'L9');
+    expect(more.ops.single.$1, 'add_line');
+    expect(more.ops.single.$2.containsKey('replaces'), isFalse); // the extra, not a replacement
   });
 
   test('a change goes to the backend as one batch', () async {
