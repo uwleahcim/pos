@@ -53,8 +53,11 @@ All in the FreePBX admin, with **Apply Config** after each step.
    existing phones.
 4. **An extension for the terminal.** Applications, Extensions, + Add Extension, + Add New SIP [chan_pjsip]
    Extension: User Extension `301`, Display Name `POS mac1`, Secret: keep the generated one and copy it (it goes
-   into the app). Advanced tab: **Enable WebRTC defaults: Yes**, **Media Encryption: DTLS-SRTP**, **Direct Media: No**,
-   Max Contacts 1. Submit, Apply Config. One extension per terminal: 302 for the iPad, and so on.
+   into the app). Advanced tab, set each of these by hand (the **Enable WebRTC defaults** switch does not
+   apply them, a [known FreePBX issue](https://community.freepbx.org/t/webrtc-default-toggle-doesnt-work/67281)):
+   **Media Encryption: DTLS-SRTP**, **Enable AVPF: Yes**, **Enable ICE Support: Yes**, **Enable rtcp Mux: Yes**,
+   **Media Use Received Transport: Yes**, DTLS Verify Fingerprint, DTLS Setup Act/Pass, **Direct Media: No**,
+   Max Contacts 1. Submit, Apply Config. One extension per terminal: 302 for the iPhone, and so on.
 5. **Check on the console.** `ssh root@144.202.2.62`, then `asterisk -rvvv`:
 
    ```
@@ -72,10 +75,9 @@ All in the FreePBX admin, with **Apply Config** after each step.
      -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' -H 'Sec-WebSocket-Protocol: sip'
    ```
 
-   If the endpoint does not show those, set them on the extension's Advanced tab by hand (older FreePBX
-   versions did not apply the WebRTC switch fully): Media Encryption DTLS-SRTP, Enable AVPF Yes, Enable ICE
-   Support Yes, Enable rtcp Mux Yes, DTLS Verify Fingerprint, DTLS Setup Act/Pass, DTLS Auto Generate
-   Certificate Yes (or the default certificate under DTLS Certificate).
+   Without AVPF and ICE the PBX offers `UDP/TLS/RTP/SAVP` with no `ice-ufrag` and no candidates, the app's
+   WebRTC stack refuses the offer (488 Not Acceptable Here, "setRemoteDescription() failed" in the app's
+   log) and the caller hears busy.
 6. **Firewall.** Connectivity, Firewall, Networks: the restaurant's public address in the **Trusted** zone,
    which opens 8089 and the RTP ports to it. To avoid trusting the whole address, allow 8089/tcp and
    10000 to 20000/udp from it under Services, Custom Services instead. Add the same address under Admin,
@@ -118,10 +120,11 @@ Settings, Phone shows the PBX's answer under the switch; a release build logs no
 | `… was not upgraded to websocket` | HTTP Prefix set (step 2) or no wss transport (step 3) |
 | `… HandshakeException …` | certificate not trusted (step 1: Let's Encrypt, made the default, Apply Config) |
 | `Not registered: 401 Unauthorized` or `403 Forbidden` | extension or secret (step 4) |
-| Rings, but Answer ends the call at once | the extension lacks the WebRTC defaults (step 4; `pjsip show endpoint 301`) |
+| Rings, but Answer gives the caller busy; app log `setRemoteDescription() failed` | the extension lacks AVPF or ICE (step 4; `pjsip show endpoint 301` must show `use_avpf: true`, `ice_support: true`) |
 
 ## Result
 
 Pending (2026-11-03). First attempt the same day: the app never reached the PBX, because the HTTPS server was
-bound to `127.0.0.1`, the HTTP Prefix was `8089` and extension 301 lacked the WebRTC defaults (all three
-found over SSH, none on the app side); the steps above now say so.
+bound to `127.0.0.1`, the HTTP Prefix was `8089` and extension 301 lacked AVPF and ICE (the WebRTC
+switch had not applied them); all found over SSH and in a SIP capture, none on the app side; the steps above
+now say so.
