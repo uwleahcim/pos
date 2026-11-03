@@ -72,12 +72,16 @@ def check_for(
         )
 
     # Discounts: on a line first, then on the check, each capped at what is left to take off. A discount on
-    # a dish follows the dish through its edits (each one voids the line and adds the changed one).
+    # a dish follows the dish through its edits (each one voids the line and adds the changed one), and comes
+    # off the check with the dish when it is removed or voided with nothing in its place: no row, nothing
+    # off the total. The log keeps the discount as it was approved either way.
     discount_rows: list[dict[str, Any]] = []
     discount_total = ZERO
     active = sorted((d for d in state.discounts.values() if d.active), key=lambda d: (d.line_id is None, d.stamp or ""))
     for discount in active:
         line_id = None if discount.line_id is None else state.current_line(discount.line_id)
+        if line_id is not None and line_id not in net:
+            continue  # its dish is off the check
         amount = _discount_amount(discount, net, line_id)
         if line_id is not None:
             if amount > ZERO:

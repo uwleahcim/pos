@@ -418,6 +418,48 @@ def test_a_comp_follows_the_line_that_replaces_its_line():
     assert check["discounts"] == [] and check["total"] == "10.71"  # 10.00 + 0.63 + 0.08
 
 
+def test_a_comp_comes_off_with_the_dish_it_was_on():
+    """A comp on a dish that comes off the check, removed before the kitchen saw it or voided after, comes
+    off with it (Mike, 2026-11-03): no row under the subtotal, nothing off the total. The log keeps the
+    comp as it was approved."""
+    ops = [
+        make_op("create", at=0, table="5", guests=2, order_type="dine_in"),
+        make_op("add_line", at=1, line_id="L1", item="Tea", qty=1, priced=TEA),
+        make_op("add_line", at=2, line_id="L2", item="Duck", qty=1, priced=DUCK),
+        adj("discount", 3, discount_id="D1", reason="comp", kind="comp", line_id="L1", applied_by="Amy"),
+    ]
+    check = check_for(state_with(*ops), massachusetts(), default_rules())
+    assert (check["discount_total"], check["total"]) == ("10.00", "21.40")  # 20.00 + 1.25 + 0.15
+
+    removed = state_with(*ops, make_op("void_line", at=4, line_id="L1", reason="changed mind"))
+    assert removed.lines["L1"].status == "removed" and removed.discounts["D1"].active
+    check = check_for(removed, massachusetts(), default_rules())
+    assert (check["discounts"], check["discount_total"], check["total"]) == ([], "0.00", "21.40")
+
+    sent = make_op("fire", at=4, course="*")
+    voided = state_with(*ops, sent, make_op("void_line", at=5, line_id="L1", reason="void"))
+    assert voided.lines["L1"].status == "void"
+    check = check_for(voided, massachusetts(), default_rules())
+    assert (check["discounts"], check["total"]) == ([], "21.40")
+
+
+def test_a_comp_on_a_removed_dish_does_not_block_a_discount_on_the_check():
+    """Even in one batch, as a terminal back from an outage sends them: the void of the comped dish counts
+    for the discount after it."""
+    c = client()
+    tea_and_duck(c)
+    ops = [
+        payload("d", "discount", 3, discount_id="D1", reason="comp", kind="comp", line_id="L1", approval=approval(c)),
+        payload("e", "void_line", 4, line_id="L1", reason="changed mind"),
+        # on the whole check: it could not go over the comp while the tea was on the check
+        payload("f", "discount", 5, discount_id="D2", reason="loyalty", kind="percent", value="10"),
+    ]
+    assert c.post("/orders/o1/ops", json=ops).json()["refused"] == []
+    check = c.get("/orders/o1/check").json()
+    assert [d["discount_id"] for d in check["discounts"]] == ["D2"]
+    assert ([line["line_id"] for line in check["lines"]], check["discount_total"]) == (["L2"], "2.00")
+
+
 def test_a_discount_on_the_replacing_line_does_not_stack_on_the_comp_that_followed():
     c = client()
     tea_and_duck(c)

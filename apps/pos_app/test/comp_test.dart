@@ -400,6 +400,22 @@ void main() {
     expect(t.hub.pins, isEmpty);
   });
 
+  testWidgets('taking a comped dish off the check takes its comp off too', (tester) async {
+    final t = await pump(tester);
+    expect(find.byKey(const ValueKey('discount-D1')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('bin-L2'))); // the duck went to the kitchen: a void, confirmed
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Void'));
+    await tester.pumpAndSettle();
+    expect(t.hub.opsFor('o1').map((op) => op['kind']), ['void_line']);
+    expect(inTile('Peking Duck', 'void'), findsOneWidget); // the voided line stays on the check, as a void
+    expect(inTile('Peking Duck', 'Comped · Manager comp'), findsNothing);
+    expect(find.byKey(const ValueKey('discount-D1')), findsNothing);
+    expect(find.text('Manager comp · on Peking Duck · Mike approved'), findsNothing);
+    expect(find.byKey(const ValueKey('discount-D2')), findsOneWidget); // the other comp is untouched
+    expect(t.hub.opsFor('o1').where((op) => op['kind'] == 'remove_discount'), isEmpty); // the log keeps the comp
+  });
+
   testWidgets('a tap on the price still opens the dish', (tester) async {
     final t = await pump(tester);
     await tester.tap(price('L1'));

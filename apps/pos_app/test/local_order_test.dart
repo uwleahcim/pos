@@ -241,6 +241,60 @@ void main() {
     expect(replayed.lines.firstWhere((l) => l.lineId == 'L4').replaces, 'L3');
   });
 
+  test('the estimate drops a comp whose dish came off the check; a discount on the whole check stays', () {
+    const read = Check(
+      lines: [
+        CheckLine(lineId: 'L1', name: 'Tea', qty: 1, total: '10.00', discount: '10.00'),
+        CheckLine(lineId: 'L2', name: 'Duck', qty: 1, total: '20.00'),
+      ],
+      subtotal: '30.00',
+      discounts: [
+        CheckDiscount(
+          discountId: 'D1',
+          reason: 'comp',
+          name: 'Manager comp',
+          kind: 'comp',
+          value: '0',
+          amount: '10.00',
+          lineId: 'L1',
+        ),
+        CheckDiscount(
+          discountId: 'D2',
+          reason: 'birthday',
+          name: 'Birthday',
+          kind: 'percent',
+          value: '10',
+          amount: '2.00',
+        ),
+      ],
+      discountTotal: '12.00',
+      taxLines: taxes,
+      tax: '1.26',
+      taxRatePct: '7.00',
+      total: '19.26',
+    );
+    final order = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [hubLine('L1'), hubLine('L2', fired: true)],
+      fired: const {},
+    );
+    for (final gone in ['L1']) {
+      final check = estimateCheck(
+        read,
+        withLocalOps(order, [
+          op('void_line', {'line_id': gone}),
+        ]),
+        const {},
+      );
+      expect(check.line('L1'), isNull);
+      expect(check.discounts.map((d) => d.discountId), ['D2']);
+      // 10% of the 20.00 of duck; tax on the 18.00: 1.13 + 0.14
+      expect((check.subtotal, check.discountTotal, check.total), ('20.00', '2.00', '19.27'));
+    }
+  });
+
   test('the estimate keeps the discounts and charges on the new lines, in the hub order', () {
     const read = Check(
       lines: [

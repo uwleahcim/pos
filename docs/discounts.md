@@ -55,6 +55,10 @@ price (choices included) is struck through and the new price sits under it; with
 simply shows its price. The row under the subtotal says the same "(30.00)", and a tap on it still takes
 the discount off.
 
+A comp comes off with its dish. Removing a comped dish (or voiding it once it has been sent) takes the
+comp off the check too: no row under the subtotal, nothing off the total. The log and the adjustments
+report keep the comp as it was approved.
+
 A comp stays with the dish through an edit. Changing a dish (other options, a kitchen note, fewer of a
 sent dish) voids its line and adds the changed dish as a new line; the new line says which line it
 replaces (`replaces` on the `add_line`), and the hub puts the comp on the new line, on the check and in

@@ -34,7 +34,7 @@ from ..printing.service import PrintService
 from ..printing.ticket import DEMO
 from ..settings import SettingStore, clean_coursing, clean_quotes, default_settings
 from ..sync.hlc import HLC
-from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState
+from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
 from .auth import manager_from
 from .menu_admin import add_menu_admin
@@ -281,14 +281,20 @@ def adjust_ops(
     `approved_by`, who it was, so the check and the reports name the manager; nothing a terminal says about
     approval on its own is kept. An adjustment the rules refuse (an unknown reason, over its cap, no manager
     when one is needed, a second discount on a dish that does not stack) is left out and reported with its
-    problems, like a refused line; the rest of the batch goes through."""
+    problems, like a refused line; the rest of the batch goes through. The line operations earlier in the
+    same batch count (a terminal back from an outage sends a void and a later discount together)."""
     out: list[Op] = []
     refused: list[dict[str, Any]] = []
     active: dict[str, dict[str, dict[str, Any]]] = {}  # order -> live discounts by id, as this batch leaves them
-    states: dict[str, OrderState] = {}
+    states: dict[str, OrderState] = {}  # order -> its state, with this batch's line operations so far
+    earlier: dict[str, list[Op]] = {}  # this batch's line operations on orders whose state is not loaded yet
     for op in ops:
         if op.kind not in ADJUSTMENTS:
             out.append(op)
+            if op.order_id in states:
+                apply(states[op.order_id], op)
+            else:
+                earlier.setdefault(op.order_id, []).append(op)
             continue
         data = {k: v for k, v in op.data.items() if k not in ("approval", "approved_by")}
         grant = tokens.verify(op.data["approval"]) if isinstance(op.data.get("approval"), str) else None
@@ -302,19 +308,25 @@ def adjust_ops(
             continue
         if op.order_id not in active:
             # a discount on a dish follows the dish through its edits: stacking is judged on the line that
-            # stands for each discounted line now
+            # stands for each discounted line now, and a discount whose dish is off the check (removed or
+            # voided, nothing in its place) no longer counts
             state = states[op.order_id] = store.state(op.order_id)
+            for line_op in earlier.pop(op.order_id, ()):
+                apply(state, line_op)
             active[op.order_id] = {
                 d.discount_id: {"reason": d.reason, "line_id": _current(state, d.line_id)}
                 for d in state.discounts.values()
-                if d.active
+                if d.active and _standing(state, d.line_id)
             }
+        state = states[op.order_id]
         live = active[op.order_id]
         if op.kind == "remove_discount":
             live.pop(ident, None)
         else:
-            judged = {**data, "line_id": _current(states[op.order_id], data.get("line_id"))}
-            problems = rules.problems(op.kind, judged, approved=approved, existing=live.values())
+            judged = {**data, "line_id": _current(state, data.get("line_id"))}
+            # a dish voided earlier in this batch takes its discount out of the stacking too
+            existing = [d for d in live.values() if _standing(state, d["line_id"])]
+            problems = rules.problems(op.kind, judged, approved=approved, existing=existing)
             if problems:
                 refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
                 continue
@@ -328,6 +340,15 @@ def adjust_ops(
 
 def _current(state: OrderState, line_id: Any) -> str | None:
     return state.current_line(line_id) if isinstance(line_id, str) and line_id else None
+
+
+def _standing(state: OrderState, line_id: Any) -> bool:
+    """Whether a discount on `line_id` still counts: on the whole check, or on a dish still on the check."""
+    current = _current(state, line_id)
+    if current is None:
+        return True
+    line = state.lines.get(current)
+    return line is not None and line.active
 
 
 def _tally(totals: dict[str, Decimal], key: str, amount: Decimal) -> None:
