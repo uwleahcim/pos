@@ -84,5 +84,7 @@ Layout:
 
 The app can be a phone on the restaurant's FreePBX: Settings, Phone, then the PBX address, this terminal's
 extension and its secret. It registers over a secure WebSocket (port 8089) and carries the audio as WebRTC
-media; a call rings as a banner over any screen. The PBX side, the device steps and what is not there yet are
-in [`spikes/softphone`](../../spikes/softphone/README.md).
+media; a call rings as a banner over any screen, with a ring of its own on Mac, iPad, iPhone and Android alike
+(`assets/sounds/ring.wav`, made by `python3 tool/make_ring.py`; it follows the ring volume on Android and plays
+over the silent switch on iOS, since a terminal that is a phone has to ring). The PBX side, the device steps and
+what is not there yet are in [`spikes/softphone`](../../spikes/softphone/README.md).

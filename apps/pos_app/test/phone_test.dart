@@ -185,6 +185,27 @@ void main() {
       expect(phone.answeredAt, now);
     });
 
+    test('knows it is answering from the tap until the PBX confirms', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      expect(phone.answering, isFalse);
+      phone.answer();
+      expect(phone.answering, isTrue);
+      expect(phone.state, PhoneState.ringing);
+      stack.events!.callAccepted('c1');
+      expect(phone.answering, isFalse);
+      expect(phone.state, PhoneState.inCall);
+    });
+
+    test('an answer the PBX never confirms is over when the call ends', () async {
+      await register();
+      stack.events!.incomingCall('c1', number: '7815551234');
+      phone.answer();
+      stack.events!.callEnded('c1', '488 Not Acceptable Here');
+      expect(phone.answering, isFalse);
+      expect(phone.state, PhoneState.registered);
+    });
+
     test('a refreshed registration during a call changes nothing', () async {
       await register();
       stack.events!.incomingCall('c1', number: '7815551234');

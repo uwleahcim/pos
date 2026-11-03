@@ -40,6 +40,7 @@ dependencies:
   camera_macos: ^0.1.1
   image: ^4.12.0
   sip_ua: ^1.1.0
+  audioplayers: ^6.8.1
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +63,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/sounds/ring.wav
 
   # To add assets to your application, add an assets section, like this:
   # assets:

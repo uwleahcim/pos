@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'asset_ringer.dart';
 import 'cache.dart';
 import 'camera.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
 import 'print_relay.dart';
+import 'ringer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
 import 'screens/settings_screen.dart';
@@ -35,6 +37,8 @@ Future<void> main() async {
   final phone = PhoneClient(SipUaStack());
   unawaited(phone.apply(settings.phone));
   settings.addListener(() => unawaited(phone.apply(settings.phone)));
+  // The ring, on every platform, for as long as the banner shows.
+  CallRinger(phone, AssetRinger());
   runApp(
     PosApp(
       settings: settings,
