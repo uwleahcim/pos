@@ -104,9 +104,15 @@ All in the FreePBX admin, with **Apply Config** after each step.
    Intrusion Detection, Whitelist, so a mistyped secret cannot ban the restaurant. The firewall's own
    **Webrtc** service (8088 and 8089) is attached to the Internal zone only, and the External zone allows
    nothing but VPN, so an address in no zone is dropped silently on 8089.
-7. **A way to ring it.** For the first test nothing more: dial `301` from a desk phone. To ring 301 from the
-   restaurant's number, add it where that number lands today: Applications, Queues, `default`, Static Agents
-   `301`, or the ring group the inbound route points at.
+7. **A way to ring it.** For the first test nothing more: dial `301` from a desk phone. The restaurant's
+   number has no inbound route of its own: it takes the catch-all route, through call recording and the
+   LookGood caller-ID rewrite, to **Ring Group 600 "Ring All"**, which rings every listed extension at once
+   for 30 seconds and then starts over (there is no queue on this PBX; Asterisk's `default` is the empty stock
+   entry). To ring a terminal from the number, add its extension under Applications, Ring Groups, 600,
+   Extension List; 301 and 302 are in it since 2026-11-03. A queue (Applications, Queues, then point the
+   catch-all route at it) would let callers wait in line with music or ringing instead of ringing on, skip
+   busy agents and pause agents, which the phase 3 connector could drive; whether the restaurant wants that
+   is a later decision, the ring group is enough for now.
 
 ## Device setup
 
@@ -127,8 +133,8 @@ All in the FreePBX admin, with **Apply Config** after each step.
 1. From a desk phone dial 301: the app shows the banner. Answer; talk both ways; Mute; Hang up. Note the audio
    at the host stand with the speaker, then with a headset.
 2. Hang up from the other side: the strip disappears and the terminal is registered again.
-3. Call the restaurant's number from a cell (after PBX step 7): the terminal rings together with the desk
-   phones; answer in the app; the others stop.
+3. Call the restaurant's number from a cell: the terminal rings together with the desk phones; answer in
+   the app; the others stop.
 4. Second call while on a call: the app answers busy; the ring group carries it to the other phones.
 
 ## Troubleshooting
@@ -152,7 +158,8 @@ Settings, Phone shows the PBX's answer under the switch; a release build logs no
 
 **Passed, 2026-11-03.** With the PBX set up as above, the iPhone (extension 302) and the Mac (301) register,
 ring with the caller's number, answer with audio both ways, mute and hang up, called from a desk phone
-(extension 200). Not yet tried: a call from the restaurant's number through the queue (step 7).
+(extension 200). Later the same day a call from a cell to the restaurant's number rang ring group 600 and
+the Mac (301) answered it.
 
 What it took, all found the same day: the PBX's HTTPS server was bound to `127.0.0.1`, the HTTP Prefix was
 `8089`, and extension 301 lacked AVPF and ICE because FreePBX's WebRTC switch had not applied them (found
@@ -161,6 +168,7 @@ over SSH and in a SIP capture; steps 2 and 4 now say so). On the app side the Ma
 
 The first version built on this the same day (the Phone section of [`apps/pos_app/README.md`](../../apps/pos_app/README.md)):
 a ring on every platform, the caller's number into a to-go order, hold, a keypad and transfer on the call
-strip, and the phone's state in the status icon. Still open: the restaurant's own public address in the
-firewall's Trusted zone before the terminals move there (step 6), a call through the queue (step 7), and
-ringing a locked iPad or phone (a push relay).
+strip, and the phone's state in the status icon. Done the same day on the PBX: the restaurant's public
+address in the Trusted zone and the Intrusion Detection whitelist (step 6), 301 and 302 in ring group 600 and
+the call from a cell answered on the Mac (step 7). Still open: whether a queue should replace the ring group
+(step 7), and ringing a locked iPad or phone (a push relay).
