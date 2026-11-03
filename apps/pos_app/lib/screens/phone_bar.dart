@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../phone.dart';
 
 /// Sits over every screen. While a call rings: a banner with the caller, Answer and Decline. During a call:
-/// a small strip at the top with the caller, the call time, mute and hang up. Otherwise nothing.
+/// a small strip at the top with the caller, the call time, mute and hang up. Otherwise nothing. The ring itself
+/// is the [CallRinger]'s, wired beside the phone in main.dart.
 class PhoneBar extends StatefulWidget {
   const PhoneBar({super.key, required this.client, required this.child});
 
@@ -44,8 +44,6 @@ class _PhoneBarState extends State<PhoneBar> {
   }
 
   void _onTick() {
-    // The Mac rings with its alert sound; phones and tablets stay silent until they get a ringtone of their own.
-    if (widget.client.state == PhoneState.ringing) SystemSound.play(SystemSoundType.alert);
     if (mounted) setState(() {});
   }
 
@@ -91,6 +89,8 @@ class _RingingBanner extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final name = client.callerName?.trim() ?? '';
+    // Once Answer is tapped the buttons wait for the PBX, so a second tap (or a Decline on top) does nothing.
+    final waiting = client.answering;
     return Material(
       elevation: 6,
       color: scheme.inverseSurface,
@@ -125,14 +125,14 @@ class _RingingBanner extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 FilledButton.icon(
-                  onPressed: client.answer,
+                  onPressed: waiting ? null : client.answer,
                   style: FilledButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
                   icon: const Icon(Icons.call),
-                  label: const Text('Answer'),
+                  label: Text(waiting ? 'Answering…' : 'Answer'),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: client.decline,
+                  onPressed: waiting ? null : client.decline,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: scheme.onInverseSurface,
                     side: BorderSide(color: scheme.onInverseSurface.withValues(alpha: 0.5)),

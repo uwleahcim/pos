@@ -48,6 +48,22 @@ void main() {
     expect(stack.answered, ['c1']);
   });
 
+  testWidgets('after Answer the buttons wait for the PBX, so a second tap does nothing', (tester) async {
+    await pumpBar(tester);
+    stack.events!.incomingCall('c1', number: '7815551234');
+    await tester.pump();
+    await tester.tap(find.text('Answer'));
+    await tester.pump();
+    expect(find.text('Answering…'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Answering…')).onPressed, isNull);
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Decline')).onPressed, isNull);
+    expect(stack.answered, ['c1']);
+    stack.events!.callAccepted('c1');
+    await tester.pump();
+    expect(find.text('Answering…'), findsNothing);
+    expect(find.byIcon(Icons.call_end), findsOneWidget);
+  });
+
   testWidgets('declines on tap', (tester) async {
     await pumpBar(tester);
     stack.events!.incomingCall('c1', number: '7815551234');

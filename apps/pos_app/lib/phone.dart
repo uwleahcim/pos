@@ -139,6 +139,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   String? _callerNumber;
   String? _callerName;
   bool _muted = false;
+  bool _answering = false;
   DateTime? _answeredAt;
 
   PhoneSettings get settings => _settings;
@@ -149,6 +150,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   String? get callerNumber => _callerNumber;
   String? get callerName => _callerName;
   bool get muted => _muted;
+
+  /// Answer was tapped and the PBX has not confirmed the call yet: the ring stops and the banner's buttons wait.
+  bool get answering => _answering;
   DateTime? get answeredAt => _answeredAt;
   bool get running => _started;
   bool get onCall => _state == PhoneState.ringing || _state == PhoneState.inCall;
@@ -182,12 +186,17 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     notifyListeners();
   }
 
+  /// Listeners hear about the answer before the stack starts on it, so the ring is told to stop before the call's
+  /// audio is set up (on iOS the two share one audio session).
   void answer() {
-    if (_state == PhoneState.ringing && _callId != null) _stack.answer(_callId!);
+    if (_state != PhoneState.ringing || _callId == null || _answering) return;
+    _answering = true;
+    notifyListeners();
+    _stack.answer(_callId!);
   }
 
   void decline() {
-    if (_state == PhoneState.ringing && _callId != null) _stack.decline(_callId!);
+    if (_state == PhoneState.ringing && _callId != null && !_answering) _stack.decline(_callId!);
   }
 
   void hangUp() {
@@ -235,6 +244,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     _callerNumber = number;
     _callerName = name;
     _muted = false;
+    _answering = false;
     _answeredAt = null;
     _state = PhoneState.ringing;
     notifyListeners();
@@ -244,6 +254,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   void callAccepted(String callId) {
     if (callId != _callId || _state == PhoneState.inCall) return;
     _state = PhoneState.inCall;
+    _answering = false;
     _answeredAt = _clock();
     notifyListeners();
   }
@@ -261,6 +272,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     _callerNumber = null;
     _callerName = null;
     _muted = false;
+    _answering = false;
     _answeredAt = null;
   }
 }
