@@ -123,6 +123,15 @@ void main() {
     expect(estimateCheck(read, removed, const {}).total, '0.00');
   });
 
+  test('a price change reads with its sign, and what a discount took off in parentheses', () {
+    expect(priceChange('0.50'), '+0.50');
+    expect(priceChange('-2.00'), '(2.00)');
+    expect(priceChange('0.00'), '');
+    expect(priceChange('0'), '');
+    expect(inParens('30.00'), '(30.00)');
+    expect(inParens('-30.00'), '(30.00)');
+  });
+
   test('a check line reads its choices from a hub that sends labels alone or with what each adds', () {
     final line = CheckLine.fromJson({
       'line_id': 'L1',

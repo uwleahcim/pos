@@ -285,6 +285,17 @@ Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
   return out;
 }
 
+/// What a choice changes on a line, with its sign: "+0.50"; a choice that takes something off reads the
+/// accounting way, "(2.00)"; one that changes nothing reads as nothing.
+String priceChange(String amount) {
+  final value = cents(amount);
+  if (value == 0) return '';
+  return value > 0 ? '+${money(value)}' : inParens(amount);
+}
+
+/// What a discount took off, the accounting way: "(30.00)".
+String inParens(String amount) => '(${money(cents(amount).abs())})';
+
 /// A line's choices with what each adds for [qty] of the dish.
 List<CheckModifier> _forQty(List<CheckModifier> modifiers, int qty) => [
   for (final m in modifiers) CheckModifier(m.label, price: m.price, amount: money(cents(m.price) * qty)),

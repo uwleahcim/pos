@@ -75,5 +75,7 @@ Layout:
   full rows.
 - `lib/screens/comp_menu.dart` the comp menu a held price opens: the reasons the rules allow on one dish,
   what each gives, how much when the reason has a range, and taking a comp off again. On the check each
-  choice on a dish is a line of its own with what it adds, and a comp follows the dish through an edit: the
-  new line says which line it replaces (`Line.replaces`), on the hub and in the estimate here.
+  choice on a dish is a line of its own with what it changes ("+0.50"), a discount follows the choices with
+  what it took off, "(30.00)", and the dish's old price is struck through over the new one. A comp follows
+  the dish through an edit: the new line says which line it replaces (`Line.replaces`), on the hub and in
+  the estimate here.
