@@ -171,6 +171,14 @@ abstract interface class SipStack {
   void hangUp(String callId);
   void decline(String callId);
   void setMuted(String callId, bool on);
+  void setHeld(String callId, bool on);
+
+  /// Plays these keys (`0`-`9`, `*`, `#`) to the other side, one after the other.
+  void sendDtmf(String callId, String tones);
+
+  /// Hands the call to another extension or number and leaves it (a blind transfer); the PBX then ends this
+  /// side of the call.
+  void transfer(String callId, String target);
 }
 
 /// The phone on this terminal: registration with the PBX and at most one call at a time. A second call while
@@ -189,7 +197,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   String? _callerNumber;
   String? _callerName;
   bool _muted = false;
+  bool _held = false;
   bool _answering = false;
+  String _typed = '';
   DateTime? _answeredAt;
   Caller? _recent;
   DateTime? _recentAt;
@@ -210,6 +220,12 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   String? get callerNumber => _callerNumber;
   String? get callerName => _callerName;
   bool get muted => _muted;
+
+  /// The caller is on hold, hearing the PBX's music.
+  bool get held => _held;
+
+  /// What was typed on the keypad and not used yet: the tones to send, or whom to transfer to.
+  String get typed => _typed;
 
   /// Answer was tapped and the PBX has not confirmed the call yet: the ring stops and the banner's buttons wait.
   bool get answering => _answering;
@@ -292,6 +308,44 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     notifyListeners();
   }
 
+  void toggleHold() {
+    if (_state != PhoneState.inCall || _callId == null) return;
+    _held = !_held;
+    _stack.setHeld(_callId!, _held);
+    notifyListeners();
+  }
+
+  static final _keys = RegExp(r'^[0-9*#]$');
+
+  /// One keypad key; anything that is not one is ignored.
+  void type(String key) {
+    if (_state != PhoneState.inCall || !_keys.hasMatch(key)) return;
+    _typed += key;
+    notifyListeners();
+  }
+
+  void backspace() {
+    if (_typed.isEmpty) return;
+    _typed = _typed.substring(0, _typed.length - 1);
+    notifyListeners();
+  }
+
+  /// Plays what was typed to the other side (a menu, a voicemail box), and clears it.
+  void sendTones() {
+    if (_state != PhoneState.inCall || _callId == null || _typed.isEmpty) return;
+    _stack.sendDtmf(_callId!, _typed);
+    _typed = '';
+    notifyListeners();
+  }
+
+  /// Hands the call to the extension or number typed and clears it; the call ends here when the PBX takes it.
+  void transfer() {
+    if (_state != PhoneState.inCall || _callId == null || _typed.isEmpty) return;
+    _stack.transfer(_callId!, _typed);
+    _typed = '';
+    notifyListeners();
+  }
+
   @override
   void registered() {
     if (!_started || onCall) return;
@@ -356,7 +410,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     _callerNumber = null;
     _callerName = null;
     _muted = false;
+    _held = false;
     _answering = false;
+    _typed = '';
     _answeredAt = null;
   }
 }

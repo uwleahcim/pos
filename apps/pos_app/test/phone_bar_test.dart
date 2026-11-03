@@ -88,12 +88,17 @@ void main() {
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer();
     addTearDown(mouse.removePointer);
-    await mouse.moveTo(tester.getCenter(find.byIcon(Icons.mic)));
+    await mouse.moveTo(tester.getCenter(find.byIcon(Icons.pause)));
     await tester.pump(const Duration(seconds: 2));
     expect(tester.takeException(), isNull);
-    await tester.tap(find.byIcon(Icons.mic));
+    await tester.tap(find.byIcon(Icons.pause));
     await tester.pump();
-    expect(stack.muted, [('c1', true)]);
+    expect(stack.held, [('c1', true)]);
+    // the keypad panel too, with its buttons
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pump();
+    await mouse.moveTo(tester.getCenter(find.text('Transfer')));
+    await tester.pump(const Duration(seconds: 2));
     expect(tester.takeException(), isNull);
   });
 
@@ -112,7 +117,7 @@ void main() {
     stack.events!.registered();
     stack.events!.incomingCall('c1', number: '7815551234');
     await tester.pump();
-    expect(find.bySemanticsLabel('To go'), findsNothing); // not before it is answered
+    expect(find.byIcon(Icons.shopping_bag_outlined), findsNothing); // not before it is answered
     stack.events!.callAccepted('c1');
     await tester.pump();
     await tester.tap(find.byIcon(Icons.shopping_bag_outlined));
@@ -130,13 +135,16 @@ void main() {
     expect(find.byIcon(Icons.shopping_bag_outlined), findsNothing);
   });
 
-  testWidgets('in a call shows the number, mute and hang up', (tester) async {
+  testWidgets('in a call shows the number, hold and hang up; mute sits behind More', (tester) async {
     await pumpBar(tester);
     stack.events!.incomingCall('c1', number: '7815551234');
     stack.events!.callAccepted('c1');
     await tester.pump();
     expect(find.text('Answer'), findsNothing);
     expect(find.text('781 555 1234'), findsOneWidget);
+    expect(find.byIcon(Icons.mic), findsNothing);
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pump();
     await tester.tap(find.byIcon(Icons.mic));
     await tester.pump();
     expect(stack.muted, [('c1', true)]);
@@ -146,5 +154,57 @@ void main() {
     stack.events!.callEnded('c1', 'Terminated');
     await tester.pump();
     expect(find.byIcon(Icons.call_end), findsNothing);
+    expect(find.text('Transfer'), findsNothing); // the panel went with the call
+  });
+
+  testWidgets('holds and resumes from the strip', (tester) async {
+    await pumpBar(tester);
+    stack.events!.incomingCall('c1', number: '7815551234');
+    stack.events!.callAccepted('c1');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.pause));
+    await tester.pump();
+    expect(stack.held, [('c1', true)]);
+    expect(find.text('On hold'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.play_arrow));
+    await tester.pump();
+    expect(stack.held, [('c1', true), ('c1', false)]);
+    expect(find.text('On hold'), findsNothing);
+  });
+
+  testWidgets('More opens a keypad that sends tones or transfers the call to what was typed', (tester) async {
+    await pumpBar(tester);
+    stack.events!.incomingCall('c1', number: '7815551234');
+    stack.events!.callAccepted('c1');
+    await tester.pump();
+    expect(find.text('Transfer'), findsNothing);
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pump();
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Transfer')).onPressed, isNull);
+    for (final key in ['2', '0', '0']) {
+      await tester.tap(find.byKey(ValueKey('key:$key')));
+    }
+    await tester.pump();
+    expect(find.text('200'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.backspace_outlined));
+    await tester.pump();
+    expect(find.text('20'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('key:0')));
+    await tester.pump();
+    await tester.tap(find.text('Transfer'));
+    await tester.pump();
+    expect(stack.transferred, [('c1', '200')]);
+    expect(find.text('200'), findsNothing); // typed digits are spent
+
+    await tester.tap(find.byKey(const ValueKey('key:1')));
+    await tester.tap(find.byKey(const ValueKey('key:#')));
+    await tester.pump();
+    await tester.tap(find.text('Send tones'));
+    await tester.pump();
+    expect(stack.tones, [('c1', '1#')]);
+
+    await tester.tap(find.byIcon(Icons.more_horiz)); // closes it again
+    await tester.pump();
+    expect(find.text('Transfer'), findsNothing);
   });
 }

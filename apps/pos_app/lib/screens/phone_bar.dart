@@ -5,9 +5,10 @@ import 'package:flutter/material.dart';
 import '../phone.dart';
 
 /// Sits over every screen. While a call rings: a banner with the caller, Answer and Decline. During a call:
-/// a small strip at the top with the caller, the call time, mute, hang up and, with [onOrder], To go: a to-go
-/// order for the caller. Otherwise nothing. The ring itself is the [CallRinger]'s, wired beside the phone in
-/// main.dart.
+/// a small strip at the top with the caller, the call time, Hold, Hang up, More and, with [onOrder], To go: a
+/// to-go order for the caller. More opens a panel under the strip with the keypad (tones to the other side, or
+/// the extension to transfer to) and Mute. Otherwise nothing. The ring itself is the [CallRinger]'s, wired
+/// beside the phone in main.dart.
 class PhoneBar extends StatefulWidget {
   const PhoneBar({super.key, required this.client, required this.child, this.onOrder});
 
@@ -24,6 +25,7 @@ class PhoneBar extends StatefulWidget {
 
 class _PhoneBarState extends State<PhoneBar> {
   Timer? _tick;
+  bool _more = false; // the keypad panel is open
 
   @override
   void initState() {
@@ -44,6 +46,7 @@ class _PhoneBarState extends State<PhoneBar> {
     } else {
       _tick?.cancel();
       _tick = null;
+      _more = false; // the panel goes with the call
     }
     if (mounted) setState(() {});
   }
@@ -75,7 +78,22 @@ class _PhoneBarState extends State<PhoneBar> {
               bottom: false,
               child: Align(
                 alignment: Alignment.topCenter,
-                child: _CallStrip(client: client, onOrder: widget.onOrder),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _CallStrip(
+                      client: client,
+                      onOrder: widget.onOrder,
+                      more: _more,
+                      onMore: () => setState(() => _more = !_more),
+                    ),
+                    if (_more)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: _MorePanel(client: client),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -155,10 +173,12 @@ class _RingingBanner extends StatelessWidget {
 }
 
 class _CallStrip extends StatelessWidget {
-  const _CallStrip({required this.client, this.onOrder});
+  const _CallStrip({required this.client, this.onOrder, required this.more, required this.onMore});
 
   final PhoneClient client;
   final VoidCallback? onOrder;
+  final bool more;
+  final VoidCallback onMore;
 
   static String _clock(Duration? d) {
     if (d == null) return '0:00';
@@ -195,7 +215,10 @@ class _CallStrip extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(_clock(client.callDuration), style: theme.textTheme.bodySmall?.copyWith(color: onDark)),
+              Text(
+                client.held ? 'On hold' : _clock(client.callDuration),
+                style: theme.textTheme.bodySmall?.copyWith(color: client.held ? scheme.inversePrimary : onDark),
+              ),
               const SizedBox(width: 4),
               // No tooltips: the strip sits above the navigator (MaterialApp.builder), where a tooltip finds no
               // overlay to open in, which is a red box in a debug build and an exception on hover in a release.
@@ -206,17 +229,111 @@ class _CallStrip extends StatelessWidget {
                   icon: const Icon(Icons.shopping_bag_outlined, semanticLabel: 'To go'),
                 ),
               IconButton(
-                onPressed: client.toggleMute,
-                color: client.muted ? scheme.inversePrimary : onDark,
-                icon: Icon(client.muted ? Icons.mic_off : Icons.mic, semanticLabel: client.muted ? 'Unmute' : 'Mute'),
+                onPressed: client.toggleHold,
+                color: client.held ? scheme.inversePrimary : onDark,
+                icon: Icon(
+                  client.held ? Icons.play_arrow : Icons.pause,
+                  semanticLabel: client.held ? 'Resume' : 'Hold',
+                ),
               ),
               IconButton(
                 onPressed: client.hangUp,
                 color: Colors.red.shade300,
                 icon: const Icon(Icons.call_end, semanticLabel: 'Hang up'),
               ),
+              IconButton(
+                onPressed: onMore,
+                color: more ? scheme.inversePrimary : onDark,
+                icon: const Icon(Icons.more_horiz, semanticLabel: 'More'),
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Under the strip: the keypad, what it typed, and what to do with it (play it to the other side as tones, or
+/// transfer the call to that extension), plus Mute. Everything here works above the navigator too: no
+/// tooltips, no text fields (their selection handles need an overlay), only buttons.
+class _MorePanel extends StatelessWidget {
+  const _MorePanel({required this.client});
+
+  final PhoneClient client;
+
+  static const _keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final typed = client.typed;
+    return Material(
+      elevation: 4,
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 12, 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 3 * 52,
+              child: Wrap(
+                children: [
+                  for (final key in _keys)
+                    SizedBox(
+                      width: 52,
+                      height: 44,
+                      child: TextButton(
+                        key: ValueKey('key:$key'),
+                        onPressed: () => client.type(key),
+                        style: TextButton.styleFrom(foregroundColor: scheme.onSurface),
+                        child: Text(key, style: theme.textTheme.titleMedium),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 164,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          typed.isEmpty ? 'Type a number' : typed,
+                          overflow: TextOverflow.ellipsis,
+                          style: typed.isEmpty
+                              ? theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)
+                              : theme.textTheme.titleMedium?.copyWith(letterSpacing: 1.5),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: typed.isEmpty ? null : client.backspace,
+                        icon: const Icon(Icons.backspace_outlined, semanticLabel: 'Backspace'),
+                      ),
+                    ],
+                  ),
+                  FilledButton(onPressed: typed.isEmpty ? null : client.transfer, child: const Text('Transfer')),
+                  const SizedBox(height: 6),
+                  OutlinedButton(onPressed: typed.isEmpty ? null : client.sendTones, child: const Text('Send tones')),
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    onPressed: client.toggleMute,
+                    icon: Icon(client.muted ? Icons.mic_off : Icons.mic),
+                    label: Text(client.muted ? 'Unmute' : 'Mute'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

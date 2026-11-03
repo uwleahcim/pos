@@ -71,6 +71,25 @@ class SipUaStack implements SipStack, SipUaHelperListener {
   }
 
   @override
+  void setHeld(String callId, bool on) {
+    final call = _calls[callId];
+    if (call == null) return;
+    if (on) {
+      call.hold();
+    } else {
+      call.unhold();
+    }
+  }
+
+  @override
+  void sendDtmf(String callId, String tones) => _calls[callId]?.sendDTMF(tones);
+
+  /// A plain extension or number: sip_ua completes it with the PBX's domain and sends the REFER; when the PBX
+  /// accepts, sip_ua ends this side of the call.
+  @override
+  void transfer(String callId, String target) => _calls[callId]?.refer(target);
+
+  @override
   void transportStateChanged(TransportState state) {
     if (state.state == TransportStateEnum.DISCONNECTED) {
       _events?.disconnected(
