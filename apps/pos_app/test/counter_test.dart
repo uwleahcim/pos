@@ -94,6 +94,12 @@ class Hub {
   String? quotesAuth;
   bool paid = false;
 
+  /// What it answers for a caller's last order of the day (null: none), the numbers it was asked about, and
+  /// whether it is down for that call.
+  Map<String, dynamic>? lastOrder;
+  final lastOrderAsked = <String>[];
+  bool lastOrderDown = false;
+
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
@@ -101,6 +107,11 @@ class Hub {
   Future<http.Response> handle(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (path == '/orders/last') {
+      lastOrderAsked.add(request.url.queryParameters['phone'] ?? '');
+      if (lastOrderDown) return json({'detail': 'down'}, 503);
+      return json({'order': lastOrder});
+    }
     if (_ops.hasMatch(path)) {
       final id = _ops.firstMatch(path)!.group(1)!;
       final ops = (jsonDecode(request.body) as List).cast<Map<String, dynamic>>();

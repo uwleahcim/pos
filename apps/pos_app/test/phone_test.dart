@@ -217,6 +217,24 @@ void main() {
       expect(phone.answeredAt, now);
     });
 
+    test('counts the calls picked up here, once each, not the ones that end unanswered', () async {
+      await register();
+      expect(phone.answers, 0);
+      stack.events!.incomingCall('c1', number: '7815551234');
+      stack.events!.callEnded('c1', 'Answered elsewhere'); // another terminal in the ring group took it
+      expect(phone.answers, 0);
+      stack.events!.incomingCall('c2', number: '7815551234');
+      phone.answer();
+      stack.events!.callAccepted('c2');
+      stack.events!.callAccepted('c2'); // the stack's confirmation repeated
+      expect(phone.answers, 1);
+      stack.events!.callEnded('c2', null);
+      stack.events!.incomingCall('c3', number: '6175551234');
+      phone.answer();
+      stack.events!.callAccepted('c3');
+      expect(phone.answers, 2);
+    });
+
     test('knows it is answering from the tap until the PBX confirms', () async {
       await register();
       stack.events!.incomingCall('c1', number: '7815551234');

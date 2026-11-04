@@ -4,11 +4,13 @@ time, and the ready text behind a messenger that only logs."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
+from pos import localtime
 from pos.api.app import create_app
 from pos.menu.service import MenuService, load_definitions
 from pos.messaging import LogMessenger, text_for
@@ -26,7 +28,7 @@ from ..printing.fake_printer import decode
 
 TEA = {"unit_price": "10.00", "tax_class": "prepared_food", "name": "Tea"}
 NOW = T0 + 100  # the backend's clock in these tests
-DAY = datetime.fromtimestamp(T0 / 1000).date()
+DAY = localtime.day_of(T0)  # the location's day at that moment
 HOUR = 60 * 60_000
 
 
@@ -47,6 +49,7 @@ def client(
     printing: PrintService | None = None,
     messenger: LogMessenger | None = None,
     numbers: OrderNumbers | None = None,
+    today: Callable[[], date] = lambda: DAY,
 ) -> TestClient:
     store = store if store is not None else OpStore(physical=lambda: NOW)  # an empty store is falsy
     return TestClient(
@@ -57,7 +60,8 @@ def client(
             printing=printing or PrintService([]),
             messenger=messenger,
             location="China Sky",
-            numbers=numbers or OrderNumbers(store, today=lambda: DAY),
+            numbers=numbers or OrderNumbers(store, today=today),
+            today=today,
         )
     )
 

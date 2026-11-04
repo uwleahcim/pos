@@ -12,6 +12,7 @@ import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .. import localtime
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.preferences import PreferenceStore
@@ -27,6 +29,7 @@ from ..identity.tokens import Tokens
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
+from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.numbers import OrderNumbers
 from ..printing.jobs import PrintJob
@@ -392,6 +395,7 @@ def create_app(
     messenger: Messenger | None = None,
     location: str | None = None,
     numbers: OrderNumbers | None = None,
+    today: Callable[[], date] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
     app.state.menu = menu if menu is not None else default_menu()
@@ -407,7 +411,9 @@ def create_app(
     app.state.settings = settings if settings is not None else default_settings()
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or "the restaurant"
-    app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store)
+    # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
+    app.state.today = today if today is not None else localtime.today
+    app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
     app.state.notifier = Notifier(
         app.state.messenger,
         location=app.state.location,
@@ -472,6 +478,17 @@ def create_app(
             states = [state for state in states if state.status == status]
         states.sort(key=lambda state: state.last or _NEVER, reverse=True)
         return {"orders": [state.snapshot() for state in states], "cursor": store.cursor}
+
+    @app.get("/orders/last")  # before /orders/{order_id}, which would take "last" for an id
+    def read_last_order(phone: str = Query(min_length=1)) -> dict[str, Any]:
+        """The order this number opened last today, for the terminal that picks up its call: numbers match by
+        their digits, today is the location's day, a voided order does not count. `order` is null when the
+        number opened none today."""
+        store: OpStore | PgOpStore = app.state.store
+        day = app.state.today()
+        state = last_order(store, phone, day=day)
+        order = None if state is None else state.snapshot()
+        return {"phone": phone_digits(phone), "day": day.isoformat(), "order": order}
 
     @app.get("/orders/{order_id}")
     def read_order(order_id: str) -> dict[str, Any]:

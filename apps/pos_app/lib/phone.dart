@@ -204,6 +204,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   Caller? _recent;
   DateTime? _recentAt;
   int _orderRequests = 0;
+  int _answers = 0;
 
   /// How long after a call ends its caller is still the one to start an order for.
   static const recentFor = Duration(minutes: 10);
@@ -249,6 +250,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
 
   /// How many times To go was tapped on a call; the orders screen opens the order form on each change.
   int get orderRequests => _orderRequests;
+
+  /// How many calls this terminal has picked up; the orders screen opens the caller's order on each change.
+  int get answers => _answers;
 
   /// To go tapped on the call banner or strip: asks whatever screen listens to start an order for the caller.
   void startOrder() {
@@ -392,6 +396,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     _state = PhoneState.inCall;
     _answering = false;
     _answeredAt = _clock();
+    _answers++;
     notifyListeners();
   }
 
