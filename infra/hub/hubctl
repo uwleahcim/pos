@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply]
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink
 set -euo pipefail
 POS_HOME=/opt/pos
+POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
 
 # The secrets in /opt/pos are root's, so run as root.
 if [[ $EUID -ne 0 ]]; then
@@ -20,6 +21,8 @@ case "${1:-status}" in
     printf 'api:  '
     curl -fsS http://127.0.0.1:8000/health || printf 'down'
     echo
+    printf 'pbx:  '
+    curl -fsS http://127.0.0.1:8000/phones/status 2> /dev/null | jq -r 'if .configured then "\(.host) \(if .connected then "connected" else "NOT connected: \(.last_error // "")" end); \(.answers) answers, \(.pops) opened on a screen, \(.links) phones linked" else "not linked (hubctl pbx link)" end' || echo "unknown"
     printf 'time: '
     chronyc tracking 2> /dev/null | awk -F': *' '/^(Stratum|System time)/ {printf "%s %s; ", $1, $2}'
     echo
@@ -59,6 +62,67 @@ case "${1:-status}" in
     shift 2
     compose exec -T api python -m pos.menu.seed "$@"
     ;;
+  pbx)
+    # hubctl pbx key                         this hub's key for the PBX (made on first use): add it to the PBX's authorized_keys
+    # hubctl pbx link root@pbx.example.org   asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher
+    # hubctl pbx status                      the tunnel and what the API says about the PBX
+    # hubctl pbx tail                        prints each call as a desk phone answers it, as the hub sees it (Ctrl-C to stop)
+    # hubctl pbx unlink                      stops the tunnel and forgets the link, secret included
+    pbx_dir="$POS_HOME/pbx"
+    pbx_key() {
+      install -d -m 0700 -o "$POS_UID" -g "$POS_UID" "$pbx_dir"
+      if [[ ! -f "$pbx_dir/id_ed25519" ]]; then
+        ssh-keygen -q -t ed25519 -N '' -C "pos-$(hostname)" -f "$pbx_dir/id_ed25519"
+        chown "$POS_UID:$POS_UID" "$pbx_dir/id_ed25519" "$pbx_dir/id_ed25519.pub"
+      fi
+    }
+    unset_env() {
+      for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
+    }
+    case "${2:-status}" in
+      key)
+        pbx_key
+        echo "Add this line to /root/.ssh/authorized_keys on the PBX (from a machine that can reach it:"
+        echo "  ssh root@<pbx> 'echo \"<the line>\" >> ~/.ssh/authorized_keys'), then run hubctl pbx link root@<pbx>:"
+        echo
+        cat "$pbx_dir/id_ed25519.pub"
+        ;;
+      link)
+        [[ $# -ge 3 ]] || { echo "usage: hubctl pbx link user@pbx-host [ami-user]" >&2; exit 2; }
+        pbx_key
+        read -rsp "Secret of the AMI user ${4:-pos} (FreePBX > Settings > Asterisk Manager Users): " secret
+        echo
+        [[ -n "$secret" ]] || { echo "no secret given; nothing changed" >&2; exit 2; }
+        unset_env COMPOSE_PROFILES POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
+        (
+          umask 077
+          printf 'COMPOSE_PROFILES=pbx\nPOS_PBX_SSH=%s\nPOS_AMI_HOST=pbx\nPOS_AMI_USER=%s\nPOS_AMI_SECRET=%s\n' "$3" "${4:-pos}" "$secret" >> "$POS_HOME/.env"
+        )
+        compose up -d pbx api
+        echo "Linked to $3. In a few seconds, hubctl pbx status says whether the hub reached the PBX."
+        ;;
+      status)
+        compose ps pbx 2> /dev/null || echo "tunnel: not set up (hubctl pbx link)"
+        compose logs --tail=5 pbx 2> /dev/null || true
+        curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
+        ;;
+      tail)
+        # shellcheck disable=SC2016  # the variables are the container's, expanded in there
+        compose exec -T api sh -c 'exec python -m pos.phones.deskphones --host "$POS_AMI_HOST" --port "$POS_AMI_PORT" --user "$POS_AMI_USER" --secret-env POS_AMI_SECRET'
+        ;;
+      unlink)
+        unset_env COMPOSE_PROFILES POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
+        compose --profile pbx stop pbx 2> /dev/null || true
+        compose --profile pbx rm -f pbx 2> /dev/null || true
+        compose up -d api
+        echo "The hub no longer watches the PBX; the key in $pbx_dir stays."
+        ;;
+      *)
+        echo "usage: hubctl pbx key | link user@pbx-host [ami-user] | status | tail | unlink" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -66,7 +130,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply]" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink" >&2
     exit 2
     ;;
 esac

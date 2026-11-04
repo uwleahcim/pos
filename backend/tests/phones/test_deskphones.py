@@ -362,3 +362,28 @@ def test_the_api_runs_the_watcher_for_as_long_as_it_runs():
         assert spy.log == ["start"]
         assert c.get("/phones/status").json()["host"] == "pbx"
     assert spy.log == ["start", "stop"]
+
+
+def test_the_command_line_prints_each_answer_as_a_json_line():
+    import io
+    import json
+
+    from pos.phones.deskphones import watch
+
+    out = io.StringIO()
+
+    async def go():
+        async with FakePBX() as pbx:
+            from pos.phones.ami import AMIClient
+
+            async with AMIClient("127.0.0.1", pbx.port) as client:
+                await client.login("pos", "s3cret", events="call")
+                for event in ring_group_answer():
+                    await pbx.emit(**event)
+                await pbx.emit(**dial_end(TRUNK, "PJSIP/201-00000080", "ANSWER"))  # transferred on
+                return await watch(client, count=2, seconds=5, out=out)
+
+    assert asyncio.run(go()) == 2
+    first, second = (json.loads(line) for line in out.getvalue().splitlines())
+    assert (first["extension"], first["number"], first["name"]) == ("200", "+16175551234", "LINDA CHEN")
+    assert second["extension"] == "201" and second["linkedid"] == LINKED

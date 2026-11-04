@@ -173,3 +173,7 @@ order of the day, or the to-go form for a new one. Done the same day on the PBX:
 address in the Trusted zone and the Intrusion Detection whitelist (step 6), 301 and 302 in ring group 600 and
 the call from a cell answered on the Mac (step 7). Still open: whether a queue should replace the ring group
 (step 7), and ringing a locked iPad or phone (a push relay).
+
+Where taking the call in the app is not possible, a desk phone can be linked to a screen instead, with the
+same effect on pick-up: [`docs/desk-phones.md`](../../docs/desk-phones.md) (the hub watches the PBX's manager
+interface through an SSH tunnel; `hubctl pbx link`).

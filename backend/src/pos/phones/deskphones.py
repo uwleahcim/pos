@@ -18,17 +18,20 @@ caller's number is an outside one.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import json
 import logging
 import os
 import re
 import ssl
+import sys
 import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, TextIO
 
 from .ami import TRUNK_CONTEXTS, AMIClient, AMIError, Message, digits
 
@@ -294,3 +297,69 @@ def watcher_from_env(calls: AnsweredCalls) -> AmiWatcher | None:
     return AmiWatcher(
         host, port, os.environ.get("POS_AMI_USER") or "pos", os.environ.get("POS_AMI_SECRET", ""), calls, tls=tls
     )
+
+
+# --- command line: watch the answers on a live PBX -------------------------------------------------------------
+
+
+async def watch(
+    client: AMIClient, *, count: int | None = None, seconds: float | None = None, out: TextIO = sys.stdout
+) -> int:
+    """Print each outside call as an extension answers it, one JSON line each, as the hub would see it."""
+    tracker = CallTracker()
+    seen = 0
+
+    async def run() -> None:
+        nonlocal seen
+        async for packet in client.events():
+            answered = tracker.feed(packet)
+            if answered is None:
+                continue
+            seen += 1
+            print(json.dumps(asdict(answered)), file=out, flush=True)
+            if count is not None and seen >= count:
+                return
+
+    try:
+        await asyncio.wait_for(run(), seconds)
+    except TimeoutError:
+        pass
+    return seen
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m pos.phones.deskphones",
+        description="Print each outside call as an extension answers it, as the hub sees it (Ctrl-C to stop).",
+    )
+    parser.add_argument("--host", required=True, help="the PBX, or `pbx` for the hub's tunnel")
+    parser.add_argument("--port", type=int, default=5038)
+    parser.add_argument("--tls", action="store_true")
+    parser.add_argument("--user", default="pos")
+    parser.add_argument("--secret-env", default="AMI_SECRET", help="environment variable holding the secret")
+    parser.add_argument("--count", type=int, help="stop after this many answers")
+    parser.add_argument("--seconds", type=float, help="stop after this many seconds")
+    args = parser.parse_args(argv)
+    secret = os.environ.get(args.secret_env, "")
+    if not secret:
+        print(f"set {args.secret_env} to the AMI user's secret", file=sys.stderr)
+        return 2
+
+    async def run() -> int:
+        async with AMIClient(args.host, args.port, tls=args.tls) as client:
+            await client.login(args.user, secret, events="call")
+            print(f"watching {args.host}:{args.port} as {args.user}", file=sys.stderr)
+            return await watch(client, count=args.count, seconds=args.seconds)
+
+    try:
+        asyncio.run(run())
+    except (AMIError, ConnectionError, OSError, TimeoutError) as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
