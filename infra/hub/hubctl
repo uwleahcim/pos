@@ -63,8 +63,8 @@ case "${1:-status}" in
     compose exec -T api python -m pos.menu.seed "$@"
     ;;
   pbx)
-    # hubctl pbx key                         this hub's key for the PBX (made on first use): add it to the PBX's authorized_keys
-    # hubctl pbx link root@pbx.example.org   asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher
+    # hubctl pbx key                         this hub's key for the PBX (made on first use) and the command that adds it by hand
+    # hubctl pbx link root@pbx.example.org   puts the key on the PBX (its password once), asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher
     # hubctl pbx status                      the tunnel and what the API says about the PBX
     # hubctl pbx tail                        prints each call as a desk phone answers it, as the hub sees it (Ctrl-C to stop)
     # hubctl pbx unlink                      stops the tunnel and forgets the link, secret included
@@ -79,19 +79,44 @@ case "${1:-status}" in
     unset_env() {
       for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
     }
+    pbx_ssh() { # to the PBX as the tunnel goes: the hub's key, and the PBX's host key kept where the tunnel reads it
+      ssh -i "$pbx_dir/id_ed25519" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$pbx_dir/known_hosts" "$@"
+    }
+    pbx_line() { # the authorized_keys line: with it the hub may only forward to the manager port, no shell on the PBX
+      printf 'restrict,port-forwarding,permitopen="127.0.0.1:5038" %s\n' "$(cat "$pbx_dir/id_ed25519.pub")"
+    }
     case "${2:-status}" in
       key)
         pbx_key
-        echo "Add this line to /root/.ssh/authorized_keys on the PBX (from a machine that can reach it:"
-        echo "  ssh root@<pbx> 'echo \"<the line>\" >> ~/.ssh/authorized_keys'), then run hubctl pbx link root@<pbx>:"
+        line=$(pbx_line)
+        echo "This hub's key for the PBX. hubctl pbx link root@<pbx> puts it on the PBX itself (the PBX asks for root's"
+        echo "password once); to add it by hand instead, run this from any machine that reaches the PBX, as one line:"
         echo
-        cat "$pbx_dir/id_ed25519.pub"
+        echo "  ssh root@<pbx> 'echo \"${line//\"/\\\"}\" >> ~/.ssh/authorized_keys'"
+        echo
+        echo "$line"
         ;;
       link)
         [[ $# -ge 3 ]] || { echo "usage: hubctl pbx link user@pbx-host [ami-user]" >&2; exit 2; }
         pbx_key
-        read -rsp "Secret of the AMI user ${4:-pos} (FreePBX > Settings > Asterisk Manager Users): " secret
+        if pbx_ssh -o BatchMode=yes "$3" true 2> /dev/null; then
+          echo "The PBX accepts the hub's key."
+        else
+          echo "The PBX does not accept the hub's key yet: adding it (the PBX asks for the password of $3 once)."
+          line=$(pbx_line)
+          pbx_ssh "$3" "umask 077; mkdir -p ~/.ssh; grep -qxF '$line' ~/.ssh/authorized_keys 2> /dev/null || echo '$line' >> ~/.ssh/authorized_keys" \
+            || { echo "Could not add the key; nothing changed. hubctl pbx key prints it, to add by hand." >&2; exit 1; }
+          pbx_ssh -o BatchMode=yes "$3" true 2> /dev/null \
+            || { echo "The key is on the PBX, but the PBX still refuses it (sshd there does not read ~/.ssh/authorized_keys?); the link was not written." >&2; exit 1; }
+          echo "The PBX accepts the hub's key now."
+        fi
+        chown "$POS_UID:$POS_UID" "$pbx_dir/known_hosts" 2> /dev/null || true
+        saved=$(sed -nE 's/^POS_AMI_SECRET=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1)
+        keeps=""
+        [[ -z "$saved" ]] || keeps="; Enter keeps the saved one"
+        read -rsp "Secret of the AMI user ${4:-pos} (FreePBX > Settings > Asterisk Manager Users$keeps): " secret
         echo
+        secret=${secret:-$saved}
         [[ -n "$secret" ]] || { echo "no secret given; nothing changed" >&2; exit 2; }
         unset_env COMPOSE_PROFILES POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
         (
@@ -103,7 +128,11 @@ case "${1:-status}" in
         ;;
       status)
         compose ps pbx 2> /dev/null || echo "tunnel: not set up (hubctl pbx link)"
-        compose logs --tail=5 pbx 2> /dev/null || true
+        logs=$(compose logs --tail=5 pbx 2> /dev/null || true)
+        [[ -z "$logs" ]] || echo "$logs"
+        if grep -q "Permission denied (publickey" <<< "$logs"; then
+          echo "=> the PBX refuses the hub's key: hubctl pbx link again puts it there (hubctl pbx key prints it, to add by hand)"
+        fi
         curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
         ;;
       tail)

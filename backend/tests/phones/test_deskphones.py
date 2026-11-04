@@ -5,12 +5,13 @@ then opens the caller's order as if it had taken the call itself."""
 from __future__ import annotations
 
 import asyncio
+import socket
 import time
 
 import pytest
 
 from pos.phones.ami import Message
-from pos.phones.deskphones import AmiWatcher, Answered, AnsweredCalls, CallTracker, extension_of
+from pos.phones.deskphones import AmiWatcher, Answered, AnsweredCalls, CallTracker, _describe, extension_of
 from pos.settings import DEFAULTS, SettingStore, clean_desk_phones
 from tests.orders.test_menu_orders import client
 from tests.phones.fake_ami import FakePBX
@@ -387,3 +388,42 @@ def test_the_command_line_prints_each_answer_as_a_json_line():
     first, second = (json.loads(line) for line in out.getvalue().splitlines())
     assert (first["extension"], first["number"], first["name"]) == ("200", "+16175551234", "LINDA CHEN")
     assert second["extension"] == "201" and second["linkedid"] == LINKED
+
+
+def test_a_name_that_does_not_resolve_points_at_the_tunnel():
+    """The api reaches the PBX through the tunnel service, by name; with the tunnel down the name resolves to
+    nothing, which the status should say in those words rather than as a resolver error."""
+    err = socket.gaierror(-3, "Temporary failure in name resolution")
+    expected = "pbx does not resolve (Temporary failure in name resolution): the tunnel service is probably down"
+    assert _describe(err, "pbx") == expected
+    assert _describe(ConnectionRefusedError(111, "Connection refused"), "pbx") == "[Errno 111] Connection refused"
+    assert _describe(TimeoutError(), "pbx") == "TimeoutError"
+
+
+def test_a_pbx_whose_name_does_not_resolve_is_said_so_in_the_status(monkeypatch):
+    """On a hub the api names the tunnel service, `pbx`; while that service is down (the PBX refusing the hub's
+    key, say) the name resolves to nothing, and the status says so in those words."""
+
+    class NoSuchHost:
+        def __init__(self, *args, **kwargs): ...
+
+        async def __aenter__(self):
+            raise socket.gaierror(-3, "Temporary failure in name resolution")
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("pos.phones.deskphones.AMIClient", NoSuchHost)
+
+    async def go():
+        watcher = AmiWatcher("pbx", 5038, "pos", "secret", AnsweredCalls(lambda: {}), backoff=(0.01, 0.02))
+        watcher.start()
+        await until(lambda: watcher.status()["attempts"] >= 2)
+        status = watcher.status()
+        await watcher.stop()
+        return status
+
+    status = asyncio.run(go())
+    assert (status["connected"], status["connections"]) == (False, 0)
+    expected = "pbx does not resolve (Temporary failure in name resolution): the tunnel service is probably down"
+    assert status["last_error"] == expected

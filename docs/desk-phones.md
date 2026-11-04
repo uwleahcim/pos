@@ -44,18 +44,19 @@ setting changes; the PBX only has to accept the hub's SSH key.
 
 On the hub:
 
-1. `hubctl pbx key` prints the hub's public key (made on first use, kept in `/opt/pos/pbx`). Add it to
-   `/root/.ssh/authorized_keys` on the PBX, from a machine that already reaches the PBX by SSH:
-
-   ```
-   ssh root@freepbx.chinasky.org 'echo "ssh-ed25519 AAAA... pos-pos-hub1" >> ~/.ssh/authorized_keys'
-   ```
-
-2. `hubctl pbx link root@freepbx.chinasky.org` asks for the AMI user's secret (FreePBX, Settings, Asterisk
+1. `hubctl pbx link root@freepbx.chinasky.org` puts the hub's SSH key on the PBX (made on first use, kept in
+   `/opt/pos/pbx`; the PBX asks for root's password this once, and from then on the key alone opens the
+   tunnel). The line it adds to `/root/.ssh/authorized_keys` lets the key forward to the manager port and
+   nothing else: no shell on the PBX. Then it asks for the AMI user's secret (FreePBX, Settings, Asterisk
    Manager Users, user `pos`; the user needs `call` among its read rights, which it has), writes the link to
    `/opt/pos/.env` and starts the tunnel and the watcher. `hubctl pbx status` a few seconds later shows
-   the tunnel up and `"connected": true`; `hubctl status` has a `pbx:` line from then on.
-3. `hubctl pbx tail` prints each call as a desk phone answers it, with the extension and the caller, as the
+   the tunnel up and `"connected": true`; `hubctl status` has a `pbx:` line from then on. Run again later,
+   it finds the key accepted and only asks for the secret (Enter keeps the saved one).
+
+   To add the key by hand instead, `hubctl pbx key` prints the line and the one-line `ssh root@... 'echo
+   ... >> ~/.ssh/authorized_keys'` command that appends it, with the key filled in: paste that whole command,
+   not one from an example.
+2. `hubctl pbx tail` prints each call as a desk phone answers it, with the extension and the caller, as the
    hub sees it: the quickest check that the PBX reports what the links need. Pick up a desk phone on a
    test call and the line appears.
 
@@ -105,7 +106,8 @@ answers from whichever hub it talks to, and the same call is one call on both.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `hubctl pbx status`: the tunnel restarts, log says `Permission denied (publickey)` | The hub's key is not on the PBX | Step 1 again; check `/root/.ssh/authorized_keys` on the PBX |
+| `hubctl pbx status`: the tunnel restarts, log says `Permission denied (publickey)` | The hub's key is not on the PBX (a line pasted from an example, `AAAA...`, is not the key) | `hubctl pbx link` again: it puts the key on the PBX; or check `/root/.ssh/authorized_keys` there holds the line `hubctl pbx key` prints |
+| `"connected": false`, `last_error` `pbx does not resolve ...: the tunnel service is probably down` | The tunnel container is not running (as a rule the row above), so its name `pbx` resolves to nothing | `hubctl pbx status` shows the tunnel's log; fix what it says and the watcher connects on its own |
 | Log says `Host key verification failed` | The PBX was reinstalled since the first connection | Delete `/opt/pos/pbx/known_hosts` on the hub, `hubctl restart` |
 | `"connected": false`, `last_error` `Authentication failed` | The AMI secret | `hubctl pbx link` again with the secret from FreePBX |
 | `last_error` `Connection refused` | The tunnel is down, or Asterisk's manager interface is off | `hubctl logs pbx`; on the PBX `asterisk -rx "manager show settings"` |
