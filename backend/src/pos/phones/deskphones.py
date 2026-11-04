@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import socket
 import ssl
 import sys
 import threading
@@ -195,6 +196,14 @@ class AnsweredCalls:
             self._calls.popleft()
 
 
+def _describe(err: BaseException, host: str) -> str:
+    """The error as the status shows it. The hub reaches the PBX through the tunnel service, by name, so a name
+    that does not resolve is that service being down, as a rule, which is worth saying in those words."""
+    if isinstance(err, socket.gaierror):
+        return f"{host} does not resolve ({err.strerror or err}): the tunnel service is probably down"
+    return str(err) or type(err).__name__
+
+
 class AmiWatcher:
     """One connection to the PBX's manager interface for as long as the API runs: logs in for call events,
     feeds them to the tracker, records the answers, and reconnects with a growing pause after any drop."""
@@ -280,7 +289,7 @@ class AmiWatcher:
                 raise
             except (AMIError, ConnectionError, OSError, TimeoutError, ssl.SSLError) as err:
                 self._since = None
-                self._last_error = str(err) or type(err).__name__
+                self._last_error = _describe(err, self.host)
                 log.warning("PBX link %s:%s: %s; trying again in %.0f s", self.host, self.port, self._last_error, delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._backoff[1])
