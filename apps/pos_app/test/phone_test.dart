@@ -107,6 +107,11 @@ void main() {
       expect(const Caller(number: '7815551234', name: 'Unknown').displayName, isNull);
       expect(const Caller(number: '7815551234', name: 'ANONYMOUS').displayName, isNull);
       expect(const Caller(number: '7815551234', name: 'Unavailable').displayName, isNull);
+      expect(
+        const Caller(number: '7815551234', name: '<unknown>').displayName,
+        isNull,
+      ); // Asterisk, for a trunk without one
+      expect(const Caller(number: '7815551234', name: 'Withheld').displayName, isNull);
       expect(const Caller(number: '7815551234', name: '').displayName, isNull);
       expect(const Caller(number: '7815551234').displayName, isNull);
     });

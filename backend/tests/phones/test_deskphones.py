@@ -11,7 +11,15 @@ import time
 import pytest
 
 from pos.phones.ami import Message
-from pos.phones.deskphones import AmiWatcher, Answered, AnsweredCalls, CallTracker, _describe, extension_of
+from pos.phones.deskphones import (
+    AmiWatcher,
+    Answered,
+    AnsweredCalls,
+    CallTracker,
+    _describe,
+    caller_name,
+    extension_of,
+)
 from pos.settings import DEFAULTS, SettingStore, clean_desk_phones
 from tests.orders.test_menu_orders import client
 from tests.phones.fake_ami import FakePBX
@@ -427,3 +435,33 @@ def test_a_pbx_whose_name_does_not_resolve_is_said_so_in_the_status(monkeypatch)
     assert (status["connected"], status["connections"]) == (False, 0)
     expected = "pbx does not resolve (Temporary failure in name resolution): the tunnel service is probably down"
     assert status["last_error"] == expected
+
+
+# --- the caller's name, when the trunk gave one -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw", ["<unknown>", "unknown", "ANONYMOUS", "Unavailable", "<Restricted>", "private", "Withheld", "  "]
+)
+def test_the_trunks_words_for_no_name_are_no_name(raw):
+    assert caller_name(raw) == ""
+
+
+def test_a_name_the_trunk_did_give_stays_as_given():
+    assert caller_name(" LINDA CHEN ") == "LINDA CHEN"
+    assert caller_name("Unknown Bakery") == "Unknown Bakery"
+
+
+def test_a_twilio_call_without_a_caller_name_reaches_the_screen_without_one():
+    """Twilio sends no caller name and Asterisk reports `<unknown>`, which is not a customer's name: the answer
+    carries none, whether the hub saw the call from its first channel or only at the pick-up."""
+    tracker = CallTracker()
+    caller = {"CallerIDNum": "+17816005224", "CallerIDName": "<unknown>"}
+    tracker.feed(newchannel(TRUNK, "from-pstn-e164-us", "+17817296899", LINKED, LINKED, **caller))
+    answer = tracker.feed(dial_end("Local/200@from-internal-00000040;2", "PJSIP/200-00000060", "ANSWER", **caller))
+    assert answer is not None and (answer.number, answer.name) == ("+17816005224", "")
+    late = CallTracker()
+    answer = late.feed(
+        dial_end("Local/200@from-internal-00000040;2", "PJSIP/200-00000060", "ANSWER", linkedid="y", **caller)
+    )
+    assert answer is not None and (answer.number, answer.name) == ("+17816005224", "")

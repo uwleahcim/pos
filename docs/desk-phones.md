@@ -21,7 +21,8 @@ caller ──▶ PBX (FreePBX) ──▶ ring group 600 ──▶ desk phone 200
 - The app on every device asks its hub for such answers: every second while a phone is linked to it, every
   ten seconds while none is. A fresh answer (less than 45 seconds old) does what picking up in the app
   does: the hub is asked for the number's last order of the day (`GET /orders/last`), which opens; with
-  none, the to-go form opens with the number, the phone channel and the caller-ID name. Only while someone
+  none, the to-go form opens with the number, the phone channel and the caller-ID name, when the trunk gave
+  one (`<unknown>`, Anonymous and the like are no name). Only while someone
   is signed in on that device, as with a call taken in the app; a call picked up just before someone signs
   in still opens when the orders screen comes up, if it is fresh.
 - The links are a location setting, like coursing and quote times: a manager links extensions to device

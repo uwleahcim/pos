@@ -110,12 +110,13 @@ class Caller {
   final String? name;
 
   /// The trunk's words for no name at all.
-  static const _noName = {'unknown', 'anonymous', 'unavailable', 'restricted', 'private'};
+  static const _noName = {'unknown', 'anonymous', 'unavailable', 'restricted', 'private', 'withheld'};
 
   /// The name as an order's customer name: null when there is none, when it only repeats the number, or when it
-  /// is the trunk's word for no name (Unknown, Anonymous, Unavailable, Restricted, Private).
+  /// is the trunk's word for no name (Unknown, Anonymous, Unavailable, Restricted, Private, Withheld; Asterisk
+  /// writes `<unknown>` for a trunk that sent none).
   String? get displayName {
-    final text = name?.trim() ?? '';
+    final text = (name ?? '').replaceAll(RegExp(r'^\s*<+|>+\s*$'), '').trim();
     if (text.isEmpty || _noName.contains(text.toLowerCase())) return null;
     final digits = text.replaceAll(RegExp(r'\D'), '');
     if (digits.isNotEmpty && digits == text.replaceAll(RegExp(r'[\s().+-]'), '')) {
