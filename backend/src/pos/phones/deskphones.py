@@ -218,7 +218,7 @@ class AmiWatcher:
         *,
         tls: bool = False,
         tracker: CallTracker | None = None,
-        backoff: tuple[float, float] = (1.0, 30.0),
+        backoff: tuple[float, float] = (1.0, 10.0),
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.host, self.port, self.user, self.tls = host, port, user, tls
