@@ -6,6 +6,8 @@
 - `coursing`: whether dishes are coursed at all, the courses by name in the order the kitchen serves them
   (any number of them; the standard four to start) and which course a new dish goes to. A line in the order
   log carries only its course's id, so a course can be renamed or moved without touching any order.
+- `desk_phones`: which screen each desk phone is linked to (a PBX extension to a device name), so a call
+  taken on the phone opens the caller's order on that screen (`pos/phones/deskphones.py`).
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -39,7 +41,12 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "pay_at_pickup": ["phone"],
     },
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
+    "desk_phones": {"links": []},
 }
+EXTENSION = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+"""A PBX extension (the endpoint's name): digits as a rule, never spaces or slashes."""
+DEVICE = re.compile(r"^[A-Za-z0-9]{1,40}$")
+"""A device name as the app keeps it: letters and digits only."""
 COURSE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 """A course's id: short, no spaces, never `*` (which a `fire` uses for every course)."""
 COURSE_NAME_MAX = 40
@@ -115,6 +122,33 @@ def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:
     elif not any(c["id"] == default for c in courses):
         raise ValueError(f"the default course {default!r} is not on the list")
     return {"enabled": enabled, "default": default, "courses": courses}
+
+
+def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The desk phone links as the app may set them, checked: `links`, a list of `{extension, device}`, each
+    extension once (a phone rings one screen; a screen may have several phones). Raises ValueError on a bad
+    value."""
+    raw = data.get("links") or []
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("links must be a list of {extension, device}")
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in raw:
+        extension = str(entry.get("extension") or "").strip()
+        device = str(entry.get("device") or "").strip()
+        if not extension:
+            raise ValueError("every link needs the phone's extension")
+        if not EXTENSION.match(extension):
+            raise ValueError(f"an extension is digits or letters, not {extension!r}")
+        if not device:
+            raise ValueError(f"the link for extension {extension} needs a device name")
+        if not DEVICE.match(device):
+            raise ValueError(f"a device name is letters and digits, as the app shows it, not {device!r}")
+        if extension in seen:
+            raise ValueError(f"extension {extension} is linked twice")
+        seen.add(extension)
+        links.append({"extension": extension, "device": device})
+    return {"links": links}
 
 
 def _new_course_id(name: str, taken: set[str]) -> str:

@@ -10,7 +10,8 @@ import base64
 import binascii
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -32,10 +33,11 @@ from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rul
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.numbers import OrderNumbers
+from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
-from ..settings import SettingStore, clean_coursing, clean_quotes, default_settings
+from ..settings import SettingStore, clean_coursing, clean_desk_phones, clean_quotes, default_settings
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
@@ -192,6 +194,17 @@ class CoursingIn(BaseModel):
     enabled: bool = True
     default: str | None = Field(None, description="the course a new dish goes to; the first one when left out")
     courses: list[CourseIn] = Field(default_factory=list)
+
+
+class DeskPhoneLinkIn(BaseModel):
+    extension: str = Field(description="the desk phone's extension on the PBX")
+    device: str = Field(description="the device name the app shows under Settings")
+
+
+class DeskPhonesIn(BaseModel):
+    """Which screen each desk phone is linked to: a call taken on the phone opens the caller's order there."""
+
+    links: list[DeskPhoneLinkIn] = Field(default_factory=list)
 
 
 PAYMENT_METHODS = frozenset({"cash", "elsewhere", "card"})
@@ -396,8 +409,22 @@ def create_app(
     location: str | None = None,
     numbers: OrderNumbers | None = None,
     today: Callable[[], date] | None = None,
+    answered: AnsweredCalls | None = None,
+    watcher: AmiWatcher | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="POS backend", version="0.1.0 (phase 1)")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """The PBX watcher runs for as long as the API does, when a PBX is configured."""
+        pbx: AmiWatcher | None = app.state.watcher
+        if pbx is not None:
+            pbx.start()
+        try:
+            yield
+        finally:
+            if pbx is not None:
+                await pbx.stop()
+
+    app = FastAPI(title="POS backend", version="0.1.0 (phase 1)", lifespan=lifespan)
     app.state.menu = menu if menu is not None else default_menu()
     app.state.taxes = taxes if taxes is not None else load_profile()
     app.state.pricing = pricing if pricing is not None else load_rules()
@@ -414,6 +441,15 @@ def create_app(
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
     app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
+    # Desk phones: the links are the manager's setting, read when a phone answers; the watcher needs POS_AMI_HOST.
+    app.state.answered = (
+        answered
+        if answered is not None
+        else AnsweredCalls(
+            lambda: {link["extension"]: link["device"] for link in app.state.settings.get("desk_phones")["links"]}
+        )
+    )
+    app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered)
     app.state.notifier = Notifier(
         app.state.messenger,
         location=app.state.location,
@@ -559,6 +595,39 @@ def create_app(
         them. Every terminal follows on its next order."""
         manager_from(app.state.tokens, authorization)
         return write_setting("coursing", body.model_dump(), clean_coursing)
+
+    @app.get("/settings/desk_phones")
+    def read_desk_phones() -> dict[str, Any]:
+        """Which screen each desk phone is linked to: `links`, a list of `{extension, device}`."""
+        settings: SettingStore = app.state.settings
+        return settings.get("desk_phones")
+
+    @app.put("/settings/desk_phones")
+    def write_desk_phones(body: DeskPhonesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager links desk phones to screens; each extension once. The next call answered on a linked
+        phone opens the caller's order on that screen."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("desk_phones", body.model_dump(), clean_desk_phones)
+
+    # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
+    @app.get("/phones/answered")
+    def read_answered(device: str = Query(min_length=1)) -> dict[str, Any]:
+        """The outside calls answered in the last two minutes on the desk phones linked to this device, oldest
+        first, each once by `id` and with its `age_ms` on the hub's clock; `linked` says whether any phone is
+        linked to the device at all, so an unlinked screen can ask less often. The app opens the caller's last
+        order of the day for a fresh one, as it does when it picks up a call itself."""
+        answered: AnsweredCalls = app.state.answered
+        return {"device": device, "linked": answered.linked(device), "calls": answered.for_device(device)}
+
+    @app.get("/phones/status")
+    def read_phone_status() -> dict[str, Any]:
+        """The hub's link to the PBX: configured (`POS_AMI_HOST`), connected and since when, what it has seen;
+        `links` counts the desk phones a manager linked."""
+        answered: AnsweredCalls = app.state.answered
+        pbx: AmiWatcher | None = app.state.watcher
+        status = pbx.status() if pbx is not None else {"configured": False, "connected": False}
+        links = app.state.settings.get("desk_phones")["links"]
+        return {**status, **answered.counts, "links": len(links)}
 
     # Counter mode and takeout: the texts that went out -----------------------------------------------------
 

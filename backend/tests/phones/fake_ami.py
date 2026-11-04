@@ -30,6 +30,12 @@ class FakePBX:
             writer.write(encode_packet(fields))
             await writer.drain()
 
+    async def drop(self) -> None:
+        """Cuts every connection, as a PBX restart or a fallen tunnel would."""
+        for writer in list(self._writers):
+            writer.close()
+            await writer.wait_closed()
+
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.write(b"Asterisk Call Manager/7.0.3\r\n")
         await writer.drain()
