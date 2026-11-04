@@ -59,6 +59,13 @@ class Hub {
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
 
+  /// Desk phones: the links it keeps, the token the last save carried, a reason to refuse the next save with,
+  /// and how it stands with the PBX (`GET /phones/status`).
+  Map<String, dynamic> deskPhones = {'links': []};
+  String? deskPhonesAuth;
+  String? refuseDeskPhones;
+  Map<String, dynamic> pbxStatus = {'configured': false, 'connected': false, 'answers': 0, 'pops': 0, 'links': 0};
+
   /// The check it serves for every order (it prices nothing itself), and its pricing rules.
   Map<String, dynamic>? check;
   Map<String, dynamic>? rules;
@@ -101,6 +108,19 @@ class Hub {
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotes);
+      case '/settings/desk_phones':
+        if (request.method == 'PUT') {
+          deskPhonesAuth = request.headers['authorization'];
+          if (refuseDeskPhones != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseDeskPhones},
+            }, 422);
+          }
+          deskPhones = jsonDecode(request.body) as Map<String, dynamic>;
+        }
+        return json(deskPhones);
+      case '/phones/status':
+        return json(pbxStatus);
       case '/admin/session':
         final pin = (jsonDecode(request.body) as Map)['pin'] as String;
         pins.add(pin);
