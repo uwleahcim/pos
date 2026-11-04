@@ -300,6 +300,14 @@ class PosApi {
 
   Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
 
+  /// The order this number opened last today, as the hub finds it (the digits match, the location's day,
+  /// a voided order does not count), or null when the number opened none today.
+  Future<Order?> lastOrder({required String phone}) async {
+    final json = await _get('/orders/last', query: {'phone': phone});
+    final order = json['order'];
+    return order == null ? null : Order.fromJson(order as Map<String, dynamic>);
+  }
+
   /// The floor plan with every table's open checks; the last one read when nothing answers.
   Future<FloorPlan> floor() async => FloorPlan.fromJson(await _remembered('floor', '/floor'));
 

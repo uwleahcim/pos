@@ -19,6 +19,16 @@ Tap **To go** on the orders screen.
 The check opens with no seats or courses. Add the dishes as on a table. The app bar shows the number the
 hub gave the order and the time it is for (`#42 Linda · 18:05`).
 
+### Phone orders
+
+On a terminal that is a phone (the Phone section of the app README), picking up a call brings up the last
+order the caller's number opened today, so a customer calling back about an order lands on it; with none,
+the to-go form opens with the number, the phone channel and the caller-ID name filled in. The hub finds the
+order (`GET /orders/last?phone=`): numbers match by their digits (`+17815551234` is `781 555 1234`), today is
+the restaurant's day (`POS_TIMEZONE`), the last order is the one opened last whatever was done to the
+others since, a voided order does not count and a closed one does. Whatever screen was open stays
+underneath for afterwards, and **To go** on the call strip still starts a fresh order for the caller.
+
 ## Paying first
 
 **Pay & send** takes the money and sends everything to the kitchen at once; the screen comes back for the

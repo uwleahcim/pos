@@ -61,6 +61,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
   late int _orderRequests = widget.phone?.orderRequests ?? 0;
+  late int _answers = widget.phone?.answers ?? 0;
   bool _ordering = false; // the to-go form is open
 
   @override
@@ -84,15 +85,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (mounted) setState(() {});
   }
 
-  /// The caller changed, or To go was tapped on the call strip: the form opens for the caller, once.
+  /// The caller changed, a call was picked up, or To go was tapped on the call strip: the caller's order
+  /// opens, or the form opens for the caller, once.
   void _onPhone() {
     if (!mounted) return;
     final phone = widget.phone!;
+    if (phone.answers != _answers) {
+      _answers = phone.answers;
+      unawaited(_callAnswered(phone.caller));
+    }
     if (phone.orderRequests != _orderRequests) {
       _orderRequests = phone.orderRequests;
       if (!_ordering) unawaited(_newOrder());
     }
     setState(() {});
+  }
+
+  /// A call picked up on this terminal: the last order the number opened today comes up, so a customer
+  /// calling back lands on their order; with none (or no number, or no hub answering) the to-go form
+  /// opens for the caller instead. Whatever screen was open stays underneath for afterwards.
+  Future<void> _callAnswered(Caller? caller) async {
+    final number = caller?.number?.trim() ?? '';
+    Order? order;
+    if (number.isNotEmpty) {
+      try {
+        order = await widget.api.lastOrder(phone: number);
+      } on ApiException {
+        order = null; // nothing answers, or the hub refused: a new order is the next best thing
+      }
+    }
+    if (!mounted) return;
+    if (order != null) return _open(order.orderId);
+    if (!_ordering) await _newOrder();
   }
 
   Future<void> _refresh() async {

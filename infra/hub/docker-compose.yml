@@ -38,6 +38,10 @@ services:
       # messaging provider is wired in (POS_MESSAGING=log).
       POS_LOCATION: ${POS_LOCATION:-}
       POS_MESSAGING: ${POS_MESSAGING:-log}
+      # The restaurant's time zone: menu hours, the day the order numbers count through and "today" when a
+      # caller's order is looked up (POS_TIMEZONE); the times on tickets and in texts (TZ).
+      POS_TIMEZONE: ${POS_TIMEZONE:-America/New_York}
+      TZ: ${POS_TIMEZONE:-America/New_York}
     ports:
       - "8000:8000"
     depends_on:

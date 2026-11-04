@@ -14,8 +14,8 @@ from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
 
+from .. import localtime
 from .defs import Definitions, StaleMenu
 from .engine import PREFIXES, MenuEngine, ResolvedEntry, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
@@ -97,7 +97,7 @@ def load_definitions(source: str | None = None) -> Definitions:
 
 def local_now() -> datetime:
     """The restaurant's wall clock: lunch hours and menu schedules are local times (`POS_TIMEZONE`)."""
-    return datetime.now(ZoneInfo(os.environ.get("POS_TIMEZONE", "America/New_York")))
+    return localtime.now()
 
 
 class MenuService:

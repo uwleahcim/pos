@@ -168,7 +168,8 @@ over SSH and in a SIP capture; steps 2 and 4 now say so). On the app side the Ma
 
 The first version built on this the same day (the Phone section of [`apps/pos_app/README.md`](../../apps/pos_app/README.md)):
 a ring on every platform, the caller's number into a to-go order, hold, a keypad and transfer on the call
-strip, and the phone's state in the status icon. Done the same day on the PBX: the restaurant's public
+strip, and the phone's state in the status icon; the day after, picking up a call brings up the caller's last
+order of the day, or the to-go form for a new one. Done the same day on the PBX: the restaurant's public
 address in the Trusted zone and the Intrusion Detection whitelist (step 6), 301 and 302 in ring group 600 and
 the call from a cell answered on the Mac (step 7). Still open: whether a queue should replace the ring group
 (step 7), and ringing a locked iPad or phone (a push relay).

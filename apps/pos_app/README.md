@@ -88,5 +88,8 @@ media; a call rings as a banner over any screen, with a ring of its own on Mac, 
 (`assets/sounds/ring.wav`, made by `python3 tool/make_ring.py`; it follows the ring volume on Android and plays
 over the silent switch on iOS, since a terminal that is a phone has to ring). On a call the strip at the top
 has Hold, Hang up, To go (a to-go order with the caller's number filled in) and More: a keypad whose digits go
-to the other side as tones or name the extension to transfer the call to, and Mute. The PBX side, the device
+to the other side as tones or name the extension to transfer the call to, and Mute. Picking up a call brings
+up the last order the caller's number opened today (the hub finds it, `GET /orders/last?phone=`, by the
+digits and the restaurant's day), so a customer calling back lands on their order; with none, the to-go
+form opens with the number, the phone channel and the caller-ID name filled in. The PBX side, the device
 steps and what is not there yet are in [`spikes/softphone`](../../spikes/softphone/README.md).
