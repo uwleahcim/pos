@@ -6,6 +6,7 @@ import 'api.dart';
 import 'asset_ringer.dart';
 import 'cache.dart';
 import 'camera.dart';
+import 'desk_phone_watcher.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
@@ -39,6 +40,9 @@ Future<void> main() async {
   settings.addListener(() => unawaited(phone.apply(settings.phone)));
   // The ring, on every platform, for as long as the banner shows.
   CallRinger(phone, AssetRinger());
+  // Desk phones: a call taken on one linked to this device opens the caller's order here, as the app does
+  // when it picks up a call itself. The hub is asked for as long as the app runs.
+  final deskPhones = DeskPhoneWatcher(api, settings)..start();
   runApp(
     PosApp(
       settings: settings,
@@ -49,6 +53,7 @@ Future<void> main() async {
       photos: photos,
       relay: relay,
       phone: phone,
+      deskPhones: deskPhones,
     ),
   );
 }
@@ -64,6 +69,7 @@ class PosApp extends StatelessWidget {
     required this.photos,
     required this.relay,
     required this.phone,
+    required this.deskPhones,
   });
 
   final Settings settings;
@@ -74,6 +80,7 @@ class PosApp extends StatelessWidget {
   final PhotoQueue photos;
   final PrintRelay relay;
   final PhoneClient phone;
+  final DeskPhoneWatcher deskPhones;
 
   static final _navigator = GlobalKey<NavigatorState>();
 
@@ -141,6 +148,7 @@ class PosApp extends StatelessWidget {
                   photos: photos,
                   relay: relay,
                   phone: phone,
+                  deskPhones: deskPhones,
                 );
               }
               return AnimatedSwitcher(

@@ -98,6 +98,8 @@ names; the address works everywhere. Run the backend's own test suite against th
 | Secrets (database password, node name) and `POS_PRINTERS` | `/opt/pos/.env`, readable by root only |
 | `POS_LOCATION` (the restaurant's name in texts to customers) and `POS_MESSAGING` (`log` until a provider is wired in; see `docs/counter-mode.md`) | `/opt/pos/.env`, optional |
 | `POS_TIMEZONE` (the restaurant's time zone, `America/New_York` unless set: menu hours, the day order numbers count through, "today" for a caller's order, the times on tickets and in texts) | `/opt/pos/.env`, optional |
+| The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, `COMPOSE_PROFILES=pbx`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
+| The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -116,6 +118,10 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star` | Set the printers a fired order prints to (writes `POS_PRINTERS` to `.env`, restarts the API) |
 | `hubctl menu import` | List what the bundled menu files would add to the hub's menu after an update (a shelf of bottles, say) and which prices they would move (only prices still at the online export's); `--apply` does it and keeps every change made in the menu editor |
 | `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |
+| `hubctl pbx key` | This hub's public key for the PBX, to add to the PBX's `authorized_keys` (made on first use) |
+| `hubctl pbx link root@freepbx.chinasky.org` | Link the hub to the PBX for desk phones: asks for the AMI secret, starts the SSH tunnel and the watcher (`docs/desk-phones.md`) |
+| `hubctl pbx status` / `hubctl pbx tail` | How the tunnel and the watcher stand / each call as a desk phone answers it, live |
+| `hubctl pbx unlink` | Stop the tunnel and forget the link |
 
 ## Ports
 
@@ -126,6 +132,8 @@ names; the address works everywhere. Run the backend's own test suite against th
 | 123/udp | the LAN | Time |
 | 5353/udp | the LAN | Name discovery (`pos-hub1.local`) |
 | 5432/tcp | the hub itself | PostgreSQL; the standby hub gets its own rule in the failover spike |
+
+The link to the PBX opens nothing inbound: it is an SSH connection from the hub out to the PBX (`hubctl pbx link`).
 
 ## Phase 0 only
 

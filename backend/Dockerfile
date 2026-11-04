@@ -8,8 +8,10 @@ RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-# A font that covers Chinese, for kitchen tickets printed as images; zone data so TZ gives the restaurant's time.
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei tzdata && rm -rf /var/lib/apt/lists/*
+# A font that covers Chinese, for kitchen tickets printed as images; zone data so TZ gives the restaurant's time;
+# the ssh client for the hub's tunnel to the PBX (the `pbx` service in infra/hub/docker-compose.yml).
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei tzdata openssh-client \
+  && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --create-home --home-dir /app pos
 COPY --from=build /install /usr/local
 WORKDIR /app

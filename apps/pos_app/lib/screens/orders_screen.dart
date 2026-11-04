@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../camera.dart';
 import '../coursing.dart';
+import '../desk_phone_watcher.dart';
 import '../floor.dart';
 import '../local_order.dart';
 import '../outbox.dart';
@@ -37,6 +38,7 @@ class OrdersScreen extends StatefulWidget {
     required this.photos,
     this.relay,
     this.phone,
+    this.deskPhones,
   });
 
   final PosApi api;
@@ -50,6 +52,10 @@ class OrdersScreen extends StatefulWidget {
   /// The terminal's phone, when it is one: a caller on the line, or just off it, goes into a to-go order.
   final PhoneClient? phone;
 
+  /// The desk phones linked to this device: a call taken on one opens the caller's order here, as if this
+  /// terminal had picked up.
+  final DeskPhoneWatcher? deskPhones;
+
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
@@ -60,16 +66,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _floor = true;
   final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
-  late int _orderRequests = widget.phone?.orderRequests ?? 0;
-  late int _answers = widget.phone?.answers ?? 0;
+  // The counts as they stood when this screen came up, so only what happens from now on opens anything (set
+  // here, not lazily: the first notification may be the one that moves a count).
+  int _orderRequests = 0;
+  int _answers = 0;
+  int _deskCalls = 0;
   bool _ordering = false; // the to-go form is open
 
   @override
   void initState() {
     super.initState();
+    _orderRequests = widget.phone?.orderRequests ?? 0;
+    _answers = widget.phone?.answers ?? 0;
+    _deskCalls = widget.deskPhones?.calls ?? 0;
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
     widget.outbox.addListener(_onOutbox);
     widget.phone?.addListener(_onPhone);
+    widget.deskPhones?.addListener(_onDeskPhone);
+    // A desk phone picked up just before someone signed in: its call is still waiting, if it is fresh.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _takeDeskCall());
     _refresh();
   }
 
@@ -78,6 +93,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _timer?.cancel();
     widget.outbox.removeListener(_onOutbox);
     widget.phone?.removeListener(_onPhone);
+    widget.deskPhones?.removeListener(_onDeskPhone);
     super.dispose();
   }
 
@@ -101,9 +117,29 @@ class _OrdersScreenState extends State<OrdersScreen> {
     setState(() {});
   }
 
-  /// A call picked up on this terminal: the last order the number opened today comes up, so a customer
-  /// calling back lands on their order; with none (or no number, or no hub answering) the to-go form
-  /// opens for the caller instead. Whatever screen was open stays underneath for afterwards.
+  /// A call taken on a desk phone linked to this device: the same as picking up here. A call this terminal's
+  /// own phone took is left to it, so one call opens one thing.
+  void _onDeskPhone() {
+    if (!mounted) return;
+    final desk = widget.deskPhones!;
+    if (desk.calls == _deskCalls) return;
+    _deskCalls = desk.calls;
+    _takeDeskCall();
+  }
+
+  void _takeDeskCall() {
+    if (!mounted) return;
+    final call = widget.deskPhones?.take();
+    if (call == null) return;
+    final own = widget.settings.phone;
+    if (own.active && own.extension == call.extension) return;
+    unawaited(_callAnswered(call.caller));
+  }
+
+  /// A call picked up on this terminal, or on a desk phone linked to it: the last order the number opened
+  /// today comes up, so a customer calling back lands on their order; with none (or no number, or no hub
+  /// answering) the to-go form opens for the caller instead. Whatever screen was open stays underneath for
+  /// afterwards.
   Future<void> _callAnswered(Caller? caller) async {
     final number = caller?.number?.trim() ?? '';
     Order? order;
@@ -116,7 +152,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     if (!mounted) return;
     if (order != null) return _open(order.orderId);
-    if (!_ordering) await _newOrder();
+    if (!_ordering) await _newOrder(caller: caller);
   }
 
   Future<void> _refresh() async {
@@ -137,8 +173,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// Counter mode (architecture section 12): name and phone first, the channel, when it is for. The hub
   /// numbers the order when the create arrives; the quote comes from the hub's settings per channel. With a
-  /// caller on the phone, or just off it, the form starts with the number, the channel and the caller-ID name.
-  Future<void> _newOrder() async {
+  /// caller on the phone, or just off it, or [caller] from a desk phone, the form starts with the number,
+  /// the channel and the caller-ID name.
+  Future<void> _newOrder({Caller? caller}) async {
     if (_ordering) return;
     _ordering = true;
     try {
@@ -149,10 +186,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         quotes = const Quotes(); // the hub's own defaults, until it answers
       }
       if (!mounted) return;
-      final caller = widget.phone?.callerForOrder;
+      final who = caller ?? widget.phone?.callerForOrder;
       final request = await showDialog<TakeoutRequest>(
         context: context,
-        builder: (context) => _TakeoutDialog(quotes: quotes, caller: caller),
+        builder: (context) => _TakeoutDialog(quotes: quotes, caller: who),
       );
       if (request == null || !mounted) return;
       await _startOrder(request, quotes);
@@ -198,7 +235,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (token == null || !mounted) return;
     await Navigator.of(context).push(
       PosPageRoute(
-        builder: (_) => LocationSettingsScreen(api: widget.api, token: token),
+        builder: (_) => LocationSettingsScreen(api: widget.api, token: token, device: widget.settings.device),
       ),
     );
   }
@@ -488,7 +525,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // With a caller on the phone, or just off it, the button names the caller: the order starts with the number.
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('to-go'),
-        onPressed: _newOrder,
+        onPressed: () => _newOrder(),
         icon: const Icon(Icons.shopping_bag_outlined),
         label: Text(switch (widget.phone?.callerForOrder) {
           null => 'To go',

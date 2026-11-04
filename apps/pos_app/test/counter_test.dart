@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
+import 'package:pos_app/desk_phone_watcher.dart';
 import 'package:pos_app/local_order.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
@@ -100,6 +101,13 @@ class Hub {
   final lastOrderAsked = <String>[];
   bool lastOrderDown = false;
 
+  /// Desk phones (`GET /phones/answered`): whether one is linked to the asking device, the calls it lists,
+  /// the devices that asked, and whether it is down for that call.
+  bool linked = false;
+  final answered = <Map<String, dynamic>>[];
+  final answeredAsked = <String>[];
+  bool answeredDown = false;
+
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
@@ -111,6 +119,11 @@ class Hub {
       lastOrderAsked.add(request.url.queryParameters['phone'] ?? '');
       if (lastOrderDown) return json({'detail': 'down'}, 503);
       return json({'order': lastOrder});
+    }
+    if (path == '/phones/answered') {
+      answeredAsked.add(request.url.queryParameters['device'] ?? '');
+      if (answeredDown) return json({'detail': 'down'}, 503);
+      return json({'device': request.url.queryParameters['device'], 'linked': linked, 'calls': answered});
     }
     if (_ops.hasMatch(path)) {
       final id = _ops.firstMatch(path)!.group(1)!;
@@ -162,6 +175,9 @@ class Terminal {
   final PhotoQueue photos;
   final Session session;
   final Settings settings;
+
+  /// The desk-phone watcher the orders screen was given, when the test asked for one.
+  DeskPhoneWatcher? deskPhones;
 }
 
 Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async {
@@ -180,15 +196,23 @@ Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async 
   return Terminal(hub, api, outbox, photos, session, settings);
 }
 
-/// The list of orders, with the hub listing [orders].
+/// The list of orders, with the hub listing [orders]. With [deskPhones], the screen watches the desk phones
+/// through the watcher it builds (stopped with the test); [before] runs once the terminal stands, before the
+/// screen comes up.
 Future<Terminal> pumpOrders(
   WidgetTester tester,
   List<Map<String, dynamic>> orders, {
   String role = 'manager',
   PhoneClient? phone,
+  DeskPhoneWatcher Function(PosApi api, Settings settings)? deskPhones,
+  Future<void> Function(Hub hub)? before,
+  bool showList = true,
 }) async {
   final t = await terminal(tester, role: role);
   t.hub.orders.addAll(orders);
+  final watcher = t.deskPhones = deskPhones?.call(t.api, t.settings);
+  if (watcher != null) addTearDown(watcher.stop);
+  await before?.call(t.hub);
   await tester.pumpWidget(
     MaterialApp(
       home: OrdersScreen(
@@ -199,12 +223,15 @@ Future<Terminal> pumpOrders(
         camera: NoCamera(),
         photos: t.photos,
         phone: phone,
+        deskPhones: watcher,
       ),
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.byTooltip('List of checks'));
-  await tester.pumpAndSettle();
+  if (showList) {
+    await tester.tap(find.byTooltip('List of checks'));
+    await tester.pumpAndSettle();
+  }
   return t;
 }
 

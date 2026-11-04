@@ -2,17 +2,22 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../coursing.dart';
+import '../desk_phone.dart';
 import '../takeout.dart';
 import 'quotes_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
-/// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, and the quote times.
-/// The hub keeps them; a terminal reads them when it opens an order. Behind the manager PIN.
+/// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times, and
+/// which screen each desk phone is linked to. The hub keeps them; a terminal reads them when it opens an
+/// order. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
-  const LocationSettingsScreen({super.key, required this.api, required this.token});
+  const LocationSettingsScreen({super.key, required this.api, required this.token, this.device});
 
   final PosApi api;
   final String token;
+
+  /// This terminal's device name, offered when linking a desk phone to the screen the manager stands at.
+  final String? device;
 
   @override
   State<LocationSettingsScreen> createState() => _LocationSettingsScreenState();
@@ -27,6 +32,23 @@ class _Row {
   String get name => controller.text.trim();
 }
 
+/// One desk phone as the screen edits it: its extension and the device it is linked to.
+class _PhoneRow {
+  _PhoneRow(this.key, {required String extension, required String device})
+    : extension = TextEditingController(text: extension),
+      device = TextEditingController(text: device);
+  final String key;
+  final TextEditingController extension;
+  final TextEditingController device;
+
+  DeskPhoneLink get link => DeskPhoneLink(extension: extension.text.trim(), device: device.text.trim());
+
+  void dispose() {
+    extension.dispose();
+    device.dispose();
+  }
+}
+
 class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   Coursing? _coursing;
   Quotes? _quotes;
@@ -37,6 +59,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   int _added = 0;
   String? _message;
   bool _busy = false;
+  List<_PhoneRow> _phones = [];
+  int _phonesAdded = 0;
+  String? _phonesMessage;
+  bool _phonesBusy = false;
+  Map<String, dynamic>? _pbx; // how the hub stands with the PBX; null until it answers
 
   @override
   void initState() {
@@ -49,6 +76,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     for (final row in _rows) {
       row.controller.dispose();
     }
+    for (final phone in _phones) {
+      phone.dispose();
+    }
     super.dispose();
   }
 
@@ -57,14 +87,77 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     try {
       final coursing = await widget.api.coursing();
       final quotes = await widget.api.quotes();
+      final phones = await widget.api.deskPhones();
       if (!mounted) return;
       setState(() {
         _quotes = quotes;
         _apply(coursing);
+        _applyPhones(phones);
       });
     } on ApiException catch (err) {
       if (mounted) setState(() => _loadError = err.message);
     }
+    try {
+      final pbx = await widget.api.pbxStatus();
+      if (mounted) setState(() => _pbx = pbx);
+    } on ApiException {
+      // the card then says the hub did not answer about the PBX
+    }
+  }
+
+  void _applyPhones(DeskPhoneLinks links) {
+    for (final phone in _phones) {
+      phone.dispose();
+    }
+    _phones = [
+      for (final link in links.links) _PhoneRow(link.extension, extension: link.extension, device: link.device),
+    ];
+  }
+
+  void _addPhone() => setState(() => _phones.add(_PhoneRow('new-${++_phonesAdded}', extension: '', device: '')));
+
+  void _removePhone(_PhoneRow phone) => setState(() {
+    _phones.remove(phone);
+    phone.dispose();
+  });
+
+  Future<void> _savePhones() async {
+    final links = [for (final phone in _phones) phone.link];
+    if (links.any((l) => l.extension.isEmpty || l.device.isEmpty)) {
+      setState(() => _phonesMessage = 'Every phone needs its extension and the name of its screen.');
+      return;
+    }
+    setState(() {
+      _phonesBusy = true;
+      _phonesMessage = null;
+    });
+    try {
+      final saved = await widget.api.saveDeskPhones(widget.token, DeskPhoneLinks(links));
+      if (!mounted) return;
+      setState(() {
+        _phonesBusy = false;
+        _applyPhones(saved);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Desk phones saved')));
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _phonesBusy = false;
+        _phonesMessage = err.detail?['message'] as String? ?? err.message;
+      });
+    }
+  }
+
+  /// One line on the hub's link to the PBX, which the desk phones depend on.
+  String get _pbxLine {
+    final pbx = _pbx;
+    if (pbx == null) return 'The hub has not said how it stands with the PBX';
+    if (pbx['configured'] != true) return 'The hub is not linked to the PBX yet: see the hub guide (hubctl pbx)';
+    final host = pbx['host'] ?? 'the PBX';
+    if (pbx['connected'] == true) {
+      return 'Hub watching $host · ${pbx['answers'] ?? 0} calls answered, ${pbx['pops'] ?? 0} opened on a screen';
+    }
+    return 'Hub cannot reach $host: ${pbx['last_error'] ?? 'not connected'}';
   }
 
   /// The screen as the hub has it; rows get the ids the hub gave them.
@@ -254,6 +347,66 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               onTap: _quoteTimes,
             ),
           ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.phone_in_talk_outlined),
+                    title: const Text('Desk phones'),
+                    subtitle: Text(_pbxLine),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(
+                      'A call taken on a linked phone opens the caller\'s order on that screen, as if the screen had '
+                      'taken the call. The device is the name that screen shows under Settings.',
+                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  if (_phones.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: Text('No desk phone is linked yet.', style: theme.textTheme.bodyMedium),
+                    ),
+                  for (var i = 0; i < _phones.length; i++) _phoneRow(context, i),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        key: const ValueKey('desk-add'),
+                        onPressed: _addPhone,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add phone'),
+                      ),
+                    ),
+                  ),
+                  if (_phonesMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                      child: Text(_phonesMessage!, style: TextStyle(color: scheme.error)),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        FilledButton(
+                          key: const ValueKey('desk-phones-save'),
+                          onPressed: _phonesBusy ? null : _savePhones,
+                          child: const Text('Save'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       );
     }
@@ -302,6 +455,51 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             tooltip: 'Remove',
             icon: const Icon(Icons.delete_outline),
             onPressed: () => _remove(row),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A desk phone: its extension, the screen it is linked to (a tap fills in this one), and the bin.
+  Widget _phoneRow(BuildContext context, int i) {
+    final phone = _phones[i];
+    final device = widget.device;
+    return Padding(
+      key: ValueKey('desk-phone:${phone.key}'),
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 104,
+            child: TextField(
+              key: ValueKey('desk-ext:$i'),
+              controller: phone.extension,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(isDense: true, labelText: 'Extension', hintText: '200'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              key: ValueKey('desk-dev:$i'),
+              controller: phone.device,
+              autocorrect: false,
+              decoration: const InputDecoration(isDense: true, labelText: 'Device', hintText: 'tab1'),
+            ),
+          ),
+          if (device != null && device.isNotEmpty)
+            IconButton(
+              key: ValueKey('desk-this-device:$i'),
+              tooltip: 'This device ($device)',
+              icon: const Icon(Icons.phonelink_ring_outlined),
+              onPressed: () => setState(() => phone.device.text = device),
+            ),
+          IconButton(
+            key: ValueKey('desk-delete:$i'),
+            tooltip: 'Remove',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => _removePhone(phone),
           ),
         ],
       ),

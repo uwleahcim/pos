@@ -93,3 +93,7 @@ up the last order the caller's number opened today (the hub finds it, `GET /orde
 digits and the restaurant's day), so a customer calling back lands on their order; with none, the to-go
 form opens with the number, the phone channel and the caller-ID name filled in. The PBX side, the device
 steps and what is not there yet are in [`spikes/softphone`](../../spikes/softphone/README.md).
+
+A desk phone can do the same for a screen: a manager links the phone's extension to the device's name under
+Location settings, Desk phones, and a call taken on that phone opens the caller's order on that screen as if
+the screen had taken the call (the hub watches the PBX for it; [`docs/desk-phones.md`](../../docs/desk-phones.md)).

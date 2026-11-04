@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'cache.dart';
 import 'coursing.dart';
+import 'desk_phone.dart';
 import 'floor.dart';
 import 'menu.dart';
 import 'pricing.dart';
@@ -356,6 +357,37 @@ class PosApi {
       ),
     ),
   );
+
+  /// Which screen each desk phone is linked to, as the hub keeps it.
+  Future<DeskPhoneLinks> deskPhones() async => DeskPhoneLinks.fromJson(await _get('/settings/desk_phones'));
+
+  /// A manager (token from [adminSession]) links the desk phones to screens for the whole location.
+  Future<DeskPhoneLinks> saveDeskPhones(String token, DeskPhoneLinks links) async => DeskPhoneLinks.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/desk_phones'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(links.toJson()),
+      ),
+    ),
+  );
+
+  /// The calls answered in the last two minutes on the desk phones linked to [device], each with when it was
+  /// picked up on [clock], and whether any phone is linked to the device at all.
+  Future<AnsweredCalls> answeredCalls({required String device, DateTime Function() clock = DateTime.now}) async {
+    final json = await _get('/phones/answered', query: {'device': device});
+    final now = clock();
+    return AnsweredCalls(
+      linked: json['linked'] as bool? ?? false,
+      calls: [
+        for (final call in json['calls'] as List? ?? const [])
+          DeskPhoneCall.fromJson(call as Map<String, dynamic>, now: now),
+      ],
+    );
+  }
+
+  /// How the hub stands with the PBX: whether a PBX is configured and reached, and what it has seen.
+  Future<Map<String, dynamic>> pbxStatus() => _get('/phones/status');
 
   /// The discount reasons and service charges this location allows, with who may apply them.
   Future<PricingRules> pricingRules() async => PricingRules.fromJson(await _get('/pricing/rules'));

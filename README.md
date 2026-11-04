@@ -12,6 +12,8 @@ merges after any disconnect.
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`
+- Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
+  link to the PBX): `docs/desk-phones.md`
 - Competitive review against Toast, Square, Clover, Lightspeed and TouchBistro (1 Nov 2026): `docs/competitive-review-2026-11-01.md`
 - Phase 0 plan and spike status: `docs/phase0/README.md` and `spikes/`
 

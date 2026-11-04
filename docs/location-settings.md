@@ -14,6 +14,8 @@ screen holds:
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
 - **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
+- **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
+  caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
 
 **Save** sends the courses to the hub, which checks them (a name on every course, no name twice, at least
 one course while coursing is on) and keeps them. Every terminal reads the setting when it opens an order,
@@ -69,6 +71,8 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
 - `GET /settings/quotes` and `PUT /settings/quotes` as before.
+- `GET /settings/desk_phones` and `PUT /settings/desk_phones` (the manager Bearer token): `{"links":
+  [{"extension": "200", "device": "tab1"}]}`, each extension once; details in `desk-phones.md`.
 - A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
   carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
   with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the
