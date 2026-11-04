@@ -49,9 +49,10 @@ On the hub:
    tunnel). The line it adds to `/root/.ssh/authorized_keys` lets the key forward to the manager port and
    nothing else: no shell on the PBX. Then it asks for the AMI user's secret (FreePBX, Settings, Asterisk
    Manager Users, user `pos`; the user needs `call` among its read rights, which it has), writes the link to
-   `/opt/pos/.env` and starts the tunnel and the watcher. `hubctl pbx status` a few seconds later shows
-   the tunnel up and `"connected": true`; `hubctl status` has a `pbx:` line from then on. Run again later,
-   it finds the key accepted and only asks for the secret (Enter keeps the saved one).
+   `/opt/pos/.env`, starts the tunnel and the watcher and waits until the hub reaches the PBX, which it says
+   (or, after 45 seconds, shows where it stands). From then on `hubctl pbx status` shows the tunnel up and
+   `"connected": true`, and `hubctl status` has a `pbx:` line. Run again later, it finds the key accepted and
+   only asks for the secret (Enter keeps the saved one).
 
    To add the key by hand instead, `hubctl pbx key` prints the line and the one-line `ssh root@... 'echo
    ... >> ~/.ssh/authorized_keys'` command that appends it, with the key filled in: paste that whole command,
@@ -98,7 +99,7 @@ answers from whichever hub it talks to, and the same call is one call on both.
 - The watcher logs in with `Events: call`, follows calls by `Linkedid` (every channel of a call shares
   it), reads the caller off the trunk's `Newchannel` (before FreePBX's caller-name rewrite) and counts a
   `DialEnd` with `DialStatus: ANSWER` whose dialed channel is an extension's (`PJSIP/200-...`, not a
-  trunk's). It reconnects with a growing pause (1 to 30 seconds) after a drop, and runs for as long as the
+  trunk's). It reconnects with a growing pause (1 to 10 seconds) after a drop, and runs for as long as the
   API does. Code: `backend/src/pos/phones/deskphones.py`; the app side: `apps/pos_app/lib/desk_phone.dart`,
   `desk_phone_watcher.dart`.
 
@@ -106,7 +107,7 @@ answers from whichever hub it talks to, and the same call is one call on both.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `hubctl pbx status`: the tunnel restarts, log says `Permission denied (publickey)` | The hub's key is not on the PBX (a line pasted from an example, `AAAA...`, is not the key) | `hubctl pbx link` again: it puts the key on the PBX; or check `/root/.ssh/authorized_keys` there holds the line `hubctl pbx key` prints |
+| `hubctl pbx status`: tunnel `restarting`, last words `Permission denied (publickey)` | The hub's key is not on the PBX (a line pasted from an example, `AAAA...`, is not the key) | `hubctl pbx link` again: it puts the key on the PBX; or check `/root/.ssh/authorized_keys` there holds the line `hubctl pbx key` prints |
 | `"connected": false`, `last_error` `pbx does not resolve ...: the tunnel service is probably down` | The tunnel container is not running (as a rule the row above), so its name `pbx` resolves to nothing | `hubctl pbx status` shows the tunnel's log; fix what it says and the watcher connects on its own |
 | Log says `Host key verification failed` | The PBX was reinstalled since the first connection | Delete `/opt/pos/pbx/known_hosts` on the hub, `hubctl restart` |
 | `"connected": false`, `last_error` `Authentication failed` | The AMI secret | `hubctl pbx link` again with the secret from FreePBX |

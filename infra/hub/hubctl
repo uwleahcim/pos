@@ -64,7 +64,7 @@ case "${1:-status}" in
     ;;
   pbx)
     # hubctl pbx key                         this hub's key for the PBX (made on first use) and the command that adds it by hand
-    # hubctl pbx link root@pbx.example.org   puts the key on the PBX (its password once), asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher
+    # hubctl pbx link root@pbx.example.org   puts the key on the PBX (its password once), asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher and waits for them to meet
     # hubctl pbx status                      the tunnel and what the API says about the PBX
     # hubctl pbx tail                        prints each call as a desk phone answers it, as the hub sees it (Ctrl-C to stop)
     # hubctl pbx unlink                      stops the tunnel and forgets the link, secret included
@@ -84,6 +84,36 @@ case "${1:-status}" in
     }
     pbx_line() { # the authorized_keys line: with it the hub may only forward to the manager port, no shell on the PBX
       printf 'restrict,port-forwarding,permitopen="127.0.0.1:5038" %s\n' "$(cat "$pbx_dir/id_ed25519.pub")"
+    }
+    ago() { # seconds, for people
+      if (( $1 < 60 )); then echo "$1 s"; elif (( $1 < 3600 )); then echo "$(( $1 / 60 )) min"; else echo "$(( $1 / 3600 )) h $(( $1 % 3600 / 60 )) min"; fi
+    }
+    pbx_status() { # the tunnel container as it stands now (its current run only: old log lines say nothing), then the API's view
+      local cid state started since uptime logs
+      cid=$(compose ps -aq pbx 2> /dev/null | head -n 1 || true)
+      if [[ -z "$cid" ]]; then
+        echo "tunnel: not set up (hubctl pbx link)"
+      else
+        state=$(docker inspect -f '{{.State.Status}}' "$cid")
+        started=$(docker inspect -f '{{.State.StartedAt}}' "$cid")
+        since=${started%%.*}
+        since=${since%Z}Z
+        uptime=$(( $(date +%s) - $(date -d "$since" +%s) ))
+        logs=$(docker logs --since "$started" "$cid" 2>&1 | tail -n 5 || true)
+        if [[ "$state" == running ]]; then
+          if (( uptime < 15 )); then echo "tunnel: up for $(ago "$uptime"), connecting"; else echo "tunnel: up for $(ago "$uptime")"; fi
+        else
+          echo "tunnel: $state ($(docker inspect -f '{{.RestartCount}}' "$cid") restarts); its last words:"
+        fi
+        [[ -z "$logs" ]] || while IFS= read -r line; do echo "  | $line"; done <<< "$logs"
+        if grep -q "Permission denied (publickey" <<< "$logs"; then
+          echo "=> the PBX refuses the hub's key: hubctl pbx link again puts it there (hubctl pbx key prints it, to add by hand)"
+        fi
+        if grep -q "Host key verification failed\|HOST IDENTIFICATION HAS CHANGED" <<< "$logs"; then
+          echo "=> the PBX's host key is not the one the hub knows (reinstalled?): rm $pbx_dir/known_hosts, then hubctl pbx link again"
+        fi
+      fi
+      curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
     }
     case "${2:-status}" in
       key)
@@ -123,17 +153,22 @@ case "${1:-status}" in
           umask 077
           printf 'COMPOSE_PROFILES=pbx\nPOS_PBX_SSH=%s\nPOS_AMI_HOST=pbx\nPOS_AMI_USER=%s\nPOS_AMI_SECRET=%s\n' "$3" "${4:-pos}" "$secret" >> "$POS_HOME/.env"
         )
-        compose up -d pbx api
-        echo "Linked to $3. In a few seconds, hubctl pbx status says whether the hub reached the PBX."
+        compose up -d --force-recreate pbx # a fresh start, not the tail of a restart loop
+        compose up -d api
+        echo "Linked to $3. Waiting for the hub to reach the PBX through the tunnel..."
+        for _ in $(seq 1 45); do
+          sleep 1
+          if [[ "$(curl -fsS http://127.0.0.1:8000/phones/status 2> /dev/null | jq -r '.connected' 2> /dev/null || true)" == true ]]; then
+            echo "The hub watches the PBX. hubctl pbx tail prints each call a desk phone answers; the phones are linked to screens under Location settings, Desk phones."
+            exit 0
+          fi
+        done
+        echo "Not reached within 45 s. Where it stands:"
+        pbx_status
+        exit 1
         ;;
       status)
-        compose ps pbx 2> /dev/null || echo "tunnel: not set up (hubctl pbx link)"
-        logs=$(compose logs --tail=5 pbx 2> /dev/null || true)
-        [[ -z "$logs" ]] || echo "$logs"
-        if grep -q "Permission denied (publickey" <<< "$logs"; then
-          echo "=> the PBX refuses the hub's key: hubctl pbx link again puts it there (hubctl pbx key prints it, to add by hand)"
-        fi
-        curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
+        pbx_status
         ;;
       tail)
         # shellcheck disable=SC2016  # the variables are the container's, expanded in there

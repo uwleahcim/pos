@@ -59,10 +59,12 @@ services:
     # The hub's way to the PBX: an SSH tunnel to the PBX host that brings Asterisk's manager interface
     # (127.0.0.1:5038 there) to pbx:5038 on this network, and nothing else; no port on the hub itself. Runs
     # only with COMPOSE_PROFILES=pbx and POS_PBX_SSH (user@host) in /opt/pos/.env, both written by
-    # `hubctl pbx link`; the key in /opt/pos/pbx comes from `hubctl pbx key` and must be authorized on the PBX.
+    # `hubctl pbx link`, which also puts the hub's key (/opt/pos/pbx) on the PBX.
     image: pos-backend:local
     profiles: ["pbx"]
     restart: unless-stopped
+    healthcheck:
+      disable: true # the image's check asks the API, which this container does not run
     environment:
       POS_PBX_SSH: ${POS_PBX_SSH:-}
     volumes:
