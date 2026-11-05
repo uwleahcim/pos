@@ -43,12 +43,16 @@ class _PhoneRow {
   final TextEditingController device;
   bool extensionTyped = false;
   bool deviceTyped = false;
+  final FocusNode extensionFocus = FocusNode();
+  final FocusNode deviceFocus = FocusNode();
 
   DeskPhoneLink get link => DeskPhoneLink(extension: extension.text.trim(), device: device.text.trim());
 
   void dispose() {
     extension.dispose();
     device.dispose();
+    extensionFocus.dispose();
+    deviceFocus.dispose();
   }
 }
 
@@ -494,6 +498,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 ? TextField(
                     key: ValueKey('desk-ext:$i'),
                     controller: phone.extension,
+                    focusNode: phone.extensionFocus,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
                       isDense: true,
@@ -510,6 +515,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     controller: phone.extension,
                     items: _extensionItems(phone.extension.text.trim()),
                     onOther: () => phone.extensionTyped = true,
+                    typing: phone.extensionFocus,
                   ),
           ),
           const SizedBox(width: 12),
@@ -518,6 +524,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 ? TextField(
                     key: ValueKey('desk-dev:$i'),
                     controller: phone.device,
+                    focusNode: phone.deviceFocus,
                     autocorrect: false,
                     decoration: InputDecoration(
                       isDense: true,
@@ -532,6 +539,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     controller: phone.device,
                     items: _deviceItems(phone.device.text.trim()),
                     onOther: () => phone.deviceTyped = true,
+                    typing: phone.deviceFocus,
                   ),
           ),
           IconButton(
@@ -549,13 +557,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   static const _other = '\u0000other';
 
   /// A list to pick from, in the frame of a field: the pick goes to [controller] (whose text is the current
-  /// pick, or nothing yet), and "Other…" at the end calls [onOther] with the text cleared, for typing.
+  /// pick, or nothing yet), and "Other…" at the end calls [onOther] with the text cleared, for typing: the
+  /// field that takes the list's place gets the focus ([typing]) as soon as it is there, so one just types,
+  /// and a touch screen brings up its keyboard.
   Widget _pullDown({
     required Key key,
     required String label,
     required TextEditingController controller,
     required List<(String, String)> items,
     required VoidCallback onOther,
+    required FocusNode typing,
   }) {
     final current = controller.text.trim();
     return InputDecorator(
@@ -579,6 +590,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             if (picked == _other) {
               controller.clear();
               onOther();
+              WidgetsBinding.instance.addPostFrameCallback((_) => typing.requestFocus());
             } else if (picked != null) {
               controller.text = picked;
             }

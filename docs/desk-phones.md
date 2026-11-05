@@ -69,8 +69,8 @@ The extension list is the PBX's extensions as the hub sees them (one with no pho
 "(offline)"); until the hub is linked to the PBX the extension is typed instead. The screen list is the
 screens the hub has heard from, by their device names (the name a screen shows under Settings), with the
 screen you stand at first, marked "(this device)". **Other…** at the end of either list opens a field to
-type what the list does not have, such as a screen that has not been on yet; the arrow in that field goes
-back to the list. The second hub of a location gets the same `hubctl pbx` steps; a device takes the
+type what the list does not have, such as a screen that has not been on yet; the field has the focus as it
+appears (a touch screen brings up its keyboard), and the arrow in it goes back to the list. The second hub of a location gets the same `hubctl pbx` steps; a device takes the
 answers from whichever hub it talks to, and the same call is one call on both.
 
 ## Limits
