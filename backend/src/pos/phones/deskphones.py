@@ -60,6 +60,16 @@ class Answered:
     at_ms: int
 
 
+#: A trunk's words for no caller name: Asterisk's `<unknown>` (Twilio sends none) and the carriers' own.
+NO_NAME = frozenset({"unknown", "anonymous", "unavailable", "restricted", "private", "withheld"})
+
+
+def caller_name(raw: str) -> str:
+    """The caller's name as the trunk gave it, or "" when the trunk only said it had none."""
+    name = raw.strip()
+    return "" if name.strip("<>").strip().lower() in NO_NAME else name
+
+
 @dataclass
 class _Call:
     number: str
@@ -98,7 +108,10 @@ class CallTracker:
         if event == "Newchannel":
             if packet.get("Context", "") in self._contexts and linkedid not in self._calls:
                 self._calls[linkedid] = _Call(
-                    packet.get("CallerIDNum", ""), packet.get("CallerIDName", ""), packet.get("Exten", ""), now
+                    packet.get("CallerIDNum", ""),
+                    caller_name(packet.get("CallerIDName", "")),
+                    packet.get("Exten", ""),
+                    now,
                 )
             return None
         if event == "Hangup":
@@ -118,7 +131,7 @@ class CallTracker:
             number = packet.get("CallerIDNum", "")
             if len(digits(number)) < 7:
                 return None
-            call = self._calls[linkedid] = _Call(number, packet.get("CallerIDName", ""), "", now)
+            call = self._calls[linkedid] = _Call(number, caller_name(packet.get("CallerIDName", "")), "", now)
         if extension in call.answered:
             return None
         call.answered.add(extension)
