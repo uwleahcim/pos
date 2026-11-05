@@ -70,11 +70,13 @@ class DeskPhoneCall {
   Caller get caller => Caller(number: number, name: name);
 }
 
-/// The hub's answer to `GET /phones/answered`: whether any desk phone is linked to the device at all, and the
-/// calls answered on its phones in the last two minutes, oldest first.
+/// The hub's answer to `GET /phones/answered`: whether any desk phone is linked to the device at all, the
+/// calls answered on its phones in the last two minutes, oldest first, and the hub's cursor, which the next
+/// request brings back as `after` so the hub holds it until there is a newer call.
 class AnsweredCalls {
-  const AnsweredCalls({required this.linked, required this.calls});
+  const AnsweredCalls({required this.linked, required this.calls, this.cursor = 0});
 
   final bool linked;
   final List<DeskPhoneCall> calls;
+  final int cursor;
 }

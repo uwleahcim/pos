@@ -373,9 +373,20 @@ class PosApi {
   );
 
   /// The calls answered in the last two minutes on the desk phones linked to [device], each with when it was
-  /// picked up on [clock], and whether any phone is linked to the device at all.
-  Future<AnsweredCalls> answeredCalls({required String device, DateTime Function() clock = DateTime.now}) async {
-    final json = await _get('/phones/answered', query: {'device': device});
+  /// picked up on [clock], whether any phone is linked to the device at all, and the hub's cursor. With
+  /// [hold], the hub keeps the request until a call newer than [after] (the last cursor) is there, or that
+  /// long: a pick-up comes back the moment it happens.
+  Future<AnsweredCalls> answeredCalls({
+    required String device,
+    int after = 0,
+    Duration hold = Duration.zero,
+    DateTime Function() clock = DateTime.now,
+  }) async {
+    final json = await _get(
+      '/phones/answered',
+      query: {'device': device, 'after': '$after', if (hold > Duration.zero) 'wait': '${hold.inSeconds}'},
+      timeout: hold > Duration.zero ? hold + const Duration(seconds: 5) : null,
+    );
     final now = clock();
     return AnsweredCalls(
       linked: json['linked'] as bool? ?? false,
@@ -383,6 +394,7 @@ class PosApi {
         for (final call in json['calls'] as List? ?? const [])
           DeskPhoneCall.fromJson(call as Map<String, dynamic>, now: now),
       ],
+      cursor: (json['cursor'] as num?)?.toInt() ?? 0,
     );
   }
 

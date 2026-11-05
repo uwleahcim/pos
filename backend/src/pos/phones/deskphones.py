@@ -148,7 +148,10 @@ class CallTracker:
 
 class AnsweredCalls:
     """The answers on linked desk phones, kept for two minutes for their screens to collect. `links` reads the
-    manager's extension-to-device links when a phone answers, so a change takes the next call."""
+    manager's extension-to-device links when a phone answers, so a change takes the next call. A screen asks
+    with `wait` and is answered the moment one of its phones picks up: each answer kept has a `seq`, the
+    hub's `cursor` is the last one given out, and a request waits for an answer newer than the cursor it
+    brings back."""
 
     def __init__(
         self, links: Callable[[], Mapping[str, str]], *, keep: float = 120.0, clock: Callable[[], float] = time.time
@@ -158,11 +161,20 @@ class AnsweredCalls:
         self._lock = threading.Lock()
         self._answers = 0
         self._pops = 0
+        self._links_version = 0
+        self._waiters: set[asyncio.Future[None]] = set()
 
     @property
     def counts(self) -> dict[str, int]:
-        """Answers seen on any extension, and how many reached a linked screen."""
-        return {"answers": self._answers, "pops": self._pops}
+        """Answers seen on any extension, how many reached a linked screen, and how many screens are waiting
+        for the next one right now."""
+        with self._lock:
+            return {"answers": self._answers, "pops": self._pops, "waiting": len(self._waiters)}
+
+    @property
+    def cursor(self) -> int:
+        """The `seq` of the last answer kept for a screen; a screen brings it back as `after`."""
+        return self._pops
 
     def linked(self, device: str) -> bool:
         """Whether any desk phone is linked to this device (names compared regardless of case)."""
@@ -176,6 +188,7 @@ class AnsweredCalls:
             self._answers += 1
             if device is None:
                 return None
+            self._pops += 1
             pop = {
                 "id": f"{answered.linkedid}:{answered.extension}",
                 "device": device,
@@ -184,11 +197,49 @@ class AnsweredCalls:
                 "name": answered.name,
                 "dialed": answered.dialed,
                 "at": answered.at_ms,
+                "seq": self._pops,
             }
             self._calls.append(pop)
-            self._pops += 1
             self._prune(self._clock())
+        self._wake()
         return pop
+
+    def links_changed(self) -> None:
+        """A manager changed the links: every waiting screen is answered now, with `linked` as it stands."""
+        self._links_version += 1
+        self._wake()
+
+    async def wait(self, device: str, *, after: int, timeout: float) -> list[dict[str, Any]]:
+        """`for_device`, the moment it holds a call newer than `after` (the `cursor` the screen was last given,
+        0 at first) or the links change; otherwise when `timeout` seconds are up, with what there is. A cursor
+        beyond this hub's (from its other hub, or from before a restart) is answered at once, so the screen
+        learns the right one."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        version = self._links_version
+        while True:
+            woken = loop.create_future()  # registered before looking, so a pick-up in between still wakes it
+            with self._lock:
+                self._waiters.add(woken)
+            try:
+                calls = self.for_device(device)
+                if after > self._pops or version != self._links_version or any(c["seq"] > after for c in calls):
+                    return calls
+                left = deadline - loop.time()
+                if left <= 0:
+                    return calls
+                await asyncio.wait_for(woken, left)
+            except TimeoutError:
+                return self.for_device(device)
+            finally:
+                with self._lock:
+                    self._waiters.discard(woken)
+
+    def _wake(self) -> None:
+        with self._lock:
+            waiters, self._waiters = self._waiters, set()
+        for woken in waiters:  # each on its own loop, maybe; the watcher records on the API's, a tool on none
+            woken.get_loop().call_soon_threadsafe(_resolve, woken)
 
     def for_device(self, device: str) -> list[dict[str, Any]]:
         """The calls answered for this device in the last two minutes, oldest first, each with its age on
@@ -207,6 +258,11 @@ class AnsweredCalls:
         cutoff = int((now - self._keep) * 1000)
         while self._calls and self._calls[0]["at"] < cutoff:
             self._calls.popleft()
+
+
+def _resolve(future: asyncio.Future[None]) -> None:
+    if not future.done():
+        future.set_result(None)
 
 
 def _describe(err: BaseException, host: str) -> str:

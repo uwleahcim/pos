@@ -19,7 +19,12 @@ import 'phone_test.dart' show active;
 void main() {
   var now = DateTime(2026, 11, 4, 18, 0, 0);
 
-  Map<String, dynamic> call({String id = '1730000000.123:200', String extension = '200', int ageMs = 800}) => {
+  Map<String, dynamic> call({
+    String id = '1730000000.123:200',
+    String extension = '200',
+    int ageMs = 800,
+    int seq = 1,
+  }) => {
     'id': id,
     'extension': extension,
     'number': '+16175551234',
@@ -27,6 +32,7 @@ void main() {
     'dialed': '+17817296899',
     'at': 1730000000000,
     'age_ms': ageMs,
+    'seq': seq,
   };
 
   setUp(() => now = DateTime(2026, 11, 4, 18, 0, 0));
@@ -89,20 +95,53 @@ void main() {
       expect(w.take(), isNull);
     });
 
-    test('asks the hub every second while a phone is linked, every ten seconds when none is', () async {
+    test('keeps one request waiting at the hub and asks again the moment it is answered', () async {
       late FakeAsync fake;
       final (hub, w) = await watcher(clock: () => now.add(fake.elapsed));
       fakeAsync((async) {
         fake = async;
         w.start();
         async.flushMicrotasks();
-        async.elapse(const Duration(seconds: 30));
-        expect(hub.answeredAsked.length, inInclusiveRange(3, 5)); // at 0, 10, 20, 30
-        hub.linked = true;
-        async.elapse(const Duration(seconds: 10)); // the next answer says linked: from then on every second
-        final before = hub.answeredAsked.length;
+        expect(hub.answeredAsked, ['tab1']);
+        expect(hub.answeredWait, [15]); // the hub may hold it for 15 seconds
+        expect(hub.answeredAfter, [0]);
+        async.elapse(const Duration(seconds: 40));
+        expect(hub.answeredAsked.length, 3); // held 15 s each, asked again at once: at 0, 15 and 30 s
+        hub.pickUp(call(seq: 1)); // at 40 s, while the third request waits
+        async.flushMicrotasks();
+        expect(w.calls, 1); // the waiting request came back with it right away
+        expect(w.take()?.extension, '200');
+        expect((hub.answeredAsked.length, hub.answeredAfter.last), (4, 1)); // asked again at once, from the cursor
+        w.stop();
+      });
+    });
+
+    test('a hub from before held requests answers at once and is asked once a second, not in a loop', () async {
+      late FakeAsync fake;
+      final (hub, w) = await watcher(clock: () => now.add(fake.elapsed));
+      hub.holds = false;
+      fakeAsync((async) {
+        fake = async;
+        w.start();
         async.elapse(const Duration(seconds: 10));
-        expect(hub.answeredAsked.length - before, inInclusiveRange(9, 11));
+        expect(hub.answeredAsked.length, inInclusiveRange(10, 11));
+        w.stop();
+      });
+    });
+
+    test('a hub that is down is asked again a second later', () async {
+      late FakeAsync fake;
+      final (hub, w) = await watcher(clock: () => now.add(fake.elapsed));
+      hub.answeredDown = true;
+      fakeAsync((async) {
+        fake = async;
+        w.start();
+        async.elapse(const Duration(seconds: 5));
+        expect(hub.answeredAsked.length, inInclusiveRange(5, 6));
+        hub.answeredDown = false;
+        hub.pickUp(call(seq: 1));
+        async.elapse(const Duration(seconds: 1));
+        expect(w.calls, 1);
         w.stop();
       });
     });

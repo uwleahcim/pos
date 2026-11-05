@@ -607,17 +607,26 @@ def create_app(
         """A manager links desk phones to screens; each extension once. The next call answered on a linked
         phone opens the caller's order on that screen."""
         manager_from(app.state.tokens, authorization)
-        return write_setting("desk_phones", body.model_dump(), clean_desk_phones)
+        saved = write_setting("desk_phones", body.model_dump(), clean_desk_phones)
+        app.state.answered.links_changed()  # every screen waiting for a call hears where it stands now
+        return saved
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")
-    def read_answered(device: str = Query(min_length=1)) -> dict[str, Any]:
+    async def read_answered(
+        device: str = Query(min_length=1),
+        wait: float = Query(0, ge=0, le=30, description="seconds to hold the request for a call newer than `after`"),
+        after: int = Query(0, ge=0, description="the `cursor` of this screen's last answer"),
+    ) -> dict[str, Any]:
         """The outside calls answered in the last two minutes on the desk phones linked to this device, oldest
         first, each once by `id` and with its `age_ms` on the hub's clock; `linked` says whether any phone is
-        linked to the device at all, so an unlinked screen can ask less often. The app opens the caller's last
-        order of the day for a fresh one, as it does when it picks up a call itself."""
+        linked to the device at all. With `wait`, the request is held until a call newer than `after` (the
+        `cursor` of the last answer) is there, or the links change, so a pick-up reaches the screen at once.
+        The app opens the caller's last order of the day for a fresh one, as it does when it picks up a call
+        itself."""
         answered: AnsweredCalls = app.state.answered
-        return {"device": device, "linked": answered.linked(device), "calls": answered.for_device(device)}
+        calls = await answered.wait(device, after=after, timeout=wait) if wait > 0 else answered.for_device(device)
+        return {"device": device, "linked": answered.linked(device), "calls": calls, "cursor": answered.cursor}
 
     @app.get("/phones/status")
     def read_phone_status() -> dict[str, Any]:
