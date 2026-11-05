@@ -254,21 +254,49 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('a manager links a desk phone to a screen', (tester) async {
-      final t = await pumpLocation(tester);
+    /// Opens the pull-down under [key] and picks the item reading [label].
+    Future<void> pick(WidgetTester tester, String key, String label) async {
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+    }
+
+    DropdownButton<String> pullDown(WidgetTester tester, String key) =>
+        tester.widget<DropdownButton<String>>(find.byKey(ValueKey(key)));
+
+    List<String> labels(DropdownButton<String> pullDown) => [
+      for (final item in pullDown.items!) (item.child as Text).data!,
+    ];
+
+    testWidgets('a manager picks each phone from the PBX\'s extensions and its screen from the hub\'s devices', (
+      tester,
+    ) async {
+      final t = await pumpLocation(
+        tester,
+        setUp: (hub) {
+          hub.extensions = [
+            {'extension': '200', 'online': true},
+            {'extension': '201', 'online': false},
+          ];
+          hub.extensionsConnected = true;
+          hub.devices = ['mac1', 'ipad1', 't1'];
+        },
+      );
       await tall(tester);
-      expect(find.textContaining('not linked to the PBX'), findsOneWidget);
       expect(find.text('No desk phone is linked yet.'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('desk-add')));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('desk-ext:0')), '200');
-      await tester.tap(find.byKey(const ValueKey('desk-this-device:0'))); // the device this screen runs on
-      await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(find.byKey(const ValueKey('desk-dev:0'))).controller!.text, 't1');
+      expect(labels(pullDown(tester, 'desk-ext-pick:0')), ['200', '201 (offline)', 'Other…']);
+      // this screen first and marked, the others by name, and Other to type a name
+      expect(labels(pullDown(tester, 'desk-dev-pick:0')), ['t1 (this device)', 'ipad1', 'mac1', 'Other…']);
+      await pick(tester, 'desk-ext-pick:0', '200');
+      await pick(tester, 'desk-dev-pick:0', 't1 (this device)');
+      expect((pullDown(tester, 'desk-ext-pick:0').value, pullDown(tester, 'desk-dev-pick:0').value), ('200', 't1'));
       await tester.tap(find.byKey(const ValueKey('desk-add')));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('desk-ext:1')), '201');
-      await tester.enterText(find.byKey(const ValueKey('desk-dev:1')), 'ipad1');
+      await pick(tester, 'desk-ext-pick:1', '201 (offline)');
+      await pick(tester, 'desk-dev-pick:1', 'ipad1');
       await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
       await tester.pumpAndSettle();
       expect(t.hub.deskPhones, {
@@ -282,6 +310,46 @@ void main() {
       await stop(tester);
     });
 
+    testWidgets('Other lets a manager type what the lists do not have', (tester) async {
+      final t = await pumpLocation(
+        tester,
+        setUp: (hub) {
+          hub.extensions = [
+            {'extension': '200', 'online': true},
+          ];
+          hub.extensionsConnected = true;
+        },
+      );
+      await tall(tester);
+      await tester.tap(find.byKey(const ValueKey('desk-add')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('desk-ext:0')), findsNothing); // a pull-down until Other is picked
+      await pick(tester, 'desk-ext-pick:0', 'Other…');
+      await tester.enterText(find.byKey(const ValueKey('desk-ext:0')), '210');
+      await pick(tester, 'desk-dev-pick:0', 'Other…');
+      await tester.enterText(find.byKey(const ValueKey('desk-dev:0')), 'kiosk');
+      await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
+      await tester.pumpAndSettle();
+      expect(t.hub.deskPhones, {
+        'links': [
+          {'extension': '210', 'device': 'kiosk'},
+        ],
+      });
+      await stop(tester);
+    });
+
+    testWidgets('without a PBX the extension is typed; the screen is still picked', (tester) async {
+      await pumpLocation(tester);
+      await tall(tester);
+      expect(find.textContaining('not linked to the PBX'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('desk-add')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('desk-ext-pick:0')), findsNothing);
+      expect(find.byKey(const ValueKey('desk-ext:0')), findsOneWidget);
+      expect(labels(pullDown(tester, 'desk-dev-pick:0')), ['t1 (this device)', 'Other…']);
+      await stop(tester);
+    });
+
     testWidgets('the links come back from the hub, a row can go, and a refusal shows', (tester) async {
       final t = await pumpLocation(
         tester,
@@ -292,15 +360,23 @@ void main() {
               {'extension': '201', 'device': 'mac1'},
             ],
           };
+          hub.extensions = [
+            {'extension': '200', 'online': true},
+            {'extension': '201', 'online': true},
+          ];
+          hub.extensionsConnected = true;
+          hub.devices = ['mac1']; // tab1 has not been heard from, yet its link still shows as it is
           hub.pbxStatus = {'configured': true, 'connected': true, 'host': 'pbx', 'answers': 3, 'pops': 2, 'links': 2};
         },
       );
       await tall(tester);
       expect(find.textContaining('watching pbx'), findsOneWidget);
-      expect(tester.widget<TextField>(find.byKey(const ValueKey('desk-dev:1'))).controller!.text, 'mac1');
+      expect(pullDown(tester, 'desk-dev-pick:0').value, 'tab1');
+      expect(labels(pullDown(tester, 'desk-dev-pick:0')), ['t1 (this device)', 'mac1', 'tab1', 'Other…']);
+      expect(pullDown(tester, 'desk-dev-pick:1').value, 'mac1');
       await tester.tap(find.byKey(const ValueKey('desk-delete:0')));
       await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(find.byKey(const ValueKey('desk-ext:0'))).controller!.text, '201');
+      expect(pullDown(tester, 'desk-ext-pick:0').value, '201');
       t.hub.refuseDeskPhones = 'extension 201 is linked twice';
       await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
       await tester.pumpAndSettle();

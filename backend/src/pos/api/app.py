@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .. import localtime
+from ..devices import DevicesSeen
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.preferences import PreferenceStore
@@ -411,6 +412,7 @@ def create_app(
     today: Callable[[], date] | None = None,
     answered: AnsweredCalls | None = None,
     watcher: AmiWatcher | None = None,
+    devices: DevicesSeen | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -450,6 +452,7 @@ def create_app(
         )
     )
     app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered)
+    app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
     app.state.notifier = Notifier(
         app.state.messenger,
         location=app.state.location,
@@ -624,6 +627,7 @@ def create_app(
         `cursor` of the last answer) is there, or the links change, so a pick-up reaches the screen at once.
         The app opens the caller's last order of the day for a fresh one, as it does when it picks up a call
         itself."""
+        app.state.devices.heard(device)
         answered: AnsweredCalls = app.state.answered
         calls = await answered.wait(device, after=after, timeout=wait) if wait > 0 else answered.for_device(device)
         return {"device": device, "linked": answered.linked(device), "calls": calls, "cursor": answered.cursor}
@@ -637,6 +641,23 @@ def create_app(
         status = pbx.status() if pbx is not None else {"configured": False, "connected": False}
         links = app.state.settings.get("desk_phones")["links"]
         return {**status, **answered.counts, "links": len(links)}
+
+    @app.get("/phones/extensions")
+    async def read_extensions() -> dict[str, Any]:
+        """The PBX's extensions, lowest first, each with `online` (a phone is registered on it), for a manager
+        linking desk phones to pick from; `connected` says whether the hub reaches the PBX right now (nothing
+        is listed otherwise)."""
+        pbx: AmiWatcher | None = app.state.watcher
+        if pbx is None:
+            return {"extensions": [], "connected": False}
+        return {"extensions": await pbx.extensions(), "connected": bool(pbx.status().get("connected"))}
+
+    @app.get("/devices")
+    def read_devices() -> dict[str, Any]:
+        """The screens this hub hears from (every running app asks it for desk-phone answers; a sign-in counts
+        too), by name with when each was last heard, for a manager to pick a screen from."""
+        devices: DevicesSeen = app.state.devices
+        return {"devices": devices.listed()}
 
     # Counter mode and takeout: the texts that went out -----------------------------------------------------
 
@@ -789,6 +810,7 @@ def create_app(
     @app.post("/signin")
     def sign_in(body: SignInIn) -> dict[str, Any]:
         """Who this PIN or tag belongs to. The app shows the name; it never sees the staff list."""
+        app.state.devices.heard(body.device)
         directory: Directory = app.state.staff
         try:
             if body.pin is not None:

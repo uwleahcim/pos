@@ -260,6 +260,23 @@ class AnsweredCalls:
             self._calls.popleft()
 
 
+#: An endpoint's device state (`PJSIPShowEndpoints`) or a peer's status (`SIPpeers`) when no phone is on it.
+_OFFLINE = frozenset({"unavailable", "invalid", "unknown", "unreachable"})
+
+
+async def extensions(client: AMIClient) -> list[dict[str, Any]]:
+    """The PBX's extensions, lowest first: its PJSIP (or SIP) endpoints with a number for a name (a trunk's name
+    is a word), each with whether a phone is registered on it right now."""
+    try:
+        _, rows = await client.send("PJSIPShowEndpoints")
+        found = [(r.get("ObjectName", ""), r.get("DeviceState", "")) for r in rows if r.get("Event") == "EndpointList"]
+    except AMIError:  # a chan_sip system
+        _, rows = await client.send("SIPpeers")
+        found = [(r.get("ObjectName", ""), r.get("Status", "")) for r in rows if r.get("Event") == "PeerEntry"]
+    numbered = sorted(((name, state) for name, state in found if name.isdigit()), key=lambda item: int(item[0]))
+    return [{"extension": name, "online": state.split(" ")[0].lower() not in _OFFLINE} for name, state in numbered]
+
+
 def _resolve(future: asyncio.Future[None]) -> None:
     if not future.done():
         future.set_result(None)
@@ -294,6 +311,7 @@ class AmiWatcher:
         self._secret, self._calls, self._backoff, self._clock = secret, calls, backoff, clock
         self._tracker = tracker if tracker is not None else CallTracker(clock=clock)
         self._task: asyncio.Task[None] | None = None
+        self._client: AMIClient | None = None
         self._since: float | None = None
         self._last_error: str | None = None
         self._attempts = 0
@@ -314,6 +332,7 @@ class AmiWatcher:
             await asyncio.wait_for(task, 15)
         except (asyncio.CancelledError, TimeoutError):
             pass
+        self._client = None
         self._since = None
 
     def status(self) -> dict[str, Any]:
@@ -330,6 +349,18 @@ class AmiWatcher:
             "last_error": self._last_error,
         }
 
+    async def extensions(self) -> list[dict[str, Any]]:
+        """The PBX's extensions (see `extensions`) while connected; none when not, or when the PBX does not
+        answer in time."""
+        client = self._client
+        if client is None:
+            return []
+        try:
+            return await extensions(client)
+        except (AMIError, ConnectionError, OSError, TimeoutError) as err:
+            log.warning("PBX %s:%s did not list its extensions: %s", self.host, self.port, err)
+            return []
+
     async def run(self) -> None:
         delay = self._backoff[0]
         while True:
@@ -337,6 +368,7 @@ class AmiWatcher:
             try:
                 async with AMIClient(self.host, self.port, tls=self.tls, timeout=5.0) as client:
                     await client.login(self.user, self._secret, events="call")
+                    self._client = client
                     self._connections += 1
                     self._since = self._clock()
                     delay = self._backoff[0]
@@ -354,9 +386,11 @@ class AmiWatcher:
                             )
                     raise ConnectionError("AMI connection closed")
             except asyncio.CancelledError:
+                self._client = None
                 self._since = None
                 raise
             except (AMIError, ConnectionError, OSError, TimeoutError, ssl.SSLError) as err:
+                self._client = None
                 self._since = None
                 self._last_error = _describe(err, self.host)
                 log.warning("PBX link %s:%s: %s; trying again in %.0f s", self.host, self.port, self._last_error, delay)
