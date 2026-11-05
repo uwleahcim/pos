@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import threading
 import time
 
 import pytest
@@ -211,11 +212,12 @@ def test_an_answer_on_a_linked_phone_waits_for_its_screen_and_an_unlinked_one_is
             "dialed": "+17817296899",
             "at": 1_730_000_010_500,
             "age_ms": 1500,
+            "seq": 1,
         }
     ]
     assert calls.for_device("ipad1") == []
     assert calls.for_device("mac1") == [] and calls.linked("mac1") and calls.linked("TAB1") and not calls.linked("x")
-    assert calls.counts == {"answers": 2, "pops": 1}
+    assert calls.counts == {"answers": 2, "pops": 1, "waiting": 0}
 
 
 def test_the_screen_sees_a_call_for_two_minutes_then_not():
@@ -233,6 +235,76 @@ def test_the_links_are_read_when_the_phone_answers_so_a_managers_change_takes_th
     calls = AnsweredCalls(lambda: links)
     links["200"] = "ipad1"
     assert calls.record(answered("200"))["device"] == "ipad1"
+
+
+# --- a screen's request waits at the hub ------------------------------------------------------------------------
+
+
+def test_a_screens_request_waits_until_one_of_its_phones_answers():
+    calls = AnsweredCalls(lambda: {"200": "tab1", "201": "mac1"}, clock=lambda: 1_730_000_012.0)
+
+    async def run() -> None:
+        waiting = asyncio.ensure_future(calls.wait("tab1", after=0, timeout=5))
+        await asyncio.sleep(0.05)
+        calls.record(answered("201", linkedid="1730000000.456"))  # mac1's phone, not one of tab1's
+        await asyncio.sleep(0.05)
+        assert not waiting.done()
+        calls.record(answered("200"))
+        found = await asyncio.wait_for(waiting, 1.0)
+        assert [(c["extension"], c["seq"]) for c in found] == [("200", 2)]
+
+    asyncio.run(run())
+
+
+def test_a_request_with_nothing_new_comes_back_with_what_there_is_when_the_wait_is_over():
+    calls = AnsweredCalls(lambda: {"200": "tab1"}, clock=lambda: 1_730_000_012.0)
+    calls.record(answered("200"))  # seq 1, which the screen has already
+
+    async def run() -> None:
+        started = time.monotonic()
+        found = await calls.wait("tab1", after=1, timeout=0.1)
+        assert [c["seq"] for c in found] == [1] and time.monotonic() - started >= 0.1
+        assert [c["seq"] for c in await calls.wait("tab1", after=0, timeout=5)] == [1]  # newer than 0: at once
+
+    asyncio.run(run())
+
+
+def test_a_cursor_from_before_the_hub_restarted_is_answered_at_once():
+    calls = AnsweredCalls(lambda: {"200": "tab1"})
+
+    async def run() -> None:
+        started = time.monotonic()
+        assert await calls.wait("tab1", after=57, timeout=5) == []
+        assert time.monotonic() - started < 1.0
+
+    asyncio.run(run())
+
+
+def test_a_change_of_links_wakes_every_waiting_screen():
+    calls = AnsweredCalls(lambda: {"200": "tab1"})
+
+    async def run() -> None:
+        waiting = [asyncio.ensure_future(calls.wait(d, after=0, timeout=5)) for d in ("tab1", "ipad1")]
+        await asyncio.sleep(0.05)
+        assert calls.counts["waiting"] == 2
+        calls.links_changed()
+        assert await asyncio.wait_for(asyncio.gather(*waiting), 1.0) == [[], []]
+        assert calls.counts["waiting"] == 0
+
+    asyncio.run(run())
+
+
+def test_a_pick_up_from_another_thread_wakes_the_screen_too():
+    """The watcher records on the API's loop; a test or a tool may record from a thread."""
+    calls = AnsweredCalls(lambda: {"200": "tab1"}, clock=lambda: 1_730_000_012.0)
+
+    async def run() -> None:
+        threading.Timer(0.1, lambda: calls.record(answered("200"))).start()
+        started = time.monotonic()
+        found = await calls.wait("tab1", after=0, timeout=5)
+        assert [c["seq"] for c in found] == [1] and time.monotonic() - started < 1.0
+
+    asyncio.run(run())
 
 
 # --- the setting -----------------------------------------------------------------------------------------------
@@ -276,6 +348,7 @@ def test_a_manager_links_the_phones_and_the_linked_screen_collects_the_answer():
         "device": "tab1",
         "linked": False,
         "calls": [],
+        "cursor": 0,
     }
     body = {"links": [{"extension": "200", "device": "tab1"}]}
     assert c.put("/settings/desk_phones", json=body).status_code == 401
@@ -290,10 +363,50 @@ def test_a_manager_links_the_phones_and_the_linked_screen_collects_the_answer():
     seen = c.get("/phones/answered", params={"device": "tab1"}).json()
     assert seen["linked"] is True and [x["id"] for x in seen["calls"]] == [f"{LINKED}:200"]
     assert seen["calls"][0]["number"] == "+16175551234" and seen["calls"][0]["age_ms"] >= 0
+    assert seen["cursor"] == 1 and seen["calls"][0]["seq"] == 1
     assert c.get("/phones/answered", params={"device": "mac1"}).json()["calls"] == []
     status = c.get("/phones/status").json()
     assert (status["configured"], status["connected"], status["links"]) == (False, False, 1)
-    assert status["answers"] == 1 and status["pops"] == 1
+    assert status["answers"] == 1 and status["pops"] == 1 and status["waiting"] == 0
+
+
+def _manager(c) -> dict[str, str]:
+    token = c.post("/admin/session", json={"device": "t1", "pin": "9999"}).json()["token"]
+    return {"authorization": f"Bearer {token}"}
+
+
+def test_a_screens_request_on_the_wire_waits_for_the_pick_up_and_carries_the_hubs_cursor():
+    c = client()
+    c.put("/settings/desk_phones", json={"links": [{"extension": "200", "device": "tab1"}]}, headers=_manager(c))
+
+    def pick_up() -> None:
+        time.sleep(0.2)
+        c.app.state.answered.record(answered("200", at_ms=int(time.time() * 1000)))
+
+    threading.Thread(target=pick_up).start()
+    started = time.monotonic()
+    seen = c.get("/phones/answered", params={"device": "tab1", "wait": 5, "after": 0}).json()
+    assert time.monotonic() - started < 2.0, "the request was held past the pick-up"
+    assert [x["id"] for x in seen["calls"]] == [f"{LINKED}:200"] and seen["cursor"] == 1
+    # the screen has that one: the next request waits, and ends with what there is when the wait is over
+    started = time.monotonic()
+    again = c.get("/phones/answered", params={"device": "tab1", "wait": 0.2, "after": 1}).json()
+    assert time.monotonic() - started >= 0.2 and [x["seq"] for x in again["calls"]] == [1]
+    assert c.get("/phones/answered", params={"device": "tab1", "wait": 31}).status_code == 422
+
+
+def test_linking_a_phone_answers_the_screens_waiting_request_on_the_wire():
+    c = client()
+    auth = _manager(c)
+
+    def link() -> None:
+        time.sleep(0.2)
+        c.put("/settings/desk_phones", json={"links": [{"extension": "200", "device": "tab1"}]}, headers=auth)
+
+    threading.Thread(target=link).start()
+    started = time.monotonic()
+    seen = c.get("/phones/answered", params={"device": "tab1", "wait": 5}).json()
+    assert time.monotonic() - started < 2.0 and seen["linked"] is True
 
 
 # --- the watcher on a live manager interface ---------------------------------------------------------------------

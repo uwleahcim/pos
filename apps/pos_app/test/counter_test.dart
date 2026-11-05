@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -101,12 +102,30 @@ class Hub {
   final lastOrderAsked = <String>[];
   bool lastOrderDown = false;
 
-  /// Desk phones (`GET /phones/answered`): whether one is linked to the asking device, the calls it lists,
-  /// the devices that asked, and whether it is down for that call.
+  /// Desk phones (`GET /phones/answered`): whether one is linked to the asking device, the calls it lists
+  /// (each with a `seq`; the hub's cursor is the highest), the devices that asked with the `after` and `wait`
+  /// they sent, and whether it is down for that call. A request with `wait` is held until [pickUp] lists a
+  /// call newer than its `after` or the wait is over; a hub from before held requests ([holds] false) answers
+  /// at once.
   bool linked = false;
   final answered = <Map<String, dynamic>>[];
   final answeredAsked = <String>[];
+  final answeredAfter = <int>[];
+  final answeredWait = <int>[];
   bool answeredDown = false;
+  bool holds = true;
+  final _waiting = <Completer<void>>[];
+
+  int get answeredCursor => answered.fold(0, (most, c) => math.max(most, (c['seq'] as int?) ?? 0));
+
+  /// A desk phone picks up: the call is listed, and every held request is answered.
+  void pickUp(Map<String, dynamic> call) {
+    answered.add(call);
+    for (final w in _waiting) {
+      if (!w.isCompleted) w.complete();
+    }
+    _waiting.clear();
+  }
 
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
@@ -121,9 +140,20 @@ class Hub {
       return json({'order': lastOrder});
     }
     if (path == '/phones/answered') {
-      answeredAsked.add(request.url.queryParameters['device'] ?? '');
+      final q = request.url.queryParameters;
+      answeredAsked.add(q['device'] ?? '');
+      final after = int.tryParse(q['after'] ?? '') ?? 0;
+      final wait = int.tryParse(q['wait'] ?? '') ?? 0;
+      answeredAfter.add(after);
+      answeredWait.add(wait);
       if (answeredDown) return json({'detail': 'down'}, 503);
-      return json({'device': request.url.queryParameters['device'], 'linked': linked, 'calls': answered});
+      final newer = answered.any((c) => ((c['seq'] as int?) ?? 0) > after);
+      if (holds && wait > 0 && !newer && after <= answeredCursor) {
+        final woken = Completer<void>();
+        _waiting.add(woken);
+        await Future.any([woken.future, Future<void>.delayed(Duration(seconds: wait))]);
+      }
+      return json({'device': q['device'], 'linked': linked, 'calls': answered, 'cursor': answeredCursor});
     }
     if (_ops.hasMatch(path)) {
       final id = _ops.firstMatch(path)!.group(1)!;

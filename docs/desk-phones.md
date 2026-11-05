@@ -18,9 +18,10 @@ caller ──▶ PBX (FreePBX) ──▶ ring group 600 ──▶ desk phone 200
 - The hub keeps one connection to the PBX's manager interface (the same AMI user `pos` as the October
   probe) and watches the call events. The moment an extension answers an outside call, the hub looks the
   extension up in the links a manager keeps and holds the answer for that device.
-- The app on every device asks its hub for such answers: every second while a phone is linked to it, every
-  ten seconds while none is. A fresh answer (less than 45 seconds old) does what picking up in the app
-  does: the hub is asked for the number's last order of the day (`GET /orders/last`), which opens; with
+- The app on every device keeps one request waiting at its hub for such answers; the hub answers it the
+  moment one of the device's phones picks up (or after 15 seconds with nothing new) and the next request
+  follows at once, so the pop comes a fraction of a second after the pick-up. A fresh answer (less than 45
+  seconds old) does what picking up in the app does: the hub is asked for the number's last order of the day (`GET /orders/last`), which opens; with
   none, the to-go form opens with the number, the phone channel and the caller-ID name, when the trunk gave
   one (`<unknown>`, Anonymous and the like are no name). Only while someone
   is signed in on that device, as with a call taken in the app; a call picked up just before someone signs
@@ -73,7 +74,9 @@ answers from whichever hub it talks to, and the same call is one call on both.
 - The screen has to be on and someone signed in, as for a call taken in the app.
 - A call that rang before the hub connected to the PBX still opens if the number is an outside one; one
   that rang while the hub was down does not.
-- The answer reaches the screen within about a second of the pick-up (the app asks every second).
+- The answer reaches the screen a fraction of a second after the pick-up: the screen's request is already
+  waiting at the hub for it. A screen running an app build from before this, or a hub from before it, asks
+  once a second instead, so the pop takes up to a second or two there.
 - An attended transfer does not open the order on the second phone's screen.
 
 ## On the wire
@@ -84,15 +87,18 @@ answers from whichever hub it talks to, and the same call is one call on both.
   extension is letters, digits, `.`, `_` or `-` (digits as a rule); a device name is letters and digits, as
   the app keeps it; an extension once. A bad body is 422 with `message` saying why; a standby hub is 503
   `read_only`.
-- `GET /phones/answered?device=tab1`: `{"device": "tab1", "linked": true, "calls": [{"id":
+- `GET /phones/answered?device=tab1&wait=15&after=41`: `{"device": "tab1", "linked": true, "calls": [{"id":
   "1730000000.123:200", "extension": "200", "number": "+16175551234", "name": "LINDA CHEN", "dialed":
-  "+17817296899", "at": 1730000010500, "age_ms": 1500}]}`: the calls answered on the device's phones in
-  the last two minutes, oldest first, each once by `id` (the call's id on the PBX and the extension, the
-  same on every hub) and with its age on the hub's clock, which the app uses rather than its own. Device
-  names match regardless of case.
+  "+17817296899", "at": 1730000010500, "age_ms": 1500, "seq": 42}], "cursor": 42}`: the calls answered on
+  the device's phones in the last two minutes, oldest first, each once by `id` (the call's id on the PBX and
+  the extension, the same on every hub), with its age on the hub's clock, which the app uses rather than its
+  own, and its `seq` on this hub. With `wait` (seconds, 30 at most) the hub holds the request until a call
+  newer than `after` (the `cursor` of the last answer, 0 at first) is there, or a manager changes the links,
+  or the time is up, and answers at once a cursor beyond its own (its other hub's, or from before a restart).
+  Without `wait` it answers at once. Device names match regardless of case.
 - `GET /phones/status`: `configured` (a PBX is set), `host`, `connected`, `since`, `attempts`,
   `connections`, `events`, `last_error`, plus `answers` seen on any extension, `pops` that reached a linked
-  screen, and `links` as counted in the setting.
+  screen, `waiting` screens with a request held at the hub right now, and `links` as counted in the setting.
 - Hub environment (`/opt/pos/.env`, written by `hubctl pbx link`): `POS_AMI_HOST` (`pbx` for the tunnel
   service; empty keeps the watcher off), `POS_AMI_PORT` (5038), `POS_AMI_USER` (`pos`), `POS_AMI_SECRET`,
   `POS_AMI_TLS` (`1` for Asterisk's TLS manager port, 5039, when a PBX is reached without the tunnel);
@@ -115,4 +121,6 @@ answers from whichever hub it talks to, and the same call is one call on both.
 | `last_error` `Connection refused` | The tunnel is down, or Asterisk's manager interface is off | `hubctl logs pbx`; on the PBX `asterisk -rx "manager show settings"` |
 | Connected, `hubctl pbx tail` prints nothing on a pick-up | The AMI user lacks the `call` read right, or the phone is not a PJSIP/SIP extension | FreePBX, Settings, Asterisk Manager Users, `pos`, Read: `call` |
 | `hubctl pbx tail` prints the answer, the screen does nothing | The extension is not linked to that device name, or nobody is signed in | Location settings, Desk phones: the device name as the screen's Settings show it |
+| The order opens a second or two after the pick-up, not at once | The app on that screen, or its hub, is from before the waiting request: the screen asks once a second | `hubctl update` on the hub and the current app build on the screen; `hubctl pbx status` then counts the screen under `waiting` |
+| The order opens late and `hubctl pbx tail` prints the answer late too | The delay is before the hub: the PBX reported the answer late (the tunnel adds milliseconds) | The hub does nothing in between, so look at the PBX: its load, and how the ring group dials the phone |
 | The app's own call and the desk phone both open an order | The app's extension is linked as a desk phone of another device | Link each extension to the screen it stands at; the app skips only its own extension |
