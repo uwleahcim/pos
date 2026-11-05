@@ -36,8 +36,10 @@ what is wrong. Screens showing the menu ask every five seconds whether it change
 Two ways to put the app on a Galaxy tablet or phone. Neither needs a signing key: the APK is signed with the
 debug key (the TODO in `android/app/build.gradle.kts`), which is fine for the restaurant's own devices.
 
-1. **No cable: the APK that CI builds.** Every push builds `app-release.apk` and keeps it for 30 days as the
-   `pos-app-apk` artifact of the `ci` workflow. On the tablet, signed in to GitHub, open the latest green run under
+1. **No cable: the APK that CI builds.** Every push to main builds `app-release.apk` (64-bit ARM, which every
+   Galaxy tablet and phone is) and keeps it for 30 days as the `pos-app-apk` artifact of the `ci` workflow; a pull
+   request builds it only when it touches the Android project, and Actions, ci, **Run workflow** builds one from
+   any branch on demand. On the tablet, signed in to GitHub, open the latest green run under
    Actions, download the artifact (a zip), open it from My Files and tap the APK inside. Android asks once to let
    that app install unknown apps. A Samsung with Auto Blocker on (Settings, Security and privacy) refuses the
    install until it is off.

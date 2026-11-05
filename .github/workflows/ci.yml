@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: # Actions, ci, Run workflow: builds the APK from any branch on demand
 
 jobs:
   backend:
@@ -82,9 +83,35 @@ jobs:
       # macOS and iOS builds need a Mac runner (10x minutes): see apple-build.yml, run weekly and on demand.
       # Android builds in the android job below.
 
-  android:
-    # Linux runners carry the Android SDK, so the Android build runs on every push at Linux prices.
+  changes:
+    # What a pull request touches, so the Android build below (the slow job: most of ten minutes cold) can be
+    # skipped on a PR that cannot change it. The checkout of a PR is its merge with the base branch, so the diff
+    # against the base branch's tip is the PR's own files.
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      android: ${{ steps.diff.outputs.android }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Does it touch the Android build?
+        id: diff
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          if git diff --name-only FETCH_HEAD HEAD | grep -Eq '^(apps/pos_app/(android/|pubspec\.(yaml|lock)$)|\.github/workflows/ci\.yml$)'; then
+            echo "android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  android:
+    # Linux runners carry the Android SDK, so the Android build runs at Linux prices. Every push to main and every
+    # run on demand build the APK and keep it; a pull request builds it only when it touches what the app job's
+    # analysis and tests cannot cover: the Android project, the packages, or this workflow.
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.android == 'true') }}
     defaults:
       run:
         working-directory: apps/pos_app
@@ -94,13 +121,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle # Gradle itself, the Android plugin, Kotlin and the libraries: downloaded once, not every run
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
       - run: flutter pub get
-      - name: Build Android (debug-signed APK)
-        run: flutter build apk --release
+      - name: Build Android (debug-signed APK, 64-bit ARM)
+        # Every Galaxy tablet and phone the restaurant would install it on is arm64; the 32-bit ARM and x86_64
+        # builds of a fat APK would triple the native compile for nothing.
+        run: flutter build apk --release --target-platform android-arm64
       # The APK stays with the run for 30 days: Actions, the run, Artifacts, pos-app-apk. Install it on a tablet or
       # phone from there (apps/pos_app/README.md, "Android tablets and phones").
       - name: Keep the APK
