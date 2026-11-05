@@ -13,6 +13,11 @@ class FakePBX:
     def __init__(self, secret: str = "s3cret", challenge: str = "4242") -> None:
         self.secret, self.challenge = secret, challenge
         self.received: list[Message] = []
+        #: What PJSIPShowEndpoints lists: a test sets its own rows (a trunk among the extensions, say).
+        self.endpoints: list[Message] = [
+            {"ObjectName": "201", "DeviceState": "Not in use"},
+            {"ObjectName": "202", "DeviceState": "Unavailable"},
+        ]
         self.port = 0
         self._writers: list[asyncio.StreamWriter] = []
 
@@ -74,11 +79,7 @@ class FakePBX:
             ]
             return self._list(action_id, "QueueSummary", rows)
         if action == "PJSIPShowEndpoints":
-            rows = [
-                {"ObjectName": "201", "DeviceState": "Not in use"},
-                {"ObjectName": "202", "DeviceState": "Unavailable"},
-            ]
-            return self._list(action_id, "EndpointList", rows)
+            return self._list(action_id, "EndpointList", self.endpoints)
         if action == "CoreShowChannels":
             return self._list(action_id, "CoreShowChannel", [])
         if action in ("QueuePause", "Originate"):

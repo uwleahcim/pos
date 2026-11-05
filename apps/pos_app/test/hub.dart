@@ -66,6 +66,12 @@ class Hub {
   String? refuseDeskPhones;
   Map<String, dynamic> pbxStatus = {'configured': false, 'connected': false, 'answers': 0, 'pops': 0, 'links': 0};
 
+  /// The PBX's extensions (`GET /phones/extensions`, with whether the hub reaches the PBX) and the screens the
+  /// hub hears from (`GET /devices`), for the pull-downs under Desk phones.
+  List<Map<String, dynamic>> extensions = [];
+  bool extensionsConnected = false;
+  List<String> devices = [];
+
   /// The check it serves for every order (it prices nothing itself), and its pricing rules.
   Map<String, dynamic>? check;
   Map<String, dynamic>? rules;
@@ -121,6 +127,14 @@ class Hub {
         return json(deskPhones);
       case '/phones/status':
         return json(pbxStatus);
+      case '/phones/extensions':
+        return json({'extensions': extensions, 'connected': extensionsConnected});
+      case '/devices':
+        return json({
+          'devices': [
+            for (final device in devices) {'device': device, 'seen_ms': 1730000000000},
+          ],
+        });
       case '/admin/session':
         final pin = (jsonDecode(request.body) as Map)['pin'] as String;
         pins.add(pin);

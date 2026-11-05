@@ -11,7 +11,8 @@ import time
 
 import pytest
 
-from pos.phones.ami import Message
+from pos.devices import DevicesSeen
+from pos.phones.ami import AMIClient, Message
 from pos.phones.deskphones import (
     AmiWatcher,
     Answered,
@@ -20,6 +21,7 @@ from pos.phones.deskphones import (
     _describe,
     caller_name,
     extension_of,
+    extensions,
 )
 from pos.settings import DEFAULTS, SettingStore, clean_desk_phones
 from tests.orders.test_menu_orders import client
@@ -578,3 +580,84 @@ def test_a_twilio_call_without_a_caller_name_reaches_the_screen_without_one():
         dial_end("Local/200@from-internal-00000040;2", "PJSIP/200-00000060", "ANSWER", linkedid="y", **caller)
     )
     assert answer is not None and (answer.number, answer.name) == ("+17816005224", "")
+
+
+# --- the lists a manager picks from -------------------------------------------------------------------------------
+
+
+def test_the_pbxs_extensions_are_its_numbered_endpoints_with_whether_a_phone_is_on_them():
+    async def go():
+        async with FakePBX() as pbx, AMIClient("127.0.0.1", pbx.port) as client:
+            pbx.endpoints = [
+                {"ObjectName": "Twilio-Oregon", "DeviceState": "Not in use"},  # a trunk is nobody's phone
+                {"ObjectName": "210", "DeviceState": "Unavailable"},
+                {"ObjectName": "201", "DeviceState": "Not in use"},
+                {"ObjectName": "1001", "DeviceState": "In use"},
+            ]
+            await client.login("pos", "s3cret")
+            return await extensions(client)
+
+    assert asyncio.run(go()) == [
+        {"extension": "201", "online": True},
+        {"extension": "210", "online": False},
+        {"extension": "1001", "online": True},
+    ]
+
+
+def test_the_watcher_lists_the_extensions_while_connected_and_none_when_not():
+    calls = AnsweredCalls(lambda: {})
+
+    async def go():
+        async with FakePBX() as pbx:
+            watcher = AmiWatcher("127.0.0.1", pbx.port, "pos", "s3cret", calls, backoff=(0.05, 0.1))
+            assert await watcher.extensions() == []  # not started yet
+            watcher.start()
+            try:
+                await until(lambda: watcher.status()["connected"])
+                assert [e["extension"] for e in await watcher.extensions()] == ["201", "202"]
+                await pbx.drop()
+                await until(lambda: not watcher.status()["connected"])
+            finally:
+                await watcher.stop()
+            assert await watcher.extensions() == []  # stopped
+
+    asyncio.run(go())
+
+
+def test_the_hub_remembers_the_screens_it_hears_from():
+    now = [1_730_000_000.0]
+    seen = DevicesSeen(clock=lambda: now[0])
+    seen.heard("tab1")
+    now[0] += 5
+    seen.heard("Mac1")
+    seen.heard("TAB1")  # the same screen, spelled as it spells itself now
+    seen.heard(" ")  # not a name
+    assert seen.listed() == [
+        {"device": "Mac1", "seen_ms": 1_730_000_005_000},
+        {"device": "TAB1", "seen_ms": 1_730_000_005_000},
+    ]
+
+
+class _ConnectedPbx:
+    """A watcher as the API sees it, with two extensions to offer."""
+
+    async def extensions(self):
+        return [{"extension": "201", "online": True}, {"extension": "202", "online": False}]
+
+    def status(self):
+        return {"configured": True, "connected": True}
+
+
+def test_the_lists_on_the_wire():
+    c = client()
+    assert c.get("/phones/extensions").json() == {"extensions": [], "connected": False}  # no PBX on a laptop
+    c.app.state.watcher = _ConnectedPbx()
+    assert c.get("/phones/extensions").json() == {
+        "extensions": [{"extension": "201", "online": True}, {"extension": "202", "online": False}],
+        "connected": True,
+    }
+    assert c.get("/devices").json() == {"devices": []}
+    c.get("/phones/answered", params={"device": "tab1"})  # every running app asks this, so the hub hears it
+    c.post("/signin", json={"device": "mac1", "pin": "1111"})
+    listed = c.get("/devices").json()["devices"]
+    assert [d["device"] for d in listed] == ["mac1", "tab1"] and all(d["seen_ms"] > 0 for d in listed)

@@ -44,6 +44,25 @@ class DeskPhoneLinks {
   };
 }
 
+/// An extension on the PBX as the hub lists it (`GET /phones/extensions`): its number, and whether a phone is
+/// registered on it right now.
+@immutable
+class PbxExtension {
+  const PbxExtension({required this.extension, this.online = true});
+
+  factory PbxExtension.fromJson(Map<String, dynamic> json) =>
+      PbxExtension(extension: json['extension'] as String? ?? '', online: json['online'] as bool? ?? true);
+
+  final String extension;
+  final bool online;
+
+  @override
+  bool operator ==(Object other) => other is PbxExtension && other.extension == extension && other.online == online;
+
+  @override
+  int get hashCode => Object.hash(extension, online);
+}
+
 /// A call answered on a desk phone linked to this device, as the hub lists it.
 @immutable
 class DeskPhoneCall {

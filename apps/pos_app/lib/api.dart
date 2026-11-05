@@ -401,6 +401,26 @@ class PosApi {
   /// How the hub stands with the PBX: whether a PBX is configured and reached, and what it has seen.
   Future<Map<String, dynamic>> pbxStatus() => _get('/phones/status');
 
+  /// The PBX's extensions as the hub sees them, lowest first, each with whether a phone is on it; empty while
+  /// the hub is not watching a PBX. A manager picks a desk phone from them.
+  Future<List<PbxExtension>> extensions() async {
+    final json = await _get('/phones/extensions');
+    return [
+      for (final ext in json['extensions'] as List? ?? const [])
+        if (PbxExtension.fromJson(ext as Map<String, dynamic>) case final found when found.extension.isNotEmpty) found,
+    ];
+  }
+
+  /// The device names of the screens the hub has heard from, by name. A manager picks a desk phone's screen
+  /// from them.
+  Future<List<String>> devicesSeen() async {
+    final json = await _get('/devices');
+    return [
+      for (final seen in json['devices'] as List? ?? const [])
+        if ((seen as Map<String, dynamic>)['device'] case final String name when name.isNotEmpty) name,
+    ];
+  }
+
   /// The discount reasons and service charges this location allows, with who may apply them.
   Future<PricingRules> pricingRules() async => PricingRules.fromJson(await _get('/pricing/rules'));
 

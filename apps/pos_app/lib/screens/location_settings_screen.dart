@@ -16,7 +16,7 @@ class LocationSettingsScreen extends StatefulWidget {
   final PosApi api;
   final String token;
 
-  /// This terminal's device name, offered when linking a desk phone to the screen the manager stands at.
+  /// This terminal's device name: first in the list of screens a desk phone can be linked to.
   final String? device;
 
   @override
@@ -32,7 +32,8 @@ class _Row {
   String get name => controller.text.trim();
 }
 
-/// One desk phone as the screen edits it: its extension and the device it is linked to.
+/// One desk phone as the screen edits it: its extension and the device it is linked to, each picked from a
+/// list or, after "Other", typed.
 class _PhoneRow {
   _PhoneRow(this.key, {required String extension, required String device})
     : extension = TextEditingController(text: extension),
@@ -40,6 +41,8 @@ class _PhoneRow {
   final String key;
   final TextEditingController extension;
   final TextEditingController device;
+  bool extensionTyped = false;
+  bool deviceTyped = false;
 
   DeskPhoneLink get link => DeskPhoneLink(extension: extension.text.trim(), device: device.text.trim());
 
@@ -64,6 +67,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   String? _phonesMessage;
   bool _phonesBusy = false;
   Map<String, dynamic>? _pbx; // how the hub stands with the PBX; null until it answers
+  List<PbxExtension> _extensions = []; // the PBX's extensions, as the hub lists them
+  List<String> _devices = []; // the screens the hub has heard from
 
   @override
   void initState() {
@@ -102,6 +107,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _pbx = pbx);
     } on ApiException {
       // the card then says the hub did not answer about the PBX
+    }
+    try {
+      final extensions = await widget.api.extensions();
+      if (mounted) setState(() => _extensions = extensions);
+    } on ApiException {
+      // an older hub, or no PBX: the extension is typed
+    }
+    try {
+      final devices = await widget.api.devicesSeen();
+      if (mounted) setState(() => _devices = devices);
+    } on ApiException {
+      // an older hub: the list holds this device and Other
     }
   }
 
@@ -461,40 +478,62 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     );
   }
 
-  /// A desk phone: its extension, the screen it is linked to (a tap fills in this one), and the bin.
+  /// A desk phone: its extension, picked from the PBX's (typed when the hub lists none, or after "Other"),
+  /// the screen it is linked to, picked from the ones the hub knows with this one first (or typed after
+  /// "Other"), and the bin.
   Widget _phoneRow(BuildContext context, int i) {
     final phone = _phones[i];
-    final device = widget.device;
     return Padding(
       key: ValueKey('desk-phone:${phone.key}'),
       padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
       child: Row(
         children: [
           SizedBox(
-            width: 104,
-            child: TextField(
-              key: ValueKey('desk-ext:$i'),
-              controller: phone.extension,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(isDense: true, labelText: 'Extension', hintText: '200'),
-            ),
+            width: 136,
+            child: _extensions.isEmpty || phone.extensionTyped
+                ? TextField(
+                    key: ValueKey('desk-ext:$i'),
+                    controller: phone.extension,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Extension',
+                      hintText: '200',
+                      suffixIcon: _extensions.isEmpty
+                          ? null
+                          : _backToList(ValueKey('desk-ext-list:$i'), () => phone.extensionTyped = false),
+                    ),
+                  )
+                : _pullDown(
+                    key: ValueKey('desk-ext-pick:$i'),
+                    label: 'Extension',
+                    controller: phone.extension,
+                    items: _extensionItems(phone.extension.text.trim()),
+                    onOther: () => phone.extensionTyped = true,
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: TextField(
-              key: ValueKey('desk-dev:$i'),
-              controller: phone.device,
-              autocorrect: false,
-              decoration: const InputDecoration(isDense: true, labelText: 'Device', hintText: 'tab1'),
-            ),
+            child: phone.deviceTyped
+                ? TextField(
+                    key: ValueKey('desk-dev:$i'),
+                    controller: phone.device,
+                    autocorrect: false,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Device',
+                      hintText: 'tab1',
+                      suffixIcon: _backToList(ValueKey('desk-dev-list:$i'), () => phone.deviceTyped = false),
+                    ),
+                  )
+                : _pullDown(
+                    key: ValueKey('desk-dev-pick:$i'),
+                    label: 'Device',
+                    controller: phone.device,
+                    items: _deviceItems(phone.device.text.trim()),
+                    onOther: () => phone.deviceTyped = true,
+                  ),
           ),
-          if (device != null && device.isNotEmpty)
-            IconButton(
-              key: ValueKey('desk-this-device:$i'),
-              tooltip: 'This device ($device)',
-              icon: const Icon(Icons.phonelink_ring_outlined),
-              onPressed: () => setState(() => phone.device.text = device),
-            ),
           IconButton(
             key: ValueKey('desk-delete:$i'),
             tooltip: 'Remove',
@@ -504,5 +543,77 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// The value of the "Other…" entry at the end of each list; nothing a manager types can be it.
+  static const _other = '\u0000other';
+
+  /// A list to pick from, in the frame of a field: the pick goes to [controller] (whose text is the current
+  /// pick, or nothing yet), and "Other…" at the end calls [onOther] with the text cleared, for typing.
+  Widget _pullDown({
+    required Key key,
+    required String label,
+    required TextEditingController controller,
+    required List<(String, String)> items,
+    required VoidCallback onOther,
+  }) {
+    final current = controller.text.trim();
+    return InputDecorator(
+      decoration: InputDecoration(isDense: true, labelText: label),
+      isEmpty: current.isEmpty,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          key: key,
+          value: current.isEmpty ? null : current,
+          isExpanded: true,
+          isDense: true,
+          items: [
+            for (final (value, shown) in items)
+              DropdownMenuItem(
+                value: value,
+                child: Text(shown, overflow: TextOverflow.ellipsis),
+              ),
+            const DropdownMenuItem(value: _other, child: Text('Other…')),
+          ],
+          onChanged: (picked) => setState(() {
+            if (picked == _other) {
+              controller.clear();
+              onOther();
+            } else if (picked != null) {
+              controller.text = picked;
+            }
+          }),
+        ),
+      ),
+    );
+  }
+
+  /// Back from typing to the list (the typed text stays as the pick).
+  Widget _backToList(Key key, VoidCallback back) => IconButton(
+    key: key,
+    tooltip: 'Pick from the list',
+    icon: const Icon(Icons.arrow_drop_down),
+    onPressed: () => setState(back),
+  );
+
+  /// The PBX's extensions, lowest first, an offline one marked, with [current] among them even when the PBX
+  /// does not list it (it was typed, or the PBX has changed).
+  List<(String, String)> _extensionItems(String current) {
+    final known = {for (final ext in _extensions) ext.extension: ext.online};
+    final numbers = [...known.keys, if (current.isNotEmpty && !known.containsKey(current)) current]
+      ..sort((a, b) => (int.tryParse(a) ?? 1 << 30).compareTo(int.tryParse(b) ?? 1 << 30));
+    return [for (final number in numbers) (number, known[number] == false ? '$number (offline)' : number)];
+  }
+
+  /// The screens: this one first, marked, then the ones the hub has heard from by name, with [current] among
+  /// them even when the hub has not heard from it.
+  List<(String, String)> _deviceItems(String current) {
+    final here = widget.device?.trim() ?? '';
+    final others = <String>{
+      for (final device in _devices)
+        if (device.toLowerCase() != here.toLowerCase()) device,
+      if (current.isNotEmpty && current != here) current,
+    }.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return [if (here.isNotEmpty) (here, '$here (this device)'), for (final device in others) (device, device)];
   }
 }

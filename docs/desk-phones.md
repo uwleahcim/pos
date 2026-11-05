@@ -64,9 +64,13 @@ On the hub:
    test call and the line appears.
 
 In the app, on any terminal, as a manager: Orders, **Location**, the manager PIN, then **Desk phones**: the
-card says how the hub stands with the PBX; **Add phone**, the extension (200), the device name of the
-screen (the name that screen shows under Settings; the phone-and-screen button fills in the screen you
-stand at), **Save**. The second hub of a location gets the same `hubctl pbx` steps; a device takes the
+card says how the hub stands with the PBX; **Add phone**, then pick the extension and the screen, **Save**.
+The extension list is the PBX's extensions as the hub sees them (one with no phone registered reads
+"(offline)"); until the hub is linked to the PBX the extension is typed instead. The screen list is the
+screens the hub has heard from, by their device names (the name a screen shows under Settings), with the
+screen you stand at first, marked "(this device)". **Other…** at the end of either list opens a field to
+type what the list does not have, such as a screen that has not been on yet; the arrow in that field goes
+back to the list. The second hub of a location gets the same `hubctl pbx` steps; a device takes the
 answers from whichever hub it talks to, and the same call is one call on both.
 
 ## Limits
@@ -99,6 +103,15 @@ answers from whichever hub it talks to, and the same call is one call on both.
 - `GET /phones/status`: `configured` (a PBX is set), `host`, `connected`, `since`, `attempts`,
   `connections`, `events`, `last_error`, plus `answers` seen on any extension, `pops` that reached a linked
   screen, `waiting` screens with a request held at the hub right now, and `links` as counted in the setting.
+- `GET /phones/extensions`: `{"extensions": [{"extension": "200", "online": true}, ...], "connected": true}`:
+  the PBX's PJSIP (or SIP) endpoints whose name is a number, lowest first, asked of the PBX over the
+  watcher's connection (`PJSIPShowEndpoints`, else `SIPpeers`; the AMI user needs the `system` or
+  `reporting` read right for them), `online` when a phone is registered on it; empty with `connected` false
+  while the hub is not watching a PBX. The app's Desk phones card picks extensions from it.
+- `GET /devices`: `{"devices": [{"device": "mac1", "seen_ms": 1730000000000}, ...]}`: the screens the hub
+  has heard from since it started (a sign-in, or the app's `GET /phones/answered` requests), by name, each
+  with when it last did; kept in memory, so a hub just restarted lists only the screens that have spoken
+  since. The card picks a phone's screen from it.
 - Hub environment (`/opt/pos/.env`, written by `hubctl pbx link`): `POS_AMI_HOST` (`pbx` for the tunnel
   service; empty keeps the watcher off), `POS_AMI_PORT` (5038), `POS_AMI_USER` (`pos`), `POS_AMI_SECRET`,
   `POS_AMI_TLS` (`1` for Asterisk's TLS manager port, 5039, when a PBX is reached without the tunnel);
@@ -121,6 +134,8 @@ answers from whichever hub it talks to, and the same call is one call on both.
 | `last_error` `Connection refused` | The tunnel is down, or Asterisk's manager interface is off | `hubctl logs pbx`; on the PBX `asterisk -rx "manager show settings"` |
 | Connected, `hubctl pbx tail` prints nothing on a pick-up | The AMI user lacks the `call` read right, or the phone is not a PJSIP/SIP extension | FreePBX, Settings, Asterisk Manager Users, `pos`, Read: `call` |
 | `hubctl pbx tail` prints the answer, the screen does nothing | The extension is not linked to that device name, or nobody is signed in | Location settings, Desk phones: the device name as the screen's Settings show it |
+| The card's Extension is typed, not a list, though the hub is connected | The AMI user may not list endpoints (the hub log says `did not list its extensions: Permission denied`), or the hub is from before the lists | FreePBX, Settings, Asterisk Manager Users, `pos`, Read: `reporting` (or `system`); `hubctl update` |
+| A screen is missing from the Device list | The hub has not heard from it since the hub started (the app signs in or waits for calls on the other hub, or the screen has not been on) | Open the app on that screen, or pick **Other…** and type its device name |
 | The order opens a second or two after the pick-up, not at once | The app on that screen, or its hub, is from before the waiting request: the screen asks once a second | `hubctl update` on the hub and the current app build on the screen; `hubctl pbx status` then counts the screen under `waiting` |
 | The order opens late and `hubctl pbx tail` prints the answer late too | The delay is before the hub: the PBX reported the answer late (the tunnel adds milliseconds) | The hub does nothing in between, so look at the PBX: its load, and how the ring group dials the phone |
 | The app's own call and the desk phone both open an order | The app's extension is linked as a desk phone of another device | Link each extension to the screen it stands at; the app skips only its own extension |
