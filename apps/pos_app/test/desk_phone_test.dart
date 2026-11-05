@@ -269,6 +269,12 @@ void main() {
       for (final item in pullDown.items!) (item.child as Text).data!,
     ];
 
+    /// Whether the text field under [key] has the focus (and so, on a touch screen, the keyboard).
+    bool focused(WidgetTester tester, String key) => tester
+        .widget<EditableText>(find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(EditableText)))
+        .focusNode
+        .hasFocus;
+
     testWidgets('a manager picks each phone from the PBX\'s extensions and its screen from the hub\'s devices', (
       tester,
     ) async {
@@ -325,8 +331,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('desk-ext:0')), findsNothing); // a pull-down until Other is picked
       await pick(tester, 'desk-ext-pick:0', 'Other…');
+      // the field that appears has the focus, so one just types; a touch screen brings up its keyboard
+      expect(focused(tester, 'desk-ext:0'), isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
       await tester.enterText(find.byKey(const ValueKey('desk-ext:0')), '210');
       await pick(tester, 'desk-dev-pick:0', 'Other…');
+      expect(focused(tester, 'desk-dev:0'), isTrue);
+      expect(focused(tester, 'desk-ext:0'), isFalse);
       await tester.enterText(find.byKey(const ValueKey('desk-dev:0')), 'kiosk');
       await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
       await tester.pumpAndSettle();
