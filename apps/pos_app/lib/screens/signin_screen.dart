@@ -3,18 +3,31 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../camera.dart';
+import '../face_signin.dart';
 import '../session.dart';
 import '../settings.dart';
+import 'face_guide.dart';
 import 'theme.dart';
 
-/// PIN pad with the camera preview beside it. Tags and face come in the sign-in hardware spike.
+/// PIN pad with the camera preview beside it. While the location signs staff in by face, the preview looks
+/// for an enrolled face (the hub recognises it) and the pad works all the same. Tags wait for the hardware.
 class SignInScreen extends StatefulWidget {
-  const SignInScreen({super.key, required this.session, required this.settings, required this.camera, this.onSettings});
+  const SignInScreen({
+    super.key,
+    required this.session,
+    required this.settings,
+    required this.camera,
+    this.onSettings,
+    this.faces,
+  });
 
   final Session session;
   final Settings settings;
   final EventCamera camera;
   final VoidCallback? onSettings;
+
+  /// The face sign-in to run; the screen makes its own when none is given.
+  final FaceSignIn? faces;
 
   @override
   State<SignInScreen> createState() => _SignInScreenState();
@@ -25,12 +38,39 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
   String? _message;
   bool _busy = false;
   late final AnimationController _shake = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
+  late final FaceSignIn _faces =
+      widget.faces ?? FaceSignIn(widget.session.api, widget.settings, widget.camera, widget.session);
+
+  @override
+  void initState() {
+    super.initState();
+    _faces.addListener(_faceChanged);
+    if (widget.camera is! NoCamera) _faces.start();
+  }
+
+  void _faceChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    _faces.removeListener(_faceChanged);
+    if (widget.faces == null) {
+      _faces.dispose();
+    } else {
+      _faces.stop();
+    }
     _shake.dispose();
     super.dispose();
   }
+
+  /// The guide's colour: how the face sign-in stands.
+  Color _guideColor(ColorScheme scheme) => switch (_faces.state) {
+    FaceState.holding => scheme.primary,
+    FaceState.signedIn => scheme.tertiary,
+    FaceState.unknown => _faces.unknownInARow >= 3 ? scheme.error : scheme.outline,
+    _ => scheme.outline,
+  };
 
   Future<void> _submit() async {
     if (_pin.length < 4 || _busy) return;
@@ -117,6 +157,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
                         fit: StackFit.expand,
                         children: [
                           ClipRRect(borderRadius: BorderRadius.circular(14.5), child: widget.camera.preview()),
+                          if (_faces.state != FaceState.off) FaceGuide(color: _guideColor(scheme)),
                           Positioned(
                             left: 10,
                             bottom: 10,
@@ -150,9 +191,25 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      'Tap your 4-digit staff PIN to unlock',
-                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_faces.state != FaceState.off) ...[
+                          Icon(
+                            _faces.state == FaceState.signedIn ? Icons.check_circle : Icons.face_outlined,
+                            size: 16,
+                            color: _faces.state == FaceState.signedIn ? scheme.tertiary : scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Text(
+                          _faces.state == FaceState.off
+                              ? 'Tap your 4-digit staff PIN to unlock'
+                              : _faces.message ?? 'Look at the camera, or tap your PIN',
+                          key: const ValueKey('sign-in-hint'),
+                          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
                     ),
                   ],
                 ),
