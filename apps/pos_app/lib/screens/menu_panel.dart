@@ -200,6 +200,16 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   List<MenuSection> get _sections => _menu?.sections ?? const <MenuSection>[];
 
+  /// A menu with a single category has no tile worth tapping: that category is the menu's root, and what it
+  /// holds shows where the categories would. The Lunch tab opens on the specials themselves.
+  MenuSection? get _root => _sections.length == 1 ? _sections.single : null;
+
+  /// The categories tiled at the top: the menu's, or a single category's own sub-categories.
+  List<MenuSection> get _top => _root?.sections ?? _sections;
+
+  /// The dishes tiled with the top categories: a single category's own, else none.
+  List<MenuEntry> get _topEntries => _root?.entries ?? const <MenuEntry>[];
+
   /// Shows another menu's categories: whatever was open on this one closes.
   void _showMenu(String code) {
     if (code == _menu?.menu || !_openMenus.any((m) => m.menu == code)) return;
@@ -215,7 +225,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// The open categories, as far as the menu still has them: a category a manager removed closes.
   List<MenuSection> get _open {
     final open = <MenuSection>[];
-    var level = _sections;
+    var level = _top;
     for (final id in _path) {
       final s = level.where((s) => s.sectionId == id).firstOrNull;
       if (s == null) break;
@@ -511,10 +521,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final searching = open.isEmpty && _search.text.trim().isNotEmpty;
         final depth = open.isEmpty ? 0 : open.length - 1;
         final here = open.lastOrNull;
-        final siblings = depth == 0 ? _sections : open[depth - 1].sections;
+        final siblings = depth == 0 ? _top : open[depth - 1].sections;
+        final topEntries = depth == 0 ? _topEntries : const <MenuEntry>[]; // a single category's own dishes
 
         final found = searching ? _found : const <MenuEntry>[];
-        final totalCategoryRows = (siblings.length / crossAxisCount).ceil();
+        final totalCategoryRows = ((siblings.length + topEntries.length) / crossAxisCount).ceil();
         final totalCategoriesContentHeight = gridHeightForRows(math.max(1, totalCategoryRows));
         final totalSearchRows = (found.length / crossAxisCount).ceil();
         final totalSearchContentHeight = gridHeightForRows(math.max(1, totalSearchRows));
@@ -587,9 +598,16 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final displayHere = displayOpen.lastOrNull;
         final displayPending = pending ?? _lastPending;
 
+        final pendingTopIndex = pending != null && here == null
+            ? topEntries.indexWhere((e) => _sameEntry(e, pending.entry))
+            : -1;
         final extraBottomSpace = _categoriesScroll.syncViewport(
-          totalTileCount: siblings.length,
-          selectedTileIndex: here != null ? siblings.indexOf(here) : -1,
+          totalTileCount: siblings.length + topEntries.length,
+          selectedTileIndex: here != null
+              ? siblings.indexOf(here)
+              : pendingTopIndex >= 0
+              ? siblings.length + pendingTopIndex
+              : -1,
           crossAxisCount: crossAxisCount,
           tileHeight: tileHeight,
           gridPadding: _gridPadding,
@@ -714,7 +732,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                       controller: _categoriesScroll,
                       extraBottomPadding: extraBottomSpace,
                       sections: siblings,
-                      entries: const [],
+                      entries: topEntries,
                       depth: depth,
                       selected: here,
                       crossAxisCount: crossAxisCount,

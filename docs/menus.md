@@ -2,7 +2,9 @@
 
 The order screen shows one tab per menu open right now: **Food** and **Drinks** all day, **Lunch** at lunch
 (Monday to Saturday, 11 to 3). A tab shows that menu's categories; tapping a category opens its dishes
-below the tiles, the same on every screen. Switching tabs closes whatever was open on the other menu. The
+below the tiles, the same on every screen. A menu with a single category has no tile to tap: its dishes show
+straight away where the tiles would be, so the Lunch tab opens on the specials themselves (a single category
+with sub-categories shows those as the tiles). Switching tabs closes whatever was open on the other menu. The
 search finds a dish on every menu open, whichever tab shows, so a soda typed on the Food tab is found at
 the bar too. With one menu open there are no tabs.
 
