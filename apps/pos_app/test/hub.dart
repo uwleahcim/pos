@@ -92,6 +92,14 @@ class Hub {
   final frames = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> staffList = [];
   List<Map<String, dynamic>> enrollAnswers = [];
+
+  /// Tags: whose each id is (`POST /signin` with `tag_uid`), the ids a manager gave people, and the id
+  /// another person already has (a 409 on giving it again).
+  Map<String, Map<String, dynamic>> tags = {};
+  final tagged = <(String, String)>[]; // (staff id, tag id) per PUT
+  final tagsForgotten = <String>[];
+  String? tagTakenBy;
+  Map<String, dynamic> handsFree = {'switch': true, 'away_seconds': 60};
   final enrolled = <(String, bool)>[]; // (staff id, replace) per view posted
   final forgotten = <String>[];
   String? faceAuth; // the token the last manager call about faces carried
@@ -100,6 +108,7 @@ class Hub {
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _samples = RegExp(r'^/admin/staff/([^/]+)/face/samples$');
   static final _face = RegExp(r'^/admin/staff/([^/]+)/face$');
+  static final _tag = RegExp(r'^/admin/staff/([^/]+)/tag$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
 
@@ -107,7 +116,18 @@ class Hub {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
     if (path == '/signin' && request.method == 'POST') {
-      final pin = (jsonDecode(request.body) as Map)['pin'];
+      final body = jsonDecode(request.body) as Map;
+      final tagUid = body['tag_uid'] as String?;
+      if (tagUid != null) {
+        final owner = tags[tagUid.toUpperCase()];
+        if (owner == null) {
+          return json({
+            'detail': {'error': 'unknown_credential'},
+          }, 401);
+        }
+        return json({...owner, 'method': 'tag'});
+      }
+      final pin = body['pin'];
       pins.add(pin as String? ?? '');
       if (pin != '1111') {
         return json({
@@ -116,7 +136,11 @@ class Hub {
       }
       return json({'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'});
     }
-    if (!faces && (path.startsWith('/faces') || path.startsWith('/admin/staff') || path == '/settings/faces')) {
+    if (!faces &&
+        (path.startsWith('/faces') ||
+            path.startsWith('/admin/staff') ||
+            path == '/settings/faces' ||
+            path == '/settings/presence')) {
       return json({'detail': 'Not Found'}, 404);
     }
     if (path == '/signin/face' && request.method == 'POST') {
@@ -142,6 +166,35 @@ class Hub {
         }
       }
       return json(answer);
+    }
+    if (_tag.hasMatch(path) && request.method == 'PUT') {
+      faceAuth = request.headers['authorization'];
+      final id = _tag.firstMatch(path)!.group(1)!;
+      final uid = ((jsonDecode(request.body) as Map)['tag_uid'] as String).toUpperCase();
+      if (tagTakenBy != null) {
+        return json({
+          'detail': {'error': 'tag_taken', 'name': tagTakenBy, 'message': "That tag is $tagTakenBy's"},
+        }, 409);
+      }
+      tagged.add((id, uid));
+      final clean = uid.replaceAll(RegExp(r'[\s:-]'), ''); // the hub keeps the id without separators
+      final ends = clean.substring(clean.length - 4);
+      for (final s in staffList) {
+        if (s['staff_id'] == id) s['tag'] = {'enrolled': true, 'ends': ends, 'updated_at': 1730000000.0};
+      }
+      return json({
+        'staff_id': id,
+        'tag': {'enrolled': true, 'ends': ends, 'updated_at': 1730000000.0},
+      });
+    }
+    if (_tag.hasMatch(path) && request.method == 'DELETE') {
+      faceAuth = request.headers['authorization'];
+      final id = _tag.firstMatch(path)!.group(1)!;
+      tagsForgotten.add(id);
+      for (final s in staffList) {
+        if (s['staff_id'] == id) s['tag'] = {'enrolled': false, 'ends': null, 'updated_at': 0.0};
+      }
+      return json({'staff_id': id, 'removed': 1});
     }
     if (_face.hasMatch(path) && request.method == 'DELETE') {
       faceAuth = request.headers['authorization'];
@@ -205,6 +258,12 @@ class Hub {
           faceStatus = {...faceStatus, 'enabled': facesSetting['enabled']};
         }
         return json(facesSetting);
+      case '/settings/presence':
+        if (request.method == 'PUT') {
+          faceAuth = request.headers['authorization'];
+          handsFree = jsonDecode(request.body) as Map<String, dynamic>;
+        }
+        return json(handsFree);
       case '/admin/staff':
         faceAuth = request.headers['authorization'];
         if (faceAuth == null) {

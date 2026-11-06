@@ -10,6 +10,10 @@
   taken on the phone opens the caller's order on that screen (`pos/phones/deskphones.py`).
 - `faces`: whether staff may sign in by face at this location (`pos/identity/faces.py`); off until a manager
   turns it on, since the location decides that after its own legal review and the staff's consent.
+- `presence`: hands-free switching. `switch`: whether a face recognised or a tag read while someone is signed
+  in switches the screen to that person at once (on by default: a server walks up and orders); `away_seconds`:
+  how long the camera may go without seeing the person signed in by face before the screen signs them out
+  (0 keeps them signed in until someone else steps up or they sign out).
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -45,7 +49,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},
+    "presence": {"switch": True, "away_seconds": 60},
 }
+AWAY_MAX = 3600
 EXTENSION = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 """A PBX extension (the endpoint's name): digits as a rule, never spaces or slashes."""
 DEVICE = re.compile(r"^[A-Za-z0-9]{1,40}$")
@@ -152,6 +158,20 @@ def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
         seen.add(extension)
         links.append({"extension": extension, "device": device})
     return {"links": links}
+
+
+def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The hands-free switching settings as the app may set them: `switch` on or off, `away_seconds` 0 (never)
+    to an hour. Raises ValueError on a bad value."""
+    switch = data.get("switch", True)
+    if not isinstance(switch, bool):
+        raise ValueError("switch must be true or false")
+    away = data.get("away_seconds", 60)
+    if isinstance(away, bool) or not isinstance(away, int | float) or away != int(away):
+        raise ValueError("away_seconds must be a whole number of seconds")
+    if not 0 <= away <= AWAY_MAX:
+        raise ValueError(f"away_seconds is 0 (never) to {AWAY_MAX}")
+    return {"switch": switch, "away_seconds": int(away)}
 
 
 def _new_course_id(name: str, taken: set[str]) -> str:

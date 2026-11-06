@@ -10,7 +10,9 @@ import 'face_guide.dart';
 import 'theme.dart';
 
 /// PIN pad with the camera preview beside it. While the location signs staff in by face, the preview looks
-/// for an enrolled face (the hub recognises it) and the pad works all the same. Tags wait for the hardware.
+/// for an enrolled face (the hub recognises it) and the pad works all the same; a tag held to the terminal's
+/// reader signs in too. The looking itself runs for as long as the app does ([FaceSignIn]); this screen shows
+/// what it says.
 class SignInScreen extends StatefulWidget {
   const SignInScreen({
     super.key,
@@ -26,7 +28,8 @@ class SignInScreen extends StatefulWidget {
   final EventCamera camera;
   final VoidCallback? onSettings;
 
-  /// The face sign-in to run; the screen makes its own when none is given.
+  /// The app's face sign-in, which runs on after this screen goes; the screen makes and runs its own when
+  /// none is given.
   final FaceSignIn? faces;
 
   @override
@@ -58,11 +61,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
   void dispose() {
     widget.camera.removeListener(_changed);
     _faces.removeListener(_changed);
-    if (widget.faces == null) {
-      _faces.dispose();
-    } else {
-      _faces.stop();
-    }
+    if (widget.faces == null) _faces.dispose();
     _shake.dispose();
     super.dispose();
   }
@@ -206,9 +205,10 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
                           const SizedBox(width: 6),
                         ],
                         Text(
-                          _faces.state == FaceState.off
-                              ? 'Tap your 4-digit staff PIN to unlock'
-                              : _faces.message ?? 'Look at the camera, or tap your PIN',
+                          _faces.notice ??
+                              (_faces.state == FaceState.off
+                                  ? 'Tap your 4-digit staff PIN to unlock'
+                                  : _faces.message ?? 'Look at the camera, or tap your PIN'),
                           key: const ValueKey('sign-in-hint'),
                           style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                         ),

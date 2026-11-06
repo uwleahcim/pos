@@ -90,6 +90,14 @@ class Directory:
                 return SignIn(staff.staff_id, staff.name, staff.role, "tag", device, self._clock())
         return None
 
+    def sign_in(self, staff_id: str, method: str, *, device: str) -> SignIn | None:
+        """A sign-in for a staff member something else identified (a tag the hub keeps, a face): None when
+        the person is no longer on the staff."""
+        staff = self._staff.get(staff_id)
+        if staff is None:
+            return None
+        return SignIn(staff.staff_id, staff.name, staff.role, method, device, self._clock())
+
     def _check_lock(self, device: str) -> None:
         now = self._clock()
         recent = [t for t in self._failures.get(device, []) if now - t < LOCK_SECONDS]

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../face_signin.dart';
 import '../menu.dart';
 import '../pricing.dart';
 
@@ -280,7 +281,14 @@ class _ApprovalDialogState extends State<ApprovalDialog> {
   bool _busy = false;
 
   @override
+  void initState() {
+    super.initState();
+    FaceSignIn.hold(); // the manager leaning in to type is approving, not taking the screen over
+  }
+
+  @override
   void dispose() {
+    FaceSignIn.release();
     _pin.dispose();
     super.dispose();
   }
