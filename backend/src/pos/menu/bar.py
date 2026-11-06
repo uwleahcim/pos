@@ -4,8 +4,9 @@ Every bottle on the back shelf and the speed rails is an item in a category per 
 gin, ...), cooked at the bar station and taxed as alcohol, with one size, the pour, unless the file lists
 its sizes (a glass and a bottle of wine, a 1 oz pour of a rare whisky). The file holds the price of each
 size, the retail price a pour was derived from (see its `_about`), and the optional choices a category
-offers (rocks, neat, up, shot; hot or cold). A category marked `existing` is one the GloriaFood export
-already has: its items join it after the export's own (the cocktails go into Mixed Drinks). `prices`
+offers (rocks, neat, up, shot; hot or cold). The file names the menu its shelves go on (the Drinks menu,
+`menus.json`). A category marked `existing` is one the GloriaFood export already has: its items join it
+after the export's own, on every menu that category is on (the cocktails go into Mixed Drinks). `prices`
 are the printed menu's prices for the export's own items (the beers). `add_bar` puts it all into
 definitions that already hold the rest of the menu, so a hub seeds the kitchen and the bar at once and
 the menu editor edits both alike. An item with `"visible": false` stays in the catalog but off the order
@@ -76,10 +77,11 @@ def import_bar(defs: Definitions, data: Mapping[str, Any]) -> BarReport:
             )
     for cat in data.get("categories", ()):
         code = cat["code"]
-        section_id = f"{menu}/{code}"
         existing = bool(cat.get("existing"))
         if existing:
-            if code not in defs.categories or section_id not in defs.sections:
+            # the export's category keeps its sections, one per menu it is on; the file's items join each
+            sections = [s for s in defs.sections.values() if s.id == f"{s.menu}/{code}"]
+            if code not in defs.categories or not sections:
                 raise ValueError(f"bar: category {code!r} is marked existing but the menu has no such category")
             first = defs.categories[code].sort * 1000 + AFTER_THE_EXPORT
         else:
@@ -87,10 +89,9 @@ def import_bar(defs: Definitions, data: Mapping[str, Any]) -> BarReport:
                 raise ValueError(f"bar: category {code!r} already exists")
             sort = FIRST_SORT + report.categories
             names = _names(cat["name"])
-            defs.add(
-                Category(code, names, tax_class=tax_class, station=station, sort=sort),
-                Section(section_id, menu, names, sort=sort),
-            )
+            section = Section(f"{menu}/{code}", menu, names, sort=sort)
+            defs.add(Category(code, names, tax_class=tax_class, station=station, sort=sort), section)
+            sections = [section]
             report.categories += 1
             first = sort * 1000
         for group_sort, group in enumerate(cat.get("groups", ())):
@@ -121,14 +122,17 @@ def import_bar(defs: Definitions, data: Mapping[str, Any]) -> BarReport:
                     active=bool(item.get("active", True)),
                     sort=first % 1000 + item_sort,
                 ),
-                Entry(
-                    f"{menu}:{item_code}",
-                    menu,
-                    section_id,
-                    item_code,
-                    None,
-                    visible=bool(item.get("visible", True)),
-                    sort=first + item_sort,
+                *(
+                    Entry(
+                        f"{s.menu}:{item_code}",
+                        s.menu,
+                        s.id,
+                        item_code,
+                        None,
+                        visible=bool(item.get("visible", True)),
+                        sort=first + item_sort,
+                    )
+                    for s in sections
                 ),
             )
             for size_sort, one in enumerate(sizes):

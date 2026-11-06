@@ -76,13 +76,82 @@ class Hub {
   Map<String, dynamic>? check;
   Map<String, dynamic>? rules;
 
+  /// Face sign-in: how the hub stands (`GET /faces/status`), the location's switch, what it answers to each
+  /// frame (in order, the last one repeating), the staff it lists for a manager, what it answers to each
+  /// enrollment view (in order, the last one repeating), and what it received.
+  Map<String, dynamic> faceStatus = {
+    'enabled': false,
+    'ready': false,
+    'active': false,
+    'enrolled': 0,
+    'model': null,
+    'error': null,
+  };
+  Map<String, dynamic> facesSetting = {'enabled': false};
+  List<Map<String, dynamic>> faceAnswers = [];
+  final frames = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> staffList = [];
+  List<Map<String, dynamic>> enrollAnswers = [];
+  final enrolled = <(String, bool)>[]; // (staff id, replace) per view posted
+  final forgotten = <String>[];
+  String? faceAuth; // the token the last manager call about faces carried
+  bool faces = true; // false: an older hub, which has none of the face calls
+
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
+  static final _samples = RegExp(r'^/admin/staff/([^/]+)/face/samples$');
+  static final _face = RegExp(r'^/admin/staff/([^/]+)/face$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
 
   Future<http.Response> handle(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (path == '/signin' && request.method == 'POST') {
+      final pin = (jsonDecode(request.body) as Map)['pin'];
+      pins.add(pin as String? ?? '');
+      if (pin != '1111') {
+        return json({
+          'detail': {'error': 'unknown_credential'},
+        }, 401);
+      }
+      return json({'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'method': 'pin'});
+    }
+    if (!faces && (path.startsWith('/faces') || path.startsWith('/admin/staff') || path == '/settings/faces')) {
+      return json({'detail': 'Not Found'}, 404);
+    }
+    if (path == '/signin/face' && request.method == 'POST') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      frames.add(body);
+      final answer = faceAnswers.isEmpty
+          ? {'face': false, 'reason': 'no_face', 'candidate': null, 'score': null, 'signed_in': null}
+          : faceAnswers[frames.length - 1 < faceAnswers.length ? frames.length - 1 : faceAnswers.length - 1];
+      return json(answer);
+    }
+    if (_samples.hasMatch(path) && request.method == 'POST') {
+      faceAuth = request.headers['authorization'];
+      final id = _samples.firstMatch(path)!.group(1)!;
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      enrolled.add((id, body['replace'] as bool? ?? false));
+      final n = enrolled.where((e) => e.$1 == id).length;
+      final answer = enrollAnswers.isEmpty
+          ? {'accepted': true, 'reason': null, 'samples': n, 'wanted': 5, 'done': n >= 5, 'looks_like': null}
+          : enrollAnswers[n - 1 < enrollAnswers.length ? n - 1 : enrollAnswers.length - 1];
+      if (answer['accepted'] == true) {
+        for (final s in staffList) {
+          if (s['staff_id'] == id) s['face'] = {'samples': answer['samples'], 'updated_at': 1730000000.0, 'stale': 0};
+        }
+      }
+      return json(answer);
+    }
+    if (_face.hasMatch(path) && request.method == 'DELETE') {
+      faceAuth = request.headers['authorization'];
+      final id = _face.firstMatch(path)!.group(1)!;
+      forgotten.add(id);
+      for (final s in staffList) {
+        if (s['staff_id'] == id) s['face'] = {'samples': 0, 'updated_at': 0.0, 'stale': 0};
+      }
+      return json({'staff_id': id, 'removed': 1});
+    }
     if (_ops.hasMatch(path)) {
       final id = _ops.firstMatch(path)!.group(1)!;
       final ops = (jsonDecode(request.body) as List).cast<Map<String, dynamic>>();
@@ -127,6 +196,23 @@ class Hub {
         return json(deskPhones);
       case '/phones/status':
         return json(pbxStatus);
+      case '/faces/status':
+        return json(faceStatus);
+      case '/settings/faces':
+        if (request.method == 'PUT') {
+          faceAuth = request.headers['authorization'];
+          facesSetting = jsonDecode(request.body) as Map<String, dynamic>;
+          faceStatus = {...faceStatus, 'enabled': facesSetting['enabled']};
+        }
+        return json(facesSetting);
+      case '/admin/staff':
+        faceAuth = request.headers['authorization'];
+        if (faceAuth == null) {
+          return json({
+            'detail': {'error': 'sign_in'},
+          }, 401);
+        }
+        return json({'staff': staffList});
       case '/phones/extensions':
         return json({'extensions': extensions, 'connected': extensionsConnected});
       case '/devices':

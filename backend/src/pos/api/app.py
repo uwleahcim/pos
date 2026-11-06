@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from .. import localtime
 from ..devices import DevicesSeen
 from ..floor import FloorPlan, load_floor, table_status
+from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory
@@ -54,6 +55,7 @@ from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
 from .auth import manager_from
+from .faces import add_face_signin
 from .menu_admin import add_menu_admin
 
 if TYPE_CHECKING:
@@ -440,17 +442,21 @@ def create_app(
     answered: AnsweredCalls | None = None,
     watcher: AmiWatcher | None = None,
     devices: DevicesSeen | None = None,
+    faces: FaceSignIn | None = None,
     push_devices: PushDevices | None = None,
     pusher: ApnsSender | None = None,
     relay: PushRelay | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        """The PBX watcher runs for as long as the API does, when a PBX is configured; the push relay's
-        connection to Apple closes with it."""
+        """The PBX watcher runs for as long as the API does, when a PBX is configured; the face models load
+        on a thread meanwhile, when the hub has them (POS_FACE_MODELS); the push relay's connection to Apple
+        closes with the API."""
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
+        if faces is None:
+            app.state.faces.start(FaceEngine.from_env)
         try:
             yield
         finally:
@@ -492,6 +498,14 @@ def create_app(
     )
     app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered, app.state.relay)
     app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
+    # Face sign-in: templates in the database, the location's switch in its settings, the models from the image.
+    app.state.faces = (
+        faces
+        if faces is not None
+        else FaceSignIn(
+            default_face_store(), app.state.staff.get, enabled=lambda: app.state.settings.get("faces")["enabled"]
+        )
+    )
     app.state.notifier = Notifier(
         app.state.messenger,
         location=app.state.location,
@@ -1050,6 +1064,7 @@ def create_app(
         return job_out(job)
 
     add_menu_admin(app)
+    add_face_signin(app)
     return app
 
 

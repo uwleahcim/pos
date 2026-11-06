@@ -8,6 +8,8 @@ merges after any disconnect.
 - Menu engine specification: `docs/menu-engine-design.md` (the binding spec for the engine)
 - Decisions: `docs/adr/`
 - Offline runbook (the cards the app shows from its status icon, to print for every station): `docs/offline-runbook.md`
+- Menus (Food, Drinks and Lunch as tabs on the order screen, what is on which, where a drink prints, moving a
+  running hub's drinks to their menu): `docs/menus.md`
 - Discounts, comps and service charges (reasons, who approves, the rules file, the report): `docs/discounts.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check

@@ -75,6 +75,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   static const _itemsDividerHeight = 1.0;
 
   List<Menu>? _menus;
+  String? _menuCode; // the menu whose categories show (Food, Drinks, Lunch); the first one until a tab is tapped
   String? _error;
   var _path = <String>[]; // the open categories, outermost first, by section id
   List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
@@ -186,7 +187,30 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     }
   }
 
-  List<MenuSection> get _sections => [for (final m in _menus ?? const <Menu>[]) ...m.sections];
+  /// The menus open now (Food and Drinks all day, Lunch at lunch), in the hub's order: the tabs.
+  List<Menu> get _openMenus => _menus ?? const <Menu>[];
+
+  /// The menu on screen: the one whose tab was tapped, else the first. A menu that closed (lunch is over)
+  /// gives way to the first without anyone doing anything.
+  Menu? get _menu {
+    final menus = _openMenus;
+    if (menus.isEmpty) return null;
+    return menus.where((m) => m.menu == _menuCode).firstOrNull ?? menus.first;
+  }
+
+  List<MenuSection> get _sections => _menu?.sections ?? const <MenuSection>[];
+
+  /// Shows another menu's categories: whatever was open on this one closes.
+  void _showMenu(String code) {
+    if (code == _menu?.menu || !_openMenus.any((m) => m.menu == code)) return;
+    _startTransition(resetScroll: true);
+    setState(() {
+      _menuCode = code;
+      _path = <String>[];
+      _pending = null;
+      _search.clear();
+    });
+  }
 
   /// The open categories, as far as the menu still has them: a category a manager removed closes.
   List<MenuSection> get _open {
@@ -201,15 +225,22 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     return open;
   }
 
+  /// What the search finds, on every menu open, whichever tab is showing: a soda typed on the Food tab is
+  /// found at the bar too. A dish on two menus at the same sizes and prices (the soft drinks) is listed once,
+  /// under its first menu; a dish the lunch menu sells as another size or price is listed from both.
   List<MenuEntry> get _found {
     final q = _search.text.trim().toLowerCase();
+    final seen = <String>{};
+    String offer(MenuEntry e) => '${e.item}|${e.variants.map((v) => '${v.variantId}=${v.price}').join(',')}';
     return [
-      for (final s in _sections)
-        for (final e in s.allEntries)
-          if (e.number?.toLowerCase() == q ||
-              e.name.toLowerCase().contains(q) ||
-              (e.secondName ?? '').toLowerCase().contains(q))
-            e,
+      for (final m in _openMenus)
+        for (final s in m.sections)
+          for (final e in s.allEntries)
+            if ((e.number?.toLowerCase() == q ||
+                    e.name.toLowerCase().contains(q) ||
+                    (e.secondName ?? '').toLowerCase().contains(q)) &&
+                seen.add(offer(e)))
+              e,
     ];
   }
 
@@ -513,17 +544,23 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           targetItemsHeight = neededItemsHeight.clamp(0.0, maxItemsHeight);
         }
 
+        // The top row holds the menu tabs (Food, Drinks; Lunch at lunch) and the search field. With tabs it
+        // stays while a category is open, so the other menu is always one tap away, and only the search field
+        // fades; with one menu there are no tabs and the row folds away to give the dishes its room.
+        final tabs = _openMenus.length > 1 ? _openMenus : const <Menu>[];
+        double topHeight(double searchFactor) => tabs.isEmpty ? _searchBarHeight * searchFactor : _searchBarHeight;
         final targetSearchFactor = open.isEmpty ? 1.0 : 0.0;
         final availableForCategories = math.max(
           minCategoriesHeight,
-          constraints.maxHeight - _searchBarHeight * targetSearchFactor - targetItemsHeight - targetRequiredHeight,
+          constraints.maxHeight - topHeight(targetSearchFactor) - targetItemsHeight - targetRequiredHeight,
         );
         final targetCategoriesHeight = math.min(topContentHeight, availableForCategories);
 
         final t = Curves.easeInOutCubic.transform(_transition.value);
         final currentSearchFactor = ui.lerpDouble(_fromSearchFactor, targetSearchFactor, t)!.clamp(0.0, 1.0);
         final showSearch = !(currentSearchFactor <= 0.005 && open.isNotEmpty);
-        final currentSearchHeight = showSearch ? _searchBarHeight * currentSearchFactor : 0.0;
+        final showTop = tabs.isNotEmpty || showSearch;
+        final currentSearchHeight = showTop ? topHeight(currentSearchFactor) : 0.0;
 
         final rawCategoriesHeight = math.max(0.0, ui.lerpDouble(_fromCategoriesHeight, targetCategoriesHeight, t)!);
         final double currentCategoriesHeight = rawCategoriesHeight.clamp(
@@ -606,9 +643,37 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           });
         }
 
+        final searchField = Opacity(
+          opacity: currentSearchFactor,
+          child: IgnorePointer(
+            ignoring: currentSearchFactor < 0.5,
+            child: Center(
+              child: TextField(
+                controller: _search,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: searching
+                      ? IconButton(
+                          tooltip: 'Clear',
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                            _search.clear();
+                            _pending = null;
+                          }),
+                        )
+                      : null,
+                  hintText: 'Number or name',
+                  isDense: true,
+                ),
+                onChanged: (_) => setState(() => _pending = null),
+              ),
+            ),
+          ),
+        );
+
         return Column(
           children: [
-            if (showSearch)
+            if (showTop)
               SizedBox(
                 height: currentSearchHeight,
                 child: ClipRect(
@@ -616,32 +681,17 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                     alignment: Alignment.topCenter,
                     minHeight: _searchBarHeight,
                     maxHeight: _searchBarHeight,
-                    child: Opacity(
-                      opacity: currentSearchFactor,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                        child: Center(
-                          child: TextField(
-                            controller: _search,
-                            decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.search),
-                              suffixIcon: searching
-                                  ? IconButton(
-                                      tooltip: 'Clear',
-                                      icon: const Icon(Icons.close),
-                                      onPressed: () => setState(() {
-                                        _search.clear();
-                                        _pending = null;
-                                      }),
-                                    )
-                                  : null,
-                              hintText: 'Number or name',
-                              isDense: true,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                      child: tabs.isEmpty
+                          ? searchField
+                          : Row(
+                              children: [
+                                _MenuTabs(menus: tabs, selected: _menu!.menu, onSelected: _showMenu),
+                                const SizedBox(width: 8),
+                                Expanded(child: searchField),
+                              ],
                             ),
-                            onChanged: (_) => setState(() => _pending = null),
-                          ),
-                        ),
-                      ),
                     ),
                   ),
                 ),
@@ -868,6 +918,35 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
       jumpTo(desired);
     }
   }
+}
+
+/// The menus open now as tabs (Food, Drinks; Lunch at lunch), the one on screen filled in. One row shared
+/// with the search field: a tap switches the categories below, whatever was open on the other menu closes.
+class _MenuTabs extends StatelessWidget {
+  const _MenuTabs({required this.menus, required this.selected, required this.onSelected});
+
+  final List<Menu> menus;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SegmentedButton<String>(
+    key: const ValueKey('menu-tabs'),
+    segments: [
+      for (final m in menus)
+        ButtonSegment(
+          value: m.menu,
+          label: Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+    ],
+    selected: {selected},
+    showSelectedIcon: false,
+    style: const ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 14)),
+    ),
+    onSelectionChanged: (chosen) => onSelected(chosen.first),
+  );
 }
 
 /// A category tile, in the colour the menu gives the category or one from the palette by its place among its
