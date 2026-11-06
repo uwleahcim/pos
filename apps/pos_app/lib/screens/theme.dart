@@ -406,7 +406,7 @@ class _PressableScaleState extends State<PressableScale> {
 
 /// Smooth fade + gentle upward slide transition for POS screen navigation.
 class PosPageRoute<T> extends PageRouteBuilder<T> {
-  PosPageRoute({required WidgetBuilder builder})
+  PosPageRoute({required WidgetBuilder builder, super.settings})
     : super(
         transitionDuration: const Duration(milliseconds: 240),
         reverseTransitionDuration: const Duration(milliseconds: 200),

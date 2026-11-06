@@ -8,6 +8,7 @@ import 'cache.dart';
 import 'call_screen.dart';
 import 'camera.dart';
 import 'desk_phone_watcher.dart';
+import 'face_signin.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
@@ -22,6 +23,8 @@ import 'screens/theme.dart';
 import 'session.dart';
 import 'settings.dart';
 import 'sip_ua_stack.dart';
+import 'switching.dart';
+import 'tags.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +39,11 @@ Future<void> main() async {
   final photos = PhotoQueue(api, settings, camera, session);
   await photos.restore();
   final relay = PrintRelay(api, settings)..bind();
+  // Who is at this screen, for as long as the app runs: the camera signs people in and switches between them
+  // hands-free (docs/face-signin.md), and a badge reader on the keyboard does the same by tag.
+  final faces = FaceSignIn(api, settings, camera, session);
+  if (camera is! NoCamera) faces.start();
+  final tags = WedgeTagReader(onTag: faces.tag)..install();
   // The device's own part in calls (docs/push-relay.md): the system's call screen on iOS, the service that
   // keeps the app alive with the screen off on Android, the sleep hold on a Mac.
   final screen = NativeCallScreen.forPlatform();
@@ -91,6 +99,8 @@ Future<void> main() async {
       deskPhones: deskPhones,
       push: push,
       callScreen: screen,
+      faces: faces,
+      tags: tags,
     ),
   );
 }
@@ -126,7 +136,7 @@ class _ScreenEvents implements CallScreenEvents {
   void opened() => deskPhones.wakeUp();
 }
 
-class PosApp extends StatelessWidget {
+class PosApp extends StatefulWidget {
   const PosApp({
     super.key,
     required this.settings,
@@ -140,6 +150,8 @@ class PosApp extends StatelessWidget {
     required this.deskPhones,
     this.push,
     this.callScreen,
+    this.faces,
+    this.tags,
   });
 
   final Settings settings;
@@ -154,16 +166,47 @@ class PosApp extends StatelessWidget {
   final PushRegistrar? push;
   final CallScreen? callScreen;
 
+  /// The app-wide face sign-in, shown by the sign-in screen; the screen runs its own without one.
+  final FaceSignIn? faces;
+
+  /// The terminal's tag reader, for enrolling tags in Location settings.
+  final TagReader? tags;
+
+  @override
+  State<PosApp> createState() => _PosAppState();
+}
+
+class _PosAppState extends State<PosApp> {
   static final _navigator = GlobalKey<NavigatorState>();
+  static final _messenger = GlobalKey<ScaffoldMessengerState>();
+  late final SessionWatcher _switching;
+
+  @override
+  void initState() {
+    super.initState();
+    // A change of person, by face, tag or PIN, closes whatever the last person had open.
+    _switching = SessionWatcher(widget.session, navigator: _navigator, messenger: _messenger);
+  }
+
+  @override
+  void dispose() {
+    _switching.dispose();
+    super.dispose();
+  }
 
   /// To go on the call strip: back to the orders screen, which opens the to-go form for the caller.
   void _orderForCaller() {
     _navigator.currentState?.popUntil((route) => route.isFirst);
-    phone.startOrder();
+    widget.phone.startOrder();
   }
 
   @override
   Widget build(BuildContext context) {
+    final settings = widget.settings;
+    final session = widget.session;
+    final api = widget.api;
+    final phone = widget.phone;
+    final camera = widget.camera;
     return ListenableBuilder(
       listenable: Listenable.merge([settings, session]),
       builder: (context, _) {
@@ -173,6 +216,7 @@ class PosApp extends StatelessWidget {
         final canOrder = settings.isConfigured && session.signedIn;
         return MaterialApp(
           navigatorKey: _navigator,
+          scaffoldMessengerKey: _messenger,
           title: 'POS',
           debugShowCheckedModeBanner: false,
           theme: PosTheme.light(highContrast: prefs.highContrast),
@@ -203,15 +247,16 @@ class PosApp extends StatelessWidget {
                   session: session,
                   settings: settings,
                   camera: camera,
+                  faces: widget.faces,
                   onSettings: () => Navigator.of(context).push(
                     PosPageRoute(
                       builder: (_) => SettingsScreen(
                         settings: settings,
                         api: api,
-                        relay: relay,
+                        relay: widget.relay,
                         phone: phone,
-                        push: push,
-                        screen: callScreen,
+                        push: widget.push,
+                        screen: widget.callScreen,
                         camera: camera,
                       ),
                     ),
@@ -221,14 +266,15 @@ class PosApp extends StatelessWidget {
                 screen = OrdersScreen(
                   key: const ValueKey('orders'),
                   api: api,
-                  outbox: outbox,
+                  outbox: widget.outbox,
                   settings: settings,
                   session: session,
                   camera: camera,
-                  photos: photos,
-                  relay: relay,
+                  photos: widget.photos,
+                  relay: widget.relay,
                   phone: phone,
-                  deskPhones: deskPhones,
+                  deskPhones: widget.deskPhones,
+                  tags: widget.tags,
                 );
               }
               return AnimatedSwitcher(

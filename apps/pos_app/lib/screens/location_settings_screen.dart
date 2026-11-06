@@ -5,16 +5,26 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
+import '../tags.dart';
 import '../takeout.dart';
 import 'face_enroll_dialog.dart';
 import 'quotes_dialog.dart';
+import 'tag_enroll_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
-/// which screen each desk phone is linked to, and face sign-in with each staff member's enrollment. The hub
-/// keeps them; a terminal reads them when it opens an order. Behind the manager PIN.
+/// which screen each desk phone is linked to, face sign-in with each staff member's enrollment and tag, and
+/// the hands-free switching between people. The hub keeps them; a terminal reads them when it opens an
+/// order. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
-  const LocationSettingsScreen({super.key, required this.api, required this.token, this.device, this.camera});
+  const LocationSettingsScreen({
+    super.key,
+    required this.api,
+    required this.token,
+    this.device,
+    this.camera,
+    this.tags,
+  });
 
   final PosApi api;
   final String token;
@@ -24,6 +34,9 @@ class LocationSettingsScreen extends StatefulWidget {
 
   /// This terminal's camera, which a face enrollment looks through; without one, enroll from another screen.
   final EventCamera? camera;
+
+  /// This terminal's tag reader, which a tag enrollment listens to; without one, the tag's id is typed.
+  final TagReader? tags;
 
   @override
   State<LocationSettingsScreen> createState() => _LocationSettingsScreenState();
@@ -85,6 +98,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   List<StaffEntry> _staff = [];
   String? _faceMessage;
   bool _faceBusy = false;
+  HandsFree? _handsFree; // the hands-free switching as the hub has it; null until it answers (an older hub)
+  bool _handsFreeBusy = false;
+  String? _handsFreeMessage;
 
   @override
   void initState() {
@@ -154,6 +170,64 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // an older hub without face sign-in: the card says so
     }
+    try {
+      final handsFree = await widget.api.handsFree();
+      if (mounted) setState(() => _handsFree = handsFree);
+    } on ApiException {
+      // an older hub without hands-free switching: the card says so
+    }
+  }
+
+  Future<void> _saveHandsFree(HandsFree next) async {
+    setState(() {
+      _handsFreeBusy = true;
+      _handsFreeMessage = null;
+    });
+    try {
+      final saved = await widget.api.saveHandsFree(widget.token, next);
+      if (!mounted) return;
+      setState(() {
+        _handsFree = saved;
+        _handsFreeBusy = false;
+      });
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _handsFreeBusy = false;
+        _handsFreeMessage = err.detail?['message'] as String? ?? err.message;
+      });
+    }
+  }
+
+  Future<void> _giveTag(StaffEntry staff) async {
+    final ends = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TagEnrollDialog(
+        api: widget.api,
+        token: widget.token,
+        staff: staff,
+        device: widget.device ?? '',
+        reader: widget.tags,
+      ),
+    );
+    if (!mounted) return;
+    await _loadFaces();
+    if (!mounted || ends == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${staff.name}: tag …$ends kept')));
+  }
+
+  Future<void> _forgetTag(StaffEntry staff) async {
+    setState(() => _faceMessage = null);
+    try {
+      await widget.api.forgetTag(widget.token, staff.staffId);
+      if (!mounted) return;
+      await _loadFaces();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${staff.name}\'s tag forgotten')));
+    } on ApiException catch (err) {
+      if (mounted) setState(() => _faceMessage = err.detail?['message'] as String? ?? err.message);
+    }
   }
 
   Future<void> _switchFaces(bool on) async {
@@ -219,13 +293,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   /// One line under a staff member's name: their role and how their face stands.
   String _staffLine(StaffEntry staff) {
     final role = staff.role.isEmpty ? '' : '${staff.role[0].toUpperCase()}${staff.role.substring(1)} · ';
+    final tag = staff.hasTag ? ' · tag …${staff.tagEnds}' : '';
     if (staff.enrolled) {
       final at = staff.updatedAt;
       final when = at == null ? '' : ' on ${at.month}/${at.day}';
-      return '${role}Enrolled, ${staff.samples} views$when';
+      return '${role}Enrolled, ${staff.samples} views$when$tag';
     }
-    if (staff.stale > 0) return '${role}Enrolled with an older model: enroll again';
-    return '${role}Not enrolled: signs in by PIN';
+    if (staff.stale > 0) return '${role}Enrolled with an older model: enroll again$tag';
+    return '${role}Not enrolled: signs in by ${staff.hasTag ? 'tag or PIN' : 'PIN'}$tag';
   }
 
   void _applyPhones(DeskPhoneLinks links) {
@@ -532,6 +607,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           ),
           const SizedBox(height: 12),
           _facesCard(context),
+          const SizedBox(height: 12),
+          _handsFreeCard(context),
         ],
       );
     }
@@ -603,6 +680,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                         icon: const Icon(Icons.delete_outline),
                         onPressed: () => _forget(staff),
                       ),
+                    IconButton(
+                      key: ValueKey('tag:${staff.staffId}'),
+                      tooltip: staff.hasTag ? 'Another tag' : 'Give a tag',
+                      icon: Icon(Icons.nfc, color: staff.hasTag ? scheme.primary : null),
+                      onPressed: () => _giveTag(staff),
+                    ),
+                    if (staff.hasTag)
+                      IconButton(
+                        key: ValueKey('forget-tag:${staff.staffId}'),
+                        tooltip: 'Forget the tag',
+                        icon: const Icon(Icons.nfc_outlined),
+                        onPressed: () => _forgetTag(staff),
+                      ),
                   ],
                 ),
               ),
@@ -610,6 +700,73 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
                 child: Text(_faceMessage!, style: TextStyle(color: scheme.error)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Hands-free switching: whether a face or tag seen while someone is signed in makes the screen theirs,
+  /// and how long the camera may miss the signed-in person before the screen signs them out.
+  Widget _handsFreeCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final setting = _handsFree;
+    const aways = [
+      (0, 'Never'),
+      (30, '30 seconds'),
+      (60, '1 minute'),
+      (120, '2 minutes'),
+      (300, '5 minutes'),
+      (600, '10 minutes'),
+    ];
+    final away = setting?.awaySeconds ?? 60;
+    final choices = aways.any((a) => a.$1 == away) ? aways : [...aways, (away, '$away seconds')];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SwitchListTile(
+              key: const ValueKey('hands-free-switch'),
+              value: setting?.switching ?? true,
+              onChanged: setting == null || _handsFreeBusy
+                  ? null
+                  : (on) => _saveHandsFree(setting.copyWith(switching: on)),
+              secondary: const Icon(Icons.swap_horiz),
+              title: const Text('Switch to whoever steps up'),
+              subtitle: Text(
+                setting == null
+                    ? 'The hub has not answered about hands-free switching (an older hub: update it)'
+                    : 'A face the camera knows, or a tag held to the reader, makes the screen that person\'s at once; '
+                          'an open order stays open and each dish they add is theirs. Off: only the sign-in screen '
+                          'signs people in.',
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.timer_outlined),
+              title: const Text('Sign out when the camera has not seen the person for'),
+              subtitle: const Text(
+                'Once the camera has recognised the person at the screen; someone it does not know (not enrolled, '
+                'or the switch off) stays until they sign out.',
+              ),
+              trailing: DropdownButton<int>(
+                key: const ValueKey('hands-free-away'),
+                value: away,
+                onChanged: setting == null || _handsFreeBusy
+                    ? null
+                    : (seconds) {
+                        if (seconds != null) _saveHandsFree(setting.copyWith(awaySeconds: seconds));
+                      },
+                items: [for (final (seconds, label) in choices) DropdownMenuItem(value: seconds, child: Text(label))],
+              ),
+            ),
+            if (_handsFreeMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                child: Text(_handsFreeMessage!, style: TextStyle(color: scheme.error)),
               ),
           ],
         ),

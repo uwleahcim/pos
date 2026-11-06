@@ -45,10 +45,10 @@ class FaceStatus {
   }
 }
 
-/// What the hub says about one frame from the sign-in screen.
+/// What the hub says about one frame from a screen's camera.
 @immutable
 class FaceFrame {
-  const FaceFrame({required this.face, this.reason, this.candidate, this.score, this.signedIn});
+  const FaceFrame({required this.face, this.reason, this.candidate, this.score, this.signedIn, this.present = false});
 
   factory FaceFrame.fromJson(Map<String, dynamic> json) => FaceFrame(
     face: json['face'] as bool? ?? false,
@@ -56,13 +56,18 @@ class FaceFrame {
     candidate: json['candidate'] as String?,
     score: (json['score'] as num?)?.toDouble(),
     signedIn: json['signed_in'] as Map<String, dynamic>?,
+    present: json['present'] as bool? ?? false,
   );
 
   /// A face was in the frame.
   final bool face;
 
-  /// Why nobody was signed in: off | not_ready | no_face | too_small | unknown | again (one more frame).
+  /// Why nobody was signed in: off | not_ready | no_face | too_small | unknown | again (one more frame) |
+  /// same (the person signed in on this screen is the one at it).
   final String? reason;
+
+  /// The person signed in on this screen is in view, at the screen or beside it.
+  final bool present;
 
   /// Who the frame looks like, before the next frame agrees.
   final String? candidate;
@@ -82,11 +87,13 @@ class StaffEntry {
     this.samples = 0,
     this.updatedAt,
     this.stale = 0,
+    this.tagEnds,
   });
 
   factory StaffEntry.fromJson(Map<String, dynamic> json) {
     final face = json['face'] as Map<String, dynamic>? ?? const {};
     final at = (face['updated_at'] as num?)?.toDouble() ?? 0;
+    final tag = json['tag'] as Map<String, dynamic>? ?? const {};
     return StaffEntry(
       staffId: json['staff_id'] as String,
       name: json['name'] as String? ?? '',
@@ -94,6 +101,7 @@ class StaffEntry {
       samples: (face['samples'] as num?)?.toInt() ?? 0,
       updatedAt: at > 0 ? DateTime.fromMillisecondsSinceEpoch((at * 1000).round()) : null,
       stale: (face['stale'] as num?)?.toInt() ?? 0,
+      tagEnds: tag['enrolled'] == true ? tag['ends'] as String? ?? '' : null,
     );
   }
 
@@ -108,7 +116,37 @@ class StaffEntry {
   /// Views enrolled with another model: the person signs in by PIN until enrolled again.
   final int stale;
 
+  /// The last characters of the person's tag id, or null without a tag.
+  final String? tagEnds;
+
   bool get enrolled => samples > 0;
+  bool get hasTag => tagEnds != null;
+}
+
+/// The location's hands-free switching, as the hub keeps it: whether a face recognised or a tag read while
+/// someone is signed in makes the screen theirs at once, and how long the camera may go without seeing the
+/// signed-in person before the screen signs them out (0: never).
+@immutable
+class HandsFree {
+  const HandsFree({this.switching = true, this.awaySeconds = 60});
+
+  factory HandsFree.fromJson(Map<String, dynamic> json) =>
+      HandsFree(switching: json['switch'] as bool? ?? true, awaySeconds: (json['away_seconds'] as num?)?.toInt() ?? 60);
+
+  final bool switching;
+  final int awaySeconds;
+
+  Map<String, dynamic> toJson() => {'switch': switching, 'away_seconds': awaySeconds};
+
+  HandsFree copyWith({bool? switching, int? awaySeconds}) =>
+      HandsFree(switching: switching ?? this.switching, awaySeconds: awaySeconds ?? this.awaySeconds);
+
+  @override
+  bool operator ==(Object other) =>
+      other is HandsFree && other.switching == switching && other.awaySeconds == awaySeconds;
+
+  @override
+  int get hashCode => Object.hash(switching, awaySeconds);
 }
 
 /// The hub's answer to one view sent for the enrollment.

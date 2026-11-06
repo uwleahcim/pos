@@ -12,6 +12,7 @@ import '../outbox.dart';
 import '../phone.dart';
 import '../photos.dart';
 import '../pricing.dart';
+import '../session.dart';
 import '../takeout.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
@@ -32,6 +33,7 @@ class OrderScreen extends StatefulWidget {
     required this.orderId,
     this.coursing = Coursing.defaults,
     this.staffName,
+    this.session,
     this.phone,
   });
 
@@ -46,8 +48,11 @@ class OrderScreen extends StatefulWidget {
   /// The location's coursing: whether dishes are coursed, the courses by name, where a new dish goes.
   final Coursing coursing;
 
-  /// Who is signed in, named on each discount they apply.
+  /// Who is signed in, named on each dish they add and each discount they apply. [session] says who it is now:
+  /// a hands-free switch changes the person under an open order, and every dish added from then on is theirs;
+  /// [staffName] stands in for a screen without a session.
   final String? staffName;
+  final Session? session;
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -58,6 +63,10 @@ class _OrderScreenState extends State<OrderScreen> {
   Check? _readCheck;
   final _local = <String, LocalLine>{}; // line id -> what this screen knew when it added the line
   String? _lastAdded; // the check scrolls to it
+
+  /// Who is at the screen now.
+  String? get _staffName => widget.session?.staff?.name ?? widget.staffName;
+  String? get _staffId => widget.session?.staff?.staffId;
   bool _reading = false;
   Timer? _timer;
   int? _seat; // null: for the table, shared
@@ -154,6 +163,8 @@ class _OrderScreenState extends State<OrderScreen> {
       'seat': ?seat,
       'course': ?course,
       'replaces': ?replaces,
+      'by': ?_staffName,
+      'by_id': ?_staffId,
       if (line.note.isNotEmpty) 'note': line.note,
       'request': line.request.toJson(),
     };
@@ -230,7 +241,7 @@ class _OrderScreenState extends State<OrderScreen> {
     await _append(choice.op, {
       choice.op == 'discount' ? 'discount_id' : 'charge_id': id,
       ...choice.data,
-      'applied_by': ?widget.staffName,
+      'applied_by': ?_staffName,
       'approval': ?approval,
     });
   }
@@ -299,7 +310,7 @@ class _OrderScreenState extends State<OrderScreen> {
             'amount': check.due,
             'tendered': ?choice.tendered,
             if (choice.note.isNotEmpty) 'note': choice.note,
-            'by': ?widget.staffName,
+            'by': ?_staffName,
           },
         ),
       ('fire', {'course': '*'}),
@@ -809,6 +820,8 @@ class _TicketPanelState extends State<_TicketPanel> {
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
       if (line.isActive && line.modifiedAfterFire) 'added after fire',
       if (line.note.isNotEmpty) line.note,
+      // a dish someone other than the order's server added, with hands-free switching
+      if (line.by.isNotEmpty && line.byId != widget.order?.fields['server_id']) 'by ${line.by}',
     ];
     final below = <Widget>[
       // each choice on its own line, with what it changes when it changes anything

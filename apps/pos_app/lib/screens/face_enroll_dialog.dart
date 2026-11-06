@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../camera.dart';
+import '../face_signin.dart';
 import '../faces.dart';
 import 'face_guide.dart';
 
@@ -45,6 +46,7 @@ class _FaceEnrollDialogState extends State<FaceEnrollDialog> {
   void initState() {
     super.initState();
     unawaited(widget.camera.watch()); // frames at hand while the dialog is up
+    FaceSignIn.hold(); // the face in front of the camera is being enrolled, not signed in
     _schedule(Duration.zero);
   }
 
@@ -52,6 +54,7 @@ class _FaceEnrollDialogState extends State<FaceEnrollDialog> {
   void dispose() {
     _timer?.cancel();
     widget.camera.unwatch();
+    FaceSignIn.release();
     super.dispose();
   }
 

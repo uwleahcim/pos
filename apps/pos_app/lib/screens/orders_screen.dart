@@ -13,6 +13,8 @@ import '../phone.dart';
 import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
+import '../switching.dart';
+import '../tags.dart';
 import '../settings.dart';
 import '../takeout.dart';
 import 'compact.dart';
@@ -39,6 +41,7 @@ class OrdersScreen extends StatefulWidget {
     this.relay,
     this.phone,
     this.deskPhones,
+    this.tags,
   });
 
   final PosApi api;
@@ -48,6 +51,9 @@ class OrdersScreen extends StatefulWidget {
   final EventCamera camera;
   final PhotoQueue photos;
   final PrintRelay? relay;
+
+  /// This terminal's tag reader, which a manager enrolls tags with in Location settings.
+  final TagReader? tags;
 
   /// The terminal's phone, when it is one: a caller on the line, or just off it, goes into a to-go order.
   final PhoneClient? phone;
@@ -240,6 +246,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           token: token,
           device: widget.settings.device,
           camera: widget.camera,
+          tags: widget.tags,
         ),
       ),
     );
@@ -271,13 +278,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       PosPageRoute(
+        settings: const RouteSettings(name: SessionWatcher.orderRoute),
         builder: (_) => OrderScreen(
           api: widget.api,
           outbox: widget.outbox,
           photos: widget.photos,
           orderId: orderId,
           coursing: coursing,
-          staffName: widget.session.staff?.name,
+          session: widget.session,
           phone: widget.phone,
         ),
       ),

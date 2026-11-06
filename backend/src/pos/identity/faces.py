@@ -15,7 +15,11 @@ image downloads them when it is built, see backend/Dockerfile):
 The rules (`Matcher`, `FaceSignIn`): a face is one staff member's when its best similarity to their templates
 is at least THRESHOLD and beats every other staff member's by MARGIN; a match at STRONG or above signs in
 on that one frame, a weaker one takes two frames in a row from the same device agreeing within
-AGREE_SECONDS, so one odd frame never signs anyone in. Enrollment
+AGREE_SECONDS, so one odd frame never signs anyone in. While someone is signed in on a device, each frame
+says who (`current`): that person's face is followed by its box from frame to frame and recognised again only
+every VERIFY_SECONDS, another enrolled face takes over once it is clearly the one at the screen (the only one,
+or STAY_RATIO times the area of the signed-in person's) and a bystander does not, so the screen follows
+whoever steps up to it without anyone signing out. Enrollment
 takes SAMPLES_WANTED views of the person, each different enough from the ones kept (a slight turn of the
 head), and refuses a view that already matches someone else enrolled, so a manager tapping through the
 enrollment cannot enroll their own face under another name.
@@ -52,6 +56,12 @@ STRONG = float(os.environ.get("POS_FACE_STRONG", "0.60"))
 """A match this good signs in on one frame; below it, two frames in a row must agree (AGREE_SECONDS)."""
 AGREE_SECONDS = 4.0
 """Two frames from one device within this window must name the same person for a sign-in."""
+VERIFY_SECONDS = float(os.environ.get("POS_FACE_VERIFY", "3.0"))
+"""The signed-in person's face, followed by its box, is recognised again at most this often."""
+TRACK_IOU = 0.5
+"""A face box overlapping the last frame's this much (intersection over union) is the same face, a frame later."""
+STAY_RATIO = 1.5
+"""While the signed-in person is in view, a newcomer's face must be this many times its area to take over."""
 SAMPLES_WANTED = 5
 """Views enrolled per person before the enrollment is complete; more are kept up to SAMPLES_MAX."""
 SAMPLES_MAX = 8
@@ -170,6 +180,17 @@ def laplacian_variance(gray: np.ndarray) -> float:
     g = gray.astype(np.float32)
     lap = 4 * g[1:-1, 1:-1] - g[:-2, 1:-1] - g[2:, 1:-1] - g[1:-1, :-2] - g[1:-1, 2:]
     return float(lap.var())
+
+
+def iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """Intersection over union of two boxes (x1, y1, x2, y2): 1 for the same box, 0 for boxes apart."""
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    inter = width * height
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 def _nms(boxes: np.ndarray, scores: np.ndarray, threshold: float) -> list[int]:
@@ -491,10 +512,11 @@ class FrameResult:
     """What the hub says about one frame from the sign-in screen."""
 
     face: bool
-    reason: str | None = None  # off | not_ready | no_face | too_small | unknown | again
+    reason: str | None = None  # off | not_ready | no_face | too_small | unknown | again | same
     candidate: str | None = None  # the staff member this frame looks like, before the second frame agrees
     score: float | None = None
     signed_in: SignIn | None = None
+    present: bool = False  # the person signed in on the device (`current`) is in view, at the screen or beside it
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -502,6 +524,7 @@ class FrameResult:
             "reason": self.reason,
             "candidate": self.candidate,
             "score": None if self.score is None else round(self.score, 3),
+            "present": self.present,
             "signed_in": None
             if self.signed_in is None
             else {
@@ -544,6 +567,15 @@ class _Sighting:
 
 
 @dataclass
+class _Track:
+    """The signed-in person's face on a device, followed by its box between recognitions."""
+
+    staff_id: str
+    box: tuple[float, float, float, float]
+    verified_at: float  # when the face in the box was last recognised as theirs
+
+
+@dataclass
 class FaceSignIn:
     """Frames in, sign-ins out; and the enrollment that makes them possible.
 
@@ -558,6 +590,7 @@ class FaceSignIn:
     matcher: Matcher = field(default_factory=Matcher)
     clock: Callable[[], float] = time.monotonic
     _sightings: dict[str, _Sighting] = field(default_factory=dict)
+    _tracks: dict[str, _Track] = field(default_factory=dict)
     _loading: threading.Thread | None = None
     load_error: str | None = None
 
@@ -610,9 +643,10 @@ class FaceSignIn:
         model = self.engine.name if self.engine else None
         return [t for t in self.store.all() if t.model == model and self.staff(t.staff_id) is not None]
 
-    def identify(self, jpeg: bytes, *, device: str) -> FrameResult:
-        """One frame from a sign-in screen: whose face it is, and the sign-in once the match is strong enough
-        on its own or two frames in a row agree."""
+    def identify(self, jpeg: bytes, *, device: str, current: str | None = None) -> FrameResult:
+        """One frame from a screen: whose face is at it, and the sign-in once the match is strong enough on its
+        own or two frames in a row agree. With `current` (who is signed in on the device) the answer is `same`
+        while that person is the one at the screen, and a sign-in for someone else once they clearly are."""
         if not self.enabled():
             return FrameResult(False, "off")
         engine = self.engine
@@ -622,27 +656,55 @@ class FaceSignIn:
         faces = engine.faces(rgb)
         if not faces:
             self._sightings.pop(device, None)
+            self._tracks.pop(device, None)
             return FrameResult(False, "no_face")
         face = faces[0]  # the largest: the person at the screen, not someone passing behind
         if face.width < MIN_FACE:
             return FrameResult(True, "too_small")
-        match = self.matcher.match(engine.embed(rgb, face), self._templates())
-        if match is None:
-            self._sightings.pop(device, None)
-            return FrameResult(True, "unknown")
         now = self.clock()
-        person = self.staff(match.staff_id)
-        if person is None:
+        track = self._tracks.get(device)
+        if track is not None and track.staff_id != current:
+            track = None  # the device signed someone else in meanwhile (a PIN, a tag)
+        present = False  # the signed-in person's face is in view, followed from the last frames
+        if track is not None:
+            theirs = next((f for f in faces if iou(f.box, track.box) >= TRACK_IOU), None)
+            if theirs is None:
+                self._tracks.pop(device, None)
+                track = None
+            else:
+                track.box = theirs.box
+                present = True
+                if theirs is face and now - track.verified_at < VERIFY_SECONDS:
+                    return FrameResult(True, "same", candidate=current, present=True)
+                if theirs is not face and face.area < STAY_RATIO * theirs.area:
+                    # someone else about as close as the person at the screen: a bystander, who takes nothing over
+                    return FrameResult(True, "same", candidate=current, present=True)
+        followed = track is not None and iou(track.box, face.box) >= TRACK_IOU  # the face recognised now is theirs
+        match = self.matcher.match(engine.embed(rgb, face), self._templates())
+        if match is None or self.staff(match.staff_id) is None:
             self._sightings.pop(device, None)
-            return FrameResult(True, "unknown")
+            if followed:
+                self._tracks.pop(device, None)  # the face followed was not theirs after all
+                present = False
+            return FrameResult(True, "unknown", present=present)
+        if current is not None and match.staff_id == current:
+            self._sightings.pop(device, None)
+            self._tracks[device] = _Track(current, face.box, now)
+            return FrameResult(True, "same", candidate=current, score=match.score, present=True)
+        if followed:
+            self._tracks.pop(device, None)
+            present = False
         seen = self._sightings.get(device)
         agreed = seen is not None and seen.staff_id == match.staff_id and now - seen.at <= AGREE_SECONDS
         if match.score < STRONG and not agreed:
             self._sightings[device] = _Sighting(match.staff_id, now)
-            return FrameResult(True, "again", candidate=match.staff_id, score=match.score)
+            return FrameResult(True, "again", candidate=match.staff_id, score=match.score, present=present)
         self._sightings.pop(device, None)
+        self._tracks[device] = _Track(match.staff_id, face.box, now)
+        person = self.staff(match.staff_id)
+        assert person is not None
         signed = SignIn(person.staff_id, person.name, person.role, "face", device, now)
-        return FrameResult(True, None, candidate=match.staff_id, score=match.score, signed_in=signed)
+        return FrameResult(True, None, candidate=match.staff_id, score=match.score, signed_in=signed, present=present)
 
     def enroll(self, staff_id: str, jpeg: bytes, *, device: str, replace: bool = False) -> EnrollResult:
         """One view of `staff_id` from the enrollment screen, kept when it is good and new."""

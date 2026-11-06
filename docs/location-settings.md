@@ -18,7 +18,14 @@ screen holds:
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
 - **Sign in by face**: the location's switch (off to start), how the hub stands with its face models (and,
   with the switch off, that no screen looks until it is on), and the staff by name with each one's
-  enrollment: Enroll (this screen's camera), Enroll again, the bin to forget a face (see `face-signin.md`).
+  enrollment: Enroll (this screen's camera), Enroll again, the bin to forget a face, the tag button to give
+  the person a tag held to this screen's reader (or typed), the crossed-out one to forget it (see
+  `face-signin.md`).
+- **Hands-free**: **Switch to whoever steps up** (on to start: a face the camera knows or a tag held to the
+  reader makes the screen that person's at once; an open order stays open and each dish added from then on
+  is theirs), and how long the
+  camera may go without seeing the signed-in person before the screen signs them out (never, 30 seconds, 1,
+  2, 5 or 10 minutes; a minute to start), once it has recognised them.
 
 **Save** sends the courses to the hub, which checks them (a name on every course, no name twice, at least
 one course while coursing is on) and keeps them. Every terminal reads the setting when it opens an order,
@@ -78,6 +85,8 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   [{"extension": "200", "device": "tab1"}]}`, each extension once; details in `desk-phones.md`.
 - `GET /settings/faces` and `PUT /settings/faces` (the manager Bearer token): `{"enabled": false}`; the
   enrollment calls are in `face-signin.md`.
+- `GET /settings/presence` and `PUT /settings/presence` (the manager Bearer token): `{"switch": true,
+  "away_seconds": 60}`, the seconds 0 (never) to 3600; the tag calls are in `face-signin.md`.
 - A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
   carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
   with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the

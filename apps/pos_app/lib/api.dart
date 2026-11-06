@@ -32,6 +32,8 @@ class Line {
     this.itemId,
     this.entryId,
     this.replaces,
+    this.by = '',
+    this.byId,
     this.pending = false,
   });
 
@@ -50,6 +52,8 @@ class Line {
     itemId: (json['priced'] as Map?)?['item'] as String?,
     entryId: (json['priced'] as Map?)?['entry_id'] as String?,
     replaces: json['replaces'] as String?,
+    by: json['by'] as String? ?? '',
+    byId: json['by_id'] as String?,
   );
 
   final String lineId;
@@ -76,6 +80,11 @@ class Line {
   /// The line this one took the place of: an edit (other choices, a kitchen note) voids a line and adds the
   /// changed dish as a new one. A comp on the old line is on this one, here and on the hub.
   final String? replaces;
+
+  /// Who added the line, by name and by staff id, when the screen that added it knew: with hands-free switching
+  /// a check one server opened is added to by another, and each dish says whose it is.
+  final String by;
+  final String? byId;
 
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
@@ -113,6 +122,8 @@ class Line {
     itemId: itemId,
     entryId: entryId,
     replaces: replaces,
+    by: by,
+    byId: byId,
     pending: pending ?? this.pending,
   );
 }
@@ -551,10 +562,49 @@ class PosApi {
   /// Whether this location signs staff in by face, whether the hub has its models and how many are enrolled.
   Future<FaceStatus> faceStatus() async => FaceStatus.fromJson(await _get('/faces/status'));
 
-  /// One frame off the sign-in screen's camera: whether a face is in it and, once the hub is sure of the person,
-  /// who it is, in the shape a PIN sign-in answers.
-  Future<FaceFrame> faceFrame({required String device, required Uint8List jpeg}) async =>
-      FaceFrame.fromJson(await _post('/signin/face', {'device': device, 'jpeg_b64': base64Encode(jpeg)}));
+  /// One frame off this screen's camera: whether a face is in it and, once the hub is sure of the person, who
+  /// it is, in the shape a PIN sign-in answers. With [current] (who is signed in here) the hub says `same`
+  /// while that person is the one at the screen and names only someone else.
+  Future<FaceFrame> faceFrame({required String device, required Uint8List jpeg, String? current}) async =>
+      FaceFrame.fromJson(
+        await _post('/signin/face', {'device': device, 'jpeg_b64': base64Encode(jpeg), 'current': ?current}),
+      );
+
+  /// The location's hands-free switching (faces and tags alike).
+  Future<HandsFree> handsFree() async => HandsFree.fromJson(await _get('/settings/presence'));
+
+  /// A manager (token from [adminSession]) sets the hands-free switching for every terminal.
+  Future<HandsFree> saveHandsFree(String token, HandsFree setting) async => HandsFree.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/presence'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(setting.toJson()),
+      ),
+    ),
+  );
+
+  /// Makes a tag, as the reader typed it, a staff member's (manager token): the last characters of its id as
+  /// the hub keeps it. 409 when it is someone else's, with their name in `detail.name`.
+  Future<String> setTag(String token, String staffId, {required String tagUid, String? device}) async {
+    final json = await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/admin/staff/$staffId/tag'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'tag_uid': tagUid, 'device': ?device}),
+      ),
+    );
+    return (json['tag'] as Map<String, dynamic>?)?['ends'] as String? ?? '';
+  }
+
+  /// Forgets a staff member's tag (manager token).
+  Future<int> forgetTag(String token, String staffId) async =>
+      ((await _withFailover(
+                (base) => _client.delete(Uri.parse('$base/admin/staff/$staffId/tag'), headers: _bearer(token)),
+              ))['removed']
+              as num?)
+          ?.toInt() ??
+      0;
 
   /// Whether the location signs staff in by face (the manager's switch).
   Future<bool> faceSetting() async => (await _get('/settings/faces'))['enabled'] as bool? ?? false;

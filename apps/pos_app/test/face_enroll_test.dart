@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:pos_app/camera.dart';
 import 'package:pos_app/faces.dart';
 import 'package:pos_app/screens/face_enroll_dialog.dart';
 import 'package:pos_app/screens/location_settings_screen.dart';
+import 'package:pos_app/tags.dart';
 
 import 'hub.dart';
 
@@ -26,11 +28,36 @@ class FrameCamera extends EventCamera {
   }
 }
 
+/// A reader whose next tag the test provides.
+class FakeTagReader implements TagReader {
+  Completer<String?>? waiting;
+
+  @override
+  Future<String?> next({Duration timeout = const Duration(seconds: 30)}) {
+    final c = waiting = Completer<String?>();
+    return c.future;
+  }
+
+  @override
+  void cancel() {
+    final c = waiting;
+    waiting = null;
+    if (c != null && !c.isCompleted) c.complete(null);
+  }
+
+  void read(String uid) {
+    final c = waiting;
+    waiting = null;
+    c?.complete(uid);
+  }
+}
+
 Map<String, dynamic> person(String id, String name, String role, {int samples = 0, int stale = 0}) => {
   'staff_id': id,
   'name': name,
   'role': role,
   'face': {'samples': samples, 'updated_at': samples > 0 ? 1762000000.0 : 0.0, 'stale': stale},
+  'tag': {'enrolled': false, 'ends': null, 'updated_at': 0.0},
 };
 
 Map<String, dynamic> step({bool accepted = true, String? reason, required int samples, String? looksLike}) => {
@@ -42,14 +69,20 @@ Map<String, dynamic> step({bool accepted = true, String? reason, required int sa
   'looks_like': looksLike,
 };
 
-Future<Terminal> pumpLocation(WidgetTester tester, {EventCamera? camera}) async {
+Future<Terminal> pumpLocation(WidgetTester tester, {EventCamera? camera, TagReader? tags}) async {
   final t = await terminal(tester);
   t.hub.faceStatus = {'enabled': false, 'ready': true, 'active': false, 'enrolled': 1, 'model': 'r50', 'error': null};
   t.hub.staffList = [person('s1', 'Amy', 'server', samples: 5), person('s2', 'Ben', 'bartender')];
-  tester.view.physicalSize = const Size(1100, 1800);
+  tester.view.physicalSize = const Size(1100, 2200);
   await tester.pumpWidget(
     MaterialApp(
-      home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1', camera: camera ?? FrameCamera()),
+      home: LocationSettingsScreen(
+        api: t.api,
+        token: 'tok-admin',
+        device: 't1',
+        camera: camera ?? FrameCamera(),
+        tags: tags,
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -137,6 +170,73 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ben: 2 views enrolled'), findsOneWidget);
     expect(t.hub.enrolled.length, 2);
+  });
+
+  testWidgets('the hands-free card saves the switch and the away time', (tester) async {
+    final t = await pumpLocation(tester);
+    expect(find.text('Switch to whoever steps up'), findsOneWidget);
+    expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('hands-free-switch'))).value, isTrue);
+    await tester.tap(find.byKey(const ValueKey('hands-free-switch')));
+    await tester.pumpAndSettle();
+    expect(t.hub.handsFree, {'switch': false, 'away_seconds': 60});
+    expect(t.hub.faceAuth, 'Bearer tok-admin');
+    expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('hands-free-switch'))).value, isFalse);
+    await tester.tap(find.byKey(const ValueKey('hands-free-away')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('5 minutes').last);
+    await tester.pumpAndSettle();
+    expect(t.hub.handsFree, {'switch': false, 'away_seconds': 300});
+  });
+
+  testWidgets('a tag held to the reader is given to the person; one that is someone else\'s is refused', (
+    tester,
+  ) async {
+    final reader = FakeTagReader();
+    final t = await pumpLocation(tester, tags: reader);
+    expect(find.byKey(const ValueKey('forget-tag:s2')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('tag:s2')));
+    await tester.pumpAndSettle();
+    expect(find.text('A tag for Ben'), findsOneWidget);
+    expect(find.text('Hold the tag to this screen\'s reader now.'), findsOneWidget);
+    reader.read('04A2B3C4D5E6F7');
+    await tester.pumpAndSettle();
+    expect(t.hub.tagged, [('s2', '04A2B3C4D5E6F7')]);
+    expect(find.text('A tag for Ben'), findsNothing, reason: 'kept: the dialog closes');
+    expect(find.text('Ben: tag …E6F7 kept'), findsOneWidget);
+    expect(find.text('Bartender · Not enrolled: signs in by tag or PIN · tag …E6F7'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5)); // the word about it goes
+    await tester.pumpAndSettle();
+    // Someone else's tag.
+    t.hub.tagTakenBy = 'Amy';
+    await tester.tap(find.byKey(const ValueKey('tag:s2')));
+    await tester.pumpAndSettle();
+    reader.read('99999999');
+    await tester.pumpAndSettle();
+    expect(find.text('That tag is Amy\'s'), findsOneWidget);
+    expect(find.text('A tag for Ben'), findsOneWidget, reason: 'the dialog stays for another tag');
+    await tester.tap(find.byKey(const ValueKey('tag-cancel')));
+    await tester.pumpAndSettle();
+    expect(find.text('A tag for Ben'), findsNothing);
+    // The bin forgets the tag.
+    await tester.tap(find.byKey(const ValueKey('forget-tag:s2')));
+    await tester.pumpAndSettle();
+    expect(t.hub.tagsForgotten, ['s2']);
+    expect(find.text('Ben\'s tag forgotten'), findsOneWidget);
+    expect(find.byKey(const ValueKey('forget-tag:s2')), findsNothing);
+  });
+
+  testWidgets('without a reader, the tag\'s id is typed', (tester) async {
+    final t = await pumpLocation(tester);
+    await tester.tap(find.byKey(const ValueKey('tag:s1')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('This screen has no reader'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byKey(const ValueKey('tag-save'))).onPressed, isNull);
+    await tester.enterText(find.byKey(const ValueKey('tag-typed')), '04:a2:b3:c4');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('tag-save')));
+    await tester.pumpAndSettle();
+    expect(t.hub.tagged, [('s1', '04:A2:B3:C4')], reason: 'as typed; the hub tidies it');
+    expect(find.text('Amy: tag …B3C4 kept'), findsOneWidget);
   });
 
   testWidgets('a screen without a camera cannot enroll', (tester) async {

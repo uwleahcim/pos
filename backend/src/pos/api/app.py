@@ -28,6 +28,7 @@ from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory
+from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
@@ -443,6 +444,7 @@ def create_app(
     watcher: AmiWatcher | None = None,
     devices: DevicesSeen | None = None,
     faces: FaceSignIn | None = None,
+    tags: TagStore | None = None,
     push_devices: PushDevices | None = None,
     pusher: ApnsSender | None = None,
     relay: PushRelay | None = None,
@@ -506,6 +508,8 @@ def create_app(
             default_face_store(), app.state.staff.get, enabled=lambda: app.state.settings.get("faces")["enabled"]
         )
     )
+    # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
+    app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
         app.state.messenger,
         location=app.state.location,
@@ -933,7 +937,7 @@ def create_app(
             if body.pin is not None:
                 found = directory.by_pin(body.pin, device=body.device)
             elif body.tag_uid is not None:
-                found = directory.by_tag(body.tag_uid, device=body.device)
+                found = sign_in_by_tag(app.state.tags, directory, body.tag_uid, device=body.device)
             else:
                 raise HTTPException(422, {"error": "no_credential"})
         except Locked as err:

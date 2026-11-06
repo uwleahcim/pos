@@ -94,3 +94,20 @@ def test_a_stamp_far_in_the_future_is_refused_until_the_clock_is_fixed():
         store.append([wrong])
     assert store.append([fine]) == []  # a duplicate is simply ignored
     assert store.cursor == 1
+
+
+def test_a_line_records_who_added_it_and_an_edit_keeps_that(op):
+    """Hands-free switching: a check one server opened is added to by another, and each line names the person
+    who added it; a change on the check (a quantity, a drag) does not change that."""
+    ops = [
+        op("create", at=0, server="Amy", server_id="s1"),
+        op("add_line", at=1, line_id="L1", item="Egg roll", by="Amy", by_id="s1"),
+        op("add_line", at=2, node="b", line_id="L2", item="Mango pudding", by="Ben", by_id="s2"),
+        op("add_line", at=3, line_id="L3", item="Tea"),
+        op("set_line", at=4, line_id="L2", qty=2, by="Amy", by_id="s1"),
+    ]
+    state = replay(ops)
+    assert (state.lines["L1"].by, state.lines["L1"].by_id) == ("Amy", "s1")
+    assert (state.lines["L2"].by, state.lines["L2"].by_id, state.lines["L2"].qty) == ("Ben", "s2", 2)
+    assert (state.lines["L3"].by, state.lines["L3"].by_id) == ("", None)
+    assert state.snapshot()["lines"]["L2"]["by_id"] == "s2"

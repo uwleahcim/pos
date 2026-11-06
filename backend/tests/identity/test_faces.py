@@ -207,6 +207,7 @@ def test_a_weaker_match_takes_two_frames_in_a_row():
         "reason": "no_face",
         "candidate": None,
         "score": None,
+        "present": False,
         "signed_in": None,
     }
     first = svc.identify(jpeg_of(RED), device="t1")
@@ -250,6 +251,124 @@ def test_unknown_small_off_and_not_ready():
     cold.engine = None
     assert cold.identify(jpeg_of(RED), device="t1").reason == "not_ready"
     assert cold.status()["ready"] is False and cold.status()["active"] is False
+
+
+class SceneEngine(FakeEngine):
+    """Faces where the test puts them, whatever the frame shows: `scene` is a list of (box, vector)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scene: list[tuple[tuple[float, float, float, float], np.ndarray]] = []
+        self.embeds = 0
+
+    def faces(self, rgb: np.ndarray, *, threshold: float = 0.6) -> list[Face]:
+        found = [Face(box, 0.9, np.zeros((5, 2), dtype=np.float32)) for box, _ in self.scene]
+        found.sort(key=lambda f: f.area, reverse=True)
+        return found
+
+    def embed(self, rgb: np.ndarray, face: Face) -> np.ndarray:
+        self.embeds += 1
+        for box, vector in self.scene:
+            if box == face.box:
+                return vector
+        raise AssertionError("no such face in the scene")
+
+
+AT_SCREEN = (100.0, 50.0, 300.0, 300.0)  # 50,000 px: the person at the screen
+MOVED = (120.0, 60.0, 320.0, 310.0)  # the same face a frame later (IoU 0.76)
+BESIDE = (320.0, 50.0, 560.0, 300.0)  # 60,000 px: someone beside them, about as close
+IN_FRONT = (320.0, 20.0, 620.0, 320.0)  # 90,000 px: someone clearly closer
+
+
+def test_the_signed_in_person_is_followed_between_recognitions():
+    engine = SceneEngine()
+    svc = service(engine=engine)
+    enrolled(svc, "s1", AMY)
+    enrolled(svc, "s2", BEN)
+    engine.scene = [(AT_SCREEN, AMY)]
+    first = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (first.reason, first.present, first.candidate, first.signed_in) == ("same", True, "s1", None)
+    assert first.as_json()["present"] is True and engine.embeds == 1
+    svc.now[0] += 1.0
+    engine.scene = [(MOVED, AMY)]
+    assert svc.identify(jpeg_of(GREY), device="t1", current="s1").reason == "same"
+    assert engine.embeds == 1, "a face followed by its box is not recognised again within the window"
+    svc.now[0] += mod.VERIFY_SECONDS
+    assert svc.identify(jpeg_of(GREY), device="t1", current="s1").reason == "same"
+    assert engine.embeds == 2, "and is once the window has passed"
+    # Someone who signed in by PIN is followed only once the camera has recognised them.
+    engine.scene = [(AT_SCREEN, BEN)]
+    svc.now[0] += 1.0
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s2")
+    assert (out.reason, out.present) == ("same", True) and engine.embeds == 3
+    # No `current`: a sign-in screen, where the person signs in as before.
+    engine.scene = [(AT_SCREEN, AMY)]
+    assert svc.identify(jpeg_of(GREY), device="t2").signed_in is not None
+
+
+def test_a_newcomer_takes_over_only_when_clearly_the_one_at_the_screen():
+    engine = SceneEngine()
+    svc = service(engine=engine)
+    enrolled(svc, "s1", AMY)
+    enrolled(svc, "s2", BEN)
+    engine.scene = [(AT_SCREEN, AMY)]
+    assert svc.identify(jpeg_of(GREY), device="t1", current="s1").reason == "same"
+    engine.scene = [(AT_SCREEN, AMY), (BESIDE, BEN)]
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (out.reason, out.present, out.signed_in) == ("same", True, None), "a bystander about as close takes nothing"
+    assert engine.embeds == 1, "and costs no recognition"
+    engine.scene = [(AT_SCREEN, AMY), (IN_FRONT, BEN)]
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert out.signed_in is not None and out.signed_in.name == "Ben" and out.present is True
+    # Ben is the one followed now; Amy beside him is the bystander.
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s2")
+    assert (out.reason, out.present) == ("same", True) and engine.embeds == 2
+    engine.scene = [(IN_FRONT, BEN)]
+    assert svc.identify(jpeg_of(GREY), device="t1", current="s2").reason == "same"
+    engine.scene = []
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s2")
+    assert (out.reason, out.present) == ("no_face", False)
+    # Someone known steps up to a screen whose person has gone: they take it over at once.
+    engine.scene = [(AT_SCREEN, AMY)]
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s2")
+    assert out.signed_in is not None and out.signed_in.name == "Amy" and out.present is False
+
+
+def test_an_unknown_face_in_front_does_not_unseat_the_person_still_in_view():
+    engine = SceneEngine()
+    svc = service(engine=engine)
+    enrolled(svc, "s1", AMY)
+    engine.scene = [(AT_SCREEN, AMY)]
+    svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    engine.scene = [(AT_SCREEN, AMY), (IN_FRONT, vec(99))]  # a customer leaning in
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (out.reason, out.present) == ("unknown", True), "Amy is still in view: the screen stays hers"
+    engine.scene = [(IN_FRONT, vec(99))]
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (out.reason, out.present) == ("unknown", False), "Amy gone: the screen signs her out after a while"
+    # The face followed turns out not to be hers once recognised again: it is no longer followed.
+    engine.scene = [(AT_SCREEN, AMY)]
+    svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    svc.now[0] += mod.VERIFY_SECONDS
+    engine.scene = [(AT_SCREEN, vec(99))]
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (out.reason, out.present) == ("unknown", False)
+
+
+def test_switching_to_someone_else_follows_the_sign_in_rules():
+    engine = SceneEngine()
+    svc = service(engine=engine)
+    enrolled(svc, "s1", AMY)
+    enrolled(svc, "s2", BEN)
+    engine.scene = [(AT_SCREEN, AMY)]
+    assert svc.identify(jpeg_of(GREY), device="t1", current="s1").reason == "same"
+    svc.now[0] += mod.VERIFY_SECONDS
+    engine.scene = [(AT_SCREEN, lean(BEN, vec(7), 1.6))]  # Ben in Amy's place, in a weaker view
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert (out.reason, out.candidate, out.present) == ("again", "s2", False)
+    svc.now[0] += 0.5
+    out = svc.identify(jpeg_of(GREY), device="t1", current="s1")
+    assert out.signed_in is not None and out.signed_in.name == "Ben", "the next frame agreeing switches"
 
 
 def test_templates_of_another_model_or_a_gone_staff_member_do_not_count():
@@ -355,6 +474,8 @@ def test_api_status_sign_in_and_the_audit_photo():
     kept = photos.recent(1)
     assert len(kept) == 1 and (kept[0].event, kept[0].staff_id, kept[0].device) == ("sign_in", "s1", "mac1")
     assert kept[0].jpeg == jpeg_of(RED), "the frame that signed her in is the sign-in's audit photo"
+    same = api.post("/signin/face", json={**frame, "current": "s1"}).json()
+    assert (same["reason"], same["present"], same["signed_in"]) == ("same", True, None), "her own screen: no sign-in"
     assert api.get("/devices").json()["devices"][0]["device"] == "mac1"
     assert api.post("/signin/face", json={"device": "mac1", "jpeg_b64": "nope!"}).status_code == 422
     assert api.post("/signin/face", json={"device": "mac1", "jpeg_b64": b64(b"PNG")}).status_code == 422
