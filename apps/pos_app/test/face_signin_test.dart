@@ -16,10 +16,14 @@ import 'hub.dart';
 /// A camera that always has a frame; its preview is up from the start, or comes up when told, as a phone's
 /// does after the screen's first build.
 class FrameCamera extends EventCamera {
-  FrameCamera({this.live = true});
+  FrameCamera({this.live = true, this.watchable = true});
   int frames = 0;
   int snaps = 0;
   bool live;
+
+  /// Whether it keeps frames coming and reports a change in its view (a phone), or not (the Mac).
+  final bool watchable;
+  int watching = 0;
   @override
   bool get ready => live;
   @override
@@ -29,6 +33,21 @@ class FrameCamera extends EventCamera {
 
   void up() {
     live = true;
+    notifyListeners();
+  }
+
+  @override
+  Future<bool> watch() async {
+    watching += 1;
+    return watchable;
+  }
+
+  @override
+  void unwatch() => watching -= 1;
+
+  /// Someone steps in front of the camera.
+  void move() {
+    motion += 1;
     notifyListeners();
   }
 
@@ -76,6 +95,7 @@ Future<Screen> pumpSignIn(
   WidgetTester tester, {
   bool withCamera = true,
   bool cameraUp = true,
+  bool watchable = true,
   Map<String, dynamic>? status,
   List<Map<String, dynamic>> answers = const [],
 }) async {
@@ -85,7 +105,7 @@ Future<Screen> pumpSignIn(
   hub.faceAnswers = answers;
   final api = PosApi(settings, client: MockClient(hub.handle));
   final session = Session(api);
-  final camera = FrameCamera(live: cameraUp);
+  final camera = FrameCamera(live: cameraUp, watchable: watchable);
   final faces = FaceSignIn(
     api,
     settings,
@@ -93,6 +113,7 @@ Future<Screen> pumpSignIn(
     session,
     quick: const Duration(milliseconds: 100),
     slow: const Duration(milliseconds: 400),
+    slowUnwatched: const Duration(milliseconds: 250),
     recheck: const Duration(seconds: 5),
     idleFrames: 3,
   );
@@ -165,11 +186,12 @@ void main() {
     expect(s.hub.frames.length, 1, reason: 'the first frame: nobody there');
     expect(s.hub.frames.first['device'], 't1');
     expect(base64Decode(s.hub.frames.first['jpeg_b64'] as String).take(2), [0xff, 0xd8]);
-    await tester.pump(const Duration(milliseconds: 100)); // the second: Amy, once
-    expect(hint(tester), 'Hold still…');
-    expect(s.faces.state, FaceState.holding);
-    await tester.pump(const Duration(milliseconds: 100)); // the third: Amy, agreed
+    expect(s.camera.watching, 1, reason: 'the camera keeps its frames coming while the screen looks');
+    expect(s.faces.watched, isTrue);
+    await tester.pump(const Duration(milliseconds: 100)); // the second: Amy, once; the third at once: agreed
+    expect(s.hub.frames.length, 3, reason: 'the frame that confirms her goes the moment the hub answers');
     expect(hint(tester), 'Hi Amy');
+    expect(s.camera.watching, 0, reason: 'signed in: the camera is let go');
     expect(s.faces.state, FaceState.signedIn);
     expect(s.session.staff?.name, 'Amy');
     expect(s.session.staff?.method, 'face');
@@ -184,12 +206,14 @@ void main() {
 
   testWidgets('an unknown face says so after three frames, and the PIN still works', (tester) async {
     final s = await pumpSignIn(tester, status: active, answers: [unknown]);
-    await tester.pump(const Duration(milliseconds: 10));
-    expect(hint(tester), 'Looking…');
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 10)); // three frames back-to-back: a face, unknown
+    expect(s.hub.frames.length, 3);
     expect(hint(tester), 'Not recognised: tap your PIN');
     expect(s.faces.state, FaceState.unknown);
+    await tester.pump(const Duration(milliseconds: 100)); // then one every 100 ms
+    expect(s.hub.frames.length, 4);
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(s.hub.frames.length, 4);
     await tapPin(tester, '1111');
     expect(s.session.staff?.name, 'Amy');
     // The screen goes with the sign-in; the frames stop with it.
@@ -210,11 +234,40 @@ void main() {
     expect(s.hub.frames.length, 3, reason: 'then one every 400 ms');
     await tester.pump(const Duration(milliseconds: 200));
     expect(s.hub.frames.length, 4);
-    s.hub.faceAnswers = [noFace, noFace, noFace, noFace, again];
-    await tester.pump(const Duration(milliseconds: 400)); // frame 5: someone
-    expect(s.hub.frames.length, 5);
-    await tester.pump(const Duration(milliseconds: 100)); // quick again
+    s.hub.faceAnswers = [noFace, noFace, noFace, noFace, again, noFace];
+    await tester.pump(const Duration(milliseconds: 400)); // frame 5: someone; frame 6 at once: gone again
     expect(s.hub.frames.length, 6);
+    await tester.pump(const Duration(milliseconds: 100)); // quick again
+    expect(s.hub.frames.length, 7);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a change in front of an idle camera brings a frame at once', (tester) async {
+    final s = await pumpSignIn(tester, status: active, answers: [noFace]);
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100)); // three empty frames: idle, one every 400 ms
+    expect(s.hub.frames.length, 3);
+    await tester.pump(const Duration(milliseconds: 100));
+    s.camera.move(); // someone steps up
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(s.hub.frames.length, 4, reason: 'a frame goes at once, not at the idle pace');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(s.hub.frames.length, 4, reason: 'nobody in it: back to the idle pace');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(s.hub.frames.length, 5);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a camera that cannot report a change idles a little faster', (tester) async {
+    final s = await pumpSignIn(tester, status: active, answers: [noFace], watchable: false);
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(s.hub.frames.length, 3);
+    expect(s.faces.watched, isFalse);
+    await tester.pump(const Duration(milliseconds: 250)); // one every 250 ms instead of 400
+    expect(s.hub.frames.length, 4);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -229,6 +282,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
     expect(s.faces.state, FaceState.off);
     expect(hint(tester), 'Tap your 4-digit staff PIN to unlock');
+    expect(s.camera.watching, 0, reason: 'not looking: the camera is let go');
     s.hub.faceStatus = {...active, 'active': false};
     await tester.pump(const Duration(seconds: 6)); // the recheck
     expect(s.faces.state, FaceState.off);

@@ -4,7 +4,8 @@ location's switch. The rules live in `pos.identity.faces`; this is the shape of 
 - `GET /faces/status`: whether the location has it on, whether the hub's models are loaded, how many staff
   are enrolled; `active` when all three hold, which is when a sign-in screen starts looking.
 - `POST /signin/face` `{device, jpeg_b64}`: one frame. The answer says whether a face was in it and, once
-  two frames in a row agree, `signed_in` with the same shape `POST /signin` gives for a PIN.
+  the match is strong on its own or two frames in a row agree, `signed_in` with the same shape `POST /signin`
+  gives for a PIN.
 - `GET /admin/staff` (manager token): the staff by name with each one's enrollment.
 - `POST /admin/staff/{id}/face/samples` `{device, jpeg_b64, replace}` (manager token): one view of the
   person; `accepted` or `reason` why not, and how many views are kept of the five wanted.
@@ -69,7 +70,8 @@ def add_face_signin(app: FastAPI) -> None:
 
     @app.post("/signin/face")
     def sign_in_face(body: FrameIn) -> dict[str, Any]:
-        """One frame off the sign-in screen's camera. `signed_in` comes once two frames in a row agree."""
+        """One frame off the sign-in screen's camera. `signed_in` comes once the match is strong on its own or
+        two frames in a row agree."""
         app.state.devices.heard(body.device)
         jpeg = _frame(body.jpeg_b64)
         result = faces().identify(jpeg, device=body.device)

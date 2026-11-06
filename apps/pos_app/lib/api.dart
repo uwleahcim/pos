@@ -551,7 +551,7 @@ class PosApi {
   /// Whether this location signs staff in by face, whether the hub has its models and how many are enrolled.
   Future<FaceStatus> faceStatus() async => FaceStatus.fromJson(await _get('/faces/status'));
 
-  /// One frame off the sign-in screen's camera: whether a face is in it and, once two frames in a row agree,
+  /// One frame off the sign-in screen's camera: whether a face is in it and, once the hub is sure of the person,
   /// who it is, in the shape a PIN sign-in answers.
   Future<FaceFrame> faceFrame({required String device, required Uint8List jpeg}) async =>
       FaceFrame.fromJson(await _post('/signin/face', {'device': device, 'jpeg_b64': base64Encode(jpeg)}));
