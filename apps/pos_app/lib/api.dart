@@ -9,6 +9,7 @@ import 'coursing.dart';
 import 'desk_phone.dart';
 import 'floor.dart';
 import 'menu.dart';
+import 'phone.dart';
 import 'pricing.dart';
 import 'settings.dart';
 import 'takeout.dart';
@@ -401,6 +402,35 @@ class PosApi {
   /// How the hub stands with the PBX: whether a PBX is configured and reached, and what it has seen.
   Future<Map<String, dynamic>> pbxStatus() => _get('/phones/status');
 
+  /// Where a call stands on the hub, by the id a push carried: ringing, answered (and where), ended, unknown.
+  Future<CallOnHub> callState(String callId) async => CallOnHub.fromJson(await _get('/phones/calls/$callId'));
+
+  /// Registers one of this screen's push tokens with the hub: `voip` (iOS, for calls, with the extension the
+  /// phone registers as) or `alert` (for a desk-phone pick-up). The answer says whether the hub has a key to
+  /// push with (`configured`).
+  Future<Map<String, dynamic>> registerPush({
+    required String device,
+    required String platform,
+    required String kind,
+    required String token,
+    String extension = '',
+  }) => _put('/push/devices', {
+    'device': device,
+    'platform': platform,
+    'kind': kind,
+    'token': token,
+    'extension': extension,
+  });
+
+  /// No more pushes to this token (the phone was switched off here).
+  Future<void> unregisterPush(String token) => _delete('/push/devices/$token');
+
+  /// The hub's push relay: its key, the tokens registered, the extensions marked on the PBX, what went out.
+  Future<Map<String, dynamic>> pushStatus() => _get('/push/status');
+
+  /// A notification to this screen by hand, to see that the hub reaches it.
+  Future<Map<String, dynamic>> testPush(String device) => _post('/push/test', {'device': device});
+
   /// The PBX's extensions as the hub sees them, lowest first, each with whether a phone is on it; empty while
   /// the hub is not watching a PBX. A manager picks a desk phone from them.
   Future<List<PbxExtension>> extensions() async {
@@ -604,6 +634,8 @@ class PosApi {
     (base) =>
         _client.put(Uri.parse('$base$path'), headers: {'content-type': 'application/json'}, body: jsonEncode(body)),
   );
+
+  Future<Map<String, dynamic>> _delete(String path) => _withFailover((base) => _client.delete(Uri.parse('$base$path')));
 
   List<String> _candidates() {
     final configured = settings.endpoints;

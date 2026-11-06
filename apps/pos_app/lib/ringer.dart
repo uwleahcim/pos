@@ -11,7 +11,8 @@ abstract interface class Ringer {
 /// Rings while the phone rings. Starts the sound the moment a call comes in, stops it the moment Answer is tapped
 /// (before the PBX confirms: the call's audio must not find the ring still holding the device's audio session),
 /// when the call is declined or given up, and when disposed. Whatever else the phone reports in between (a
-/// dropped connection, a second call turned away) leaves a ring that is on alone.
+/// dropped connection, a second call turned away) leaves a ring that is on alone. A call the device's own
+/// screen rings for (the system's call screen on iOS) is left to it.
 class CallRinger {
   CallRinger(this._phone, this._ringer) {
     _phone.addListener(_onPhone);
@@ -23,7 +24,7 @@ class CallRinger {
   bool _ringing = false;
 
   void _onPhone() {
-    final shouldRing = _phone.state == PhoneState.ringing && !_phone.answering;
+    final shouldRing = _phone.state == PhoneState.ringing && !_phone.answering && !_phone.screenRings;
     if (shouldRing == _ringing) return;
     _ringing = shouldRing;
     unawaited(shouldRing ? _ringer.start() : _ringer.stop());
