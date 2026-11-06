@@ -51,10 +51,12 @@ after the sign-in, on every screen of the app and not only the sign-in screen:
   person is out of the view, or the newcomer's face is at least one and a half times the area of theirs
   (whoever stepped up fills more of the camera than whoever stands beside). The newcomer is recognised
   under the sign-in rules (a strong match on one frame, else two frames agreeing), the hub records a
-  sign-in event with that frame as its photo, and the screen is theirs: whatever the last person had open
-  closes, the orders open under the new name, and "Hi Ben" shows for a moment. A face the hub does not know
-  never unseats someone still in view, and two enrolled people side by side do not flip the screen back and
-  forth.
+  sign-in event with that frame as its photo, and the screen is theirs, with "Hi Ben" for a moment. An order
+  that is open stays open, since the newcomer carries on with it: every dish added from then on is theirs
+  (the hub keeps who added each line, and the check says "by Ben" under a dish added by someone other than
+  the order's server), while whatever sat above the order (a sheet, a dialog, a manager's screen) closes;
+  with no order open the screen goes back to the orders list. A face the hub does not know never unseats
+  someone still in view, and two enrolled people side by side do not flip the screen back and forth.
 - **Away.** A person the camera has not seen for a minute is signed out and the screen goes back to looking
   (**Sign out when the camera has not seen the person for**, in Location settings: never, 30 seconds, 1, 2,
   5 or 10 minutes). Only someone the camera has recognised is signed out this way: a person who signed in by
@@ -151,6 +153,8 @@ for a weak hub; `POS_FACE_THREADS` sets the CPU threads (up to four, as many as 
   `"method": "tag"`, or 401 `unknown_credential`.
 - `GET /settings/presence` and `PUT /settings/presence` `{"switch": true, "away_seconds": 60}` (manager
   token): hands-free switching for the location; `away_seconds` is 0 (never) to 3600, else 422 `bad_value`.
+- An `add_line` op carries `by` (the name) and `by_id` (the staff id) of the person who added the dish, and
+  the order's lines report them; the order's own `server` and `server_id` stay whoever opened it.
 - `GET /admin/staff` (manager Bearer token): `{"staff": [{"staff_id", "name", "role", "face": {"samples",
   "updated_at", "stale"}, "tag": {"enrolled", "ends", "updated_at"}}]}`, `ends` the id's last four
   characters.

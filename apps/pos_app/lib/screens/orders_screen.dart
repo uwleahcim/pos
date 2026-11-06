@@ -13,6 +13,7 @@ import '../phone.dart';
 import '../photos.dart';
 import '../print_relay.dart';
 import '../session.dart';
+import '../switching.dart';
 import '../tags.dart';
 import '../settings.dart';
 import '../takeout.dart';
@@ -277,13 +278,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!mounted) return;
     await Navigator.of(context).push(
       PosPageRoute(
+        settings: const RouteSettings(name: SessionWatcher.orderRoute),
         builder: (_) => OrderScreen(
           api: widget.api,
           outbox: widget.outbox,
           photos: widget.photos,
           orderId: orderId,
           coursing: coursing,
-          staffName: widget.session.staff?.name,
+          session: widget.session,
           phone: widget.phone,
         ),
       ),

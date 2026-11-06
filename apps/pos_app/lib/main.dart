@@ -263,9 +263,8 @@ class _PosAppState extends State<PosApp> {
                   ),
                 );
               } else {
-                // Keyed by the person, so a switch by face or tag gives the next one a fresh orders screen.
                 screen = OrdersScreen(
-                  key: ValueKey('orders-${session.staff?.staffId}'),
+                  key: const ValueKey('orders'),
                   api: api,
                   outbox: widget.outbox,
                   settings: settings,

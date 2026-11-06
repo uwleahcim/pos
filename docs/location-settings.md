@@ -22,7 +22,8 @@ screen holds:
   the person a tag held to this screen's reader (or typed), the crossed-out one to forget it (see
   `face-signin.md`).
 - **Hands-free**: **Switch to whoever steps up** (on to start: a face the camera knows or a tag held to the
-  reader makes the screen that person's at once, closing what the last person had open), and how long the
+  reader makes the screen that person's at once; an open order stays open and each dish added from then on
+  is theirs), and how long the
   camera may go without seeing the signed-in person before the screen signs them out (never, 30 seconds, 1,
   2, 5 or 10 minutes; a minute to start), once it has recognised them.
 

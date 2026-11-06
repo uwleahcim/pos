@@ -740,8 +740,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               subtitle: Text(
                 setting == null
                     ? 'The hub has not answered about hands-free switching (an older hub: update it)'
-                    : 'A face the camera knows, or a tag held to the reader, makes the screen that person\'s at once, '
-                          'closing whatever the last person had open. Off: only the sign-in screen signs people in.',
+                    : 'A face the camera knows, or a tag held to the reader, makes the screen that person\'s at once; '
+                          'an open order stays open and each dish they add is theirs. Off: only the sign-in screen '
+                          'signs people in.',
               ),
             ),
             ListTile(

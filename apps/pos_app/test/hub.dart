@@ -335,6 +335,8 @@ class Hub {
             'note': data['note'] ?? '',
             'request': data['request'],
             'replaces': data['replaces'], // an edit: the line this one took the place of
+            'by': data['by'] ?? '',
+            'by_id': data['by_id'],
             'status': 'active',
             'fired': false,
             'rank': data['rank'] ?? (ranks.isEmpty ? 1.0 : ranks.reduce(max) + 1),

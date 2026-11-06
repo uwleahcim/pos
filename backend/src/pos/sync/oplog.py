@@ -22,7 +22,7 @@ KINDS = frozenset(
     {
         "create",  # data: any order fields
         "set_field",  # data: any order fields
-        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?
+        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?
         "set_line",  # data: line_id + any line fields (a drag on the check: course and rank)
         "void_line",  # data: line_id, reason? (removes a line the kitchen has not seen, voids one it has)
         "fire",  # data: course ("*" = everything); sends that course's lines not yet sent
@@ -104,6 +104,8 @@ class Line:
     request: dict[str, Any] | None = None  # what the operator chose, so a screen can reopen the choices
     priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
     replaces: str | None = None  # the line this one took the place of: an edit voids a line and adds the changed one
+    by: str = ""  # who added it (name) and their staff id: several people can work one check, hands-free
+    by_id: str | None = None
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
 
@@ -253,6 +255,8 @@ class OrderState:
                     "request": line.request,
                     "priced": line.priced,
                     "replaces": line.replaces,
+                    "by": line.by,
+                    "by_id": line.by_id,
                 }
                 for line in self.ordered_lines()
             },
@@ -293,6 +297,8 @@ def apply(state: OrderState, op: Op) -> None:
             request=data.get("request"),
             priced=data.get("priced"),
             replaces=data.get("replaces") if isinstance(data.get("replaces"), str) else None,
+            by=str(data.get("by") or ""),
+            by_id=data.get("by_id") if isinstance(data.get("by_id"), str) else None,
         )
         rank = _rank(data.get("rank"))
         if rank is None:  # after everything on the check so far

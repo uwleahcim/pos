@@ -54,6 +54,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           entryId: req?.entryId,
           request: req,
           replaces: data['replaces'] as String?,
+          by: data['by'] as String? ?? '',
+          byId: data['by_id'] as String?,
           pending: true,
         );
       case 'set_line':

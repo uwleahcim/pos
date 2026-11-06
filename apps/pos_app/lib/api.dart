@@ -32,6 +32,8 @@ class Line {
     this.itemId,
     this.entryId,
     this.replaces,
+    this.by = '',
+    this.byId,
     this.pending = false,
   });
 
@@ -50,6 +52,8 @@ class Line {
     itemId: (json['priced'] as Map?)?['item'] as String?,
     entryId: (json['priced'] as Map?)?['entry_id'] as String?,
     replaces: json['replaces'] as String?,
+    by: json['by'] as String? ?? '',
+    byId: json['by_id'] as String?,
   );
 
   final String lineId;
@@ -76,6 +80,11 @@ class Line {
   /// The line this one took the place of: an edit (other choices, a kitchen note) voids a line and adds the
   /// changed dish as a new one. A comp on the old line is on this one, here and on the hub.
   final String? replaces;
+
+  /// Who added the line, by name and by staff id, when the screen that added it knew: with hands-free switching
+  /// a check one server opened is added to by another, and each dish says whose it is.
+  final String by;
+  final String? byId;
 
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
@@ -113,6 +122,8 @@ class Line {
     itemId: itemId,
     entryId: entryId,
     replaces: replaces,
+    by: by,
+    byId: byId,
     pending: pending ?? this.pending,
   );
 }
