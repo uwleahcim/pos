@@ -32,8 +32,9 @@ from the same card (they look at the camera and turn their head a little; five v
 on the hub, never pictures). [`docs/face-signin.md`](../../docs/face-signin.md) has the whole of it.
 
 The menu on the order screen has a tab per menu the hub has open: Food and Drinks all day, Lunch at lunch
-(`docs/menus.md`). A tab shows its categories; a category opens its dishes below the tiles; the search finds
-a dish on every menu open. With one menu open there are no tabs.
+(`docs/menus.md`). A tab shows its categories; a category opens its dishes below the tiles; a menu with a
+single category skips the tile and shows its dishes straight away; the search finds a dish on every menu
+open. With one menu open there are no tabs.
 
 A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
 every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,

@@ -11,17 +11,18 @@ import 'package:pos_app/settings.dart';
 import 'hub.dart';
 
 /// The fixture's one menu as the hub serves it now: the food on the Food menu, the bar on a Drinks menu of its
-/// own, the soft drinks on both (an entry per menu, the same dish). Lunch comes and goes with the hour.
-Map<String, dynamic> menus({bool lunch = false}) {
+/// own, the soft drinks on both (an entry per menu, the same dish). Lunch comes and goes with the hour, one
+/// category of specials. On request a Wine menu whose one category holds sub-categories.
+Map<String, dynamic> menus({bool lunch = false, bool wine = false}) {
   final sections = (fixture('menu')['menus'] as List)[0]['sections'] as List;
-  Map<String, dynamic> onDrinks(Map<String, dynamic> section) {
-    final id = (section['section_id'] as String).replaceFirst('dinner/', 'drinks/');
+  Map<String, dynamic> onMenu(Map<String, dynamic> section, String menu) {
+    final id = (section['section_id'] as String).replaceFirst('dinner/', '$menu/');
     return {
       ...section,
       'section_id': id,
       'entries': [
         for (final e in section['entries'] as List)
-          {...e as Map<String, dynamic>, 'entry_id': (e['entry_id'] as String).replaceFirst('dinner:', 'drinks:')},
+          {...e as Map<String, dynamic>, 'entry_id': (e['entry_id'] as String).replaceFirst('dinner:', '$menu:')},
       ],
     };
   }
@@ -68,13 +69,30 @@ Map<String, dynamic> menus({bool lunch = false}) {
         'menu': 'drinks',
         'name': 'Drinks',
         'priority': -10,
-        'sections': [onDrinks(bar), onDrinks(soft)],
+        'sections': [onMenu(bar, 'drinks'), onMenu(soft, 'drinks')],
       },
+      if (wine)
+        {
+          'menu': 'wine',
+          'name': 'Wine',
+          'priority': -20,
+          'sections': [
+            {
+              'section_id': 'wine/list',
+              'name': 'Wine list',
+              'entries': <Map<String, dynamic>>[],
+              'sections': [
+                {...onMenu(bar, 'wine'), 'name': 'Bar shelf'},
+                onMenu(soft, 'wine'),
+              ],
+            },
+          ],
+        },
     ],
   };
 }
 
-Future<void> mount(WidgetTester tester, Map<String, dynamic> Function() served) async {
+Future<void> mount(WidgetTester tester, Map<String, dynamic> Function() served, {List<ChosenLine>? chosen}) async {
   final api = PosApi(
     Settings(device: 't1', endpoints: ['http://hub:8000']),
     client: MockClient((request) async {
@@ -94,7 +112,7 @@ Future<void> mount(WidgetTester tester, Map<String, dynamic> Function() served) 
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: MenuPanel(api: api, onChosen: (_) {}),
+        body: MenuPanel(api: api, onChosen: (line) => chosen?.add(line)),
       ),
     ),
   );
@@ -187,16 +205,17 @@ void main() {
   testWidgets('a menu that closes gives way to the first: lunch is over, Food shows', (tester) async {
     var lunch = true;
     await mount(tester, () => menus(lunch: lunch));
-    // at lunch the hub lists Lunch first (its priority), so the screen opens on the lunch specials
+    // at lunch the hub lists Lunch first (its priority), so the screen opens on the specials: the Lunch menu's
+    // one category, shown as its dishes with no tile
     expect(tab('Lunch'), findsOneWidget);
-    expect(find.text('Lunch Specials'), findsOneWidget);
+    expect(find.byKey(const ValueKey('e:lunch:L1:EGGROLL')), findsOneWidget);
     expect(find.text('Appetizers'), findsNothing);
     await tester.tap(tab('Food'));
     await tester.pumpAndSettle();
     expect(find.text('Appetizers'), findsOneWidget);
     await tester.tap(tab('Lunch'));
     await tester.pumpAndSettle();
-    expect(find.text('Lunch Specials'), findsOneWidget);
+    expect(find.byKey(const ValueKey('e:lunch:L1:EGGROLL')), findsOneWidget);
 
     lunch = false; // the hub's revision moves as the hour closes the menu; the panel asks every 5 seconds
     await tester.pump(MenuPanelCheck.every);
@@ -204,6 +223,50 @@ void main() {
     expect(tab('Lunch'), findsNothing);
     expect(tab('Food'), findsOneWidget);
     expect(find.text('Appetizers'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a menu with one category skips the tile: its dishes show where the tiles would, the search stays', (
+    tester,
+  ) async {
+    final chosen = <ChosenLine>[];
+    await mount(tester, () => menus(lunch: true), chosen: chosen);
+    // Lunch Specials is the Lunch menu's only category: no tile, no tray, the specials in the top grid
+    expect(find.text('Lunch Specials'), findsNothing);
+    expect(find.byKey(const ValueKey('items-lunch/specials')), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('categories-0')),
+        matching: find.byKey(const ValueKey('e:lunch:L1:EGGROLL')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<Opacity>(find.ancestor(of: find.byType(TextField), matching: find.byType(Opacity)).first).opacity,
+      1,
+    );
+    // a tap adds the dish as from any grid
+    await tester.tap(find.text('Egg roll'));
+    await tester.pumpAndSettle();
+    expect(chosen.map((c) => c.name), ['Egg roll']);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a single category with sub-categories tiles those instead, and they open their dishes below', (
+    tester,
+  ) async {
+    await mount(tester, () => menus(wine: true));
+    await tester.tap(tab('Wine'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wine list'), findsNothing);
+    expect(find.text('Bar shelf'), findsOneWidget);
+    expect(find.text('Soft drinks'), findsOneWidget);
+    expect(find.text('Tsingtao'), findsNothing);
+    await tester.tap(find.text('Bar shelf'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('items-wine/bar')), findsOneWidget);
+    expect(find.text('Tsingtao'), findsOneWidget);
+    expect(find.text('Bar shelf'), findsOneWidget); // the tile stays, as on any menu
     await tester.pumpWidget(const SizedBox());
   });
 }
