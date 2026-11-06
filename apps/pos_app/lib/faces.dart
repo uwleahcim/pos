@@ -68,7 +68,7 @@ class FaceFrame {
   final String? candidate;
   final double? score;
 
-  /// The sign-in, in the shape `POST /signin` answers for a PIN, once two frames agree.
+  /// The sign-in, in the shape `POST /signin` answers for a PIN, once the hub is sure of the person.
   final Map<String, dynamic>? signedIn;
 }
 

@@ -94,7 +94,7 @@ class FakeEngine:
         if r > 0 and g == 0 and b == 0:
             return lean(AMY, vec(100 + int(self.turn * 10)), self.turn) if self.turn else AMY
         if b >= 224:
-            return BEN
+            return lean(BEN, vec(200 + int(self.turn * 10)), self.turn) if self.turn else BEN
         if g >= 224:
             return MIKE
         return vec(99)
@@ -183,8 +183,23 @@ def test_matcher_rules():
 # The sign-in ---------------------------------------------------------------------------------------------------
 
 
-def test_two_frames_in_a_row_sign_in():
+def test_a_strong_match_signs_in_on_one_frame():
     svc = service()
+    enrolled(svc, "s1", AMY)
+    enrolled(svc, "s2", BEN)
+    first = svc.identify(jpeg_of(RED), device="t1")
+    assert first.signed_in is not None and first.signed_in.name == "Amy", "her own enrolled view: no doubt"
+    assert first.reason is None and first.score == 1.0
+    svc.engine.turn = 1.0  # a view 0.71 like hers: still strong
+    assert svc.identify(jpeg_of(RED), device="t1").signed_in is not None
+    svc.engine.turn = 1.6  # about 0.5: over the threshold, under STRONG, so one more frame must agree
+    weak = svc.identify(jpeg_of(RED), device="t1")
+    assert (weak.reason, weak.candidate) == ("again", "s1") and mod.THRESHOLD <= weak.score < mod.STRONG
+
+
+def test_a_weaker_match_takes_two_frames_in_a_row():
+    svc = service()
+    svc.engine.turn = 1.6
     enrolled(svc, "s1", AMY)
     enrolled(svc, "s2", BEN)
     assert svc.identify(jpeg_of(BLACK), device="t1").as_json() == {
@@ -205,6 +220,7 @@ def test_two_frames_in_a_row_sign_in():
 
 def test_agreement_needs_the_same_person_on_the_same_device_within_the_window():
     svc = service()
+    svc.engine.turn = 1.6
     enrolled(svc, "s1", AMY)
     enrolled(svc, "s2", BEN)
     assert svc.identify(jpeg_of(RED), device="t1").reason == "again"
@@ -221,6 +237,7 @@ def test_agreement_needs_the_same_person_on_the_same_device_within_the_window():
 
 def test_unknown_small_off_and_not_ready():
     svc = service()
+    svc.engine.turn = 1.6
     enrolled(svc, "s1", AMY)
     assert svc.identify(jpeg_of(GREEN), device="t1").reason == "unknown", "Mike is not enrolled"
     assert svc.identify(jpeg_of(RED), device="t1").reason == "again"
@@ -328,8 +345,10 @@ def test_api_status_sign_in_and_the_audit_photo():
     assert api.get("/faces/status").json()["active"] is True
     api.put("/staff/s1/preferences", json={"text_scale": 1.3})
     frame = {"device": "mac1", "jpeg_b64": b64(jpeg_of(RED))}
+    svc.engine.turn = 1.6  # a weaker view: the second frame must agree
     first = api.post("/signin/face", json=frame).json()
     assert (first["face"], first["reason"], first["candidate"], first["signed_in"]) == (True, "again", "s1", None)
+    assert 0.5 < first["score"] < 0.6
     second = api.post("/signin/face", json=frame).json()
     assert second["signed_in"]["name"] == "Amy" and second["signed_in"]["method"] == "face"
     assert second["signed_in"]["preferences"]["text_scale"] == 1.3, "the display settings come along, as with a PIN"
@@ -354,7 +373,8 @@ def test_api_switch_off_means_no_looking():
     assert api.put("/settings/faces", json={"enabled": True}).status_code == 401, "the switch is a manager's"
     assert api.put("/settings/faces", json={"enabled": True}, headers=token(api)).json() == {"enabled": True}
     assert api.get("/settings/faces").json() == {"enabled": True}
-    assert api.post("/signin/face", json={"device": "t1", "jpeg_b64": b64(jpeg_of(RED))}).json()["reason"] == "again"
+    on = api.post("/signin/face", json={"device": "t1", "jpeg_b64": b64(jpeg_of(RED))}).json()
+    assert on["signed_in"]["name"] == "Amy", "her own enrolled view signs in on the one frame"
 
 
 def test_api_enrollment_is_a_managers_job():

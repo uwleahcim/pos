@@ -44,12 +44,14 @@ class _FaceEnrollDialogState extends State<FaceEnrollDialog> {
   @override
   void initState() {
     super.initState();
+    unawaited(widget.camera.watch()); // frames at hand while the dialog is up
     _schedule(Duration.zero);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    widget.camera.unwatch();
     super.dispose();
   }
 

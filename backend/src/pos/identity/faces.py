@@ -13,8 +13,9 @@ image downloads them when it is built, see backend/Dockerfile):
 - `w600k_r50.onnx`: ArcFace, a ResNet-50 trained on WebFace600K; a 112x112 aligned crop in, 512 floats out.
 
 The rules (`Matcher`, `FaceSignIn`): a face is one staff member's when its best similarity to their templates
-is at least THRESHOLD and beats every other staff member's by MARGIN; a sign-in takes two frames in a row
-from the same device agreeing within AGREE_SECONDS, so one odd frame never signs anyone in. Enrollment
+is at least THRESHOLD and beats every other staff member's by MARGIN; a match at STRONG or above signs in
+on that one frame, a weaker one takes two frames in a row from the same device agreeing within
+AGREE_SECONDS, so one odd frame never signs anyone in. Enrollment
 takes SAMPLES_WANTED views of the person, each different enough from the ones kept (a slight turn of the
 head), and refuses a view that already matches someone else enrolled, so a manager tapping through the
 enrollment cannot enroll their own face under another name.
@@ -47,6 +48,8 @@ THRESHOLD = float(os.environ.get("POS_FACE_THRESHOLD", "0.45"))
 """Cosine similarity a frame needs to the templates of one staff member to be theirs."""
 MARGIN = 0.08
 """How far the best staff member must stand above the runner-up: two look-alikes sign in by PIN."""
+STRONG = float(os.environ.get("POS_FACE_STRONG", "0.60"))
+"""A match this good signs in on one frame; below it, two frames in a row must agree (AGREE_SECONDS)."""
 AGREE_SECONDS = 4.0
 """Two frames from one device within this window must name the same person for a sign-in."""
 SAMPLES_WANTED = 5
@@ -232,7 +235,9 @@ class FaceEngine:
         if not (path / detector).is_file() or not (path / recognizer).is_file():
             log.info("face sign-in off: no models at %s", path)
             return None
-        return cls(path, detector=detector, recognizer=recognizer, threads=int(os.environ.get("POS_FACE_THREADS", "2")))
+        # The recognizer takes about 240 ms on one thread, 120 on two, 70 on four; a hub has cores to spare.
+        threads = int(os.environ.get("POS_FACE_THREADS") or min(4, os.cpu_count() or 2))
+        return cls(path, detector=detector, recognizer=recognizer, threads=threads)
 
     def _anchor_centers(self, height: int, width: int, stride: int) -> np.ndarray:
         key = (height, width)
@@ -606,7 +611,8 @@ class FaceSignIn:
         return [t for t in self.store.all() if t.model == model and self.staff(t.staff_id) is not None]
 
     def identify(self, jpeg: bytes, *, device: str) -> FrameResult:
-        """One frame from a sign-in screen: whose face it is, and the sign-in once two frames agree."""
+        """One frame from a sign-in screen: whose face it is, and the sign-in once the match is strong enough
+        on its own or two frames in a row agree."""
         if not self.enabled():
             return FrameResult(False, "off")
         engine = self.engine
@@ -625,15 +631,15 @@ class FaceSignIn:
             self._sightings.pop(device, None)
             return FrameResult(True, "unknown")
         now = self.clock()
-        seen = self._sightings.get(device)
-        if seen is None or seen.staff_id != match.staff_id or now - seen.at > AGREE_SECONDS:
-            self._sightings[device] = _Sighting(match.staff_id, now)
-            return FrameResult(True, "again", candidate=match.staff_id, score=match.score)
-        seen.frames += 1
-        seen.at = now
         person = self.staff(match.staff_id)
         if person is None:
+            self._sightings.pop(device, None)
             return FrameResult(True, "unknown")
+        seen = self._sightings.get(device)
+        agreed = seen is not None and seen.staff_id == match.staff_id and now - seen.at <= AGREE_SECONDS
+        if match.score < STRONG and not agreed:
+            self._sightings[device] = _Sighting(match.staff_id, now)
+            return FrameResult(True, "again", candidate=match.staff_id, score=match.score)
         self._sightings.pop(device, None)
         signed = SignIn(person.staff_id, person.name, person.role, "face", device, now)
         return FrameResult(True, None, candidate=match.staff_id, score=match.score, signed_in=signed)

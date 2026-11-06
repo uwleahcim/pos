@@ -26,6 +26,18 @@ abstract class EventCamera extends ChangeNotifier {
   /// default.
   Future<Uint8List?> frame({int maxSide = 480}) => snap();
 
+  /// Keeps the camera's frames coming while a screen looks for faces, so [frame] answers at once with the
+  /// newest one, and counts in [motion] the times the view in front of the camera changed. Answers whether
+  /// the camera can do that; one that cannot (the Mac) goes on answering [frame] as before. Each call is
+  /// paired with an [unwatch].
+  Future<bool> watch() async => false;
+
+  void unwatch() {}
+
+  /// Goes up, with a notification, each time the picture in front of a watched camera changes (someone
+  /// stepping up to the screen): the sign-in loop sends a frame at once rather than waiting its turn.
+  int motion = 0;
+
   static EventCamera forPlatform() {
     if (kIsWeb) return NoCamera();
     if (Platform.isMacOS) return MacCamera();
@@ -107,6 +119,17 @@ class PhoneCamera extends EventCamera {
   Future<void>? _starting;
   String? _error;
 
+  // While watched, the preview stream stays open and the newest frame is kept here.
+  int _watchers = 0;
+  cam.CameraImage? _latest;
+  int _latestSeq = 0; // goes up with each frame delivered
+  int _handedSeq = 0; // the frame last handed out
+  Completer<cam.CameraImage>? _waiting; // a caller waiting for the next frame
+  Uint8List? _handedLook; // a coarse picture of the frame last handed out, to see the view change
+  int _delivered = 0;
+  int _motionAt = 0;
+  Future<void>? _stopping; // the stream's stop in flight after the last unwatch
+
   @override
   bool get ready => _controller?.value.isInitialized ?? false;
   @override
@@ -133,6 +156,9 @@ class PhoneCamera extends EventCamera {
         // The stream's pixel format: BGRA on iOS, the planar YUV Android's camera gives (encodeYuv turns it
         // into a JPEG).
         imageFormatGroup: Platform.isIOS ? cam.ImageFormatGroup.bgra8888 : cam.ImageFormatGroup.yuv420,
+        // Fifteen frames a second are plenty for the preview and the sign-in, and half the copying while the
+        // stream is open (a hint: the platform picks the nearest rate it supports).
+        fps: 15,
       );
       await controller.initialize();
       _controller = controller;
@@ -210,9 +236,115 @@ class PhoneCamera extends EventCamera {
     }
   }
 
+  @override
+  Future<bool> watch() async {
+    _watchers += 1;
+    if (_watchers > 1) return true;
+    await start();
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return false;
+    try {
+      await _snapping; // an audit photo's own short stream ends first
+      await _stopping; // and so does the stop of the stream a previous watcher left
+      if (!controller.value.isStreamingImages) await controller.startImageStream(_onFrame);
+      return true;
+    } catch (err) {
+      _error = '$err';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  @override
+  void unwatch() {
+    if (_watchers == 0) return;
+    _watchers -= 1;
+    if (_watchers > 0) return;
+    _latest = null;
+    _handedLook = null;
+    final controller = _controller;
+    if (controller != null && controller.value.isStreamingImages) {
+      _stopping = controller
+          .stopImageStream()
+          .catchError((Object err) => _error = '$err')
+          .whenComplete(() => _stopping = null);
+    }
+  }
+
+  void _onFrame(cam.CameraImage image) {
+    _latest = image;
+    _latestSeq += 1;
+    final waiting = _waiting;
+    if (waiting != null && !waiting.isCompleted) {
+      _waiting = null;
+      waiting.complete(image);
+    }
+    _delivered += 1;
+    if (_delivered % 3 == 0) _lookForMotion(image);
+  }
+
+  /// The newest frame: straight off the open stream while watched (never the same frame twice), else one
+  /// frame off a short stream of its own.
+  Future<cam.CameraImage?> _grab(cam.CameraController controller) async {
+    if (_watchers == 0 || !controller.value.isStreamingImages) return _oneFrame(controller);
+    var image = _latest;
+    if (image == null || _latestSeq == _handedSeq) {
+      final next = _waiting ??= Completer<cam.CameraImage>();
+      try {
+        image = await next.future.timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        return null; // the app is in the background, or the camera went
+      }
+    }
+    _handedSeq = _latestSeq;
+    _handedLook = _look(image);
+    return image;
+  }
+
+  /// A coarse grey picture of a frame, 24 by 18 samples of its first plane (the luma on Android, the green
+  /// of BGRA on iOS): enough to tell an empty view from one with someone in it.
+  static Uint8List _look(cam.CameraImage image) {
+    final plane = image.planes.first;
+    final step = plane.bytesPerPixel ?? 1;
+    final offset = step == 4 ? 1 : 0;
+    final bytes = plane.bytes;
+    final out = Uint8List(24 * 18);
+    var k = 0;
+    for (var row = 0; row < 18; row++) {
+      final y = (row * image.height + image.height ~/ 2) ~/ 18;
+      for (var col = 0; col < 24; col++) {
+        final x = (col * image.width + image.width ~/ 2) ~/ 24;
+        final i = y * plane.bytesPerRow + x * step + offset;
+        out[k++] = i < bytes.length ? bytes[i] : 0;
+      }
+    }
+    return out;
+  }
+
+  /// Has the view changed since the frame last handed out? Then [motion] goes up, at most a few times a
+  /// second. A still view, with or without someone in it, stays quiet.
+  void _lookForMotion(cam.CameraImage image) {
+    final before = _handedLook;
+    if (before == null) return;
+    final now = _look(image);
+    var diff = 0;
+    for (var i = 0; i < now.length; i++) {
+      diff += (now[i] - before[i]).abs();
+    }
+    if (diff < motionThreshold * now.length) return;
+    final at = DateTime.now().millisecondsSinceEpoch;
+    if (at - _motionAt < 300) return;
+    _motionAt = at;
+    motion += 1;
+    notifyListeners();
+  }
+
+  /// Mean change per sample (of 255) between two looks that counts as the view changing.
+  static const int motionThreshold = 12;
+
   /// One frame off the preview stream as a JPEG at most [maxSide] px on the long side, upright.
   Future<Uint8List?> _streamed(cam.CameraController controller, int maxSide) async {
-    final frame = await _oneFrame(controller);
+    final frame = await _grab(controller);
     if (frame == null) return null;
     final turn = _rotation(controller);
     if (frame.format.group == cam.ImageFormatGroup.bgra8888) {
@@ -222,7 +354,7 @@ class PhoneCamera extends EventCamera {
     throw StateError('unexpected camera frame: ${frame.format.group} with ${frame.planes.length} planes');
   }
 
-  /// Start the image stream, keep the first frame, stop the stream again.
+  /// Start the image stream, keep the first frame, stop the stream again (the camera is not watched).
   Future<cam.CameraImage?> _oneFrame(cam.CameraController controller) async {
     if (controller.value.isStreamingImages) return null;
     final first = Completer<cam.CameraImage>();
@@ -379,5 +511,6 @@ Uint8List _small(img.Image image, [int maxSide = 320]) {
         ? img.copyResize(image, width: maxSide)
         : img.copyResize(image, height: maxSide);
   }
-  return img.encodeJpg(image, quality: maxSide > 320 ? 80 : 70);
+  // Chroma at half resolution, as every camera JPEG has it: a quarter less to encode, a smaller file.
+  return img.encodeJpg(image, quality: maxSide > 320 ? 80 : 70, chroma: img.JpegChroma.yuv420);
 }

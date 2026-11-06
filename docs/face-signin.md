@@ -19,11 +19,15 @@ frames and shows what the hub says. Off per location until a manager turns it on
   location there).
 - **Sign-in.** With the switch on, the hub's models loaded and someone enrolled, the sign-in screen looks
   for a face as soon as it shows: an oval over the preview, "Look at the camera, or tap your PIN" under it.
-  A frame goes to the hub twice a second while someone is in front of the camera (every two seconds once
-  nobody has been for a while, so twenty idle terminals do not keep the hub busy). The hub answers each
-  frame; two frames in a row must name the same person ("Hold still…"), then the screen says "Hi Amy" and
-  the orders open, with her own text size and contrast as after a PIN. A face the hub does not know shows
-  "Not recognised: tap your PIN" after three frames; the pad works the whole time.
+  On a phone or tablet the camera's frame stream stays open while the screen looks, so the newest frame is
+  always at hand, and a change in the view (someone stepping up to the screen) sends a frame at once. While
+  a face is in view the next frame leaves as soon as the hub answers the last one: a strong match signs in
+  on that one frame, a weaker one on the next frame that agrees ("Hold still…"), then the screen says
+  "Hi Amy" and the orders open, with her own text size and contrast as after a PIN. A face the hub does not
+  know shows "Not recognised: tap your PIN" after three frames; a bystander facing the camera slows the
+  frames to two a second, then one every two seconds. With nobody in view a frame goes twice a second, then
+  every two seconds once a dozen in a row were empty (every second on a Mac, whose camera cannot report a
+  change), so twenty idle terminals do not keep the hub busy. The pad works the whole time.
 - **A screen that is not looking** shows the PIN pad alone, and says why in two places: the card's status
   line in Location settings ("switched off: no screen looks until the switch is on", "nobody enrolled yet",
   "no face models yet"), and the terminal's own Settings (the gear on the sign-in screen), whose Face sign-in
@@ -50,11 +54,12 @@ download):
 - `det_500m.onnx`, the SCRFD-500MF face detector with five landmarks, run at 320 px: a few milliseconds
   per frame, so an idle terminal's frames cost the hub next to nothing.
 - `w600k_r50.onnx`, ArcFace on a ResNet-50 trained on WebFace600K: the 112 px aligned crop in, 512 floats
-  out, about 120 ms on two CPU threads.
+  out, about 70 ms on four CPU threads (120 on two).
 
 The rules: a face is one person's when its best cosine similarity to their templates is at least 0.45
-(`POS_FACE_THRESHOLD`) and beats every other person's by 0.08; a sign-in takes two frames in a row from
-the same device within four seconds. On sample photos, different pictures of one person score 0.6 to 0.8
+(`POS_FACE_THRESHOLD`) and beats every other person's by 0.08; a match at 0.60 or above
+(`POS_FACE_STRONG`) signs in on that one frame, a weaker one takes two frames in a row from the same
+device within four seconds naming the same person. On sample photos, different pictures of one person score 0.6 to 0.8
 and two people stay under 0.25. A frame is at most 640 px on the long side; a face narrower than 72 px is
 "come closer". Enrollment wants a sharp view (the variance of the Laplacian of the crop) with one face in
 it, and keeps a view only when it is under 0.92 similar to every view already kept.
@@ -63,17 +68,18 @@ The models load on a thread when the API starts, so the API is up at once; `GET 
 they are ready. A hub without the models (`POS_FACE_MODELS` unset, or the files missing) answers
 `ready: false` and every sign-in screen stays a PIN pad. `POS_FACE_RECOGNIZER=w600k_mbf.onnx` with that
 file in the models directory swaps in the small MobileFaceNet recognizer (10 ms, somewhat less accurate)
-for a weak hub; `POS_FACE_THREADS` sets the CPU threads (2).
+for a weak hub; `POS_FACE_THREADS` sets the CPU threads (up to four, as many as the hub has).
 
 ## On the wire
 
 - `GET /faces/status`: `{"enabled", "ready", "active", "enrolled", "model", "error"}`. `active` is the one
   the sign-in screen acts on: on, ready and someone enrolled.
 - `POST /signin/face` `{"device", "jpeg_b64"}`: one frame, a JPEG of at most 400 KB. The answer:
-  `{"face": true, "reason": "again", "candidate": "s1", "score": 0.71, "signed_in": null}` for a first
-  frame of someone known; `"reason"` is `no_face`, `too_small`, `unknown`, `again`, `off` (the switch) or
-  `not_ready` (no models yet); once two frames agree, `"signed_in": {"staff_id", "name", "role", "method":
-  "face", "preferences"}`, the shape `POST /signin` answers for a PIN.
+  `{"face": true, "reason": "again", "candidate": "s1", "score": 0.51, "signed_in": null}` for a first
+  frame of someone known but not strongly; `"reason"` is `no_face`, `too_small`, `unknown`, `again`, `off`
+  (the switch) or `not_ready` (no models yet); once the match is strong on its own or two frames agree,
+  `"signed_in": {"staff_id", "name", "role", "method": "face", "preferences"}`, the shape `POST /signin`
+  answers for a PIN.
 - `GET /admin/staff` (manager Bearer token): `{"staff": [{"staff_id", "name", "role", "face": {"samples",
   "updated_at", "stale"}}]}`.
 - `POST /admin/staff/{id}/face/samples` `{"device", "jpeg_b64", "replace"}` (manager token): one view;
