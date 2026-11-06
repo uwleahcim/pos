@@ -143,14 +143,21 @@ class PhoneCamera extends EventCamera {
     notifyListeners();
   }
 
+  /// The live picture once the controller is up. The widget follows the camera on its own, so a screen built
+  /// while the camera was still starting (the sign-in screen at app start) shows the picture the moment it is
+  /// there, with no rebuild of its own.
   @override
   Widget preview() {
     start();
+    return ListenableBuilder(listenable: this, builder: (context, _) => _livePreview());
+  }
+
+  Widget _livePreview() {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
-      return const ColoredBox(
+      return ColoredBox(
         color: Colors.black26,
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(child: _error == null ? const CircularProgressIndicator() : const Icon(Icons.no_photography)),
       );
     }
     // The preview keeps the sensor's aspect ratio and is cropped to the box it is given, never stretched.

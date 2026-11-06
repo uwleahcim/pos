@@ -13,16 +13,25 @@ import 'package:pos_app/settings.dart';
 
 import 'hub.dart';
 
-/// A camera that always has a frame.
+/// A camera that always has a frame; its preview is up from the start, or comes up when told, as a phone's
+/// does after the screen's first build.
 class FrameCamera extends EventCamera {
+  FrameCamera({this.live = true});
   int frames = 0;
   int snaps = 0;
+  bool live;
   @override
-  bool get ready => true;
+  bool get ready => live;
   @override
   String? get error => null;
   @override
-  Widget preview() => const SizedBox();
+  Widget preview() => Text(live ? 'live preview' : 'camera starting');
+
+  void up() {
+    live = true;
+    notifyListeners();
+  }
+
   @override
   Future<Uint8List?> snap() async {
     snaps += 1;
@@ -66,6 +75,7 @@ class Screen {
 Future<Screen> pumpSignIn(
   WidgetTester tester, {
   bool withCamera = true,
+  bool cameraUp = true,
   Map<String, dynamic>? status,
   List<Map<String, dynamic>> answers = const [],
 }) async {
@@ -75,7 +85,7 @@ Future<Screen> pumpSignIn(
   hub.faceAnswers = answers;
   final api = PosApi(settings, client: MockClient(hub.handle));
   final session = Session(api);
-  final camera = FrameCamera();
+  final camera = FrameCamera(live: cameraUp);
   final faces = FaceSignIn(
     api,
     settings,
@@ -119,6 +129,31 @@ void main() {
     await tapPin(tester, '1111');
     expect(s.session.staff?.name, 'Amy');
     expect(s.session.staff?.method, 'pin');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the preview appears as soon as the camera is up, with no tap on the pad', (tester) async {
+    final s = await pumpSignIn(tester, cameraUp: false);
+    await tester.pump();
+    expect(find.text('camera starting'), findsOneWidget);
+    s.camera.up();
+    await tester.pump();
+    expect(find.text('live preview'), findsOneWidget, reason: 'the screen follows the camera');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a status the app cannot read does not stop the loop: the hub is asked again', (tester) async {
+    final s = await pumpSignIn(tester, status: {...active, 'enabled': 'yes'}, answers: [noFace]);
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(hint(tester), 'Tap your 4-digit staff PIN to unlock');
+    expect(s.faces.state, FaceState.off);
+    expect(s.faces.lastError, contains('bool'), reason: 'the cast that failed is kept for the settings screen');
+    s.hub.faceStatus = Map.of(active);
+    await tester.pump(const Duration(seconds: 5)); // the recheck
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(hint(tester), 'Look at the camera, or tap your PIN');
+    expect(s.faces.state, FaceState.looking);
+    expect(s.faces.lastError, isNull);
     await tester.pumpWidget(const SizedBox());
   });
 

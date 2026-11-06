@@ -24,6 +24,10 @@ frames and shows what the hub says. Off per location until a manager turns it on
   frame; two frames in a row must name the same person ("Hold still…"), then the screen says "Hi Amy" and
   the orders open, with her own text size and contrast as after a PIN. A face the hub does not know shows
   "Not recognised: tap your PIN" after three frames; the pad works the whole time.
+- **A screen that is not looking** shows the PIN pad alone, and says why in two places: the card's status
+  line in Location settings ("switched off: no screen looks until the switch is on", "nobody enrolled yet",
+  "no face models yet"), and the terminal's own Settings (the gear on the sign-in screen), whose Face sign-in
+  line gives the same answer plus the state of this terminal's camera.
 - **The audit trail.** The frame that signed someone in is kept as the sign-in's event photo, like the
   photo an order's creation or firing takes, so what the camera saw is on record: a photograph held up to
   the camera would be in it.

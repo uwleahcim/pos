@@ -133,7 +133,8 @@ class PosApp extends StatelessWidget {
                   camera: camera,
                   onSettings: () => Navigator.of(context).push(
                     PosPageRoute(
-                      builder: (_) => SettingsScreen(settings: settings, api: api, relay: relay, phone: phone),
+                      builder: (_) =>
+                          SettingsScreen(settings: settings, api: api, relay: relay, phone: phone, camera: camera),
                     ),
                   ),
                 );

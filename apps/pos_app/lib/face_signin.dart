@@ -64,6 +64,10 @@ class FaceSignIn extends ChangeNotifier {
   int unknownInARow = 0;
   int noFaceInARow = 0;
 
+  /// What went wrong last (no hub answers, an answer this app could not read), for the settings screen;
+  /// null once a call goes through again.
+  String? lastError;
+
   Timer? _timer;
   bool _running = false;
   bool _busy = false;
@@ -99,6 +103,13 @@ class FaceSignIn extends ChangeNotifier {
       } else {
         await _sendFrame();
       }
+    } catch (err) {
+      // An answer in a shape this app does not know, or a fault in the camera code: not looking for now, and
+      // the hub is asked again later. The loop must never just stop, since nothing would start it again.
+      lastError = '$err';
+      status = null;
+      _become(FaceState.off, null);
+      _schedule(recheck);
     } finally {
       _busy = false;
     }
@@ -108,6 +119,7 @@ class FaceSignIn extends ChangeNotifier {
     try {
       final found = await api.faceStatus();
       status = found;
+      lastError = null;
       if (found.active) {
         _become(FaceState.looking, 'Look at the camera, or tap your PIN');
         noFaceInARow = 0;
@@ -116,7 +128,8 @@ class FaceSignIn extends ChangeNotifier {
         _become(FaceState.off, null);
         _schedule(recheck);
       }
-    } on ApiException {
+    } on ApiException catch (err) {
+      lastError = '$err';
       _become(FaceState.off, null);
       _schedule(recheck);
     }
@@ -132,11 +145,13 @@ class FaceSignIn extends ChangeNotifier {
     final FaceFrame answer;
     try {
       answer = await api.faceFrame(device: settings.device, jpeg: jpeg);
-    } on ApiException {
+    } on ApiException catch (err) {
+      lastError = '$err';
       _schedule(const Duration(seconds: 3));
       return;
     }
     if (!_running) return;
+    lastError = null;
     frames += 1;
     noFaceInARow = answer.face ? 0 : noFaceInARow + 1;
     final signed = answer.signedIn;

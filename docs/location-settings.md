@@ -16,9 +16,9 @@ screen holds:
 - **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
-- **Sign in by face**: the location's switch (off to start), how the hub stands with its face models, and
-  the staff by name with each one's enrollment: Enroll (this screen's camera), Enroll again, the bin to
-  forget a face (see `face-signin.md`).
+- **Sign in by face**: the location's switch (off to start), how the hub stands with its face models (and,
+  with the switch off, that no screen looks until it is on), and the staff by name with each one's
+  enrollment: Enroll (this screen's camera), Enroll again, the bin to forget a face (see `face-signin.md`).
 
 **Save** sends the courses to the hub, which checks them (a name on every course, no name twice, at least
 one course while coursing is on) and keeps them. Every terminal reads the setting when it opens an order,

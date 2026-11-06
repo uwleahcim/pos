@@ -44,17 +44,20 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _faces.addListener(_faceChanged);
+    _faces.addListener(_changed);
+    // A phone's camera comes up after the first build: the ready dot (and the preview) follow it.
+    widget.camera.addListener(_changed);
     if (widget.camera is! NoCamera) _faces.start();
   }
 
-  void _faceChanged() {
+  void _changed() {
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _faces.removeListener(_faceChanged);
+    widget.camera.removeListener(_changed);
+    _faces.removeListener(_changed);
     if (widget.faces == null) {
       _faces.dispose();
     } else {

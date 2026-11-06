@@ -62,7 +62,7 @@ void main() {
   testWidgets('the card lists the staff with their enrollment, the switch and the forget button', (tester) async {
     final t = await pumpLocation(tester);
     expect(find.text('Sign in by face'), findsOneWidget);
-    expect(find.text('Hub ready · 1 enrolled'), findsOneWidget);
+    expect(find.text('Hub ready · 1 enrolled · switched off: no screen looks until the switch is on'), findsOneWidget);
     expect(find.text('Server · Enrolled, 5 views on 11/1'), findsOneWidget);
     expect(find.text('Bartender · Not enrolled: signs in by PIN'), findsOneWidget);
     expect(find.text('Enroll again'), findsOneWidget);
