@@ -780,6 +780,36 @@ class CategoryEditor extends StatelessWidget {
             onChanged();
           },
         ),
+        _heading(context, 'On the menus'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final m in catalog.menus())
+              FilterChip(
+                key: ValueKey('on-menu-${m['code']}'),
+                label: Text(nameOf(m)),
+                selected: catalog.categoryOn(categoryKey, m['code'] as String),
+                onSelected: (on) {
+                  if (on) {
+                    putCategoryOnMenu(catalog, categoryKey, m['code'] as String);
+                  } else {
+                    takeCategoryOffMenu(catalog, categoryKey, m['code'] as String);
+                  }
+                  onChanged();
+                },
+              ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Each menu is a tab on the order screen. A category on two menus (the soft drinks, with the food and '
+            'at the bar) sells the same dishes from both. Where a dish prints is its station, whatever menu it '
+            'was ordered from.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
         _heading(context, 'Option groups every dish here asks for'),
         Wrap(
           spacing: 8,
@@ -1093,6 +1123,62 @@ Map<String, dynamic> newEntry(MenuCatalog catalog, String item, Map<String, dyna
     'display': <String, dynamic>{},
     'sort': catalog.all('entry').where((e) => e['section'] == section['id']).length,
   };
+}
+
+/// Puts a category on a menu, as the import does: a section `menu/category` named like the category, under
+/// the category's parent when that is on the menu too, and an entry for each of its dishes. A dish already on
+/// another menu brings its number, the sizes it offers there and whether it shows, so the two menus agree.
+void putCategoryOnMenu(MenuCatalog catalog, String categoryKey, String menu) {
+  if (catalog.categoryOn(categoryKey, menu)) return;
+  final category = catalog.get('category', categoryKey)!;
+  final elsewhere = catalog.all('section').where((s) => s['id'] == '${s['menu']}/$categoryKey').firstOrNull;
+  final parent = category['parent'] as String?;
+  final sectionId = '$menu/$categoryKey';
+  catalog.put('section', {
+    'id': sectionId,
+    'menu': menu,
+    'names': copyRow((elsewhere?['names'] ?? category['names']) as Map<String, dynamic>),
+    'parent': parent != null && catalog.categoryOn(parent, menu) ? '$menu/$parent' : null,
+    'display': copyRow((elsewhere?['display'] as Map<String, dynamic>?) ?? const {}),
+    'sort': (elsewhere?['sort'] ?? category['sort'] ?? 0) as int,
+  });
+  for (final item in catalog.itemsIn(categoryKey)) {
+    final code = item['code'] as String;
+    final others = catalog.entriesOf(code);
+    final other =
+        others.where((e) => (e['section'] as String).endsWith('/$categoryKey')).firstOrNull ?? others.firstOrNull;
+    var id = '$menu:$code';
+    for (var n = 2; catalog.get('entry', id) != null; n++) {
+      id = '$menu:$code-$n';
+    }
+    catalog.put('entry', {
+      'id': id,
+      'menu': menu,
+      'section': sectionId,
+      'item': code,
+      'number': other?['number'],
+      'variants': other?['variants'] == null ? null : List<dynamic>.from(other!['variants'] as List),
+      'price_overrides': <String, dynamic>{},
+      'availability': <String, dynamic>{},
+      'visible': other?['visible'] ?? true,
+      'featured': false,
+      'display': <String, dynamic>{},
+      'sort': (other?['sort'] ?? item['sort'] ?? 0) as int,
+    });
+  }
+}
+
+/// Takes a category off a menu: its section there goes, with every entry in it. The dishes stay in the catalog
+/// and on the other menus; a dish on no menu at all cannot be ordered until it is put back on one.
+void takeCategoryOffMenu(MenuCatalog catalog, String categoryKey, String menu) {
+  final sectionId = '$menu/$categoryKey';
+  for (final e in catalog.all('entry').where((e) => e['section'] == sectionId).toList()) {
+    catalog.delete('entry', e['id'] as String);
+  }
+  for (final s in catalog.all('section').where((s) => s['parent'] == sectionId).toList()) {
+    takeCategoryOffMenu(catalog, (s['id'] as String).substring(menu.length + 1), menu);
+  }
+  catalog.delete('section', sectionId);
 }
 
 /// A size goes, and with it the menu entries' mentions of it.

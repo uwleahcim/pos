@@ -6,6 +6,8 @@ from datetime import datetime
 from decimal import Decimal as D
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from pos.menu.engine import MenuEngine
 from pos.menu.gloriafood import ImportSettings, import_gloriafood, load_restaurant_menu, split_number
 from pos.menu.request import LineRequest, Selection
@@ -69,9 +71,46 @@ def test_lunch_is_its_own_menu_on_weekday_lunch_hours():
     tuesday_noon = datetime(2026, 10, 27, 12, 0, tzinfo=BOSTON)
     tuesday_night = datetime(2026, 10, 27, 19, 0, tzinfo=BOSTON)
     sunday_noon = datetime(2026, 11, 1, 12, 0, tzinfo=BOSTON)
-    assert [m.menu for m in engine.menu_for("pos", tuesday_noon)] == ["lunch", "dinner"]
-    assert [m.menu for m in engine.menu_for("pos", tuesday_night)] == ["dinner"]
-    assert [m.menu for m in engine.menu_for("pos", sunday_noon)] == ["dinner"]
+    assert [m.menu for m in engine.menu_for("pos", tuesday_noon)] == ["lunch", "dinner", "drinks"]
+    assert [m.menu for m in engine.menu_for("pos", tuesday_night)] == ["dinner", "drinks"]
+    assert [m.menu for m in engine.menu_for("pos", sunday_noon)] == ["dinner", "drinks"]
+
+
+def test_the_drinks_are_their_own_menu_and_the_soft_drinks_are_on_both():
+    """menus.json: the drink categories leave the Food menu for Drinks; Beverages (tea, soda) stays on Food too.
+    Where a drink prints is the category's station, not the menu: everything on Drinks goes to the bar or the
+    soda station, never to a wok."""
+    defs, _ = load_restaurant_menu()
+    engine = MenuEngine(defs)
+    menus = {m.menu: m for m in engine.menu_for("pos")}
+    assert [(m.name, m.priority) for m in menus.values()] == [("Food", 0), ("Drinks", -10)]
+    food = [s.name for s in menus["dinner"].sections]
+    drinks = [s.name for s in menus["drinks"].sections]
+    assert drinks[:6] == ["Mixed Drinks", "Beverages", "Domestic Beer", "Foreign Beer", "White Wine", "Red Wine"]
+    assert food[:2] == ["Appetizers", "Soup"] and "Beverages" in food and "Gift Certificates" in food
+    assert not {"Mixed Drinks", "Domestic Beer", "Foreign Beer", "White Wine", "Red Wine", "Whiskey"} & set(food)
+    assert "Lunch Specials" not in food and "Lunch Specials" not in drinks
+    soda = next(s for s in menus["drinks"].sections if s.name == "Beverages")
+    also = next(s for s in menus["dinner"].sections if s.name == "Beverages")
+    assert [e.item for e in soda.entries] == [e.item for e in also.entries] and soda.entries
+    assert {e.entry_id.split(":")[0] for e in soda.entries + also.entries} == {"drinks", "dinner"}
+    assert {e.number for e in soda.entries} == {e.number for e in also.entries}  # the same numbers on both
+    stations = {defs.inherited(defs.items[e.item], "station") for s in menus["drinks"].sections for e in s.entries}
+    assert stations == {"bar", "soda"}
+    assert defs.menus["drinks"].schedule == {} and defs.menus["drinks"].channels == ("pos", "phone")
+
+
+def test_menus_json_names_exactly_one_default_menu(tmp_path):
+    from pos.menu.gloriafood import MenuSpec, menus_from
+
+    path = tmp_path / "menus.json"
+    path.write_text('{"menus": [{"code": "a", "names": {"en": "A"}}, {"code": "b", "names": {"en": "B"}}]}')
+    with pytest.raises(ValueError, match="exactly one"):
+        menus_from(path)
+    path.write_text('{"menus": [{"code": "a", "names": {"en": "A"}, "default": true, "categories": ["Soup"]}]}')
+    assert menus_from(path) == (MenuSpec("a", {"en": "A"}, default=True, categories=("Soup",)),)
+    settings = ImportSettings(menus=menus_from(path))
+    assert [m.code for m in settings.menus_for("Soup")] == ["a"] and [m.code for m in settings.menus_for("x")] == ["a"]
 
 
 def test_unmapped_categories_go_to_the_default_and_are_reported():

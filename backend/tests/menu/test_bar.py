@@ -64,16 +64,18 @@ def test_pours_end_in_45_or_95_and_well_brands_are_the_cheapest():
     assert max(well) < min(called)
 
 
-def test_the_bar_sections_come_last_and_offer_how_a_pour_is_served():
+def test_the_bar_sections_come_last_on_the_drinks_menu_and_offer_how_a_pour_is_served():
     defs, _ = load_restaurant_menu()
     engine = MenuEngine(defs)
-    dinner = next(m for m in engine.menu_for("pos") if m.menu == "dinner")
-    names = [s.name for s in dinner.sections]
+    drinks = next(m for m in engine.menu_for("pos") if m.menu == "drinks")
+    names = [s.name for s in drinks.sections]
     assert names[-12:] == [
         "White Wine", "Red Wine", "Sparkling Wine", "Sake & Plum Wine", "Whiskey", "Vodka", "Gin", "Rum",
         "Tequila", "Cognac & Brandy", "Liqueurs & Cordials", "Aperitifs & Vermouth",
     ]  # fmt: skip
-    whiskey = next(s for s in dinner.sections if s.name == "Whiskey")
+    food = next(m for m in engine.menu_for("pos") if m.menu == "dinner")
+    assert not {s.name for s in food.sections} & set(names[-12:])  # the Food menu sells none of it
+    whiskey = next(s for s in drinks.sections if s.name == "Whiskey")
     entry = next(e for e in whiskey.entries if e.name == "Maker's Mark")
     assert entry.number is None and [(v.name, v.price) for v in entry.variants] == [("1.5 oz", D("8.95"))]
     served = defs.groups["served"]
@@ -85,7 +87,7 @@ def test_the_bar_sections_come_last_and_offer_how_a_pour_is_served():
     assert [g.code for g, _ in defs.attachments_for("hibiki_21")] == ["served"]
     assert [v.names["en"] for v in defs.variants_of("hibiki_21")] == ["1 oz"]
     # wine by the glass and the bottle, or the bottle alone, as the printed list has it
-    white = next(s for s in dinner.sections if s.name == "White Wine")
+    white = next(s for s in drinks.sections if s.name == "White Wine")
     riesling = next(e for e in white.entries if e.name == "Riesling, Schlink Haus")
     assert [(v.name, v.price) for v in riesling.variants] == [("Glass", D("9")), ("Bottle", D("32"))]
     assert [v.code for v in defs.variants_of("merlot_wente")] == ["bottle"]
@@ -101,8 +103,8 @@ def test_the_bar_sections_come_last_and_offer_how_a_pour_is_served():
 def test_the_printed_cocktails_and_beer_prices_join_the_export_s_own_categories():
     defs, _ = load_restaurant_menu()
     engine = MenuEngine(defs)
-    dinner = next(m for m in engine.menu_for("pos") if m.menu == "dinner")
-    mixed = next(s for s in dinner.sections if s.name == "Mixed Drinks")
+    drinks = next(m for m in engine.menu_for("pos") if m.menu == "drinks")
+    mixed = next(s for s in drinks.sections if s.name == "Mixed Drinks")
     names = [e.name for e in mixed.entries]
     assert names[:4] == ["Mai Tai (to go)", "White Mai Tai", "Scorpion Bowl for 1", "Zombie"]  # the export's first
     assert "China Sky Rita" in names and len(names) == 26
@@ -116,7 +118,7 @@ def test_the_printed_cocktails_and_beer_prices_join_the_export_s_own_categories(
     budweiser = (export.variants["E01:regular"].base_price, defs.variants["E01:regular"].base_price)
     assert budweiser == (D("4.00"), D("5.50"))
     assert defs.variants["E09:regular"].base_price == D("6.50")
-    foreign = next(s for s in dinner.sections if s.name == "Foreign Beer")
+    foreign = next(s for s in drinks.sections if s.name == "Foreign Beer")
     assert [e.name for e in foreign.entries][-1] == "Non-Alcoholic Beer"
     na = engine.resolve(LineRequest("na_beer:regular"))
     assert na.ok and na.line_total == D("6.50") and na.tax_class == "prepared_food"

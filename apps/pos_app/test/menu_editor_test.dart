@@ -90,6 +90,12 @@ Map<String, dynamic> catalogJson({int revision = 7, String price = '24.95'}) => 
         'names': {'en': 'Dinner'},
         'channels': ['pos'],
       }),
+      row('drinks', {
+        'code': 'drinks',
+        'names': {'en': 'Drinks'},
+        'channels': ['pos'],
+        'priority': -10,
+      }),
     ],
     'section': [
       row('dinner/chefs', {
@@ -135,6 +141,27 @@ void main() {
       {for (final c in catalog.changes()) '${c['op']} ${c['kind']} ${c['key'] ?? ''}'.trim()},
       {'delete entry dinner:87', 'delete attachment item:GTC/rice', 'delete variant GTC:quart', 'delete item GTC'},
     );
+  });
+
+  test('a category goes on a menu with every dish in it, and comes off it with them', () {
+    final catalog = MenuCatalog.fromJson(catalogJson());
+    expect(catalog.menus().map((m) => m['code']), ['dinner', 'drinks']); // the order screen's tab order
+    expect(catalog.categoryOn('mains', 'drinks'), isFalse);
+    putCategoryOnMenu(catalog, 'mains', 'drinks');
+    expect(catalog.categoryOn('mains', 'drinks'), isTrue);
+    final section = catalog.get('section', 'drinks/mains')!;
+    expect(section['menu'], 'drinks');
+    expect(section['names'], {'en': 'Mains'});
+    expect(section['parent'], isNull);
+    final entry = catalog.get('entry', 'drinks:GTC')!;
+    // the dish brings the number it has on the other menu, so both menus agree
+    expect([entry['section'], entry['item'], entry['number'], entry['visible']], ['drinks/mains', 'GTC', '87', true]);
+    expect([for (final c in catalog.changes()) '${c['op']} ${c['kind']}'], ['put section', 'put entry']);
+    putCategoryOnMenu(catalog, 'mains', 'drinks'); // already there: nothing doubles
+    expect(catalog.entriesOf('GTC').length, 2);
+    takeCategoryOffMenu(catalog, 'mains', 'drinks');
+    expect(catalog.changes(), isEmpty);
+    expect(catalog.entriesOf('GTC').map((e) => e['id']), ['dinner:87']); // the other menu keeps the dish
   });
 
   test('prices are kept as dollars and cents', () {
@@ -263,5 +290,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Menu editor · revision 7'), findsOneWidget);
     expect(find.text('MAINS'), findsOneWidget);
+
+    // a category's editor: a chip per menu, filled where the category is; a tap puts it on a menu
+    await tester.tap(find.text('MAINS'));
+    await tester.pumpAndSettle();
+    expect(find.text('On the menus'), findsOneWidget);
+    final drinks = find.byKey(const ValueKey('on-menu-drinks'));
+    expect(tester.widget<FilterChip>(drinks).selected, isFalse);
+    await tester.tap(drinks);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilterChip>(drinks).selected, isTrue);
+    expect(find.text('Save 2'), findsOneWidget); // the section and the dish's entry
   });
 }

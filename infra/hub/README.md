@@ -116,7 +116,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
 | `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star` | Set the printers a fired order prints to (writes `POS_PRINTERS` to `.env`, restarts the API) |
-| `hubctl menu import` | List what the bundled menu files would add to the hub's menu after an update (a shelf of bottles, say) and which prices they would move (only prices still at the online export's); `--apply` does it and keeps every change made in the menu editor |
+| `hubctl menu import` | List what the bundled menu files would change in the hub's menu after an update: what they would add (a shelf of bottles, say), which categories they would move to another menu (the drinks to their own, `docs/menus.md`) and which prices they would move (only prices still at the online export's); `--apply` does it and keeps every change made in the menu editor |
 | `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |
 | `hubctl pbx key` | This hub's public key for the PBX (made on first use) and the command that adds it to the PBX's `authorized_keys` by hand |
 | `hubctl pbx link root@freepbx.chinasky.org` | Link the hub to the PBX for desk phones: puts the hub's key on the PBX (its root password once), asks for the AMI secret, starts the SSH tunnel and the watcher and waits until the hub reaches the PBX (`docs/desk-phones.md`) |
