@@ -171,8 +171,9 @@ a ring on every platform, the caller's number into a to-go order, hold, a keypad
 strip, and the phone's state in the status icon; the day after, picking up a call brings up the caller's last
 order of the day, or the to-go form for a new one. Done the same day on the PBX: the restaurant's public
 address in the Trusted zone and the Intrusion Detection whitelist (step 6), 301 and 302 in ring group 600 and
-the call from a cell answered on the Mac (step 7). Still open: whether a queue should replace the ring group
-(step 7), and ringing a locked iPad or phone (a push relay).
+the call from a cell answered on the Mac (step 7). Ringing a locked iPhone or iPad, and a Galaxy or a Mac
+with the screen off, came later as [the push relay](../../docs/push-relay.md). Still open: whether a queue
+should replace the ring group (step 7).
 
 Where taking the call in the app is not possible, a desk phone can be linked to a screen instead, with the
 same effect on pick-up: [`docs/desk-phones.md`](../../docs/desk-phones.md) (the hub watches the PBX's manager

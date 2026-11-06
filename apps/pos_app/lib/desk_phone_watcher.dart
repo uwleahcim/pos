@@ -38,7 +38,7 @@ class DeskPhoneWatcher extends ChangeNotifier {
   bool _disposed = false;
   Completer<void>? _sleeping;
   Timer? _alarm;
-  bool _polling = false;
+  int _inFlight = 0;
   bool _linked = false;
   int _cursor = 0;
   final _seen = <String>{};
@@ -46,7 +46,7 @@ class DeskPhoneWatcher extends ChangeNotifier {
   DeskPhoneCall? _pending;
   int _calls = 0;
 
-  /// Whether the hub links any desk phone to this device.
+  /// Whether the hub links any desk phone to this device; listeners hear when it changes.
   bool get linked => _linked;
 
   /// How many calls have been seen; the orders screen takes the newest on each change.
@@ -69,6 +69,15 @@ class DeskPhoneWatcher extends ChangeNotifier {
     _alarm = null;
     final sleeping = _sleeping;
     if (sleeping != null && !sleeping.isCompleted) sleeping.complete();
+  }
+
+  /// The app is back (brought up by a tap on a pick-up's notification, or in front again after a sleep): the
+  /// hub is asked now, beside a request that may still be held there over a dead connection.
+  void wakeUp() {
+    if (!_running || !settings.isConfigured) return;
+    final sleeping = _sleeping;
+    if (sleeping != null && !sleeping.isCompleted) sleeping.complete();
+    unawaited(poll(again: true));
   }
 
   /// The call waiting for a screen, if it is still fresh; taken once.
@@ -97,15 +106,16 @@ class DeskPhoneWatcher extends ChangeNotifier {
   }
 
   /// Asks the hub once for this device's calls, from the cursor of its last answer; with [hold], the hub
-  /// keeps the request until there is a newer call (or that long).
-  Future<void> poll({Duration hold = Duration.zero}) async {
-    if (_polling) return;
-    _polling = true;
+  /// keeps the request until there is a newer call (or that long). One request at a time, unless [again]:
+  /// a second one beside a request that may be lost (the connection died while the hub held it).
+  Future<void> poll({Duration hold = Duration.zero, bool again = false}) async {
+    if (_inFlight > 0 && !again) return;
+    _inFlight++;
     try {
       final answered = await api.answeredCalls(device: settings.device, after: _cursor, hold: hold, clock: _clock);
+      var changed = answered.linked != _linked;
       _linked = answered.linked;
       _cursor = answered.cursor;
-      var changed = false;
       for (final call in answered.calls) {
         if (!_seen.add(call.id)) continue;
         _remember(call.id);
@@ -117,7 +127,7 @@ class DeskPhoneWatcher extends ChangeNotifier {
     } on ApiException {
       // nothing answers, or the hub refused: the status icon shows the outage; the next request asks again
     } finally {
-      _polling = false;
+      _inFlight--;
     }
   }
 

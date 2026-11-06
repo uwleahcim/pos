@@ -75,7 +75,9 @@ answers from whichever hub it talks to, and the same call is one call on both.
 
 ## Limits
 
-- The screen has to be on and someone signed in, as for a call taken in the app.
+- Someone has to be signed in, as for a call taken in the app. A locked iPhone or iPad gets a notification
+  of the pick-up and opens the order when it is tapped, a Galaxy lights up and opens it, and a Mac with the
+  display off lights it: [the push relay](push-relay.md).
 - A call that rang before the hub connected to the PBX still opens if the number is an outside one; one
   that rang while the hub was down does not.
 - The answer reaches the screen a fraction of a second after the pick-up: the screen's request is already

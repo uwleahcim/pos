@@ -32,9 +32,12 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from .ami import TRUNK_CONTEXTS, AMIClient, AMIError, Message, digits
+
+if TYPE_CHECKING:
+    from ..push.relay import PushRelay
 
 log = logging.getLogger("pos.phones")
 
@@ -93,6 +96,7 @@ class CallTracker:
     ) -> None:
         self._contexts, self._clock, self._keep = contexts, clock, keep
         self._calls: dict[str, _Call] = {}
+        self._ended: dict[str, float] = {}  # linkedid: when the call's first channel hung up
         self._pruned = clock()
 
     @property
@@ -117,6 +121,7 @@ class CallTracker:
         if event == "Hangup":
             if packet.get("Uniqueid", "") == linkedid:  # the call's first channel: the trunk's
                 self._calls.pop(linkedid, None)
+                self._ended[linkedid] = now
             return None
         if event != "DialEnd" or packet.get("DialStatus") != "ANSWER":
             return None
@@ -137,6 +142,23 @@ class CallTracker:
         call.answered.add(extension)
         return Answered(linkedid, extension, call.number, call.name, call.dialed, int(now * 1000))
 
+    def state(self, linkedid: str) -> dict[str, Any]:
+        """Where a call stands, for a screen woken for it: `ringing` (up, no extension has answered),
+        `answered` (with the extensions that did; a transfer adds one), `ended` (the caller's channel hung
+        up in the last ten minutes) or `unknown` (never seen, or long gone)."""
+        call = self._calls.get(linkedid)
+        if call is None:
+            state = "ended" if linkedid in self._ended else "unknown"
+            return {"call": linkedid, "state": state, "answered": [], "number": "", "name": "", "dialed": ""}
+        return {
+            "call": linkedid,
+            "state": "answered" if call.answered else "ringing",
+            "answered": sorted(call.answered),
+            "number": call.number,
+            "name": call.name,
+            "dialed": call.dialed,
+        }
+
     def _prune(self, now: float) -> None:
         if now - self._pruned < 60 and now >= self._pruned:
             return
@@ -144,6 +166,9 @@ class CallTracker:
         for linkedid, call in list(self._calls.items()):
             if now - call.seen > self._keep:
                 del self._calls[linkedid]
+        for linkedid, at in list(self._ended.items()):
+            if now - at > 600:
+                del self._ended[linkedid]
 
 
 class AnsweredCalls:
@@ -292,7 +317,9 @@ def _describe(err: BaseException, host: str) -> str:
 
 class AmiWatcher:
     """One connection to the PBX's manager interface for as long as the API runs: logs in for call events,
-    feeds them to the tracker, records the answers, and reconnects with a growing pause after any drop."""
+    feeds them to the tracker, records the answers, and reconnects with a growing pause after any drop. With a
+    push `relay`, the hook's user events are asked for too, every event reaches the relay, and so does every
+    pick-up kept for a screen (docs/push-relay.md)."""
 
     def __init__(
         self,
@@ -304,12 +331,14 @@ class AmiWatcher:
         *,
         tls: bool = False,
         tracker: CallTracker | None = None,
+        relay: PushRelay | None = None,
         backoff: tuple[float, float] = (1.0, 10.0),
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.host, self.port, self.user, self.tls = host, port, user, tls
         self._secret, self._calls, self._backoff, self._clock = secret, calls, backoff, clock
         self._tracker = tracker if tracker is not None else CallTracker(clock=clock)
+        self.relay = relay
         self._task: asyncio.Task[None] | None = None
         self._client: AMIClient | None = None
         self._since: float | None = None
@@ -334,6 +363,11 @@ class AmiWatcher:
             pass
         self._client = None
         self._since = None
+
+    @property
+    def tracker(self) -> CallTracker:
+        """The calls followed on this connection (`state` answers a woken screen's question)."""
+        return self._tracker
 
     def status(self) -> dict[str, Any]:
         return {
@@ -367,14 +401,18 @@ class AmiWatcher:
             self._attempts += 1
             try:
                 async with AMIClient(self.host, self.port, tls=self.tls, timeout=5.0) as client:
-                    await client.login(self.user, self._secret, events="call")
+                    await client.login(self.user, self._secret, events="call,user" if self.relay else "call")
                     self._client = client
                     self._connections += 1
                     self._since = self._clock()
                     delay = self._backoff[0]
                     log.info("PBX link up: %s:%s as %s", self.host, self.port, self.user)
+                    if self.relay is not None:
+                        await self.relay.connected(client)
                     async for packet in client.events():
                         self._events += 1
+                        if self.relay is not None:
+                            self.relay.feed(packet, self._tracker)
                         answered = self._tracker.feed(packet)
                         if answered is not None:
                             pop = self._calls.record(answered)
@@ -384,21 +422,27 @@ class AmiWatcher:
                                 answered.number,
                                 f" for {pop['device']}" if pop else "",
                             )
+                            if pop is not None and self.relay is not None:
+                                self.relay.pop(pop)
                     raise ConnectionError("AMI connection closed")
             except asyncio.CancelledError:
                 self._client = None
                 self._since = None
+                if self.relay is not None:
+                    self.relay.disconnected()
                 raise
             except (AMIError, ConnectionError, OSError, TimeoutError, ssl.SSLError) as err:
                 self._client = None
                 self._since = None
+                if self.relay is not None:
+                    self.relay.disconnected()
                 self._last_error = _describe(err, self.host)
                 log.warning("PBX link %s:%s: %s; trying again in %.0f s", self.host, self.port, self._last_error, delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self._backoff[1])
 
 
-def watcher_from_env(calls: AnsweredCalls) -> AmiWatcher | None:
+def watcher_from_env(calls: AnsweredCalls, relay: PushRelay | None = None) -> AmiWatcher | None:
     """The watcher for the PBX named by `POS_AMI_HOST` (with `POS_AMI_PORT`, `POS_AMI_USER`, `POS_AMI_SECRET`
     and `POS_AMI_TLS`); None when no PBX is configured, as on a laptop."""
     host = os.environ.get("POS_AMI_HOST", "").strip()
@@ -407,7 +451,13 @@ def watcher_from_env(calls: AnsweredCalls) -> AmiWatcher | None:
     tls = os.environ.get("POS_AMI_TLS", "").strip().lower() in ("1", "true", "yes")
     port = int(os.environ.get("POS_AMI_PORT") or (5039 if tls else 5038))
     return AmiWatcher(
-        host, port, os.environ.get("POS_AMI_USER") or "pos", os.environ.get("POS_AMI_SECRET", ""), calls, tls=tls
+        host,
+        port,
+        os.environ.get("POS_AMI_USER") or "pos",
+        os.environ.get("POS_AMI_SECRET", ""),
+        calls,
+        tls=tls,
+        relay=relay,
     )
 
 

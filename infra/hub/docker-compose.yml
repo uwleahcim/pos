@@ -49,6 +49,14 @@ services:
       POS_AMI_USER: ${POS_AMI_USER:-pos}
       POS_AMI_SECRET: ${POS_AMI_SECRET:-}
       POS_AMI_TLS: ${POS_AMI_TLS:-}
+      # Apple's push key (docs/push-relay.md), for waking a locked iPhone or iPad: `hubctl push apple` puts the
+      # key in /opt/pos/apns (mounted below) and writes these. Empty: no pushes go out.
+      POS_APNS_KEY: ${POS_APNS_KEY:-}
+      POS_APNS_KEY_ID: ${POS_APNS_KEY_ID:-}
+      POS_APNS_TEAM_ID: ${POS_APNS_TEAM_ID:-}
+      POS_APNS_BUNDLE_ID: ${POS_APNS_BUNDLE_ID:-org.chinasky.posApp}
+    volumes:
+      - ./apns:/apns:ro
     ports:
       - "8000:8000"
     depends_on:

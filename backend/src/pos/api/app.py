@@ -39,7 +39,18 @@ from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing.jobs import PrintJob
 from ..printing.service import PrintService
 from ..printing.ticket import DEMO
-from ..settings import SettingStore, clean_coursing, clean_desk_phones, clean_quotes, default_settings
+from ..push.apns import ApnsSender, sender_from_env
+from ..push.devices import PushDevices, clean_device, default_push_devices
+from ..push.relay import PushRelay
+from ..settings import (
+    DEVICE,
+    EXTENSION,
+    SettingStore,
+    clean_coursing,
+    clean_desk_phones,
+    clean_quotes,
+    default_settings,
+)
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
@@ -202,6 +213,22 @@ class CoursingIn(BaseModel):
 class DeskPhoneLinkIn(BaseModel):
     extension: str = Field(description="the desk phone's extension on the PBX")
     device: str = Field(description="the device name the app shows under Settings")
+
+
+class PushDeviceIn(BaseModel):
+    """A screen's push token: `voip` for the phone in the app (with the extension it registers as), `alert`
+    for a desk-phone pick-up."""
+
+    device: str
+    platform: str
+    kind: str
+    token: str
+    extension: str = ""
+
+
+class PushTestIn(BaseModel):
+    device: str
+    kind: str = "alert"
 
 
 class DeskPhonesIn(BaseModel):
@@ -416,11 +443,15 @@ def create_app(
     watcher: AmiWatcher | None = None,
     devices: DevicesSeen | None = None,
     faces: FaceSignIn | None = None,
+    push_devices: PushDevices | None = None,
+    pusher: ApnsSender | None = None,
+    relay: PushRelay | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """The PBX watcher runs for as long as the API does, when a PBX is configured; the face models load
-        on a thread meanwhile, when the hub has them (POS_FACE_MODELS)."""
+        on a thread meanwhile, when the hub has them (POS_FACE_MODELS); the push relay's connection to Apple
+        closes with the API."""
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
@@ -431,6 +462,7 @@ def create_app(
         finally:
             if pbx is not None:
                 await pbx.stop()
+            await app.state.relay.close()
 
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)", lifespan=lifespan)
     app.state.menu = menu if menu is not None else default_menu()
@@ -457,7 +489,14 @@ def create_app(
             lambda: {link["extension"]: link["device"] for link in app.state.settings.get("desk_phones")["links"]}
         )
     )
-    app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered)
+    # Push relay: the screens' push tokens, the Apple key (`hubctl push apple`) and what turns a ring into a push.
+    app.state.push_devices = push_devices if push_devices is not None else default_push_devices()
+    app.state.relay = (
+        relay
+        if relay is not None
+        else PushRelay(app.state.push_devices, pusher if pusher is not None else sender_from_env())
+    )
+    app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered, app.state.relay)
     app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
     # Face sign-in: templates in the database, the location's switch in its settings, the models from the image.
     app.state.faces = (
@@ -672,6 +711,70 @@ def create_app(
         too), by name with when each was last heard, for a manager to pick a screen from."""
         devices: DevicesSeen = app.state.devices
         return {"devices": devices.listed()}
+
+    @app.get("/phones/calls/{call_id}")
+    def read_call(call_id: str) -> dict[str, Any]:
+        """Where a call stands, by the id a push carried (`call`): `ringing`, `answered` (and on which
+        extensions), `ended` or `unknown`. A phone woken for a call asks this to take its ringing screen down
+        when the call was answered elsewhere or the caller gave up before its own invite arrived."""
+        pbx: AmiWatcher | None = app.state.watcher
+        if pbx is None:
+            return {"call": call_id, "state": "unknown", "answered": [], "number": "", "name": "", "dialed": ""}
+        return pbx.tracker.state(call_id)
+
+    # Push relay: the screens register their tokens, the hub wakes them (docs/push-relay.md) ----------------------
+    @app.put("/push/devices")
+    def register_push(body: PushDeviceIn) -> dict[str, Any]:
+        """A screen registers a push token, on every start and whenever it changes: `kind` is `voip` for the
+        phone in the app (with the `extension` it registers as, which the hub marks on the PBX so the dial
+        waits for the phone) or `alert` for a desk-phone pick-up. `configured` says whether this hub has an
+        Apple key to push with; `env` is where Apple took the token, once known."""
+        try:
+            device = clean_device(body.model_dump(), device_pattern=DEVICE, extension_pattern=EXTENSION)
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        registry: PushDevices = app.state.push_devices
+        try:
+            saved = registry.put(device)
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.devices.heard(device.device)
+        relay: PushRelay = app.state.relay
+        relay.marks_changed()
+        return {
+            "ok": True,
+            "configured": relay.configured,
+            "kind": saved.kind,
+            "extension": saved.extension,
+            "env": saved.env,
+        }
+
+    @app.delete("/push/devices/{token}")
+    def unregister_push(token: str) -> dict[str, Any]:
+        """The phone was turned off in the app, or signed out: no more pushes to this token."""
+        registry: PushDevices = app.state.push_devices
+        try:
+            removed = registry.remove(token.strip().lower())
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.relay.marks_changed()
+        return {"ok": True, "removed": removed}
+
+    @app.get("/push/status")
+    def read_push_status() -> dict[str, Any]:
+        """The hub's push relay: whether an Apple key is on it, what went out, the tokens registered (shortened),
+        the extensions marked on the PBX (and any trouble marking them), and when the PBX's hook last spoke."""
+        relay: PushRelay = app.state.relay
+        registry: PushDevices = app.state.push_devices
+        return {**relay.status(), "list": registry.listed()}
+
+    @app.post("/push/test")
+    async def test_push(body: PushTestIn) -> dict[str, Any]:
+        """A push to a screen by hand: a notification (`alert`), or a test call (`voip`) the phone shows."""
+        if body.kind not in ("alert", "voip"):
+            raise HTTPException(422, {"error": "bad_value", "message": "kind must be alert or voip"})
+        relay: PushRelay = app.state.relay
+        return await relay.test(body.device.strip(), body.kind)
 
     # Counter mode and takeout: the texts that went out -----------------------------------------------------
 
