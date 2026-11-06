@@ -203,7 +203,7 @@ case "${1:-status}" in
         (if .configured then "key: \(.key_id), team \(.team_id), bundle \(.bundle); \(.sent) sent, \(.failed) failed" + (if .last_error then " (last: \(.last_error))" else "" end) else "key: none (hubctl push apple AuthKey_KEYID.p8 <key-id> <team-id>)" end),
         "tokens: \(.devices.voip) for calls, \(.devices.alert) for pick-ups",
         (.list[] | "  \(.device)  \(.platform)  \(.kind)" + (if .extension != "" then "  extension \(.extension)" else "" end) + (if .env then "  (\(.env))" else "" end)),
-        ("pbx: " + (if .pbx then "connected; marked for push: " + (if (.marks | length) > 0 then (.marks | join(", ")) else "nothing" end) + (if .marks_error then "; TROUBLE: \(.marks_error)" else "" end) + (if .hook_seen then "; the pre-dial hook spoke" else "; the pre-dial hook has not spoken yet (docs/push-relay.md, step 8)" end) else "not connected" end)),
+        ("pbx: " + (if .pbx then "connected; marked for push: " + (if (.marks | length) > 0 then (.marks | join(", ")) else "nothing" end) + (if .marks_error then "; TROUBLE: \(.marks_error)" else "" end) + (if .hook_seen then "; the pre-dial hook spoke" else "; the pre-dial hook has not spoken yet (docs/push-relay.md, step 7)" end) else "not connected" end)),
         "pushes: \(.pushes.ring) rings, \(.pushes.pop) pick-ups, \(.pushes.test) tests"' || echo "the API is not answering"
     }
     case "${2:-status}" in
