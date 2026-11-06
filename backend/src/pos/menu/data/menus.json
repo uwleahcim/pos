@@ -1,0 +1,24 @@
+{
+  "_about": "The menus the order screen shows as tabs, and which of the export's categories each one sells. Food is the default: a category no other menu names is on it. A category named under two menus is on both (Beverages: with the food and at the bar). Lunch has hours; the others are open whenever the restaurant is. Tabs come in priority order, highest first. The bar's own shelves (bar.json) name their menu in that file. Edit and run `hubctl update`; a running hub takes the change with `hubctl menu import --apply`, which moves a category's section (and every dish in it) to the menu named here and leaves everything else as the menu editor has it.",
+  "menus": [
+    {
+      "code": "dinner",
+      "names": {"en": "Food", "zh": "菜品"},
+      "default": true,
+      "categories": ["Beverages"]
+    },
+    {
+      "code": "lunch",
+      "names": {"en": "Lunch", "zh": "午餐"},
+      "priority": 10,
+      "hours": {"days": [1, 2, 3, 4, 5, 6], "from": "11:00", "to": "15:00"},
+      "categories": ["Lunch Specials"]
+    },
+    {
+      "code": "drinks",
+      "names": {"en": "Drinks", "zh": "酒水"},
+      "priority": -10,
+      "categories": ["Mixed Drinks", "Beverages", "Domestic Beer", "Foreign Beer", "White Wine", "Red Wine"]
+    }
+  ]
+}

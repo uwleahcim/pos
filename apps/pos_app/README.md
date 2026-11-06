@@ -31,11 +31,16 @@ frames in a row that agree sign the person in while the pad keeps working. A man
 from the same card (they look at the camera and turn their head a little; five views are kept as templates
 on the hub, never pictures). [`docs/face-signin.md`](../../docs/face-signin.md) has the whole of it.
 
+The menu on the order screen has a tab per menu the hub has open: Food and Drinks all day, Lunch at lunch
+(`docs/menus.md`). A tab shows its categories; a category opens its dishes below the tiles; the search finds
+a dish on every menu open. With one menu open there are no tabs.
+
 A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
 every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,
 its sizes and prices, where it sits on the menus and its option groups. Option groups and categories edit
-the same way. Save sends only what changed; the backend checks the whole menu and either saves it or says
-what is wrong. Screens showing the menu ask every five seconds whether it changed and reload when it has.
+the same way; a category's page puts it on or off each menu with every dish in it. Save sends only what
+changed; the backend checks the whole menu and either saves it or says what is wrong. Screens showing the
+menu ask every five seconds whether it changed and reload when it has.
 
 ## Android tablets and phones
 

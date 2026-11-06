@@ -127,6 +127,16 @@ class MenuCatalog {
   /// Every menu section, for the "on the menu at" picker.
   List<Map<String, dynamic>> sections() => _sorted(all('section'));
 
+  /// The menus (Food, Lunch, Drinks) as the order screen tabs them: by priority, highest first.
+  List<Map<String, dynamic>> menus() => all('menu').toList()
+    ..sort((a, b) {
+      final byPriority = ((b['priority'] as int?) ?? 0).compareTo((a['priority'] as int?) ?? 0);
+      return byPriority != 0 ? byPriority : '${a['code']}'.compareTo('${b['code']}');
+    });
+
+  /// Whether a category is on a menu: the import and the editor both name its section there `menu/category`.
+  bool categoryOn(String categoryKey, String menu) => get('section', '$menu/$categoryKey') != null;
+
   List<Map<String, dynamic>> stations() => all('station').toList();
 
   static List<Map<String, dynamic>> _sorted(Iterable<Map<String, dynamic>> rows) => rows.toList()

@@ -6,8 +6,9 @@ groups attached to the item or the whole category. The format is documented at
 https://github.com/GlobalFood/integration_docs/tree/master/fetch_menu.
 
 What the export does not carry is filled from `ImportSettings`: which kitchen station cooks each category,
-the tax class behind each GloriaFood tax category, and the lunch hours. Chinese names and kitchen labels
-are not in the export; they are added later through the spreadsheet round trip.
+the tax class behind each GloriaFood tax category, and the menus (Food, Lunch with its hours, Drinks) with
+the categories each one sells. Chinese names and kitchen labels are not in the export; they are added later
+through the spreadsheet round trip.
 """
 
 from __future__ import annotations
@@ -68,19 +69,64 @@ ALLERGENS = {  # GloriaFood allergen name -> allergen code, the nine US majors
 }
 
 
+LUNCH_HOURS = {"days": [1, 2, 3, 4, 5, 6], "from": "11:00", "to": "15:00"}
+CHANNELS = ("pos", "phone")
+
+
+@dataclass(frozen=True)
+class MenuSpec:
+    """One menu the order screen shows as a tab, and the export's categories (by name) it sells. A category
+    named by two menus is on both; a category named by none is on the default menu."""
+
+    code: str
+    names: Mapping[str, str]
+    priority: int = 0
+    hours: Mapping[str, Any] | None = None  # a weekly window, e.g. LUNCH_HOURS; None = open all day
+    categories: tuple[str, ...] = ()
+    default: bool = False
+    channels: tuple[str, ...] = CHANNELS
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> MenuSpec:
+        return cls(
+            code=str(data["code"]),
+            names=dict(data.get("names") or {"en": str(data["code"]).title()}),
+            priority=int(data.get("priority") or 0),
+            hours=dict(data["hours"]) if data.get("hours") else None,
+            categories=tuple(str(c) for c in data.get("categories") or ()),
+            default=bool(data.get("default", False)),
+            channels=tuple(data.get("channels") or CHANNELS),
+        )
+
+    def menu(self) -> Menu:
+        schedule = {"weekly": [dict(self.hours)]} if self.hours else {}
+        return Menu(self.code, dict(self.names), self.channels, schedule, self.priority)
+
+
+DEFAULT_MENUS = (
+    MenuSpec("dinner", {"en": "Menu", "zh": "菜单"}, default=True),
+    MenuSpec("lunch", {"en": "Lunch", "zh": "午餐"}, 10, LUNCH_HOURS, ("Lunch Specials",)),
+)
+"""Settings that name no menus get the two the export implies: everything, and the lunch specials at lunch."""
+
+
 @dataclass
 class ImportSettings:
     tax_classes: Mapping[int, str] = field(default_factory=dict)  # GloriaFood tax_category_id -> tax class
     stations: Mapping[str, Mapping[str, str]] = field(default_factory=dict)  # code -> names
     category_stations: Mapping[str, str | None] = field(default_factory=dict)  # category name -> station
     default_station: str | None = None
-    lunch_category: str = "Lunch Specials"
-    lunch_hours: Mapping[str, Any] = field(
-        default_factory=lambda: {"days": [1, 2, 3, 4, 5, 6], "from": "11:00", "to": "15:00"}
-    )
+    menus: tuple[MenuSpec, ...] = DEFAULT_MENUS
     include_inactive_categories: bool = True
     """Online-only switches: the export marks beer and wine inactive because they are not sold online, but
     the bar sells them at the table. Items marked inactive stay out either way."""
+
+    def menus_for(self, category_name: str) -> list[MenuSpec]:
+        """The menus a category is sold from: every menu that names it, else the default menu."""
+        named = [m for m in self.menus if category_name in m.categories]
+        if named:
+            return named
+        return [next((m for m in self.menus if m.default), self.menus[0])]
 
 
 @dataclass
@@ -151,16 +197,10 @@ def import_gloriafood(
         ]
     ):
         defs.add(Allergen(code, {"en": en}, True, sort))
-    defs.add(Menu("dinner", {"en": "Menu", "zh": "菜单"}, ("pos", "phone"), {}, 0))
-    defs.add(
-        Menu(
-            "lunch",
-            {"en": "Lunch", "zh": "午餐"},
-            ("pos", "phone"),
-            {"weekly": [dict(settings.lunch_hours)]},
-            10,
-        )
-    )
+    if not settings.menus:
+        raise ValueError("import settings name no menu")
+    for spec in settings.menus:
+        defs.add(spec.menu())
 
     groups: dict[int, str] = {}
 
@@ -215,19 +255,18 @@ def import_gloriafood(
             report.notes.append(f"category {cat['name']!r} has no station set; it goes to {station}")
         if station is not None and station not in settings.stations:
             report.notes.append(f"category {cat['name']!r}: unknown station {station!r}")
-        lunch = cat["name"] == settings.lunch_category
-        menu = "lunch" if lunch else "dinner"
-        section_id = f"{menu}/{cat_code}"
-        defs.add(
-            Category(cat_code, {"en": cat["name"]}, station=station, sort=int(cat.get("sort") or 0)),
-            Section(
-                section_id,
-                menu,
-                {"en": cat["name"]},
-                display={"description": cat.get("description")} if cat.get("description") else {},
-                sort=int(cat.get("sort") or 0),
-            ),
-        )
+        menus = [m.code for m in settings.menus_for(cat["name"])]
+        defs.add(Category(cat_code, {"en": cat["name"]}, station=station, sort=int(cat.get("sort") or 0)))
+        for menu in menus:
+            defs.add(
+                Section(
+                    f"{menu}/{cat_code}",
+                    menu,
+                    {"en": cat["name"]},
+                    display={"description": cat.get("description")} if cat.get("description") else {},
+                    sort=int(cat.get("sort") or 0),
+                )
+            )
         report.categories += 1
         if not cat.get("active", True):
             report.notes.append(f"category {cat['name']!r} is off online; kept for the POS")
@@ -291,16 +330,17 @@ def import_gloriafood(
                 report.variants += 1
             for g in item.get("groups") or ():
                 defs.add(Attachment("item", code, group_code(g), sort=int(g.get("sort") or 0)))
-            defs.add(
-                Entry(
-                    f"{menu}:{code}",
-                    menu,
-                    section_id,
-                    code,
-                    number,
-                    sort=int(cat.get("sort") or 0) * 1000 + int(item.get("sort") or 0),
+            for menu in menus:
+                defs.add(
+                    Entry(
+                        f"{menu}:{code}",
+                        menu,
+                        f"{menu}/{cat_code}",
+                        code,
+                        number,
+                        sort=int(cat.get("sort") or 0) * 1000 + int(item.get("sort") or 0),
+                    )
                 )
-            )
             if re.search(r"\d+\.\d\d?$", name):
                 report.notes.append(f"{code}: name {name!r} ends in what looks like a price")
     if data.get("currency", "USD") != "USD":
@@ -316,16 +356,29 @@ DATA = Path(__file__).with_name("data")
 BUNDLED = DATA / "gloriafood_menu.json"
 """The restaurant's online menu as exported on 2026-10-27; the POS menu until the real one is curated."""
 STATIONS = DATA / "stations.json"
+MENUS = DATA / "menus.json"
 
 
-def settings_from(path: Path | str = STATIONS) -> ImportSettings:
-    """Stations and the category-to-station map from a JSON file like `data/stations.json`."""
+def menus_from(path: Path | str = MENUS) -> tuple[MenuSpec, ...]:
+    """The menus (Food, Lunch, Drinks) and the categories each sells, from a JSON file like `data/menus.json`."""
+    config = json.loads(Path(path).read_text(encoding="utf-8"))
+    menus = tuple(MenuSpec.from_json(m) for m in config.get("menus") or ())
+    if not menus:
+        raise ValueError(f"{path}: no menus")
+    if sum(m.default for m in menus) != 1:
+        raise ValueError(f"{path}: exactly one menu must be the default")
+    return menus
+
+
+def settings_from(path: Path | str = STATIONS, menus: Path | str = MENUS) -> ImportSettings:
+    """Stations and the category-to-station map from a JSON file like `data/stations.json`, and the menus
+    from one like `data/menus.json`."""
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     return ImportSettings(
         stations=config.get("stations", {}),
         category_stations=config.get("categories", {}),
         default_station=config.get("default_station"),
-        lunch_hours=config.get("lunch_hours") or {"days": [1, 2, 3, 4, 5, 6], "from": "11:00", "to": "15:00"},
+        menus=menus_from(menus),
     )
 
 
