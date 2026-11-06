@@ -25,6 +25,12 @@ Ben 2222, Mike 9999, or `POS_STAFF` on the backend). The camera thumbnail in the
 that a small photo is taken when an order is created, fired, closed, reopened or a line is voided; the
 photos queue on disk like the operations and go to the backend when it answers.
 
+With face sign-in on for the location (Location settings, a manager's switch, off to start), the sign-in
+screen also looks for an enrolled face: frames off the camera go to the hub, which recognises them, and two
+frames in a row that agree sign the person in while the pad keeps working. A manager enrolls each person
+from the same card (they look at the camera and turn their head a little; five views are kept as templates
+on the hub, never pictures). [`docs/face-signin.md`](../../docs/face-signin.md) has the whole of it.
+
 The menu on the order screen has a tab per menu the hub has open: Food and Drinks all day, Lunch at lunch
 (`docs/menus.md`). A tab shows its categories; a category opens its dishes below the tiles; the search finds
 a dish on every menu open. With one menu open there are no tabs.
@@ -58,7 +64,9 @@ The tablet must be on the Wi-Fi that reaches the hub; the hub answers plain HTTP
 allows. The sign-in screen asks for the camera the first time ("While using the app"); without it the audit photos
 are skipped and the dot by the preview stays orange. A tablet gets the same layout as an iPad (anything 600 px wide
 or more); a Galaxy phone gets the phone layout. Android takes the audit photo as an ordinary silent still, so a
-device that plays a shutter sound should be reported: iOS already takes the frame off the preview instead.
+device that plays a shutter sound should be reported: iOS already takes the frame off the preview instead. The
+face sign-in's frames come off the preview stream on Android too (planar YUV, turned into a JPEG in the app),
+since a still every half second would be a shutter sound every half second on a device that forces one.
 
 Layout:
 
@@ -66,8 +74,9 @@ Layout:
 - `lib/outbox.dart` the in-flight queue: operations are stamped with a hybrid logical clock, kept on disk
   until the backend accepts them, and resent on reconnect. Duplicates are harmless; the backend ignores them.
 - `lib/settings.dart` device name and backend addresses, saved on the device.
-- `lib/session.dart` who is signed in; `lib/camera.dart` the front camera on macOS and iOS; `lib/photos.dart` the
-  event photo queue.
+- `lib/session.dart` who is signed in; `lib/camera.dart` the front camera on macOS, iOS and Android; `lib/photos.dart`
+  the event photo queue; `lib/face_signin.dart` the face sign-in's frames to the hub while the sign-in screen is
+  up, and `lib/screens/face_enroll_dialog.dart` a manager's enrollment of one person.
 - `lib/print_relay.dart` the print relay: with the switch on in settings, this terminal claims queued print
   jobs from the backend and writes them to the printers on the LAN when the hub cannot.
 - `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.

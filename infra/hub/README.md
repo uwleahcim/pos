@@ -111,7 +111,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | --- | --- |
 | `hubctl status` | Services, API health, time, disk, temperature |
 | `hubctl logs api` | Follow the API log (`db` for PostgreSQL) |
-| `hubctl update` | Pull the clone, rebuild the image, restart what changed |
+| `hubctl update` | Pull the clone, rebuild the image, restart what changed (the first build with face sign-in downloads its two models, about 290 MB, once; see `docs/face-signin.md`) |
 | `hubctl restart` | Restart the services |
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |

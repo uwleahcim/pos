@@ -59,6 +59,9 @@ jobs:
           docker run -d --name api -p 8000:8000 pos-backend:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/health
+          # The face models baked into the image load on a thread after the start: the API must say they are ready.
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/faces/status | grep -q '"ready":true' && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/faces/status | tee /dev/stderr | grep -q '"ready":true'
           docker logs api
 
   app:

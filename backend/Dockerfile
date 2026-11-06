@@ -6,6 +6,20 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir --prefix=/install .
 
+# The face sign-in models (pos/identity/faces.py), from the InsightFace model zoo: the SCRFD-500MF detector out
+# of buffalo_sc and the ArcFace ResNet-50 recognizer out of buffalo_l, pinned by checksum. Downloaded once per
+# machine (the layer is cached) and baked into the image, so a hub needs no internet to sign staff in.
+FROM python:3.12-slim AS models
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /models
+RUN curl -fsSL --retry 5 -o sc.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip \
+  && echo "57d31b56b6ffa911c8a73cfc1707c73cab76efe7f13b675a05223bf42de47c72  sc.zip" | sha256sum -c - \
+  && unzip -q sc.zip det_500m.onnx && rm sc.zip \
+  && curl -fsSL --retry 5 -o l.zip https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip \
+  && echo "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f  l.zip" | sha256sum -c - \
+  && unzip -q l.zip w600k_r50.onnx && rm l.zip
+
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 # A font that covers Chinese, for kitchen tickets printed as images; zone data so TZ gives the restaurant's time;
@@ -14,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhe
   && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --create-home --home-dir /app pos
 COPY --from=build /install /usr/local
+COPY --from=models /models /app/models
+ENV POS_FACE_MODELS=/app/models
 WORKDIR /app
 USER pos
 EXPOSE 8000

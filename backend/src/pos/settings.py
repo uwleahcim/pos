@@ -8,6 +8,8 @@
   log carries only its course's id, so a course can be renamed or moved without touching any order.
 - `desk_phones`: which screen each desk phone is linked to (a PBX extension to a device name), so a call
   taken on the phone opens the caller's order on that screen (`pos/phones/deskphones.py`).
+- `faces`: whether staff may sign in by face at this location (`pos/identity/faces.py`); off until a manager
+  turns it on, since the location decides that after its own legal review and the staff's consent.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -42,6 +44,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     "desk_phones": {"links": []},
+    "faces": {"enabled": False},
 }
 EXTENSION = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 """A PBX extension (the endpoint's name): digits as a rule, never spaces or slashes."""

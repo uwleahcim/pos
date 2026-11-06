@@ -235,7 +235,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (token == null || !mounted) return;
     await Navigator.of(context).push(
       PosPageRoute(
-        builder: (_) => LocationSettingsScreen(api: widget.api, token: token, device: widget.settings.device),
+        builder: (_) => LocationSettingsScreen(
+          api: widget.api,
+          token: token,
+          device: widget.settings.device,
+          camera: widget.camera,
+        ),
       ),
     );
   }
