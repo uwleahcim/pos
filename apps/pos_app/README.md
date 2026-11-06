@@ -77,6 +77,10 @@ Layout:
 - `lib/session.dart` who is signed in; `lib/camera.dart` the front camera on macOS, iOS and Android; `lib/photos.dart`
   the event photo queue; `lib/face_signin.dart` the face sign-in's frames to the hub while the sign-in screen is
   up, and `lib/screens/face_enroll_dialog.dart` a manager's enrollment of one person.
+- `lib/call_screen.dart` the device's part in calls (the system's call screen on iOS, the service that keeps
+  the app alive on Android, the sleep hold on a Mac) over one method channel; `lib/push.dart` keeps the hub's
+  list of this screen's push tokens in step with the settings; `lib/phone.dart` the phone itself, with the
+  call a push announced before the PBX's invitation arrives.
 - `lib/print_relay.dart` the print relay: with the switch on in settings, this terminal claims queued print
   jobs from the backend and writes them to the printers on the LAN when the hub cannot.
 - `lib/menu_admin.dart` the menu as the editor holds it, and the changes it sends back.
@@ -113,3 +117,9 @@ steps and what is not there yet are in [`spikes/softphone`](../../spikes/softpho
 A desk phone can do the same for a screen: a manager links the phone's extension to the device's name under
 Location settings, Desk phones, and a call taken on that phone opens the caller's order on that screen as if
 the screen had taken the call (the hub watches the PBX for it; [`docs/desk-phones.md`](../../docs/desk-phones.md)).
+
+Both reach a locked or sleeping screen too ([`docs/push-relay.md`](../../docs/push-relay.md)): a locked iPhone or
+iPad rings on the system's call screen from a VoIP push the hub sends (Apple's push key goes on the hub with
+`hubctl push apple`; a desk-phone pick-up arrives as a notification), a Galaxy keeps the app running with the
+screen off while the phone is on or a desk phone is linked and lights up for a call, and a Mac keeps itself
+awake. The Phone card under Settings says what the device still has to allow, with an Allow button.

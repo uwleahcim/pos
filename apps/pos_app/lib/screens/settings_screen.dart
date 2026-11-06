@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../call_screen.dart';
 import '../camera.dart';
 import '../faces.dart';
 import '../phone.dart';
 import '../print_relay.dart';
+import '../push.dart';
 import '../settings.dart';
 
 /// Device name, backend addresses and the phone. Shown on first start, and from the orders screen afterwards.
@@ -19,6 +21,8 @@ class SettingsScreen extends StatefulWidget {
     this.api,
     this.relay,
     this.phone,
+    this.push,
+    this.screen,
     this.camera,
   });
 
@@ -28,6 +32,12 @@ class SettingsScreen extends StatefulWidget {
   final PrintRelay? relay;
   final PhoneClient? phone;
   final EventCamera? camera;
+
+  /// The hub's push registry for this screen (iOS): a line on whether a locked screen is woken.
+  final PushRegistrar? push;
+
+  /// The device's own part in calls: what it still needs allowed (Android), and the way to ask.
+  final CallScreen? screen;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -44,16 +54,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _printMessage;
   FaceStatus? _faceStatus;
   String? _faceError;
+  Map<String, bool> _readiness = const {};
 
   @override
   void initState() {
     super.initState();
     widget.camera?.addListener(_changed);
     unawaited(_askFaces());
+    unawaited(_checkReadiness());
   }
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _checkReadiness() async {
+    final screen = widget.screen;
+    if (screen == null) return;
+    final found = await screen.readiness();
+    if (mounted) setState(() => _readiness = found);
+  }
+
+  Future<void> _prepare() async {
+    await widget.screen?.prepare();
+    await _checkReadiness();
+  }
+
+  /// What Android still needs allowed for calls with the screen off, in words; null when all is allowed.
+  String? get _missing {
+    final missing = [
+      if (_readiness['notifications'] == false) 'notifications',
+      if (_readiness['fullScreen'] == false) 'full-screen alerts',
+      if (_readiness['battery'] == false) 'running without battery limits',
+    ];
+    return missing.isEmpty ? null : missing.join(', ');
   }
 
   @override
@@ -274,6 +308,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ],
                       ),
+                      if (widget.push != null)
+                        ListenableBuilder(
+                          listenable: widget.push!,
+                          builder: (context, _) {
+                            final line = widget.push!.line;
+                            if (line == null) return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 14),
+                              child: Text(
+                                line,
+                                key: const ValueKey('push-line'),
+                                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                            );
+                          },
+                        ),
+                      if (_missing != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'For calls and desk-phone pick-ups with the screen off, this device must allow: $_missing.',
+                                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: _prepare,
+                                icon: const Icon(Icons.notifications_active_outlined),
+                                label: const Text('Allow'),
+                              ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ),

@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
+import 'call_screen.dart';
 
 /// How this terminal reaches the PBX as a phone: one secure WebSocket to FreePBX and an extension of its own.
 /// The display name is the device name, shown to the PBX as the caller name.
@@ -182,13 +186,58 @@ abstract interface class SipStack {
   void transfer(String callId, String target);
 }
 
+/// Where a call stands on the hub (`GET /phones/calls/<id>`): a phone woken for it asks, so a call answered
+/// on another phone, or given up by the caller, comes off its screen before the invite would have arrived.
+enum CallProgress { ringing, answered, ended, unknown }
+
+@immutable
+class CallOnHub {
+  const CallOnHub(this.progress, {this.answered = const []});
+
+  factory CallOnHub.fromJson(Map<String, dynamic> json) => CallOnHub(
+    switch (json['state']) {
+      'ringing' => CallProgress.ringing,
+      'answered' => CallProgress.answered,
+      'ended' => CallProgress.ended,
+      _ => CallProgress.unknown,
+    },
+    answered: [for (final e in json['answered'] as List? ?? const []) e.toString()],
+  );
+
+  final CallProgress progress;
+
+  /// The extensions the call was answered on (a transfer adds one).
+  final List<String> answered;
+}
+
+typedef CallLookup = Future<CallOnHub> Function(String callId);
+
 /// The phone on this terminal: registration with the PBX and at most one call at a time. A second call while
 /// one is on gets a busy answer; the PBX's ring group sends it to the other terminals.
+///
+/// With a [CallScreen], the device's own call screen takes part: a push that woke the device for a call
+/// ([pushed]) rings there before the PBX's invite can arrive (the phone registers again meanwhile), and on a
+/// platform whose screen owns Answer and End (iOS) the app's own buttons go through it, so the system's call
+/// screen, the audio session and the SIP call agree.
 class PhoneClient extends ChangeNotifier implements SipEvents {
-  PhoneClient(this._stack, {DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
+  PhoneClient(
+    this._stack, {
+    DateTime Function()? clock,
+    CallScreen? screen,
+    this.callState,
+    bool Function()? isForeground,
+  }) : _clock = clock ?? DateTime.now,
+       _screen = screen ?? NoCallScreen(),
+       _isForeground = isForeground ?? (() => true);
 
   final SipStack _stack;
   final DateTime Function() _clock;
+  final CallScreen _screen;
+
+  /// Asks the hub where a call stands (`PosApi.callState`); without it a pushed call waits for its invite or
+  /// the timeout alone.
+  final CallLookup? callState;
+  final bool Function() _isForeground;
 
   PhoneSettings _settings = const PhoneSettings();
   bool _started = false;
@@ -206,9 +255,39 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   DateTime? _recentAt;
   int _orderRequests = 0;
   int _answers = 0;
+  String? _pushedId; // the id a push carried (the PBX's), while the device's screen shows the call
+  bool _screenOwns = false; // the device's screen shows the call and owns Answer and End (iOS)
+  bool _screenRings = false; // the device's own screen rings for this call: the app's ringer stays quiet
+  bool _screenAnswered = false; // answered on the device's screen before the PBX's invite arrived
+  bool _test = false; // a test call the hub sent by hand: nothing is coming behind it
+  Timer? _expect; // gives a pushed call up when its invite never comes
+  Timer? _check; // asks the hub where a pushed call stands
+  Timer? _grace; // a push on a registered, foreground phone: the invite should follow, else register anew
+  final _declined = <String, DateTime>{}; // numbers declined on the screen lately: their late invite is turned away
+  DateTime? _pausedAt;
 
   /// How long after a call ends its caller is still the one to start an order for.
   static const recentFor = Duration(minutes: 10);
+
+  /// How long a pushed call waits for the PBX's invite: a ring group rings again after thirty seconds, so a
+  /// phone that woke too late for one pass still gets the next.
+  static const expectFor = Duration(seconds: 45);
+
+  /// How often a pushed call asks the hub where it stands while the invite is on its way.
+  static const checkEvery = Duration(seconds: 2);
+
+  /// How long a number declined on the device's screen is turned away: the same call's invite, coming late.
+  static const declinedFor = Duration(minutes: 2);
+
+  /// A push on a phone that believes itself registered, in the foreground: this long for the invite to show
+  /// the registration is live; else the phone registers anew.
+  static const graceFor = Duration(seconds: 3);
+
+  /// A pause (the app in the background) longer than this: the connection is taken for dead on resume.
+  static const pausedLong = Duration(seconds: 15);
+
+  /// A test call rings this long and then goes away by itself.
+  static const testRingsFor = Duration(seconds: 8);
 
   PhoneSettings get settings => _settings;
   PhoneState get state => _state;
@@ -236,8 +315,17 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   bool get onCall => _state == PhoneState.ringing || _state == PhoneState.inCall;
   Duration? get callDuration => _answeredAt == null ? null : _clock().difference(_answeredAt!);
 
+  /// The id of the call a push woke the device for, while it rings or waits for its invite; null otherwise.
+  String? get pushedId => _pushedId;
+
+  /// The device's own call screen rings for this call (the system's on iOS): the app's ringer keeps quiet.
+  bool get screenRings => _screenRings;
+
+  /// A test call from the hub (`hubctl push test <device> voip`): it rings and goes away by itself.
+  bool get testCall => _test;
+
   /// The call's caller while one rings or is on.
-  Caller? get caller => _callId == null ? null : Caller(number: _callerNumber, name: _callerName);
+  Caller? get caller => _callId == null && _pushedId == null ? null : Caller(number: _callerNumber, name: _callerName);
 
   /// The last call's caller for [recentFor] after it ended: the order often starts after the hang-up.
   Caller? get recentCaller {
@@ -254,6 +342,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
 
   /// How many calls this terminal has picked up; the orders screen opens the caller's order on each change.
   int get answers => _answers;
+
+  /// The id the device's screen knows the call by: the push's, else the SIP stack's.
+  String? get _screenId => _pushedId ?? _callId;
 
   /// To go tapped on the call banner or strip: asks whatever screen listens to start an order for the caller.
   void startOrder() {
@@ -272,7 +363,7 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     }
     if (_started) await _stack.stop();
     _started = true;
-    _clearCall();
+    _dropCall(reason: 'failed');
     _problem = null;
     _state = PhoneState.connecting;
     notifyListeners();
@@ -282,28 +373,72 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
   Future<void> stop() async {
     final wasRunning = _started;
     _started = false;
-    _clearCall();
+    _dropCall(reason: 'failed');
     _problem = null;
     _state = PhoneState.off;
     if (wasRunning) await _stack.stop();
     notifyListeners();
   }
 
+  /// The connection is started over: the same settings, a fresh socket and registration. For a phone that
+  /// was suspended (iOS) and still believes in a socket that is dead. A call that is on is left alone.
+  Future<void> _restart() async {
+    if (!_started || _callId != null) return;
+    await _stack.stop();
+    if (!_started) return;
+    _problem = null;
+    if (!onCall) _state = PhoneState.connecting;
+    notifyListeners();
+    await _stack.start(_settings, this);
+  }
+
+  /// The app went to the background (the screen locked, another app in front).
+  void paused() => _pausedAt = _clock();
+
+  /// The app is in front again: after a long pause the connection is taken for dead and started over, so the
+  /// phone is registered again at once rather than when the dead socket times out.
+  void resumed() {
+    final at = _pausedAt;
+    _pausedAt = null;
+    if (!_started || onCall || at == null || _clock().difference(at) < pausedLong) return;
+    unawaited(_restart());
+  }
+
   /// Listeners hear about the answer before the stack starts on it, so the ring is told to stop before the call's
-  /// audio is set up (on iOS the two share one audio session).
+  /// audio is set up (on iOS the two share one audio session). When the device's screen owns the call, the
+  /// screen is asked and the stack hears from it ([screenAnswered]).
   void answer() {
-    if (_state != PhoneState.ringing || _callId == null || _answering) return;
+    if (_state != PhoneState.ringing || _answering) return;
+    final screenId = _screenId;
+    if (_screenOwns && screenId != null) {
+      _answering = true;
+      notifyListeners();
+      _screen.answer(screenId);
+      return;
+    }
+    if (_callId == null) return;
     _answering = true;
     notifyListeners();
     _stack.answer(_callId!);
   }
 
   void decline() {
-    if (_state == PhoneState.ringing && _callId != null && !_answering) _stack.decline(_callId!);
+    if (_state != PhoneState.ringing || _answering) return;
+    final screenId = _screenId;
+    if (_screenOwns && screenId != null) {
+      _screen.end(screenId);
+      return;
+    }
+    if (_callId != null) _stack.decline(_callId!);
   }
 
   void hangUp() {
-    if (_state == PhoneState.inCall && _callId != null) _stack.hangUp(_callId!);
+    if (_state != PhoneState.inCall || _callId == null) return;
+    if (_screenOwns && _screenId != null) {
+      _screen.end(_screenId!);
+      return;
+    }
+    _stack.hangUp(_callId!);
   }
 
   void toggleMute() {
@@ -351,6 +486,155 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     notifyListeners();
   }
 
+  // --- the device's screen -----------------------------------------------------------------------------------
+
+  /// A push woke the device for a call: the device's screen rings for it already (iOS reports it to the
+  /// system's call screen before telling the app). The phone rings along, quietly, and makes sure it is
+  /// registered so the PBX's invite can arrive; [incomingCall] then attaches the invite to this call. A [test]
+  /// call has nothing behind it: it rings for [testRingsFor] and goes away, at once when answered.
+  void pushed(String id, {String? number, String? name, bool test = false}) {
+    if (!test && !_started) {
+      _screen.ended(id, reason: 'failed'); // the phone is off here: nothing will come for it
+      return;
+    }
+    if (_declinedLately(number)) {
+      _screen.ended(id, reason: 'declinedElsewhere');
+      return;
+    }
+    if (onCall) {
+      // busy with another call (the ring group has the other phones), or the push of a call known already;
+      // a push for the very call the invite brought first never gets here: the device keeps that to itself
+      if (_pushedId != id) _screen.ended(id, reason: 'unanswered');
+      return;
+    }
+    final was = _state;
+    _clearCall();
+    _pushedId = id;
+    _callerNumber = number;
+    _callerName = name;
+    _test = test;
+    _screenOwns = true;
+    _screenRings = true;
+    _state = PhoneState.ringing;
+    if (test) {
+      _expect = Timer(testRingsFor, () => _giveUp(reason: 'unanswered'));
+    } else {
+      _expect = Timer(expectFor, () => _giveUp(reason: 'unanswered'));
+      _check = Timer.periodic(checkEvery, (_) => unawaited(_checkCall()));
+      _freshen(was);
+    }
+    notifyListeners();
+  }
+
+  /// Answer on the device's screen: the SIP call is answered, or will be the moment its invite arrives.
+  void screenAnswered(String id) {
+    if (id != _screenId || _state != PhoneState.ringing) return;
+    if (_test) {
+      _giveUp(reason: 'remoteEnded');
+      return;
+    }
+    _answering = true;
+    if (_callId == null) {
+      _screenAnswered = true;
+    } else {
+      _stack.answer(_callId!);
+    }
+    notifyListeners();
+  }
+
+  /// Decline or End on the device's screen.
+  void screenEnded(String id) {
+    if (id != _screenId) return;
+    if (_state == PhoneState.inCall) {
+      if (_callId != null) _stack.hangUp(_callId!);
+      return;
+    }
+    if (_state != PhoneState.ringing) return;
+    if (_pushedId != null) _rememberDeclined(_callerNumber);
+    if (_callId != null) {
+      _stack.decline(_callId!);
+      return;
+    }
+    _giveUp(reason: 'declinedElsewhere', tell: false);
+  }
+
+  /// Mute on the device's screen.
+  void screenMuted(String id, bool on) {
+    if (id != _screenId || _state != PhoneState.inCall || _callId == null || _muted == on) return;
+    _muted = on;
+    _stack.setMuted(_callId!, on);
+    notifyListeners();
+  }
+
+  /// The device's screen will not show the call after all: the app rings and acts for it itself. A pushed
+  /// call without a screen has nobody to answer it before its invite: it waits for the invite as any call.
+  void screenGone(String id) {
+    if (id != _screenId || !onCall) return;
+    _screenOwns = false;
+    _screenRings = false;
+    notifyListeners();
+  }
+
+  /// The push promises an invite; it can only arrive over a live registration. A phone registered and in the
+  /// foreground is given [graceFor] for the invite before it registers anew (a push sent while the invite was
+  /// already on its way: both at once); a phone that was in the background or suspended, or whose connection
+  /// dropped, registers anew at once; one connecting already is left to it.
+  void _freshen(PhoneState was) {
+    if (!_started || _callId != null) return;
+    if (was == PhoneState.connecting && _problem == null) return;
+    final trusted = was == PhoneState.registered && _isForeground() && _pausedAt == null;
+    if (!trusted) {
+      unawaited(_restart());
+      return;
+    }
+    _grace = Timer(graceFor, () {
+      if (_pushedId != null && _callId == null) unawaited(_restart());
+    });
+  }
+
+  Future<void> _checkCall() async {
+    final id = _pushedId;
+    final lookup = callState;
+    if (id == null || lookup == null || _callId != null) return;
+    CallOnHub found;
+    try {
+      found = await lookup(id);
+    } catch (_) {
+      return; // nothing answers: the invite, or the timeout, decides
+    }
+    if (_pushedId != id || _callId != null) return;
+    if (found.progress == CallProgress.ended) {
+      _giveUp(reason: 'remoteEnded');
+    } else if (found.progress == CallProgress.answered && !found.answered.contains(_settings.extension)) {
+      _giveUp(reason: 'answeredElsewhere');
+    }
+  }
+
+  /// A pushed call is over without its invite: answered elsewhere, given up, declined here, or never came.
+  void _giveUp({required String reason, bool tell = true}) {
+    final id = _pushedId;
+    _clearCall();
+    _state = !_started ? PhoneState.off : (_problem == null ? PhoneState.registered : PhoneState.connecting);
+    if (id != null && tell) _screen.ended(id, reason: reason);
+    notifyListeners();
+  }
+
+  void _rememberDeclined(String? number) {
+    final digits = _digits(number);
+    if (digits.isNotEmpty) _declined[digits] = _clock();
+  }
+
+  bool _declinedLately(String? number) {
+    final now = _clock();
+    _declined.removeWhere((_, at) => now.difference(at) > declinedFor);
+    final digits = _digits(number);
+    return digits.isNotEmpty && _declined.keys.any((d) => d.endsWith(digits) || digits.endsWith(d));
+  }
+
+  static String _digits(String? number) => (number ?? '').replaceAll(RegExp(r'\D'), '');
+
+  // --- the SIP stack ----------------------------------------------------------------------------------------
+
   @override
   void registered() {
     if (!_started || onCall) return;
@@ -377,7 +661,25 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
 
   @override
   void incomingCall(String callId, {String? number, String? name}) {
-    if (!_started || onCall) {
+    if (!_started || _declinedLately(number)) {
+      _stack.decline(callId);
+      return;
+    }
+    if (_pushedId != null && _callId == null && !_test) {
+      // the invite the push promised: the call the screen shows gets its SIP side
+      _callId = callId;
+      _callerNumber ??= number;
+      _callerName ??= name;
+      _cancelTimers();
+      if (_screenAnswered) {
+        _screenAnswered = false;
+        _answering = true;
+        _stack.answer(callId);
+      }
+      notifyListeners();
+      return;
+    }
+    if (onCall) {
       _stack.decline(callId);
       return;
     }
@@ -388,6 +690,9 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     _answering = false;
     _answeredAt = null;
     _state = PhoneState.ringing;
+    _screenOwns = _screen.routesActions; // the system's call screen shows it and rings for it on iOS
+    _screenRings = _screenOwns;
+    _screen.incoming(callId, number: number, name: name);
     notifyListeners();
   }
 
@@ -396,8 +701,10 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     if (callId != _callId || _state == PhoneState.inCall) return;
     _state = PhoneState.inCall;
     _answering = false;
+    _screenAnswered = false;
     _answeredAt = _clock();
     _answers++;
+    _screen.connected(_screenId!);
     notifyListeners();
   }
 
@@ -406,19 +713,48 @@ class PhoneClient extends ChangeNotifier implements SipEvents {
     if (callId != _callId) return;
     _recent = caller;
     _recentAt = _clock();
+    final screenId = _screenId!;
+    final wasOn = _answeredAt != null;
     _clearCall();
     if (_started) _state = _problem == null ? PhoneState.registered : PhoneState.connecting;
+    _screen.ended(screenId, reason: wasOn ? 'remoteEnded' : 'unanswered');
     notifyListeners();
   }
 
+  /// A call the device's screen shows is dropped with it (the phone switched off, or started over).
+  void _dropCall({required String reason}) {
+    final screenId = _screenId;
+    _clearCall();
+    if (screenId != null) _screen.ended(screenId, reason: reason);
+  }
+
   void _clearCall() {
+    _cancelTimers();
     _callId = null;
+    _pushedId = null;
     _callerNumber = null;
     _callerName = null;
     _muted = false;
     _held = false;
     _answering = false;
+    _screenOwns = false;
+    _screenRings = false;
+    _screenAnswered = false;
+    _test = false;
     _typed = '';
     _answeredAt = null;
+  }
+
+  void _cancelTimers() {
+    _expect?.cancel();
+    _check?.cancel();
+    _grace?.cancel();
+    _expect = _check = _grace = null;
+  }
+
+  @override
+  void dispose() {
+    _cancelTimers();
+    super.dispose();
   }
 }

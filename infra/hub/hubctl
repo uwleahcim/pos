@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -23,6 +23,8 @@ case "${1:-status}" in
     echo
     printf 'pbx:  '
     curl -fsS http://127.0.0.1:8000/phones/status 2> /dev/null | jq -r 'if .configured then "\(.host) \(if .connected then "connected" else "NOT connected: \(.last_error // "")" end); \(.answers) answers, \(.pops) opened on a screen, \(.links) phones linked" else "not linked (hubctl pbx link)" end' || echo "unknown"
+    printf 'push: '
+    curl -fsS http://127.0.0.1:8000/push/status 2> /dev/null | jq -r 'if .configured then "key \(.key_id); \(.devices.voip + .devices.alert) tokens; \(.pushes.ring) rings, \(.pushes.pop) pick-ups" + (if .marks_error then "; TROUBLE marking the PBX: \(.marks_error)" else "" end) else "no Apple key (hubctl push apple)" end' || echo "unknown"
     printf 'time: '
     chronyc tracking 2> /dev/null | awk -F': *' '/^(Stratum|System time)/ {printf "%s %s; ", $1, $2}'
     echo
@@ -187,6 +189,67 @@ case "${1:-status}" in
         ;;
     esac
     ;;
+  push)
+    # hubctl push apple AuthKey_KEYID.p8 <key-id> <team-id> [bundle-id]   puts Apple's push key on the hub (the API's user reads it, nobody else), saves the ids in .env, restarts the API
+    # hubctl push status                                                  the key, the tokens the screens registered, the extensions marked on the PBX, what went out
+    # hubctl push test <device> [alert|voip]                              a notification (or a test call) to that screen, by the name it shows in its status
+    # hubctl push forget                                                  removes the key and the ids: no more pushes
+    apns_dir="$POS_HOME/apns"
+    unset_env() {
+      for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
+    }
+    push_status() {
+      curl -fsS http://127.0.0.1:8000/push/status 2> /dev/null | jq -r '
+        (if .configured then "key: \(.key_id), team \(.team_id), bundle \(.bundle); \(.sent) sent, \(.failed) failed" + (if .last_error then " (last: \(.last_error))" else "" end) else "key: none (hubctl push apple AuthKey_KEYID.p8 <key-id> <team-id>)" end),
+        "tokens: \(.devices.voip) for calls, \(.devices.alert) for pick-ups",
+        (.list[] | "  \(.device)  \(.platform)  \(.kind)" + (if .extension != "" then "  extension \(.extension)" else "" end) + (if .env then "  (\(.env))" else "" end)),
+        ("pbx: " + (if .pbx then "connected; marked for push: " + (if (.marks | length) > 0 then (.marks | join(", ")) else "nothing" end) + (if .marks_error then "; TROUBLE: \(.marks_error)" else "" end) + (if .hook_seen then "; the pre-dial hook spoke" else "; the pre-dial hook has not spoken yet (docs/push-relay.md, step 7)" end) else "not connected" end)),
+        "pushes: \(.pushes.ring) rings, \(.pushes.pop) pick-ups, \(.pushes.test) tests"' || echo "the API is not answering"
+    }
+    case "${2:-status}" in
+      apple)
+        [[ $# -ge 5 ]] || { echo "usage: hubctl push apple <AuthKey_KEYID.p8> <key-id> <team-id> [bundle-id]" >&2; exit 2; }
+        [[ -f "$3" ]] || { echo "no such file: $3" >&2; exit 2; }
+        grep -q 'PRIVATE KEY' "$3" || { echo "$3 is not a .p8 key: no PRIVATE KEY in it" >&2; exit 2; }
+        [[ "$4" =~ ^[A-Z0-9]{10}$ ]] || { echo "the key id is the ten letters and digits in the file's name, AuthKey_<key id>.p8, not '$4'" >&2; exit 2; }
+        [[ "$5" =~ ^[A-Z0-9]{10}$ ]] || { echo "the team id is ten letters and digits (Membership details in the Apple developer account), not '$5'" >&2; exit 2; }
+        install -d -m 0700 -o "$POS_UID" -g "$POS_UID" "$apns_dir"
+        install -m 0400 -o "$POS_UID" -g "$POS_UID" "$3" "$apns_dir/AuthKey_$4.p8"
+        unset_env POS_APNS_KEY POS_APNS_KEY_ID POS_APNS_TEAM_ID POS_APNS_BUNDLE_ID
+        printf 'POS_APNS_KEY=/apns/AuthKey_%s.p8\nPOS_APNS_KEY_ID=%s\nPOS_APNS_TEAM_ID=%s\n' "$4" "$4" "$5" >> "$POS_HOME/.env"
+        if [[ -n "${6:-}" ]]; then printf 'POS_APNS_BUNDLE_ID=%s\n' "$6" >> "$POS_HOME/.env"; fi
+        compose up -d api
+        echo "The key is on the hub. Waiting for the API to pick it up..."
+        for _ in $(seq 1 30); do
+          sleep 1
+          if [[ "$(curl -fsS http://127.0.0.1:8000/push/status 2> /dev/null | jq -r '.configured' 2> /dev/null || true)" == true ]]; then
+            echo "The hub pushes as team $5 with key $4 for ${6:-org.chinasky.posApp}. Next: on an iPhone, turn the phone on in the app (or link a desk phone to it), then hubctl push test <device>."
+            exit 0
+          fi
+        done
+        echo "The API did not come up with the key within 30 s. hubctl logs api says why; hubctl push forget takes the key off again."
+        exit 1
+        ;;
+      status)
+        push_status
+        ;;
+      test)
+        [[ $# -ge 3 ]] || { echo "usage: hubctl push test <device> [alert|voip]" >&2; exit 2; }
+        curl -fsS -X POST -H 'content-type: application/json' -d "{\"device\":\"$3\",\"kind\":\"${4:-alert}\"}" http://127.0.0.1:8000/push/test \
+          | jq -r 'if .configured | not then "no Apple key on this hub (hubctl push apple)" elif .tokens == 0 then "\(.device) has registered no \(.kind) token on this hub: open the app on it (for voip, turn the phone on in the app)" else (.results[] | "\(.device) \(.platform) \(.kind): " + (if .ok then "sent (\(.env))" else "FAILED: \(.reason)" end)) end'
+        ;;
+      forget)
+        unset_env POS_APNS_KEY POS_APNS_KEY_ID POS_APNS_TEAM_ID POS_APNS_BUNDLE_ID
+        rm -rf "$apns_dir"
+        compose up -d api
+        echo "The key is gone; the hub sends no pushes until hubctl push apple puts one back."
+        ;;
+      *)
+        echo "usage: hubctl push apple <AuthKey_KEYID.p8> <key-id> <team-id> [bundle-id] | status | test <device> [alert|voip] | forget" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -194,7 +257,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget" >&2
     exit 2
     ;;
 esac

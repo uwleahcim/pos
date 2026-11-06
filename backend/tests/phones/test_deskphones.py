@@ -661,3 +661,33 @@ def test_the_lists_on_the_wire():
     c.post("/signin", json={"device": "mac1", "pin": "1111"})
     listed = c.get("/devices").json()["devices"]
     assert [d["device"] for d in listed] == ["mac1", "tab1"] and all(d["seen_ms"] > 0 for d in listed)
+
+
+# --- where a call stands, for a phone woken for it ---------------------------------------------------------------
+
+
+def test_where_a_call_stands_follows_it_from_ringing_to_answered_to_ended():
+    clock = [1_730_000_000.0]
+    tracker = CallTracker(clock=lambda: clock[0])
+    assert tracker.state(LINKED)["state"] == "unknown"
+    tracker.feed(outside_call())
+    ringing = tracker.state(LINKED)
+    assert (ringing["state"], ringing["answered"], ringing["number"]) == ("ringing", [], "+16175551234")
+    assert (ringing["name"], ringing["dialed"]) == ("LINDA CHEN", "+17817296899")
+    for event in ring_group_answer()[1:]:
+        tracker.feed(event)
+    assert tracker.state(LINKED)["state"] == "answered" and tracker.state(LINKED)["answered"] == ["200"]
+    tracker.feed(dial_end("Local/201@from-internal-00000041;2", "PJSIP/201-00000061", "ANSWER"))  # transferred
+    assert tracker.state(LINKED)["answered"] == ["200", "201"]
+    tracker.feed(hangup(TRUNK, LINKED, LINKED))
+    assert tracker.state(LINKED) == {
+        "call": LINKED,
+        "state": "ended",
+        "answered": [],
+        "number": "",
+        "name": "",
+        "dialed": "",
+    }
+    clock[0] += 11 * 60
+    tracker.feed(hangup("PJSIP/999-00000099", "1730000000.999", "1730000000.999"))  # anything: time to tidy up
+    assert tracker.state(LINKED)["state"] == "unknown"

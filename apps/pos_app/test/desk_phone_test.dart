@@ -116,6 +116,42 @@ void main() {
       });
     });
 
+    test('woken up, it asks the hub at once beside the request the hub may still hold', () async {
+      late FakeAsync fake;
+      final (hub, w) = await watcher(clock: () => now.add(fake.elapsed));
+      fakeAsync((async) {
+        fake = async;
+        w.wakeUp(); // not running yet: nothing to ask
+        expect(hub.answeredAsked, isEmpty);
+        w.start();
+        async.flushMicrotasks();
+        expect(hub.answeredAsked, ['tab1']); // held at the hub
+        async.elapse(const Duration(seconds: 5));
+        w.wakeUp(); // the app is back in front: the held request may be dead, so a second one goes out
+        async.flushMicrotasks();
+        expect(hub.answeredAsked, ['tab1', 'tab1']);
+        hub.pickUp(call(seq: 1));
+        async.flushMicrotasks();
+        expect(w.calls, 1); // both came back with it; the call is reported once
+        async.elapse(const Duration(seconds: 1));
+        expect(w.calls, 1);
+        w.stop();
+      });
+    });
+
+    test('says when the links change, so the screen can keep itself awake for its phones', () async {
+      final (hub, w) = await watcher();
+      var told = 0;
+      w.addListener(() => told++);
+      await w.poll();
+      expect((w.linked, told), (false, 0));
+      hub.linked = true;
+      await w.poll();
+      expect((w.linked, told), (true, 1));
+      await w.poll();
+      expect(told, 1);
+    });
+
     test('a hub from before held requests answers at once and is asked once a second, not in a loop', () async {
       late FakeAsync fake;
       final (hub, w) = await watcher(clock: () => now.add(fake.elapsed));
