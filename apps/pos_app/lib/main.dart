@@ -212,6 +212,7 @@ class PosApp extends StatelessWidget {
                         phone: phone,
                         push: push,
                         screen: callScreen,
+                        camera: camera,
                       ),
                     ),
                   ),

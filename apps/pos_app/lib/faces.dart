@@ -34,11 +34,14 @@ class FaceStatus {
   final String? model;
   final String? error;
 
-  /// One line on how the hub stands, for the manager's screen.
+  /// One line on how the hub stands, for the manager's screen and the terminal's settings: when the sign-in
+  /// screens are not looking, it says what is missing (models, an enrollment, or the location's switch).
   String get line {
     if (error != null) return 'The hub could not load its face models: $error';
     if (!ready) return 'The hub has no face models yet (update the hub, or wait while they load)';
-    return enrolled == 0 ? 'Hub ready, nobody enrolled yet' : 'Hub ready · $enrolled enrolled';
+    if (enrolled == 0) return 'Hub ready, nobody enrolled yet';
+    if (!enabled) return 'Hub ready · $enrolled enrolled · switched off: no screen looks until the switch is on';
+    return 'Hub ready · $enrolled enrolled · the sign-in screens are looking';
   }
 }
 

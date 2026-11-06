@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../call_screen.dart';
+import '../camera.dart';
+import '../faces.dart';
 import '../phone.dart';
 import '../print_relay.dart';
 import '../push.dart';
 import '../settings.dart';
 
 /// Device name, backend addresses and the phone. Shown on first start, and from the orders screen afterwards.
+/// With an [api] it also says how face sign-in stands, so a terminal that is not looking for faces says why.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -20,6 +23,7 @@ class SettingsScreen extends StatefulWidget {
     this.phone,
     this.push,
     this.screen,
+    this.camera,
   });
 
   final Settings settings;
@@ -27,6 +31,7 @@ class SettingsScreen extends StatefulWidget {
   final PosApi? api;
   final PrintRelay? relay;
   final PhoneClient? phone;
+  final EventCamera? camera;
 
   /// The hub's push registry for this screen (iOS): a line on whether a locked screen is woken.
   final PushRegistrar? push;
@@ -47,12 +52,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
   late bool _phoneOn = widget.settings.phone.enabled;
   String? _printMessage;
+  FaceStatus? _faceStatus;
+  String? _faceError;
   Map<String, bool> _readiness = const {};
 
   @override
   void initState() {
     super.initState();
+    widget.camera?.addListener(_changed);
+    unawaited(_askFaces());
     unawaited(_checkReadiness());
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _checkReadiness() async {
@@ -79,6 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    widget.camera?.removeListener(_changed);
     _device.dispose();
     _endpoints.dispose();
     _pbx.dispose();
@@ -104,6 +118,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else {
       Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _askFaces() async {
+    final api = widget.api;
+    if (api == null) return;
+    try {
+      final status = await api.faceStatus();
+      if (mounted) setState(() => _faceStatus = status);
+    } on ApiException catch (err) {
+      if (mounted) setState(() => _faceError = 'The hub has not answered about face sign-in: ${err.message}');
+    }
+  }
+
+  /// How face sign-in stands here: what the hub says, then this terminal's own camera.
+  String _faceLine() {
+    final hub = _faceError ?? _faceStatus?.line ?? 'Asking the hub…';
+    final camera = widget.camera;
+    if (camera == null) return hub;
+    final here = camera is NoCamera
+        ? 'This terminal has no camera: PIN only.'
+        : camera.ready
+        ? 'This terminal\'s camera is up.'
+        : 'This terminal\'s camera: ${camera.error ?? 'starting'}.';
+    return '$hub. $here';
   }
 
   Future<void> _testPrint() async {
@@ -207,6 +245,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ),
+              if (widget.api != null) ...[
+                const SizedBox(height: 16),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.face_outlined),
+                    title: const Text('Face sign-in'),
+                    subtitle: Text(_faceLine(), key: const ValueKey('face-line')),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Card(
                 child: Padding(

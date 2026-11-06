@@ -375,7 +375,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
         Icons.settings,
         () => Navigator.of(context).push(
           PosPageRoute(
-            builder: (_) => SettingsScreen(settings: widget.settings, api: widget.api, relay: widget.relay),
+            builder: (_) => SettingsScreen(
+              settings: widget.settings,
+              api: widget.api,
+              relay: widget.relay,
+              phone: widget.phone,
+              camera: widget.camera,
+            ),
           ),
         ),
       ),
