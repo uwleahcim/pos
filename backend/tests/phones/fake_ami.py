@@ -18,6 +18,10 @@ class FakePBX:
             {"ObjectName": "201", "DeviceState": "Not in use"},
             {"ObjectName": "202", "DeviceState": "Unavailable"},
         ]
+        #: The PBX's database (AstDB), family -> key -> value, as DBPut/DBDel/DBDelTree leave it.
+        self.db: dict[str, dict[str, str]] = {}
+        #: Actions this PBX refuses with "Permission denied" (an AMI user without the right).
+        self.denied: set[str] = set()
         self.port = 0
         self._writers: list[asyncio.StreamWriter] = []
 
@@ -84,6 +88,20 @@ class FakePBX:
             return self._list(action_id, "CoreShowChannel", [])
         if action in ("QueuePause", "Originate"):
             return [{**ok, "Message": f"{action} accepted"}]
+        if action in self.denied:
+            return [{"Response": "Error", "ActionID": action_id, "Message": "Permission denied"}]
+        if action == "DBPut":
+            self.db.setdefault(packet.get("Family", ""), {})[packet.get("Key", "")] = packet.get("Val", "")
+            return [{**ok, "Message": "Updated database successfully"}]
+        if action == "DBDel":
+            family = self.db.get(packet.get("Family", ""), {})
+            if family.pop(packet.get("Key", ""), None) is None:
+                return [{"Response": "Error", "ActionID": action_id, "Message": "Database entry not found"}]
+            return [{**ok, "Message": "Key deleted successfully"}]
+        if action == "DBDelTree":
+            if not self.db.pop(packet.get("Family", ""), None):
+                return [{"Response": "Error", "ActionID": action_id, "Message": "Database entry not found"}]
+            return [{**ok, "Message": "Key tree deleted successfully"}]
         if action == "Logoff":
             return [{"Response": "Goodbye", "ActionID": action_id, "Message": "Thanks for all the fish."}]
         return [{"Response": "Error", "ActionID": action_id, "Message": "Invalid/unknown command"}]
