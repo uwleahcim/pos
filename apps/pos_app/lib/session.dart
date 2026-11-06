@@ -18,16 +18,20 @@ class Session extends ChangeNotifier {
   /// Returns null on success, or the message to show on the PIN pad.
   Future<String?> signInWithPin(String device, String pin) async {
     try {
-      final json = await api.signIn(device: device, pin: pin);
-      staff = Staff.fromJson(json);
-      prefs = DisplayPrefs.fromJson(json['preferences'] as Map<String, dynamic>?);
-      notifyListeners();
+      applySignIn(await api.signIn(device: device, pin: pin));
       return null;
     } on ApiException catch (err) {
       if (err.status == 401) return 'Wrong PIN';
       if (err.status == 423) return 'Too many tries. Wait a minute.';
       return err.message;
     }
+  }
+
+  /// The sign-in as the backend answered it, by PIN or by face: who, and their own display settings.
+  void applySignIn(Map<String, dynamic> json) {
+    staff = Staff.fromJson(json);
+    prefs = DisplayPrefs.fromJson(json['preferences'] as Map<String, dynamic>?);
+    notifyListeners();
   }
 
   /// Applies the new settings on this screen at once and sends them to the backend for every other

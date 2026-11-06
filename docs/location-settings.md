@@ -16,6 +16,9 @@ screen holds:
 - **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
+- **Sign in by face**: the location's switch (off to start), how the hub stands with its face models, and
+  the staff by name with each one's enrollment: Enroll (this screen's camera), Enroll again, the bin to
+  forget a face (see `face-signin.md`).
 
 **Save** sends the courses to the hub, which checks them (a name on every course, no name twice, at least
 one course while coursing is on) and keeps them. Every terminal reads the setting when it opens an order,
@@ -73,6 +76,8 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
 - `GET /settings/quotes` and `PUT /settings/quotes` as before.
 - `GET /settings/desk_phones` and `PUT /settings/desk_phones` (the manager Bearer token): `{"links":
   [{"extension": "200", "device": "tab1"}]}`, each extension once; details in `desk-phones.md`.
+- `GET /settings/faces` and `PUT /settings/faces` (the manager Bearer token): `{"enabled": false}`; the
+  enrollment calls are in `face-signin.md`.
 - A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
   carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
   with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the

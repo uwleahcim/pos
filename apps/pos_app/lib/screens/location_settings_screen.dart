@@ -1,23 +1,29 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
+import '../faces.dart';
 import '../takeout.dart';
+import 'face_enroll_dialog.dart';
 import 'quotes_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
-/// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times, and
-/// which screen each desk phone is linked to. The hub keeps them; a terminal reads them when it opens an
-/// order. Behind the manager PIN.
+/// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
+/// which screen each desk phone is linked to, and face sign-in with each staff member's enrollment. The hub
+/// keeps them; a terminal reads them when it opens an order. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
-  const LocationSettingsScreen({super.key, required this.api, required this.token, this.device});
+  const LocationSettingsScreen({super.key, required this.api, required this.token, this.device, this.camera});
 
   final PosApi api;
   final String token;
 
   /// This terminal's device name: first in the list of screens a desk phone can be linked to.
   final String? device;
+
+  /// This terminal's camera, which a face enrollment looks through; without one, enroll from another screen.
+  final EventCamera? camera;
 
   @override
   State<LocationSettingsScreen> createState() => _LocationSettingsScreenState();
@@ -73,6 +79,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   Map<String, dynamic>? _pbx; // how the hub stands with the PBX; null until it answers
   List<PbxExtension> _extensions = []; // the PBX's extensions, as the hub lists them
   List<String> _devices = []; // the screens the hub has heard from
+  FaceStatus? _faceStatus; // how the hub stands with face sign-in; null until it answers
+  bool _faceEnabled = false;
+  bool _faceKnown = false; // the hub answered about faces at all (an older hub does not)
+  List<StaffEntry> _staff = [];
+  String? _faceMessage;
+  bool _faceBusy = false;
 
   @override
   void initState() {
@@ -124,6 +136,96 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // an older hub: the list holds this device and Other
     }
+    await _loadFaces();
+  }
+
+  Future<void> _loadFaces() async {
+    try {
+      final status = await widget.api.faceStatus();
+      final enabled = await widget.api.faceSetting();
+      final staff = await widget.api.adminStaff(widget.token);
+      if (!mounted) return;
+      setState(() {
+        _faceStatus = status;
+        _faceEnabled = enabled;
+        _staff = staff;
+        _faceKnown = true;
+      });
+    } on ApiException {
+      // an older hub without face sign-in: the card says so
+    }
+  }
+
+  Future<void> _switchFaces(bool on) async {
+    setState(() {
+      _faceBusy = true;
+      _faceMessage = null;
+    });
+    try {
+      final saved = await widget.api.saveFaceSetting(widget.token, enabled: on);
+      final status = await widget.api.faceStatus();
+      if (!mounted) return;
+      setState(() {
+        _faceEnabled = saved;
+        _faceStatus = status;
+        _faceBusy = false;
+      });
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _faceBusy = false;
+        _faceMessage = err.detail?['message'] as String? ?? err.message;
+      });
+    }
+  }
+
+  Future<void> _enroll(StaffEntry staff) async {
+    final camera = widget.camera;
+    if (camera == null) return;
+    final views = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => FaceEnrollDialog(
+        api: widget.api,
+        token: widget.token,
+        staff: staff,
+        camera: camera,
+        device: widget.device ?? '',
+      ),
+    );
+    if (!mounted) return;
+    await _loadFaces();
+    if (!mounted || views == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(views > 0 ? '${staff.name}: $views views enrolled' : 'Nothing enrolled for ${staff.name}'),
+      ),
+    );
+  }
+
+  Future<void> _forget(StaffEntry staff) async {
+    setState(() => _faceMessage = null);
+    try {
+      await widget.api.forgetFace(widget.token, staff.staffId);
+      if (!mounted) return;
+      await _loadFaces();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${staff.name} signs in by PIN now')));
+    } on ApiException catch (err) {
+      if (mounted) setState(() => _faceMessage = err.detail?['message'] as String? ?? err.message);
+    }
+  }
+
+  /// One line under a staff member's name: their role and how their face stands.
+  String _staffLine(StaffEntry staff) {
+    final role = staff.role.isEmpty ? '' : '${staff.role[0].toUpperCase()}${staff.role.substring(1)} · ';
+    if (staff.enrolled) {
+      final at = staff.updatedAt;
+      final when = at == null ? '' : ' on ${at.month}/${at.day}';
+      return '${role}Enrolled, ${staff.samples} views$when';
+    }
+    if (staff.stale > 0) return '${role}Enrolled with an older model: enroll again';
+    return '${role}Not enrolled: signs in by PIN';
   }
 
   void _applyPhones(DeskPhoneLinks links) {
@@ -428,6 +530,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          _facesCard(context),
         ],
       );
     }
@@ -435,6 +539,80 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       appBar: AppBar(title: const Text('Location settings')),
       body: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
+      ),
+    );
+  }
+
+  /// Face sign-in: the location's switch, how the hub stands, and each staff member's enrollment.
+  Widget _facesCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final canEnroll = widget.camera != null && widget.camera is! NoCamera;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SwitchListTile(
+              key: const ValueKey('faces-enabled'),
+              value: _faceEnabled,
+              onChanged: _faceKnown && !_faceBusy ? _switchFaces : null,
+              secondary: const Icon(Icons.face_outlined),
+              title: const Text('Sign in by face'),
+              subtitle: Text(
+                !_faceKnown
+                    ? 'The hub has not answered about face sign-in (an older hub: update it)'
+                    : _faceStatus?.line ?? 'Loading…',
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Text(
+                'Enroll each person here: they look at this screen\'s camera and turn their head a little, and the hub '
+                'keeps five views as templates (numbers, never pictures). The sign-in screen then recognises them; '
+                'the PIN always works too. Get each person\'s consent first.'
+                '${canEnroll ? '' : ' This screen has no camera: enroll from one that has.'}',
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+            for (final staff in _staff)
+              ListTile(
+                key: ValueKey('staff:${staff.staffId}'),
+                dense: true,
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: staff.enrolled ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                  child: Text(staff.name.isEmpty ? '?' : staff.name[0].toUpperCase()),
+                ),
+                title: Text(staff.name),
+                subtitle: Text(_staffLine(staff)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton.icon(
+                      key: ValueKey('enroll:${staff.staffId}'),
+                      onPressed: canEnroll && (_faceStatus?.ready ?? false) ? () => _enroll(staff) : null,
+                      icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                      label: Text(staff.enrolled || staff.stale > 0 ? 'Enroll again' : 'Enroll'),
+                    ),
+                    if (staff.enrolled || staff.stale > 0)
+                      IconButton(
+                        key: ValueKey('forget:${staff.staffId}'),
+                        tooltip: 'Forget the face',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _forget(staff),
+                      ),
+                  ],
+                ),
+              ),
+            if (_faceMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                child: Text(_faceMessage!, style: TextStyle(color: scheme.error)),
+              ),
+          ],
+        ),
       ),
     );
   }

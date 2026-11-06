@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'cache.dart';
 import 'coursing.dart';
 import 'desk_phone.dart';
+import 'faces.dart';
 import 'floor.dart';
 import 'menu.dart';
 import 'pricing.dart';
@@ -514,6 +515,63 @@ class PosApi {
 
   /// Stores an event photo; sending the same photo twice is harmless.
   Future<Map<String, dynamic>> putPhoto(Map<String, dynamic> photo) => _post('/events/photos', photo);
+
+  // Face sign-in: frames off the camera go to the hub, which knows the faces. ---------------------------
+
+  /// Whether this location signs staff in by face, whether the hub has its models and how many are enrolled.
+  Future<FaceStatus> faceStatus() async => FaceStatus.fromJson(await _get('/faces/status'));
+
+  /// One frame off the sign-in screen's camera: whether a face is in it and, once two frames in a row agree,
+  /// who it is, in the shape a PIN sign-in answers.
+  Future<FaceFrame> faceFrame({required String device, required Uint8List jpeg}) async =>
+      FaceFrame.fromJson(await _post('/signin/face', {'device': device, 'jpeg_b64': base64Encode(jpeg)}));
+
+  /// Whether the location signs staff in by face (the manager's switch).
+  Future<bool> faceSetting() async => (await _get('/settings/faces'))['enabled'] as bool? ?? false;
+
+  /// A manager (token from [adminSession]) switches face sign-in on or off for every terminal.
+  Future<bool> saveFaceSetting(String token, {required bool enabled}) async =>
+      (await _withFailover(
+            (base) => _client.put(
+              Uri.parse('$base/settings/faces'),
+              headers: {'content-type': 'application/json', ..._bearer(token)},
+              body: jsonEncode({'enabled': enabled}),
+            ),
+          ))['enabled']
+          as bool? ??
+      false;
+
+  /// The staff by name, each with their face enrollment (manager token).
+  Future<List<StaffEntry>> adminStaff(String token) async => [
+    for (final entry in (await _get('/admin/staff', headers: _bearer(token)))['staff'] as List? ?? const [])
+      StaffEntry.fromJson(entry as Map<String, dynamic>),
+  ];
+
+  /// One view of a staff member for their enrollment (manager token); [replace] on the first view of a fresh
+  /// enrollment drops the views kept before.
+  Future<EnrollStep> enrollFace(
+    String token,
+    String staffId, {
+    required String device,
+    required Uint8List jpeg,
+    bool replace = false,
+  }) async => EnrollStep.fromJson(
+    await _post(
+      '/admin/staff/$staffId/face/samples',
+      {'device': device, 'jpeg_b64': base64Encode(jpeg), 'replace': replace},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 10),
+    ),
+  );
+
+  /// Forgets a staff member's face (manager token); they sign in by PIN until enrolled again.
+  Future<int> forgetFace(String token, String staffId) async =>
+      ((await _withFailover(
+                (base) => _client.delete(Uri.parse('$base/admin/staff/$staffId/face'), headers: _bearer(token)),
+              ))['removed']
+              as num?)
+          ?.toInt() ??
+      0;
 
   /// Saves what a staff member set for themselves (text size, contrast, language), for every device.
   Future<Map<String, dynamic>> putPreferences(String staffId, Map<String, dynamic> prefs) =>

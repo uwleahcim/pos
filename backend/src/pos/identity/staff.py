@@ -67,6 +67,13 @@ class Directory:
     def __len__(self) -> int:
         return len(self._staff)
 
+    def get(self, staff_id: str) -> Staff | None:
+        return self._staff.get(staff_id)
+
+    def all(self) -> list[Staff]:
+        """Every staff member, as listed: the back office shows them by name."""
+        return list(self._staff.values())
+
     def by_pin(self, pin: str, *, device: str) -> SignIn | None:
         """The staff member whose PIN this is, or None. Raises Locked after too many misses on `device`."""
         self._check_lock(device)
