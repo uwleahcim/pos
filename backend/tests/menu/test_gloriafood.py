@@ -82,7 +82,8 @@ def test_the_drinks_are_their_own_menu_and_the_soft_drinks_are_on_both():
     soda station, never to a wok."""
     defs, _ = load_restaurant_menu()
     engine = MenuEngine(defs)
-    menus = {m.menu: m for m in engine.menu_for("pos")}
+    tuesday_night = datetime(2026, 10, 27, 19, 0, tzinfo=BOSTON)  # Lunch closed; the clock would open it at lunch
+    menus = {m.menu: m for m in engine.menu_for("pos", tuesday_night)}
     assert [(m.name, m.priority) for m in menus.values()] == [("Food", 0), ("Drinks", -10)]
     food = [s.name for s in menus["dinner"].sections]
     drinks = [s.name for s in menus["drinks"].sections]
