@@ -178,6 +178,26 @@ def test_the_check_lists_a_slot_dish_with_its_price_and_its_choices_one_level_de
     ]
 
 
+def test_a_slot_s_price_on_the_sheet_is_what_the_slot_charges():
+    """A slot priced "linked" charges the dish's own price and one priced "free" nothing: the sheet says so."""
+    defs = build_example()
+    spring, egg = defs.options["side_slot:springroll"], defs.options["side_slot:eggroll"]
+    defs.options[spring.id] = replace(spring, price_mode="linked")
+    defs.options[egg.id] = replace(egg, price_mode="free", price=D("2.00"))
+    service = MenuService(defs)
+    side = next(g for g in service.item("C5", "dinner:C5")["groups"] if g["group_id"] == "side_slot")
+    prices = {o["option_id"]: o["price"] for o in side["options"]}
+    assert prices == {
+        "side_slot:eggroll": "0.00",
+        "side_slot:springroll": str(defs.variants["SPRINGROLL:regular"].base_price),
+    }
+    with_spring = service.priced(
+        {"variant_id": "C5:regular", "selections": [{"group_id": "side_slot", "option_id": "side_slot:springroll"}]}
+    )
+    plain = service.priced({"variant_id": "C5:regular"})
+    assert D(with_spring["unit_price"]) - D(plain["unit_price"]) == defs.variants["SPRINGROLL:regular"].base_price
+
+
 def test_a_dish_that_offers_itself_is_found_by_the_checks_and_stops_resolving():
     defs = build_example()
     defs.add(

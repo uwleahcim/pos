@@ -826,7 +826,7 @@ class _TicketPanelState extends State<_TicketPanel> {
     final below = <Widget>[
       // each choice on its own line, with what it changes when it changes anything
       for (final m in priced?.modifiers ?? const <CheckModifier>[])
-        _SubLine(m.label, amount: m.charged ? priceChange(m.amount) : null),
+        _SubLine(m.label, amount: m.charged ? priceChange(m.amount) : null, depth: m.depth),
       // then each comp or discount on the line (they come off after every choice), with what it took off
       for (final d in comps) _SubLine(compLabel(d), amount: inParens(d.amount)),
       if (words.isNotEmpty) _SubLine(words.join(' · ')),
@@ -1034,12 +1034,17 @@ class _Price extends StatelessWidget {
 }
 
 /// A line under a dish on the check: one of its choices and what it changes ("+0.50"), a comp or discount
-/// on it and what it took off ("(30.00)"), or its state ("not sent yet", a kitchen note).
+/// on it and what it took off ("(30.00)"), or its state ("not sent yet", a kitchen note). A choice on a
+/// choice that is a dish (the sauce on a roll of the maki combination) sits one step further in.
 class _SubLine extends StatelessWidget {
-  const _SubLine(this.label, {this.amount});
+  const _SubLine(this.label, {this.amount, this.depth = 0});
 
   final String label;
   final String? amount;
+  final int depth;
+
+  /// How far each level of choices moves in.
+  static const indent = 12.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1049,7 +1054,12 @@ class _SubLine extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(child: Text(label, style: style)),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(left: depth * indent),
+            child: Text(label, style: style),
+          ),
+        ),
         if (amount != null && amount.isNotEmpty)
           SizedBox(
             width: _amountWidth,

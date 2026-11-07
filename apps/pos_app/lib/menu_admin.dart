@@ -111,6 +111,21 @@ class MenuCatalog {
 
   List<Map<String, dynamic>> itemsIn(String category) => _sorted(all('item').where((i) => i['category'] == category));
 
+  /// A category with the categories above it, nearest first.
+  List<String> categoryChain(String categoryKey) {
+    final chain = <String>[];
+    String? key = categoryKey;
+    while (key != null && !chain.contains(key)) {
+      chain.add(key);
+      key = get('category', key)?['parent'] as String?;
+    }
+    return chain;
+  }
+
+  /// Every dish in a category or in the categories under it, in menu order (the backend's `items_in`).
+  List<Map<String, dynamic>> itemsUnder(String categoryKey) =>
+      _sorted(all('item').where((i) => categoryChain(i['category'] as String).contains(categoryKey)));
+
   List<Map<String, dynamic>> variantsOf(String item) => _sorted(all('variant').where((v) => v['item'] == item));
 
   List<Map<String, dynamic>> entriesOf(String item) => all('entry').where((e) => e['item'] == item).toList();

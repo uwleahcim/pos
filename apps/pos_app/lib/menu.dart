@@ -139,6 +139,8 @@ class OptionDetail {
     required this.price,
     required this.isDefault,
     required this.status,
+    this.linkedItem,
+    this.groups = const [],
   });
 
   factory OptionDetail.fromJson(Map<String, dynamic> json) => OptionDetail(
@@ -147,16 +149,27 @@ class OptionDetail {
     price: json['price'] as String? ?? '0.00',
     isDefault: json['is_default'] as bool? ?? false,
     status: json['status'] as String? ?? 'available',
+    linkedItem: json['linked_item'] as String?,
+    groups: (json['groups'] as List? ?? const []).map((g) => GroupDetail.fromJson(g as Map<String, dynamic>)).toList(),
   );
 
   final String optionId;
   final String name;
+
+  /// What choosing it adds to the dish: for a choice that is a dish, what the slot charges for it.
   final String price;
   final bool isDefault;
   final String status;
 
+  /// The dish this choice is (the soup with a lunch special, a roll of the maki combination), when it is one.
+  final String? linkedItem;
+
+  /// That dish's own choices, asked one level down once the option is chosen.
+  final List<GroupDetail> groups;
+
   bool get available => status == 'available';
   bool get free => double.tryParse(price) == 0;
+  bool get isDish => linkedItem != null;
 }
 
 class GroupDetail {
@@ -217,63 +230,142 @@ class ItemDetail {
 /// The one-tap instructions a choice can carry, as the backend spells them, with the word shown for each.
 const instructions = {'no': 'No', 'extra': 'Extra', 'side': 'On the side', 'light': 'Light'};
 
-/// What the customer chose for one line; the backend's `request` on `add_line`.
-class LineRequest {
-  LineRequest({
-    required this.variantId,
-    this.entryId,
-    Map<String, List<String>>? selections,
-    Map<String, String>? prefixes,
-    this.notes,
-  }) : selections = selections ?? {},
-       prefixes = prefixes ?? {};
+/// What was chosen on a dish: the options picked in each of its groups, the word on any of them, and, for a
+/// choice that is itself a dish (the soup with a lunch special, each roll of a maki combination), the choices
+/// made on that dish, one level down. A screen asks a dish's choices the same way at every level.
+class Choices {
+  Choices({Map<String, List<String>>? selections, Map<String, String>? prefixes, Map<String, Choices>? nested})
+    : selections = selections ?? {},
+      prefixes = prefixes ?? {},
+      nested = nested ?? {};
 
-  factory LineRequest.fromJson(Map<String, dynamic> json) {
-    final selections = <String, List<String>>{};
-    final prefixes = <String, String>{};
-    for (final s in json['selections'] as List? ?? const []) {
-      final m = s as Map<String, dynamic>;
-      selections.putIfAbsent(m['group_id'] as String, () => []).add(m['option_id'] as String);
-      if (m['prefix'] != null) prefixes[m['option_id'] as String] = m['prefix'] as String;
-    }
-    return LineRequest(
-      variantId: json['variant_id'] as String,
-      entryId: json['entry_id'] as String?,
-      selections: selections,
-      prefixes: prefixes,
-      notes: json['notes'] as String?,
-    );
-  }
-
-  LineRequest copy() => LineRequest(
-    variantId: variantId,
-    entryId: entryId,
-    selections: {
-      for (final e in selections.entries) e.key: [...e.value],
-    },
-    prefixes: {...prefixes},
-    notes: notes,
-  );
-
-  String variantId;
-  final String? entryId;
   final Map<String, List<String>> selections; // group id -> option ids
 
   /// An instruction on a chosen option (option id -> no | extra | side | light): "no peanuts" without an
   /// option of its own. The backend prints it in front of the kitchen label and makes a "no" free.
   final Map<String, String> prefixes;
+
+  /// The choices on the dish behind a chosen option, by option id; sent as the selection's `children`.
+  final Map<String, Choices> nested;
+
+  bool picked(String groupId, String optionId) => selections[groupId]?.contains(optionId) ?? false;
+
+  /// The choices on the dish behind [optionId], started empty when there are none yet.
+  Choices inside(String optionId) => nested.putIfAbsent(optionId, Choices.new);
+
+  /// The backend's `selections`: one entry per chosen option, with its word and the choices on its dish.
+  List<Map<String, dynamic>> selectionsJson() => [
+    for (final e in selections.entries)
+      for (final option in e.value)
+        {
+          'group_id': e.key,
+          'option_id': option,
+          if (prefixes[option] != null) 'prefix': prefixes[option],
+          if (nested[option] case final inside? when inside.selections.isNotEmpty) 'children': inside.selectionsJson(),
+        },
+  ];
+
+  /// Reads the backend's `selections` into this, children and all.
+  void readSelections(List<dynamic>? list) {
+    for (final s in list ?? const []) {
+      final m = s as Map<String, dynamic>;
+      final option = m['option_id'] as String;
+      selections.putIfAbsent(m['group_id'] as String, () => []).add(option);
+      if (m['prefix'] != null) prefixes[option] = m['prefix'] as String;
+      final children = m['children'] as List?;
+      if (children != null && children.isNotEmpty) inside(option).readSelections(children);
+    }
+  }
+
+  /// A copy deep enough to edit without touching this.
+  Choices copyChoices() => Choices(
+    selections: {
+      for (final e in selections.entries) e.key: [...e.value],
+    },
+    prefixes: {...prefixes},
+    nested: {for (final e in nested.entries) e.key: e.value.copyChoices()},
+  );
+}
+
+/// What the customer chose for one line; the backend's `request` on `add_line`.
+class LineRequest extends Choices {
+  LineRequest({required this.variantId, this.entryId, super.selections, super.prefixes, super.nested, this.notes});
+
+  factory LineRequest.fromJson(Map<String, dynamic> json) => LineRequest(
+    variantId: json['variant_id'] as String,
+    entryId: json['entry_id'] as String?,
+    notes: json['notes'] as String?,
+  )..readSelections(json['selections'] as List?);
+
+  /// The same dish with the same choices, from a copy of [choices] when given (the tray's picks).
+  factory LineRequest.withChoices(String variantId, String? entryId, Choices choices) {
+    final copy = choices.copyChoices();
+    return LineRequest(
+      variantId: variantId,
+      entryId: entryId,
+      selections: copy.selections,
+      prefixes: copy.prefixes,
+      nested: copy.nested,
+    );
+  }
+
+  LineRequest copy() => LineRequest.withChoices(variantId, entryId, this)..notes = notes;
+
+  String variantId;
+  final String? entryId;
   String? notes;
 
   Map<String, dynamic> toJson() => {
     'variant_id': variantId,
     'entry_id': ?entryId,
-    'selections': [
-      for (final e in selections.entries)
-        for (final option in e.value)
-          {'group_id': e.key, 'option_id': option, if (prefixes[option] != null) 'prefix': prefixes[option]},
-    ],
+    'selections': selectionsJson(),
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
   };
+}
+
+/// Puts the menu's defaults into [choices] for [groups]: what a dish comes with before anyone changes anything.
+/// A default that is a dish brings that dish's own defaults one level down, unless choices were made on it.
+void fillDefaults(List<GroupDetail> groups, Choices choices) {
+  for (final g in groups) {
+    final defaults = [
+      for (final o in g.options)
+        if (o.isDefault && o.available) o.optionId,
+    ];
+    if (defaults.isEmpty) continue;
+    choices.selections[g.groupId] = defaults;
+    for (final o in g.options) {
+      if (defaults.contains(o.optionId) && o.groups.isNotEmpty && !choices.nested.containsKey(o.optionId)) {
+        fillDefaults(o.groups, choices.inside(o.optionId));
+      }
+    }
+  }
+}
+
+/// The choices on a dish as the check lists them before the hub has priced the line: every choice that is not
+/// the menu's default or carries a word, with the price of one (a choice marked "no" is free, as the hub makes
+/// it). A choice that is a dish is followed by the changed choices on that dish one level deeper, and a dish
+/// the menu picked by default is listed when a choice on it changed, so the change reads under its dish.
+List<CheckModifier> pickedModifiers(List<GroupDetail> groups, Choices choices, {int depth = 0}) {
+  final rows = <CheckModifier>[];
+  for (final g in groups) {
+    for (final o in g.options) {
+      if (!choices.picked(g.groupId, o.optionId)) continue;
+      final word = choices.prefixes[o.optionId];
+      final inside = o.groups.isEmpty
+          ? const <CheckModifier>[]
+          : pickedModifiers(o.groups, choices.nested[o.optionId] ?? Choices(), depth: depth + 1);
+      if (word == null && o.isDefault && inside.isEmpty) continue;
+      rows.add(
+        CheckModifier(
+          word == null ? o.name : '${instructions[word]} ${o.name}',
+          price: o.free || word == 'no' ? '0.00' : o.price,
+          depth: depth,
+        ),
+      );
+      rows.addAll(inside);
+    }
+  }
+  return rows;
 }
 
 /// The backend's price for a configured line: what it costs and anything wrong with it.
@@ -302,12 +394,17 @@ class Priced {
 /// for the line's quantity. A choice that costs nothing ("No scallions", the rice a dish comes with) has no
 /// amount to show. An older hub sends the label alone.
 class CheckModifier {
-  const CheckModifier(this.label, {this.price = '0.00', this.amount = '0.00'});
+  const CheckModifier(this.label, {this.price = '0.00', this.amount = '0.00', this.depth = 0});
 
   factory CheckModifier.fromJson(Object? json) {
     if (json is! Map) return CheckModifier(json?.toString() ?? '');
     final price = json['price']?.toString() ?? '0.00';
-    return CheckModifier(json['label'] as String? ?? '', price: price, amount: json['amount']?.toString() ?? price);
+    return CheckModifier(
+      json['label'] as String? ?? '',
+      price: price,
+      amount: json['amount']?.toString() ?? price,
+      depth: json['depth'] as int? ?? 0,
+    );
   }
 
   final String label;
@@ -315,6 +412,10 @@ class CheckModifier {
   /// Of one; [amount] is for the line's quantity.
   final String price;
   final String amount;
+
+  /// 0 for a choice on the dish; 1 for a choice on a choice that is a dish (the sauce on a roll of the maki
+  /// combination), listed under it; and so on. The check indents each level.
+  final int depth;
 
   /// It costs something: the check shows its amount on its line.
   bool get charged => (double.tryParse(price) ?? 0) != 0;

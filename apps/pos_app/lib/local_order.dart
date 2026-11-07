@@ -225,21 +225,35 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
 }
 
 /// This screen's own price for a configured line, from the menu it has: the size's price plus every chosen
-/// extra that costs something (a choice marked "no" is free, as the backend makes it), with a problem for
-/// each required choice still missing. Used only while no backend answers (ADR 6); the backend prices the
-/// line for real once it is back.
+/// extra that costs something (a choice marked "no" is free, as the backend makes it), the choices on a
+/// chosen dish included, with a problem for each required choice still missing. Used only while no backend
+/// answers (ADR 6); the backend prices the line for real once it is back.
 Priced localPrice(String name, List<VariantOffer> variants, ItemDetail? detail, LineRequest request) {
   final variant = variants.where((v) => v.variantId == request.variantId).firstOrNull ?? variants.firstOrNull;
-  var unit = variant == null ? 0 : cents(variant.price);
   final problems = <String>[];
-  for (final g in detail?.groups ?? const <GroupDetail>[]) {
-    final picked = request.selections[g.groupId] ?? const <String>[];
-    if (g.required && picked.length < g.minSelect) problems.add('Choose ${g.name.toLowerCase()}');
+  final unit =
+      (variant == null ? 0 : cents(variant.price)) + choicesPrice(detail?.groups ?? const [], request, problems);
+  return Priced(name: name, unitPrice: money(unit), problems: problems, estimated: true);
+}
+
+/// What the choices add to one of a dish, in cents, down through the choices on any chosen dish; a problem
+/// goes on [problems] for each required group still short ("Choose sauce for Kappa Maki" one level down).
+int choicesPrice(List<GroupDetail> groups, Choices choices, List<String> problems, {String? on}) {
+  var total = 0;
+  for (final g in groups) {
+    final picked = choices.selections[g.groupId] ?? const <String>[];
+    if (g.required && picked.length < g.minSelect) {
+      problems.add(on == null ? 'Choose ${g.name.toLowerCase()}' : 'Choose ${g.name.toLowerCase()} for $on');
+    }
     for (final o in g.options) {
-      if (picked.contains(o.optionId) && !o.free && request.prefixes[o.optionId] != 'no') unit += cents(o.price);
+      if (!picked.contains(o.optionId)) continue;
+      if (!o.free && choices.prefixes[o.optionId] != 'no') total += cents(o.price);
+      if (o.groups.isNotEmpty) {
+        total += choicesPrice(o.groups, choices.nested[o.optionId] ?? Choices(), problems, on: o.name);
+      }
     }
   }
-  return Priced(name: name, unitPrice: money(unit), problems: problems, estimated: true);
+  return total;
 }
 
 /// Orders this device opened that no backend has heard of yet (their `create` is still queued): the list
@@ -300,7 +314,8 @@ String inParens(String amount) => '(${money(cents(amount).abs())})';
 
 /// A line's choices with what each adds for [qty] of the dish.
 List<CheckModifier> _forQty(List<CheckModifier> modifiers, int qty) => [
-  for (final m in modifiers) CheckModifier(m.label, price: m.price, amount: money(cents(m.price) * qty)),
+  for (final m in modifiers)
+    CheckModifier(m.label, price: m.price, amount: money(cents(m.price) * qty), depth: m.depth),
 ];
 
 /// "17.95" -> 1795.

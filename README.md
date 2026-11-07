@@ -10,6 +10,8 @@ merges after any disconnect.
 - Offline runbook (the cards the app shows from its status icon, to print for every station): `docs/offline-runbook.md`
 - Menus (Food, Drinks and Lunch as tabs on the order screen, what is on which, where a drink prints, moving a
   running hub's drinks to their menu): `docs/menus.md`
+- Choices that are dishes (the soup with a lunch special, the rolls of a maki combination; a group that offers a
+  whole category; a chosen dish's own choices asked under it; the check and the tickets): `docs/modifiers.md`
 - Discounts, comps and service charges (reasons, who approves, the rules file, the report): `docs/discounts.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check

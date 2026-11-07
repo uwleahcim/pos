@@ -1139,12 +1139,18 @@ class MenuEngine:
                 linked = defs.linked_item(o)
                 status = self.status_of(o.id, at)
                 nested: tuple[GroupDetail, ...] = ()
+                price = money(prices.get(o.code, o.price))
                 if o.linked_variant:
                     variant = defs.variants.get(o.linked_variant)
                     if variant is None or linked is None or not variant.active or not linked.active:
                         continue  # a dish off sale is not offered as a choice either
                     if status == "available":
                         status = self.status_of(variant.id, at)
+                    # what the slot charges (`_slot`): the dish's own price, nothing, or the option's
+                    if o.price_mode == "linked":
+                        price = money(variant.base_price)
+                    elif o.price_mode == "free":
+                        price = money(ZERO)
                     if depth < MAX_DEPTH:
                         nested = self._group_details(
                             linked,
@@ -1158,7 +1164,7 @@ class MenuEngine:
                     OptionDetail(
                         o.id,
                         loc.text(defs.option_names(o), locale),
-                        money(prices.get(o.code, o.price)),
+                        price,
                         o.price_mode,
                         (o.code == default) if default else o.is_default,
                         o.linked_variant,

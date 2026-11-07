@@ -523,4 +523,264 @@ void main() {
     expect(find.textContaining("Can't load the choices for Japanese whisky"), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  test("a choice that is a dish carries the dish's own groups, and the choices on it travel as children", () {
+    final c5 = ItemDetail.fromJson(fixture('item_c5'));
+    final entree = c5.groups.firstWhere((g) => g.groupId == 'entree_slot');
+    final gtc = entree.options.firstWhere((o) => o.optionId == 'entree_slot:gtc');
+    expect((gtc.isDish, gtc.linkedItem, gtc.isDefault), (true, 'GTC', true));
+    expect(gtc.groups.map((g) => g.groupId), ['spice', 'rice', 'addons']);
+    final side = c5.groups.firstWhere((g) => g.groupId == 'side_slot');
+    expect(side.options.first.isDish && side.options.first.groups.isEmpty, isTrue); // its choices are locked
+
+    // the dish's defaults, and the defaults of the dish it comes with, one level down
+    final request = LineRequest(variantId: 'C5:regular', entryId: 'dinner:C5');
+    fillDefaults(c5.groups, request);
+    expect(request.selections, {
+      'entree_slot': ['entree_slot:gtc'],
+      'side_slot': ['side_slot:eggroll'],
+      'rice_slot': ['rice_slot:pfr'],
+    });
+    expect(request.nested['entree_slot:gtc']!.selections, {
+      'spice': ['spice:medium'],
+      'rice': ['rice:white'],
+    });
+    expect(pickedModifiers(c5.groups, request), isEmpty); // nothing differs from the menu
+
+    // a change on the chosen dish goes as that selection's children, and comes back the same
+    final inside = request.inside('entree_slot:gtc');
+    inside.selections['spice'] = ['spice:extra'];
+    inside.selections['addons'] = ['addons:shrimp'];
+    inside.prefixes['addons:shrimp'] = 'extra';
+    expect(request.toJson()['selections'], [
+      {
+        'group_id': 'entree_slot',
+        'option_id': 'entree_slot:gtc',
+        'children': [
+          {'group_id': 'spice', 'option_id': 'spice:extra'},
+          {'group_id': 'rice', 'option_id': 'rice:white'},
+          {'group_id': 'addons', 'option_id': 'addons:shrimp', 'prefix': 'extra'},
+        ],
+      },
+      {'group_id': 'side_slot', 'option_id': 'side_slot:eggroll'},
+      {'group_id': 'rice_slot', 'option_id': 'rice_slot:pfr'},
+    ]);
+    final back = LineRequest.fromJson(request.toJson());
+    expect(back.nested['entree_slot:gtc']!.selections['addons'], ['addons:shrimp']);
+    expect(back.nested['entree_slot:gtc']!.prefixes, {'addons:shrimp': 'extra'});
+    final copy = back.copy();
+    copy.inside('entree_slot:gtc').selections['spice'] = ['spice:mild'];
+    expect(back.nested['entree_slot:gtc']!.selections['spice'], ['spice:extra']); // a copy, not a view
+    // the check lists the dish the menu chose, since a choice on it changed, then its changes one level in
+    expect(pickedModifiers(c5.groups, back).map((m) => (m.label, m.price, m.depth)), [
+      ("General Tso's Chicken", '0.00', 0),
+      ('Extra spicy', '0.00', 1),
+      ('Extra Add shrimp', '4.00', 1),
+    ]);
+    expect(CheckModifier.fromJson({'label': 'Extra spicy', 'price': '0.00', 'depth': 1}).depth, 1);
+    expect(CheckModifier.fromJson({'label': 'Brown rice', 'price': '1.00'}).depth, 0); // an older hub
+  });
+
+  testWidgets("the item sheet asks a chosen dish's own choices right under it and sends them as children", (
+    tester,
+  ) async {
+    final priced = <Map<String, dynamic>>[];
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/menu/items/C5':
+            return http.Response.bytes(utf8.encode(jsonEncode(fixture('item_c5'))), 200);
+          case '/menu/price':
+            priced.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(jsonEncode({'name': 'Combination Plate', 'unit_price': '19.50'}), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    final sections = (fixture('menu')['menus'] as List)[0]['sections'] as List;
+    final entryJson = [
+      for (final s in sections)
+        for (final e in s['entries'] as List)
+          if (e['item'] == 'C5') e,
+    ].single;
+    final entry = MenuEntry.fromJson(entryJson as Map<String, dynamic>);
+    ChosenLine? result;
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await showDialog<ChosenLine>(
+              context: context,
+              builder: (_) => ItemSheet(api: api, entry: entry),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    // the entree the plate comes with is chosen, and its own choices are asked in a block under it
+    final inside = find.byKey(const ValueKey('inside:entree_slot:gtc'));
+    expect(inside, findsOneWidget);
+    expect(find.descendant(of: inside, matching: find.text('Spice level')), findsOneWidget);
+    expect(find.descendant(of: inside, matching: find.text('Choice of rice (required)')), findsOneWidget);
+    expect(find.byKey(const ValueKey('inside:entree_slot:bb')), findsNothing);
+    expect(find.byKey(const ValueKey('inside:side_slot:eggroll')), findsNothing); // locked: nothing to ask
+    // the hub was asked to price the plate with the entree's own defaults as children
+    final first = (priced.last['selections'] as List).cast<Map<String, dynamic>>();
+    expect(first.firstWhere((s) => s['option_id'] == 'entree_slot:gtc')['children'], [
+      {'group_id': 'spice', 'option_id': 'spice:medium'},
+      {'group_id': 'rice', 'option_id': 'rice:white'},
+    ]);
+
+    // a change on the entree
+    await tester.tap(find.byKey(const ValueKey('choice:spice:extra@1')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('choice:addons:shrimp@1')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    final gtc = (priced.last['selections'] as List).firstWhere((s) => s['option_id'] == 'entree_slot:gtc');
+    expect(gtc['children'], [
+      {'group_id': 'spice', 'option_id': 'spice:extra'},
+      {'group_id': 'rice', 'option_id': 'rice:white'},
+      {'group_id': 'addons', 'option_id': 'addons:shrimp'},
+    ]);
+
+    // another entree: its own block opens with its defaults, the first one's closes
+    await tester.tap(find.text('Beef with Broccoli'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('inside:entree_slot:gtc')), findsNothing);
+    expect(find.byKey(const ValueKey('inside:entree_slot:bb')), findsOneWidget);
+    final bb = (priced.last['selections'] as List).firstWhere((s) => s['option_id'] == 'entree_slot:bb');
+    expect(bb['children'], [
+      {'group_id': 'spice', 'option_id': 'spice:medium'},
+      {'group_id': 'rice', 'option_id': 'rice:white'},
+    ]);
+    await tester.tap(find.byKey(const ValueKey('choice:rice:brown@1')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    final request = result!.request;
+    expect(request.selections['entree_slot'], ['entree_slot:bb']);
+    expect(request.nested['entree_slot:bb']!.selections['rice'], ['rice:brown']);
+    expect(result!.unitPrice, '19.50'); // the hub's price
+    // the check reads: the entree chosen instead of the default, then the rice changed on it, one step in
+    expect(result!.modifiers.map((m) => (m.label, m.price, m.depth)), [
+      ('Beef with Broccoli', '0.00', 0),
+      ('Brown rice', '1.00', 1),
+    ]);
+  });
+
+  testWidgets("the tray asks what a chosen dish's own defaults leave open, under the dish", (tester) async {
+    Map<String, dynamic> roll(String code, String name, {bool sauce = false}) => {
+      'option_id': 'roll:$code',
+      'name': name,
+      'price': '0.00',
+      'is_default': false,
+      'status': 'available',
+      'linked_item': code,
+      'groups': [
+        if (sauce)
+          {
+            'group_id': 'sauce',
+            'name': 'Sauce',
+            'min_select': 1,
+            'max_select': 1,
+            'options': [
+              {'option_id': 'sauce:soy', 'name': 'Soy', 'price': '0.00', 'status': 'available'},
+              {'option_id': 'sauce:spicy', 'name': 'Spicy mayo', 'price': '0.50', 'status': 'available'},
+            ],
+          },
+      ],
+    };
+    final maki = {
+      'item': 'C5',
+      'name': 'Combination Plate',
+      'variants': [
+        {'variant_id': 'C5:regular', 'name': 'Regular', 'price': '14.50', 'status': 'available'},
+      ],
+      'groups': [
+        {
+          'group_id': 'roll',
+          'name': 'Roll',
+          'min_select': 2,
+          'max_select': 2,
+          'options': [roll('K01', 'Kappa Maki', sauce: true), roll('K02', 'Tekka Maki')],
+        },
+      ],
+    };
+    final api = PosApi(
+      Settings(device: 't1', endpoints: ['http://hub:8000']),
+      client: MockClient((request) async {
+        switch (request.url.path) {
+          case '/menu':
+            return http.Response.bytes(utf8.encode(jsonEncode(fixture('menu'))), 200);
+          case '/menu/items/C5':
+            return http.Response.bytes(utf8.encode(jsonEncode(maki)), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    final chosen = <ChosenLine>[];
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: chosen.add),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'C5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Combination Plate'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('required-selections')), findsOneWidget);
+    expect(find.text('Roll (0/2)'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('req-option:roll:K01/sauce:sauce:soy')), findsNothing);
+
+    // the first roll chosen has a sauce to pick: asked right after the rolls, named for the roll
+    await tester.tap(find.text('Kappa Maki'));
+    await tester.pumpAndSettle();
+    expect(chosen, isEmpty);
+    expect(find.text('Roll (1/2)'), findsNWidgets(2));
+    expect(find.text('Kappa Maki · Sauce'), findsNWidgets(2));
+    await tester.tap(find.text('Tekka Maki'));
+    await tester.pumpAndSettle();
+    expect(chosen, isEmpty); // two rolls, but the sauce is still open
+    expect(find.text('Roll (2/2)'), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey('req-option:roll:K01/sauce:sauce:spicy')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('required-selections')), findsNothing);
+    final line = chosen.single;
+    expect(line.request.selections['roll'], ['roll:K01', 'roll:K02']);
+    expect(line.request.toJson()['selections'], [
+      {
+        'group_id': 'roll',
+        'option_id': 'roll:K01',
+        'children': [
+          {'group_id': 'sauce', 'option_id': 'sauce:spicy'},
+        ],
+      },
+      {'group_id': 'roll', 'option_id': 'roll:K02'},
+    ]);
+    expect(line.unitPrice, '15.00'); // 14.50 + the sauce
+    expect(line.modifiers.map((m) => (m.label, m.price, m.depth)), [
+      ('Kappa Maki', '0.00', 0),
+      ('Spicy mayo', '0.50', 1),
+      ('Tekka Maki', '0.00', 0),
+    ]);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
