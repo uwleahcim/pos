@@ -178,6 +178,43 @@ def test_the_check_lists_a_slot_dish_with_its_price_and_its_choices_one_level_de
     ]
 
 
+def test_a_note_on_a_chosen_dish_travels_with_it_to_the_kitchen_and_the_check():
+    """ "Extra hot" on the soup of a lunch special: the wok's line names it with the soup, the soup station prints
+    it under its own line, and the check reads it under the soup, one level in, like a choice on it."""
+    defs, _ = load_restaurant_menu()
+    engine = MenuEngine(defs)
+    soup = Selection("soup_929530", "soup_929530:4904287", notes="extra hot")
+    line = engine.resolve(LineRequest("L01:regular", 1, "lunch:L01", (soup,)))
+    assert line.ok, list(line.problems) + [p for c in line.children for p in c.problems]
+    assert line.children[0].notes == "extra hot"
+    assert [(k.station, k.text, k.header, k.note) for k in line.kitchen_lines] == [
+        ("wok1", "1 Sweet & Sour Chicken · White Rice · Miso Soup (extra hot)", None, None),
+        ("soup", "1 Miso Soup", "L01 Sweet & Sour Chicken", "extra hot"),
+    ]
+    priced = MenuService(defs).priced(
+        {
+            "variant_id": "L01:regular",
+            "entry_id": "lunch:L01",
+            "selections": [{"group_id": "soup_929530", "option_id": "soup_929530:4904287", "notes": "extra hot"}],
+        }
+    )
+    assert priced["problems"] == []
+    rows = [(m["label"], m["price"], m["depth"], m.get("note", False)) for m in priced["modifiers"]]
+    assert rows[1:] == [("Miso Soup", "0.00", 0, False), ("extra hot", "0.00", 1, True)]
+    assert [(k["station"], k["note"]) for k in priced["kitchen"]] == [("wok1", None), ("soup", "extra hot")]
+    # a blank note is no note
+    blank = Selection("soup_929530", "soup_929530:4904287", notes="  ")
+    assert (
+        MenuService(defs).priced(
+            {
+                "variant_id": "L01:regular",
+                "selections": [{"group_id": blank.group_id, "option_id": blank.option_id, "notes": blank.notes}],
+            }
+        )["kitchen"][1]["note"]
+        is None
+    )
+
+
 def test_a_slot_s_price_on_the_sheet_is_what_the_slot_charges():
     """A slot priced "linked" charges the dish's own price and one priced "free" nothing: the sheet says so."""
     defs = build_example()

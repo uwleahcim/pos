@@ -45,6 +45,7 @@ def selection_from(data: Mapping[str, Any]) -> Selection:
         children=tuple(selection_from(c) for c in data.get("children", ())),
         components=tuple(component_from(c) for c in data.get("components", ())),
         prefix=str(data["prefix"]) if data.get("prefix") else None,
+        notes=str(data["notes"]).strip() or None if data.get("notes") else None,
     )
 
 
@@ -320,6 +321,22 @@ class MenuService:
             )
             if child is not None:
                 rows.extend(self._check_rows(child, depth + 1))
+                if child.notes:
+                    # the kitchen note on that dish, read under it like one of its choices
+                    rows.append(
+                        {
+                            "group_id": m.group_id,
+                            "option_id": m.option_id,
+                            "qty": 1,
+                            "label": child.notes,
+                            "kitchen_label": child.notes,
+                            "prefix": None,
+                            "price": "0.00",
+                            "defaulted": False,
+                            "depth": depth + 1,
+                            "note": True,
+                        }
+                    )
         return rows
 
     def priced(self, request: Mapping[str, Any], at: datetime | None = None) -> dict[str, Any]:
@@ -349,6 +366,7 @@ class MenuService:
                     "label": k.text.split(" ", 1)[-1].split(" · ")[0],  # without the count and modifiers
                     "labels": list(k.labels),
                     "header": k.header,
+                    "note": k.note,
                 }
                 for k in line.kitchen_lines
             ],

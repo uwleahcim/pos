@@ -61,6 +61,44 @@ def test_fire_makes_a_ticket_of_the_active_lines():
     assert ticket_for_fire(state, op("g", "fire", 6, course="drinks"), station="Bar", ticket_no=8) is None
 
 
+def test_a_note_on_a_chosen_dish_prints_under_that_dish_s_line_with_the_order_line_s_note():
+    """The soup station gets "extra hot" under the soup, and the order line's own note with it; the wok's
+    line, where the soup is only a word, gets the order line's note alone."""
+    soup = {
+        "station": "soup",
+        "qty": 1,
+        "label": "Miso Soup",
+        "labels": [],
+        "header": "L01 Sweet & Sour Chicken",
+        "note": "extra hot",
+    }
+    wok = {"station": "wok1", "qty": 1, "label": "Sweet & Sour Chicken", "labels": ["Miso Soup (extra hot)"]}
+    state = replay(
+        [
+            op("a", "create", 0, table=3, server="Amy"),
+            op("b", "add_line", 1, line_id="L1", item="Sweet & Sour Chicken", qty=1, priced={"kitchen": [wok, soup]}),
+            op(
+                "c",
+                "add_line",
+                2,
+                line_id="L2",
+                item="Sweet & Sour Chicken",
+                qty=1,
+                priced={"kitchen": [wok, soup]},
+                note="allergy: peanut",
+            ),
+        ]
+    )
+    ticket = ticket_for_fire(state, op("f", "fire", 5, course="*"), station="Kitchen", ticket_no=1)
+    assert ticket is not None
+    assert [(line.label, line.header, line.note) for line in ticket.lines] == [
+        ("Sweet & Sour Chicken", None, ""),
+        ("Miso Soup", "L01 Sweet & Sour Chicken", "extra hot"),
+        ("Sweet & Sour Chicken", None, "allergy: peanut"),
+        ("Miso Soup", "L01 Sweet & Sour Chicken", "extra hot · allergy: peanut"),
+    ]
+
+
 def wait_for(predicate, seconds: float = 3.0) -> None:
     deadline = time.monotonic() + seconds
     while not predicate():
