@@ -151,7 +151,8 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
                     qty=line.qty * int(k.get("qty", 1)),
                     label=str(k.get("label") or line.item),
                     modifiers=tuple(k.get("labels", ())),
-                    note=line.note,
+                    # the dish's own note (a slot dish's, from its choice) and the order line's, under every line
+                    note=" · ".join(n for n in (k.get("note"), line.note) if n),
                     seat=line.seat,
                     void=void,
                     changed=not void and line.modified_after_fire,

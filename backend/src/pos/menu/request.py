@@ -23,6 +23,7 @@ class Selection:
     children: tuple[Selection, ...] = ()  # nested groups, or a slot's linked item's groups
     components: tuple[ComponentRequest, ...] = ()  # a slot's linked item's nested components
     prefix: str | None = None  # a one-tap instruction on the option: no | extra | side | light
+    notes: str | None = None  # a kitchen note on the dish behind a slot option ("no sesame" on a roll)
 
 
 @dataclass(frozen=True)

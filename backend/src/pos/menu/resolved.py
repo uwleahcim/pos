@@ -48,6 +48,7 @@ class KitchenLine:
     header: str | None = None  # the combo's number and name for child lines
     origin: str = "line"  # line | slot | component | modifier
     allergy_note: str | None = None
+    note: str | None = None  # the kitchen note on this dish itself (a slot dish's, from its selection)
 
 
 @dataclass(frozen=True)

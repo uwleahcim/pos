@@ -234,10 +234,14 @@ const instructions = {'no': 'No', 'extra': 'Extra', 'side': 'On the side', 'ligh
 /// choice that is itself a dish (the soup with a lunch special, each roll of a maki combination), the choices
 /// made on that dish, one level down. A screen asks a dish's choices the same way at every level.
 class Choices {
-  Choices({Map<String, List<String>>? selections, Map<String, String>? prefixes, Map<String, Choices>? nested})
-    : selections = selections ?? {},
-      prefixes = prefixes ?? {},
-      nested = nested ?? {};
+  Choices({
+    Map<String, List<String>>? selections,
+    Map<String, String>? prefixes,
+    Map<String, Choices>? nested,
+    this.notes,
+  }) : selections = selections ?? {},
+       prefixes = prefixes ?? {},
+       nested = nested ?? {};
 
   final Map<String, List<String>> selections; // group id -> option ids
 
@@ -248,7 +252,27 @@ class Choices {
   /// The choices on the dish behind a chosen option, by option id; sent as the selection's `children`.
   final Map<String, Choices> nested;
 
+  /// A note to the kitchen on the dish these choices are on: the line's `notes` on the order line, a
+  /// selection's `notes` on a dish chosen as a choice ("no sesame" on a roll of the maki combination). The
+  /// kitchen prints it with that dish and the check shows it under it.
+  String? notes;
+
   bool picked(String groupId, String optionId) => selections[groupId]?.contains(optionId) ?? false;
+
+  /// Puts [optionId] on the line in [group] as a tap does: a single-pick group takes it alone, a multi-pick
+  /// group adds it while there is room. A word on a choice that leaves the line goes with it.
+  void take(GroupDetail group, String optionId) {
+    final current = selections[group.groupId] ?? const <String>[];
+    if (group.single) {
+      selections[group.groupId] = [optionId];
+    } else if (!current.contains(optionId) && (group.maxSelect == null || current.length < group.maxSelect!)) {
+      selections[group.groupId] = [...current, optionId];
+    }
+    final kept = selections[group.groupId] ?? const <String>[];
+    for (final o in group.options) {
+      if (!kept.contains(o.optionId)) prefixes.remove(o.optionId);
+    }
+  }
 
   /// The choices on the dish behind [optionId], started empty when there are none yet.
   Choices inside(String optionId) => nested.putIfAbsent(optionId, Choices.new);
@@ -262,6 +286,7 @@ class Choices {
           'option_id': option,
           if (prefixes[option] != null) 'prefix': prefixes[option],
           if (nested[option] case final inside? when inside.selections.isNotEmpty) 'children': inside.selectionsJson(),
+          if (nested[option]?.notes case final notes? when notes.isNotEmpty) 'notes': notes,
         },
   ];
 
@@ -274,6 +299,7 @@ class Choices {
       if (m['prefix'] != null) prefixes[option] = m['prefix'] as String;
       final children = m['children'] as List?;
       if (children != null && children.isNotEmpty) inside(option).readSelections(children);
+      if (m['notes'] case final String notes when notes.isNotEmpty) inside(option).notes = notes;
     }
   }
 
@@ -284,12 +310,13 @@ class Choices {
     },
     prefixes: {...prefixes},
     nested: {for (final e in nested.entries) e.key: e.value.copyChoices()},
+    notes: notes,
   );
 }
 
 /// What the customer chose for one line; the backend's `request` on `add_line`.
 class LineRequest extends Choices {
-  LineRequest({required this.variantId, this.entryId, super.selections, super.prefixes, super.nested, this.notes});
+  LineRequest({required this.variantId, this.entryId, super.selections, super.prefixes, super.nested, super.notes});
 
   factory LineRequest.fromJson(Map<String, dynamic> json) => LineRequest(
     variantId: json['variant_id'] as String,
@@ -306,14 +333,14 @@ class LineRequest extends Choices {
       selections: copy.selections,
       prefixes: copy.prefixes,
       nested: copy.nested,
+      notes: copy.notes,
     );
   }
 
-  LineRequest copy() => LineRequest.withChoices(variantId, entryId, this)..notes = notes;
+  LineRequest copy() => LineRequest.withChoices(variantId, entryId, this);
 
   String variantId;
   final String? entryId;
-  String? notes;
 
   Map<String, dynamic> toJson() => {
     'variant_id': variantId,
@@ -321,6 +348,34 @@ class LineRequest extends Choices {
     'selections': selectionsJson(),
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
   };
+}
+
+/// A fresh [Choices] holding the menu's defaults for [groups].
+Choices defaultChoices(List<GroupDetail> groups) {
+  final choices = Choices();
+  fillDefaults(groups, choices);
+  return choices;
+}
+
+/// The required groups on a dish chosen as a choice that the menu's defaults do not answer: what choosing the
+/// dish still has to ask. A dish whose defaults answer everything is simply chosen, as its tile would be, and
+/// everything else on it waits behind a hold.
+List<GroupDetail> openGroups(OptionDetail option) => [
+  for (final g in option.groups)
+    if (g.required && g.options.where((o) => o.isDefault && o.available).length < g.minSelect) g,
+];
+
+/// Whether every required group in [groups] has its picks, down through the dishes chosen as choices.
+bool choicesComplete(List<GroupDetail> groups, Choices choices) {
+  for (final g in groups) {
+    final picked = choices.selections[g.groupId] ?? const <String>[];
+    if (picked.length < g.minSelect) return false;
+    for (final o in g.options) {
+      if (o.groups.isEmpty || !picked.contains(o.optionId)) continue;
+      if (!choicesComplete(o.groups, choices.nested[o.optionId] ?? defaultChoices(o.groups))) return false;
+    }
+  }
+  return true;
 }
 
 /// Puts the menu's defaults into [choices] for [groups]: what a dish comes with before anyone changes anything.
@@ -343,17 +398,20 @@ void fillDefaults(List<GroupDetail> groups, Choices choices) {
 
 /// The choices on a dish as the check lists them before the hub has priced the line: every choice that is not
 /// the menu's default or carries a word, with the price of one (a choice marked "no" is free, as the hub makes
-/// it). A choice that is a dish is followed by the changed choices on that dish one level deeper, and a dish
-/// the menu picked by default is listed when a choice on it changed, so the change reads under its dish.
+/// it). A choice that is a dish is followed by the changed choices on that dish and its note to the kitchen
+/// one level deeper, and a dish the menu picked by default is listed when a choice on it changed, so the
+/// change reads under its dish.
 List<CheckModifier> pickedModifiers(List<GroupDetail> groups, Choices choices, {int depth = 0}) {
   final rows = <CheckModifier>[];
   for (final g in groups) {
     for (final o in g.options) {
       if (!choices.picked(g.groupId, o.optionId)) continue;
       final word = choices.prefixes[o.optionId];
-      final inside = o.groups.isEmpty
-          ? const <CheckModifier>[]
-          : pickedModifiers(o.groups, choices.nested[o.optionId] ?? Choices(), depth: depth + 1);
+      final dish = choices.nested[o.optionId];
+      final inside = [
+        if (o.groups.isNotEmpty) ...pickedModifiers(o.groups, dish ?? Choices(), depth: depth + 1),
+        if (dish?.notes case final String notes when notes.isNotEmpty) CheckModifier(notes, depth: depth + 1),
+      ];
       if (word == null && o.isDefault && inside.isEmpty) continue;
       rows.add(
         CheckModifier(

@@ -398,7 +398,7 @@ class MenuEngine:
         usage, own_cost = self._explode(ctx.working, qty, ctx.problems)
         children = tuple(ctx.children)
         allergens = self._allergens({u.ingredient for u in usage}, ctx.stations, item, variant, children)
-        kitchen = self._kitchen_lines(ctx, item, variant, qty, modifiers, children, origin, header, kitchen_name)
+        kitchen = self._kitchen_lines(ctx, item, variant, qty, modifiers, children, origin, header, kitchen_name, notes)
         if origin == "slot" and fold_into:
             # the slot's label on the parent's line carries this dish and its choices (`_slot`)
             kitchen = tuple(
@@ -643,7 +643,7 @@ class MenuEngine:
             qty=sq,
             selections=sel.children,
             components=sel.components,
-            notes=None,
+            notes=sel.notes,
             at=ctx.at,
             locale=ctx.locale,
             origin="slot",
@@ -660,6 +660,8 @@ class MenuEngine:
         if not label:
             label = self.defs.localizer.kitchen(child.names) or self.defs.localizer.text(child.names, "en")
         inside = [m.kitchen_label for m in flatten_modifiers(child.modifiers) if m.kitchen_label]
+        if child.notes:
+            inside.append(child.notes)  # the note on the dish reads with it, on whichever line names it
         if inside:
             label = f"{label} ({' · '.join(inside)})"
         return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None)
@@ -878,6 +880,7 @@ class MenuEngine:
         origin: str,
         header: str | None,
         kitchen_name: str,
+        notes: str | None = None,
     ) -> tuple[KitchenLine, ...]:
         loc = self.defs.localizer
         lines: list[KitchenLine] = []
@@ -890,7 +893,9 @@ class MenuEngine:
                 text += f" ({loc.kitchen(variant.names)})"
             if labels:
                 text += " · " + " · ".join(labels)
-            lines.append(KitchenLine(station, qty, text, labels, header if origin != "line" else None, origin))
+            lines.append(
+                KitchenLine(station, qty, text, labels, header if origin != "line" else None, origin, note=notes)
+            )
         for mod in flatten_modifiers(modifiers):
             if mod.station and mod.station != station:
                 lines.append(

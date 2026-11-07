@@ -23,16 +23,20 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
 
 ## What the customer and the kitchen see
 
-- **Ordering.** A choice that is a dish is a chip or a tray button like any other. Once it is chosen, the
-  dish's own choices are asked right under it: the sheet opens a block titled with the dish ("Kappa Maki")
-  and its groups one step in; the tray asks what the dish's defaults leave open, named for the dish
-  ("Kappa Maki · Sauce"), and only lets the line go on the check when every question down the levels is
-  answered. The dish comes with its own defaults filled in. Nesting goes as deep as the menu does (the hub
-  stops at eight levels, and refuses a menu where a dish offers itself).
+- **Ordering.** A choice that is a dish behaves like the dish's own tile. A tap chooses it as it comes: its
+  defaults are filled in, and only what they leave open is asked right under it, so a roll with a sauce to
+  pick opens that one question under the roll (a block titled with the dish in the sheet, a tray button
+  named "Kappa Maki · Sauce" in the tray), and a roll that needs nothing is simply chosen. A hold on the
+  chip or the tray button opens the dish's own sheet: every choice on it, as its tile would show them, and a
+  note to the kitchen ("no sesame"), even when the dish has no choices at all; Done chooses the dish as made
+  there, and the chip shows a tune mark once the dish differs from how it comes. The line goes on the check
+  only when every question down the levels is answered. Nesting goes as deep as the menu does (the hub stops
+  at eight levels, and refuses a menu where a dish offers itself).
 - **The check.** The dish line is the full price, choices included. Each choice is its own line under the
   dish with what it changes ("+1.00"); a choice that is a dish shows what the slot charges for it; the
-  choices on that dish follow one step further in. A default choice is not listed, unless one of its own
-  choices changed: then it is listed above the change, so "Spicy mayo" reads under the roll it is on.
+  choices on that dish follow one step further in, and so does a note made on it ("no sesame"). A default
+  choice is not listed, unless one of its own choices changed: then it is listed above the change, so
+  "Spicy mayo" reads under the roll it is on.
 - **Prices.** A slot charges by its price mode: the option's own price (`delta`, the usual: the soup adds
   nothing, a roll adds nothing), the dish's menu price (`linked`), or nothing (`free`). The choices made on
   the dish add what they add. The app's offline estimate follows the same rules.
@@ -41,7 +45,9 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
   "Maki Combination · Kappa Maki · Kanikyu · Tekka Maki". A dish cooked elsewhere prints its own line at its
   own station with a header naming the dish it belongs to: the soup station gets "1 Miso Soup" with
   "with L01 Sweet & Sour Chicken" under it, while the wok line reads "Sweet & Sour Chicken · White Rice ·
-  Miso Soup". A void prints inverse at both.
+  Miso Soup". A note made on the dish travels with it: the wok line reads "Miso Soup (extra hot)" and the
+  soup station prints "** extra hot **" under its own line, together with the order line's note when there
+  is one. A void prints inverse at both.
 
 ## In the menu editor
 

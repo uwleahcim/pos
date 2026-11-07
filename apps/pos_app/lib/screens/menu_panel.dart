@@ -323,19 +323,32 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     final pending = _pending;
     if (pending == null || !variant.available) return;
     pending.selectedVariantId = variant.variantId;
-    if (pending.isComplete) {
-      final chosen = pending.toChosenLine();
-      _closePending();
-      _choose(chosen);
-    } else {
-      setState(() {});
-    }
+    _settlePending(pending);
   }
 
   void _togglePendingOption(_Ask ask, OptionDetail option) {
     final pending = _pending;
     if (pending == null || !option.available) return;
     pending.toggle(ask, option);
+    _settlePending(pending);
+  }
+
+  /// A hold on a choice that is a dish: that dish's own sheet, every choice on it and a note to the kitchen,
+  /// as a hold on its menu tile would open it. Done chooses the dish with what was picked there.
+  Future<void> _longPressPendingOption(_Ask ask, OptionDetail option) async {
+    final pending = _pending;
+    if (pending == null || !option.available || !option.isDish) return;
+    final inside = await showDialog<Choices>(
+      context: context,
+      builder: (_) => DishChoicesSheet(option: option, initial: ask.choices.nested[option.optionId]),
+    );
+    if (inside == null || !mounted || _pending != pending) return;
+    pending.answered(ask, option, inside);
+    _settlePending(pending);
+  }
+
+  /// The tray closes and the dish goes on the order once nothing is left to ask; otherwise it shows the rest.
+  void _settlePending(_PendingItemSelection pending) {
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
@@ -772,6 +785,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                       tileHeight: tileHeight,
                       onSelectVariant: _selectPendingVariant,
                       onToggleOption: _togglePendingOption,
+                      onLongPressOption: _longPressPendingOption,
                       onClose: _closePending,
                     ),
                   ),
@@ -1112,6 +1126,21 @@ class _PendingItemSelection {
     } else if (group.maxSelect == null || current.length < group.maxSelect!) {
       choices.selections[group.groupId] = [...current, option.optionId];
     }
+    _followPicks(ask, group);
+  }
+
+  /// The dish's own sheet answered for a choice that is a dish: its choices are taken as they are and the
+  /// dish is chosen, so the tray asks about it only what the sheet left open, which is nothing.
+  void answered(_Ask ask, OptionDetail option, Choices inside) {
+    ask.choices.nested[option.optionId] = inside;
+    ask.choices.take(ask.group, option.optionId);
+    _nestedAsks.remove('${ask.path}${option.optionId}'); // asked again from what the sheet chose
+    _followPicks(ask, ask.group);
+  }
+
+  /// After a pick in [group]: a dish now chosen starts asking its open questions, one taken off stops.
+  void _followPicks(_Ask ask, GroupDetail group) {
+    final choices = ask.choices;
     for (final o in group.options) {
       if (o.groups.isEmpty) continue;
       final key = '${ask.path}${o.optionId}';
@@ -1170,6 +1199,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
     required this.tileHeight,
     required this.onSelectVariant,
     required this.onToggleOption,
+    required this.onLongPressOption,
     required this.onClose,
   });
 
@@ -1178,6 +1208,9 @@ class _RequiredSelectionsSection extends StatelessWidget {
   final double tileHeight;
   final ValueChanged<VariantOffer> onSelectVariant;
   final void Function(_Ask ask, OptionDetail option) onToggleOption;
+
+  /// A hold on a choice that is a dish: the dish's own sheet.
+  final void Function(_Ask ask, OptionDetail option) onLongPressOption;
   final VoidCallback onClose;
 
   @override
@@ -1223,7 +1256,9 @@ class _RequiredSelectionsSection extends StatelessWidget {
                   priceLabel: o.free ? null : '+${o.price}',
                   available: o.available,
                   selected: ask.choices.picked(ask.group.groupId, o.optionId),
+                  dish: o.isDish,
                   onTap: () => onToggleOption(ask, o),
+                  onLongPress: o.isDish ? () => onLongPressOption(ask, o) : null,
                 ),
           ],
         ),
@@ -1240,7 +1275,9 @@ class _ModifierButton extends StatelessWidget {
     this.priceLabel,
     required this.available,
     required this.selected,
+    this.dish = false,
     required this.onTap,
+    this.onLongPress,
   });
 
   final String groupLabel;
@@ -1248,7 +1285,11 @@ class _ModifierButton extends StatelessWidget {
   final String? priceLabel;
   final bool available;
   final bool selected;
+
+  /// The choice is a dish of the menu: marked, since a hold opens it.
+  final bool dish;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1271,6 +1312,7 @@ class _ModifierButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: available ? onTap : null,
+          onLongPress: available ? onLongPress : null,
           child: Padding(
             padding: const EdgeInsets.all(9),
             child: Column(
@@ -1309,18 +1351,34 @@ class _ModifierButton extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Expanded(
-                  child: Text(
-                    name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      decoration: available ? null : TextDecoration.lineThrough,
-                      color: !available
-                          ? scheme.onSurfaceVariant
-                          : (selected ? scheme.onPrimaryContainer : scheme.onSurface),
-                      fontWeight: selected ? FontWeight.w700 : null,
-                      height: 1.15,
-                    ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (dish)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4, top: 1),
+                          child: Icon(
+                            Icons.restaurant_menu,
+                            size: 14,
+                            color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      Expanded(
+                        child: Text(
+                          name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            decoration: available ? null : TextDecoration.lineThrough,
+                            color: !available
+                                ? scheme.onSurfaceVariant
+                                : (selected ? scheme.onPrimaryContainer : scheme.onSurface),
+                            fontWeight: selected ? FontWeight.w700 : null,
+                            height: 1.15,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1493,7 +1551,6 @@ class _ItemSheetState extends State<ItemSheet> {
   late final _note = TextEditingController(text: widget.initial?.note ?? '');
   Timer? _debounce;
   String? _error;
-  String? _armed; // No, Extra, On the side or Light, waiting for the choice it is about
 
   @override
   void initState() {
@@ -1561,139 +1618,10 @@ class _ItemSheetState extends State<ItemSheet> {
     }
   }
 
-  /// A tap on a choice, on the dish or on a chosen dish one level down ([choices] is that level's).
-  void _toggle(Choices choices, GroupDetail group, OptionDetail option) {
-    setState(() {
-      final current = choices.selections[group.groupId] ?? [];
-      final chosen = current.contains(option.optionId);
-      final armed = _armed;
-      _armed = null;
-      if (armed != null) {
-        // "No peanuts": the word goes on this choice, which has to be on the line for it to mean anything.
-        // The same word again takes it off and leaves the plain choice.
-        final full = !chosen && !group.single && group.maxSelect != null && current.length >= group.maxSelect!;
-        if (!full) {
-          if (choices.prefixes[option.optionId] == armed) {
-            choices.prefixes.remove(option.optionId);
-          } else {
-            choices.prefixes[option.optionId] = armed;
-          }
-          if (!chosen) {
-            choices.selections[group.groupId] = group.single ? [option.optionId] : [...current, option.optionId];
-          }
-        }
-      } else if (group.single) {
-        choices.selections[group.groupId] = chosen && !group.required ? [] : [option.optionId];
-      } else if (chosen) {
-        choices.selections[group.groupId] = [...current]..remove(option.optionId);
-      } else if (group.maxSelect == null || current.length < group.maxSelect!) {
-        choices.selections[group.groupId] = [...current, option.optionId];
-      }
-      // a word only means something on a choice that is on the line
-      final kept = choices.selections[group.groupId] ?? const <String>[];
-      for (final o in group.options) {
-        if (!kept.contains(o.optionId)) choices.prefixes.remove(o.optionId);
-      }
-      // a dish chosen as a choice comes with its own defaults, asked right under it
-      if (option.groups.isNotEmpty && kept.contains(option.optionId) && !choices.nested.containsKey(option.optionId)) {
-        fillDefaults(option.groups, choices.inside(option.optionId));
-      }
-    });
-    _reprice();
-  }
-
   /// The choices that differ from the menu's defaults, as the check lists them, each with its price; a
   /// marked choice is listed with its word even when it is the default ("No white rice"), and a choice left
   /// off ("no") is free, as the backend makes it. The choices on a chosen dish follow it one level deeper.
   List<CheckModifier> get _picked => pickedModifiers(_detail?.groups ?? const <GroupDetail>[], _request);
-
-  /// A choice's chip: its word when it has one, and its price unless the word is "no" (the backend charges
-  /// nothing for a choice left off).
-  String _optionLabel(Choices choices, OptionDetail o) {
-    final mark = choices.prefixes[o.optionId];
-    final name = mark == null ? o.name : '${instructions[mark]} ${o.name}';
-    return o.free || mark == 'no' ? name : '$name +${o.price}';
-  }
-
-  /// A dish's groups as chips, each chosen choice that is a dish followed by that dish's own groups in a
-  /// block under it, one step in, so a roll's sauce is asked right under the roll.
-  List<Widget> _groupBlocks(
-    ThemeData theme,
-    ColorScheme scheme,
-    List<GroupDetail> groups,
-    Choices choices,
-    int depth,
-  ) => [
-    for (final g in groups) ...[
-      Text(
-        g.required ? '${g.name} (required)' : g.name,
-        style: theme.textTheme.titleSmall?.copyWith(color: g.required ? scheme.primary : scheme.onSurface),
-      ),
-      const SizedBox(height: 6),
-      Wrap(
-        spacing: 8,
-        runSpacing: 6,
-        children: [
-          for (final o in g.options)
-            FilterChip(
-              key: depth == 0 ? null : ValueKey('choice:${o.optionId}@$depth'),
-              label: Text(_optionLabel(choices, o)),
-              selected: choices.picked(g.groupId, o.optionId),
-              onSelected: o.available ? (_) => _toggle(choices, g, o) : null,
-            ),
-        ],
-      ),
-      const SizedBox(height: 14),
-      for (final o in g.options)
-        if (o.groups.isNotEmpty && choices.picked(g.groupId, o.optionId))
-          Container(
-            key: ValueKey('inside:${o.optionId}'),
-            margin: const EdgeInsets.only(bottom: 14),
-            padding: const EdgeInsets.only(left: 12),
-            decoration: BoxDecoration(
-              border: Border(left: BorderSide(color: scheme.outlineVariant, width: 2)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(o.name, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                ..._groupBlocks(theme, scheme, o.groups, choices.inside(o.optionId), depth + 1),
-              ],
-            ),
-          ),
-    ],
-  ];
-
-  /// One tap for the kitchen's usual words. A word waits for the next choice tapped, then goes on it.
-  Widget _instructionRow(ThemeData theme, ColorScheme scheme) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            for (final MapEntry(key: code, value: word) in instructions.entries)
-              ChoiceChip(
-                key: ValueKey('instruction:$code'),
-                label: Text(word),
-                selected: _armed == code,
-                onSelected: (on) => setState(() => _armed = on ? code : null),
-              ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _armed == null
-              ? 'To mark a choice, tap a word and then the choice.'
-              : 'Now tap the choice to mark “${instructions[_armed]}”.',
-          style: theme.textTheme.bodySmall?.copyWith(color: _armed == null ? scheme.onSurfaceVariant : scheme.primary),
-        ),
-      ],
-    ),
-  );
 
   String get _lineName {
     final variant = widget.entry.variants.firstWhere((v) => v.variantId == _request.variantId);
@@ -1756,8 +1684,14 @@ class _ItemSheetState extends State<ItemSheet> {
                       ),
                       const SizedBox(height: 14),
                     ],
-                    if (detail.groups.isNotEmpty) _instructionRow(theme, scheme),
-                    ..._groupBlocks(theme, scheme, detail.groups, _request, 0),
+                    ChoicesEditor(
+                      groups: detail.groups,
+                      choices: _request,
+                      onChanged: () {
+                        setState(() {});
+                        _reprice();
+                      },
+                    ),
                     TextField(
                       controller: _note,
                       decoration: const InputDecoration(
@@ -1860,6 +1794,269 @@ class _ItemSheetState extends State<ItemSheet> {
                 )
               : null,
           child: Text(widget.initial == null ? 'Add' : 'Update'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The choices on a dish as chips, group by group: a tap picks one, the kitchen's words mark one ("No
+/// peanuts"), and a chosen choice that is a dish shows the questions its defaults leave open in a block right
+/// under it. A hold on a choice that is a dish opens that dish's own sheet, with every choice on it and a note
+/// to the kitchen, as a hold on its menu tile would. The item sheet and a dish's own sheet share it, so a dish
+/// inside a dish reads the same at every level.
+class ChoicesEditor extends StatefulWidget {
+  const ChoicesEditor({super.key, required this.groups, required this.choices, required this.onChanged});
+
+  final List<GroupDetail> groups;
+
+  /// Edited in place; [onChanged] says when.
+  final Choices choices;
+  final VoidCallback onChanged;
+
+  @override
+  State<ChoicesEditor> createState() => _ChoicesEditorState();
+}
+
+class _ChoicesEditorState extends State<ChoicesEditor> {
+  String? _armed; // No, Extra, On the side or Light, waiting for the choice it is about
+
+  /// A tap on a choice, on the dish or on a chosen dish one level down ([choices] is that level's).
+  void _toggle(Choices choices, GroupDetail group, OptionDetail option) {
+    setState(() {
+      final current = choices.selections[group.groupId] ?? [];
+      final chosen = current.contains(option.optionId);
+      final armed = _armed;
+      _armed = null;
+      if (armed != null) {
+        // "No peanuts": the word goes on this choice, which has to be on the line for it to mean anything.
+        // The same word again takes it off and leaves the plain choice.
+        final full = !chosen && !group.single && group.maxSelect != null && current.length >= group.maxSelect!;
+        if (!full) {
+          if (choices.prefixes[option.optionId] == armed) {
+            choices.prefixes.remove(option.optionId);
+          } else {
+            choices.prefixes[option.optionId] = armed;
+          }
+          if (!chosen) {
+            choices.selections[group.groupId] = group.single ? [option.optionId] : [...current, option.optionId];
+          }
+        }
+      } else if (group.single) {
+        choices.selections[group.groupId] = chosen && !group.required ? [] : [option.optionId];
+      } else if (chosen) {
+        choices.selections[group.groupId] = [...current]..remove(option.optionId);
+      } else if (group.maxSelect == null || current.length < group.maxSelect!) {
+        choices.selections[group.groupId] = [...current, option.optionId];
+      }
+      // a word only means something on a choice that is on the line
+      final kept = choices.selections[group.groupId] ?? const <String>[];
+      for (final o in group.options) {
+        if (!kept.contains(o.optionId)) choices.prefixes.remove(o.optionId);
+      }
+      // a dish chosen as a choice comes with its own defaults; what they leave open is asked right under it
+      if (option.groups.isNotEmpty && kept.contains(option.optionId) && !choices.nested.containsKey(option.optionId)) {
+        fillDefaults(option.groups, choices.inside(option.optionId));
+      }
+    });
+    widget.onChanged();
+  }
+
+  /// A hold on a choice that is a dish: its own sheet. Done takes the choices made there and chooses the dish.
+  Future<void> _openDish(Choices choices, GroupDetail group, OptionDetail option) async {
+    final inside = await showDialog<Choices>(
+      context: context,
+      builder: (_) => DishChoicesSheet(option: option, initial: choices.nested[option.optionId]),
+    );
+    if (inside == null || !mounted) return;
+    setState(() {
+      choices.nested[option.optionId] = inside;
+      choices.take(group, option.optionId);
+    });
+    widget.onChanged();
+  }
+
+  /// A choice's chip: its word when it has one, and its price unless the word is "no" (the backend charges
+  /// nothing for a choice left off).
+  String _optionLabel(Choices choices, OptionDetail o) {
+    final mark = choices.prefixes[o.optionId];
+    final name = mark == null ? o.name : '${instructions[mark]} ${o.name}';
+    return o.free || mark == 'no' ? name : '$name +${o.price}';
+  }
+
+  /// The dish behind a choice was changed: a choice on it differs from its defaults, or it carries a note.
+  bool _changed(Choices choices, OptionDetail o) {
+    final inside = choices.nested[o.optionId];
+    if (inside == null) return false;
+    return (inside.notes?.isNotEmpty ?? false) || pickedModifiers(o.groups, inside).isNotEmpty;
+  }
+
+  /// A dish's groups as chips; under each chosen choice that is a dish, the questions its defaults leave
+  /// open in a block one step in, so a roll's sauce is asked right under the roll. The rest of that dish is a
+  /// hold away.
+  List<Widget> _groupBlocks(
+    ThemeData theme,
+    ColorScheme scheme,
+    List<GroupDetail> groups,
+    Choices choices,
+    int depth,
+  ) => [
+    for (final g in groups) ...[
+      Text(
+        g.required ? '${g.name} (required)' : g.name,
+        style: theme.textTheme.titleSmall?.copyWith(color: g.required ? scheme.primary : scheme.onSurface),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final o in g.options)
+            GestureDetector(
+              key: ValueKey('choice:${o.optionId}@$depth'),
+              onLongPress: o.isDish && o.available ? () => _openDish(choices, g, o) : null,
+              child: FilterChip(
+                avatar: o.isDish ? Icon(_changed(choices, o) ? Icons.tune : Icons.restaurant_menu, size: 16) : null,
+                label: Text(_optionLabel(choices, o)),
+                selected: choices.picked(g.groupId, o.optionId),
+                onSelected: o.available ? (_) => _toggle(choices, g, o) : null,
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      for (final o in g.options)
+        if (choices.picked(g.groupId, o.optionId) && openGroups(o).isNotEmpty)
+          Container(
+            key: ValueKey('inside:${o.optionId}'),
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.only(left: 12),
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: scheme.outlineVariant, width: 2)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(o.name, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                ..._groupBlocks(theme, scheme, openGroups(o), choices.inside(o.optionId), depth + 1),
+              ],
+            ),
+          ),
+    ],
+  ];
+
+  /// One tap for the kitchen's usual words. A word waits for the next choice tapped, then goes on it.
+  Widget _instructionRow(ThemeData theme, ColorScheme scheme) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final MapEntry(key: code, value: word) in instructions.entries)
+              ChoiceChip(
+                key: ValueKey('instruction:$code'),
+                label: Text(word),
+                selected: _armed == code,
+                onSelected: (on) => setState(() => _armed = on ? code : null),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _armed == null
+              ? 'To mark a choice, tap a word and then the choice. Hold a dish to open it.'
+              : 'Now tap the choice to mark “${instructions[_armed]}”.',
+          style: theme.textTheme.bodySmall?.copyWith(color: _armed == null ? scheme.onSurfaceVariant : scheme.primary),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.groups.isNotEmpty) _instructionRow(theme, scheme),
+        ..._groupBlocks(theme, scheme, widget.groups, widget.choices, 0),
+      ],
+    );
+  }
+}
+
+/// A dish chosen as a choice on another dish, opened on its own by a hold: every choice on it, as its own
+/// sheet shows them, and a note to the kitchen that prints with it. Done hands the choices back, and the dish
+/// is chosen with them; Cancel changes nothing.
+class DishChoicesSheet extends StatefulWidget {
+  const DishChoicesSheet({super.key, required this.option, this.initial});
+
+  final OptionDetail option;
+
+  /// The choices already on the dish, when it was chosen before.
+  final Choices? initial;
+
+  @override
+  State<DishChoicesSheet> createState() => _DishChoicesSheetState();
+}
+
+class _DishChoicesSheetState extends State<DishChoicesSheet> {
+  late final Choices _choices = _start();
+  late final _note = TextEditingController(text: widget.initial?.notes ?? '');
+
+  /// The choices as they stand, or the dish's defaults when it has not been chosen yet.
+  Choices _start() {
+    final initial = widget.initial;
+    if (initial != null && initial.selections.isNotEmpty) return initial.copyChoices();
+    return defaultChoices(widget.option.groups)..notes = initial?.notes;
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final option = widget.option;
+    return AlertDialog(
+      title: Text(option.name),
+      content: SizedBox(
+        width: 490,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ChoicesEditor(groups: option.groups, choices: _choices, onChanged: () => setState(() {})),
+              TextField(
+                key: const ValueKey('dish-note'),
+                controller: _note,
+                decoration: const InputDecoration(
+                  labelText: 'Note to the kitchen',
+                  prefixIcon: Icon(Icons.edit_note_outlined),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: choicesComplete(option.groups, _choices)
+              ? () {
+                  final note = _note.text.trim();
+                  Navigator.of(context).pop(_choices..notes = note.isEmpty ? null : note);
+                }
+              : null,
+          child: const Text('Done'),
         ),
       ],
     );
