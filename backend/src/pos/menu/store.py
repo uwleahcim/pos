@@ -8,8 +8,9 @@ know when to reload.
 
 The tables follow "Schema sketch" in the Menu Engine Design. Three columns are added: `code` on
 `menu_section`, `menu_entry` and `recipe_component` (the in-memory ids, e.g. "dinner/chefs",
-"dinner:87"), plus `station_id` on `modifier_option` and `defaults`/`locked` on `recipe_component`,
-which the engine already has. A hub creates the tables on start, like the order log.
+"dinner:87"), plus `station_id` on `modifier_option`, `defaults`/`locked` on `recipe_component` and
+`source_category_id` on `modifier_group` (a group whose options are a category's dishes), which the engine
+already has. A hub creates the tables on start, like the order log, and adds a column a table gained since.
 """
 
 from __future__ import annotations
@@ -130,8 +131,11 @@ CREATE TABLE IF NOT EXISTS modifier_group (
   allow_quantity   boolean NOT NULL DEFAULT false,
   allow_duplicates boolean NOT NULL DEFAULT false,
   display          text NOT NULL DEFAULT 'inline',
-  sort             int NOT NULL DEFAULT 0
+  sort             int NOT NULL DEFAULT 0,
+  source_category_id uuid REFERENCES category DEFERRABLE INITIALLY DEFERRED
 );
+ALTER TABLE modifier_group
+  ADD COLUMN IF NOT EXISTS source_category_id uuid REFERENCES category DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE IF NOT EXISTS modifier_option (
   id                uuid PRIMARY KEY,
   group_id          uuid NOT NULL REFERENCES modifier_group ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
@@ -590,6 +594,7 @@ def _rows(defs: Definitions, ids: _Ids) -> dict[str, list[dict[str, Any]]]:
                 "allow_duplicates": g.allow_duplicates,
                 "display": g.display,
                 "sort": g.sort,
+                "source_category_id": ids.id("category", g.source_category),
             }
         )
     for o in defs.options.values():
@@ -876,6 +881,7 @@ def _definitions(rows: Mapping[str, list[dict[str, Any]]], localizer: Localizer 
                 r["allow_duplicates"],
                 r["display"],
                 r["sort"],
+                ids.code("category", r.get("source_category_id")),
             )
         )
     for r in by_sort(rows["modifier_option"]):

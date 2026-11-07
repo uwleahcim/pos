@@ -76,6 +76,8 @@ class _Ctx:
     children: list[ResolvedLine] = field(default_factory=list)
     problems: list[Problem] = field(default_factory=list)
     stations: set[str] = field(default_factory=set)
+    depth: int = 0  # how many slots and components above this dish
+    fold_into: str | None = None  # the parent's station, whose line names this slot dish among its choices
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,10 @@ class OptionDetail:
     linked_variant: str | None
     status: str
     kitchen_label: str | None
+    linked_item: str | None = None
+    groups: tuple[GroupDetail, ...] = ()
+    """A linked dish's own groups, as this slot exposes them: the questions to ask once the option is chosen,
+    answered in the selection's `children`. The screen reveals one level at a time."""
 
 
 @dataclass(frozen=True)
@@ -147,6 +153,11 @@ class GroupDetail:
     free_count: int
     allow_quantity: bool
     options: tuple[OptionDetail, ...]
+
+
+MAX_DEPTH = 8
+"""How deep a dish may nest through slots and components before the engine stops: a combo in a combo in a
+combo is data, a dish that offers itself is a mistake `check` reports."""
 
 
 @dataclass(frozen=True)
@@ -252,6 +263,8 @@ class MenuEngine:
         component_id: str | None = None,
         option_id: str | None = None,
         header: str | None = None,
+        depth: int = 0,
+        fold_into: str | None = None,
     ) -> ResolvedLine:
         defs = self.defs
         loc = defs.localizer
@@ -260,8 +273,17 @@ class MenuEngine:
             return self._broken(
                 variant_id, qty, entry_id, origin, at, Problem("unknown_variant", f"no variant {variant_id}")
             )
+        if depth > MAX_DEPTH:
+            return self._broken(
+                variant_id,
+                qty,
+                entry_id,
+                origin,
+                at,
+                Problem("too_deep", f"{variant_id} nests deeper than {MAX_DEPTH}"),
+            )
         item = defs.items[variant.item]
-        ctx = _Ctx(item, variant, at, locale, header, dict(preset_defaults or {}))
+        ctx = _Ctx(item, variant, at, locale, header, dict(preset_defaults or {}), depth=depth, fold_into=fold_into)
         entry = defs.entry(entry_id) if entry_id else None
 
         # --- validate the head of the request
@@ -334,6 +356,7 @@ class MenuEngine:
                         locked=comp.locked,
                         component_id=comp.id,
                         header=own_header,
+                        depth=depth + 1,
                     )
                 )
         for comp_id in requests:
@@ -376,6 +399,11 @@ class MenuEngine:
         children = tuple(ctx.children)
         allergens = self._allergens({u.ingredient for u in usage}, ctx.stations, item, variant, children)
         kitchen = self._kitchen_lines(ctx, item, variant, qty, modifiers, children, origin, header, kitchen_name)
+        if origin == "slot" and fold_into:
+            # the slot's label on the parent's line carries this dish and its choices (`_slot`)
+            kitchen = tuple(
+                k for k in kitchen if not (k.origin == "slot" and k.station == fold_into and k.header == header)
+            )
         modifier_total = sum((m.price_delta for m in modifiers), ZERO)
         children_total = sum((c.line_total for c in children), ZERO)
         line_total = money((unit_price + modifier_total + children_total) * qty)
@@ -530,7 +558,9 @@ class MenuEngine:
                     Problem("bad_prefix", f"{opt.id}: no instruction {prefix!r}", group_id=group.code, option_id=opt.id)
                 )
                 prefix = None
-            label = prefixed_label(prefix, opt.kitchen_label, defs.localizer.text(opt.names, "en"))
+            label = prefixed_label(
+                prefix, defs.option_kitchen_label(opt), defs.localizer.text(defs.option_names(opt), "en")
+            )
             if opt.linked_variant:
                 results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, defaulted, own_header, label))
                 continue
@@ -604,6 +634,10 @@ class MenuEngine:
         else:
             child_price = price
         expose = overrides.get("expose_linked_groups", "all")
+        # A dish that prints its own line (not a combo) names the slot's dish among its choices, so the dish's
+        # own line at the same station would say it twice: it folds into the parent's. At another station
+        # (the soup with a lunch special) it prints there, under the parent's header.
+        parent_station = self.defs.inherited(ctx.item, "station") if ctx.item.kind != "combo" else None
         child = self._resolve(
             variant_id=opt.linked_variant or "",
             qty=sq,
@@ -619,8 +653,15 @@ class MenuEngine:
             locked=expose == "none",
             option_id=opt.id,
             header=own_header,
+            depth=ctx.depth + 1,
+            fold_into=parent_station,
         )
         ctx.children.append(child)
+        if not label:
+            label = self.defs.localizer.kitchen(child.names) or self.defs.localizer.text(child.names, "en")
+        inside = [m.kitchen_label for m in flatten_modifiers(child.modifiers) if m.kitchen_label]
+        if inside:
+            label = f"{label} ({' · '.join(inside)})"
         return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None)
 
     def _apply_effect(self, ctx: _Ctx, effect: Any, opt: Option, sq: int) -> EffectResult:
@@ -1064,25 +1105,69 @@ class MenuEngine:
         defs, loc = self.defs, self.defs.localizer
         item = defs.items[item_id]
         entry = defs.entry(menu_entry_id) if menu_entry_id else None
+        return ItemDetail(
+            item.code,
+            loc.text(item.names, locale),
+            item.kind,
+            self._offers(item, entry, at, locale),
+            self._group_details(item, "all", {}, at, locale, 0),
+            defs.inherited(item, "tax_class"),
+            defs.inherited(item, "station"),
+        )
+
+    def _group_details(
+        self, item: Item, expose: Any, preset: Mapping[str, str], at: datetime, locale: str, depth: int
+    ) -> tuple[GroupDetail, ...]:
+        """A dish's groups as a screen asks them, as a slot exposes them (`expose_linked_groups`), with the
+        slot's `child_defaults` as the defaults. An option linked to a dish carries that dish's groups the
+        same way, one level down, so the screen can ask them once the option is chosen."""
+        defs, loc = self.defs, self.defs.localizer
+        attached = defs.attachments_for(item.code)
+        if expose == "none":
+            attached = []
+        elif expose != "all":
+            attached = [(g, o) for g, o in attached if g.code in set(expose)]
         groups = []
-        for group, overrides in defs.attachments_for(item.code):
+        for group, overrides in attached:
             hidden = set(overrides.get("hidden", ()))
             prices = overrides.get("prices", {})
-            default = overrides.get("default")
-            options = tuple(
-                OptionDetail(
-                    o.id,
-                    loc.text(o.names, locale),
-                    money(prices.get(o.code, o.price)),
-                    o.price_mode,
-                    (o.code == default) if default else o.is_default,
-                    o.linked_variant,
-                    self.status_of(o.id, at),
-                    o.kitchen_label,
+            default = preset.get(group.code) or overrides.get("default")
+            options = []
+            for o in defs.options_of(group.code):
+                if not o.active or o.code in hidden:
+                    continue
+                linked = defs.linked_item(o)
+                status = self.status_of(o.id, at)
+                nested: tuple[GroupDetail, ...] = ()
+                if o.linked_variant:
+                    variant = defs.variants.get(o.linked_variant)
+                    if variant is None or linked is None or not variant.active or not linked.active:
+                        continue  # a dish off sale is not offered as a choice either
+                    if status == "available":
+                        status = self.status_of(variant.id, at)
+                    if depth < MAX_DEPTH:
+                        nested = self._group_details(
+                            linked,
+                            overrides.get("expose_linked_groups", "all"),
+                            overrides.get("child_defaults") or {},
+                            at,
+                            locale,
+                            depth + 1,
+                        )
+                options.append(
+                    OptionDetail(
+                        o.id,
+                        loc.text(defs.option_names(o), locale),
+                        money(prices.get(o.code, o.price)),
+                        o.price_mode,
+                        (o.code == default) if default else o.is_default,
+                        o.linked_variant,
+                        status,
+                        defs.option_kitchen_label(o),
+                        linked.code if linked is not None else None,
+                        nested,
+                    )
                 )
-                for o in defs.options_of(group.code)
-                if o.active and o.code not in hidden
-            )
             groups.append(
                 GroupDetail(
                     group.code,
@@ -1091,18 +1176,10 @@ class MenuEngine:
                     overrides.get("max", group.max_select),
                     group.free_count,
                     group.allow_quantity,
-                    options,
+                    tuple(options),
                 )
             )
-        return ItemDetail(
-            item.code,
-            loc.text(item.names, locale),
-            item.kind,
-            self._offers(item, entry, at, locale),
-            tuple(groups),
-            defs.inherited(item, "tax_class"),
-            defs.inherited(item, "station"),
-        )
+        return tuple(groups)
 
     # --- validation of the definitions --------------------------------------------------------
 
@@ -1137,6 +1214,14 @@ class MenuEngine:
         for group in defs.groups.values():
             if group.min_select > 0 and not any(o.active for o in defs.options_of(group.code)):
                 problems.append(Problem("empty_required_group", f"{group.code} is required but has no options"))
+            if group.source_category and group.source_category not in defs.categories:
+                problems.append(
+                    Problem(
+                        "unknown_category",
+                        f"{group.code} takes its options from unknown category {group.source_category}",
+                    )
+                )
+        problems.extend(self._slot_cycles())
         for opt in defs.options.values():
             if opt.linked_variant and opt.linked_variant not in defs.variants:
                 problems.append(Problem("unknown_variant", f"{opt.id} links unknown variant {opt.linked_variant}"))
@@ -1209,6 +1294,35 @@ class MenuEngine:
                             f"{variant.id}: free-from {ov.allergen} rests on unreviewed {', '.join(unreviewed)}",
                         )
                     )
+        return problems
+
+    def _slot_cycles(self) -> list[Problem]:
+        """A dish that offers itself, through its groups' linked options, would never finish resolving."""
+        defs = self.defs
+        graph: dict[str, set[str]] = {}
+        for item in defs.items.values():
+            for group, overrides in defs.attachments_for(item.code):
+                hidden = set(overrides.get("hidden", ()))
+                for opt in defs.options_of(group.code):
+                    linked = defs.linked_item(opt)
+                    if linked is not None and opt.active and opt.code not in hidden:
+                        graph.setdefault(item.code, set()).add(linked.code)
+        problems: list[Problem] = []
+        state: dict[str, int] = {}
+
+        def visit(node: str, path: list[str]) -> None:
+            if state.get(node) == 1:
+                problems.append(Problem("cycle", "a dish offers itself as a choice: " + " -> ".join([*path, node])))
+                return
+            if state.get(node) == 2:
+                return
+            state[node] = 1
+            for nxt in sorted(graph.get(node, ())):
+                visit(nxt, [*path, node])
+            state[node] = 2
+
+        for node in sorted(graph):
+            visit(node, [])
         return problems
 
     def _cycles(self) -> list[Problem]:

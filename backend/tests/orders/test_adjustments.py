@@ -491,6 +491,6 @@ def test_the_check_lists_each_choice_with_what_it_adds_for_the_quantity():
     line = check_for(state_with(*ops), massachusetts())["lines"][0]
     assert line["total"] == "23.50"
     assert line["modifiers"] == [
-        {"label": "Oat milk", "price": "0.75", "amount": "1.50"},
-        {"label": "Large", "price": "1.00", "amount": "2.00"},
+        {"label": "Oat milk", "price": "0.75", "amount": "1.50", "depth": 0},
+        {"label": "Large", "price": "1.00", "amount": "2.00", "depth": 0},
     ]

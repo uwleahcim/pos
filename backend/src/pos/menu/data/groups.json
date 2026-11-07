@@ -1,0 +1,8 @@
+{
+  "_about": "Which of the export's option groups offer dishes rather than words, by the group's name in the export. \"items_from\": each option becomes the dish of the same name in that category (an option with no such dish, like No Soup, stays a plain option). \"category\": the group offers every dish on sale in that category instead of the export's own copies of them, and follows the category from then on: a new roll is in the maki combination the moment it is on the menu. A choice that is a dish prints at the dish's station under the dish it came with, carries the dish's own choices, and shows on the check as its own line. Edit and run `hubctl update`; a running hub takes the change with `hubctl menu import --apply`.",
+  "linked": {
+    "Soup": {"items_from": "Soup"},
+    "Sushi Soup": {"items_from": "Soup"},
+    "Roll": {"category": "Roll (Maki)"}
+  }
+}

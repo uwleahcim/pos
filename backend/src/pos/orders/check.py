@@ -57,12 +57,14 @@ def check_for(
                 "unit_price": str(unit),
                 "total": str(total),
                 "discount": "0.00",  # what came off this line itself, filled in below
-                # each choice that is not the dish's default, with what it adds to the line for its quantity
+                # each choice that is not the dish's default, with what it adds to the line for its quantity;
+                # `depth` 1 is a choice of a choice (the sauce on a roll of the maki combination)
                 "modifiers": [
                     {
                         "label": m["label"],
                         "price": str(_money(m.get("price"))),
                         "amount": str(cents(_money(m.get("price")) * line.qty)),
+                        "depth": int(m.get("depth") or 0),
                     }
                     for m in priced.get("modifiers", ())
                     if not m.get("defaulted")

@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from .. import localtime
-from .defs import Definitions, StaleMenu
+from .defs import Definitions, StaleMenu, money
 from .engine import PREFIXES, MenuEngine, ResolvedEntry, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
 from .resolved import ResolvedLine, ResolvedModifier
@@ -278,7 +278,7 @@ class MenuService:
                 if len(self.defs.variants_of(variant.item)) > 1:
                     name += f" ({loc.text(variant.names, 'en')})"
             else:
-                name = loc.text(option.names, "en") if option else target
+                name = loc.text(self.defs.option_names(option), "en") if option else target
             out.append({"target_id": target, "name": name, "status": state.status, "by": state.set_by})
         return out
 
@@ -292,8 +292,35 @@ class MenuService:
         option = self.defs.options.get(m.option_id)
         if option is None:
             return m.kitchen_label
-        name = self.defs.localizer.text(option.names, "en")
+        name = self.defs.localizer.text(self.defs.option_names(option), "en")
         return f"{PREFIXES[m.prefix]} {name}" if m.prefix else name
+
+    def _check_rows(self, line: ResolvedLine, depth: int = 0) -> list[dict[str, Any]]:
+        """The choices on a line as the check lists them, each with what it adds for one of the dish. A choice
+        that is a dish (a slot: the soup with a lunch special, each roll of a maki combination) is a row at
+        this depth with the slot's price, and that dish's own choices follow one level deeper, so the check
+        reads dish, choice, the choice's choices, each on its own line."""
+        rows: list[dict[str, Any]] = []
+        slots = {c.option_id: c for c in line.children if c.origin == "slot" and c.option_id}
+        for m in flatten_modifiers(line.modifiers):
+            child = slots.get(m.option_id)
+            rows.append(
+                {
+                    "group_id": m.group_id,
+                    "option_id": m.option_id,
+                    "qty": m.qty,
+                    "label": self._modifier_label(m),
+                    "kitchen_label": m.kitchen_label,
+                    "prefix": m.prefix,
+                    # a slot's price is on its dish (the child line); a plain choice carries its own delta
+                    "price": str(money(child.unit_price * child.qty) if child is not None else m.price_delta),
+                    "defaulted": m.defaulted,
+                    "depth": depth,
+                }
+            )
+            if child is not None:
+                rows.extend(self._check_rows(child, depth + 1))
+        return rows
 
     def priced(self, request: Mapping[str, Any], at: datetime | None = None) -> dict[str, Any]:
         """The snapshot an order line keeps: names, the price of one, tax class, kitchen lines, problems."""
@@ -313,19 +340,7 @@ class MenuService:
             "name": name,
             "unit_price": str(line.line_total),
             "tax_class": line.tax_class,
-            "modifiers": [
-                {
-                    "group_id": m.group_id,
-                    "option_id": m.option_id,
-                    "qty": m.qty,
-                    "label": self._modifier_label(m),
-                    "kitchen_label": m.kitchen_label,
-                    "prefix": m.prefix,
-                    "price": str(m.price_delta),
-                    "defaulted": m.defaulted,
-                }
-                for m in flatten_modifiers(line.modifiers)
-            ],
+            "modifiers": self._check_rows(line),
             "kitchen": [
                 {
                     "station": k.station,

@@ -9,7 +9,10 @@ only while the stored price is still the export's own. When the files move a cat
 (the drinks went from the one menu to their own), the stored section moves there with every dish in it,
 the editor's additions included, and a category the files put on a second menu as well gets its dishes
 there too. Without `--apply` it only lists what it would do. A row deleted in the editor comes back if the
-files still carry it, so delete it from the files too. On a hub: `hubctl menu import [--apply]`.
+files still carry it, so delete it from the files too. When the files link an option to a dish (the soup with
+a lunch special is the real Miso Soup) or make a group offer a whole category (the maki combination offers
+the Roll category), the stored group follows (`linked.relink`): the export's own copies of the dishes go,
+the dishes come, and an option the editor added stays. On a hub: `hubctl menu import [--apply]`.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import os
 import sys
 from dataclasses import replace
 
-from . import admin
+from . import admin, linked
 from .defs import Definitions, Entry, Section
 from .service import load_definitions
 
@@ -132,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
         stored = store.load(bundled.localizer)
         merged, changed = restructure(stored, bundled)
         merged, added = missing(merged, bundled)
+        changed += linked.relink(merged, bundled)
+        changed += linked.sync(merged)
         updated = []
         if source in ("", "gloriafood"):
             updated = reprice(merged, bundled, load_gloriafood(BUNDLED, settings_from(STATIONS))[0])
