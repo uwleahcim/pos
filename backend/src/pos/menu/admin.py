@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from . import defs as d
+from . import linked
 from .defs import Definitions
 from .engine import MenuEngine
 from .resolved import Problem
@@ -190,7 +191,9 @@ def _with_ids(kind: str, data: Mapping[str, Any]) -> dict[str, Any]:
 def apply(defs: Definitions, changes: list[Mapping[str, Any]]) -> Definitions:
     """A new `Definitions` with the changes made in order. `put` adds or replaces a definition by its key;
     `delete` removes one, and with `"cascade": true` an item takes its sizes, menu entries, modifier
-    attachments, allergen overrides and recipes with it, and a modifier group its options and attachments."""
+    attachments, allergen overrides and recipes with it, and a modifier group its options and attachments.
+    A group whose options come from a category then gets the options the category's dishes call for
+    (`linked.sync`), so a dish added to the category is offered where the category is."""
     new = copy_of(defs)
     for n, change in enumerate(changes, 1):
         if not isinstance(change, Mapping):
@@ -224,6 +227,7 @@ def apply(defs: Definitions, changes: list[Mapping[str, Any]]) -> Definitions:
                 _cascade(new, kind.name, key)
         else:
             raise ChangeError(f"change {n}: op must be put or delete")
+    linked.sync(new)
     return new
 
 
@@ -274,6 +278,8 @@ def _references(defs: Definitions) -> list[Problem]:
         need(f"size {v.id}", "item", v.item, defs.items)
         if v.id != f"{v.item}:{v.code}":
             out.append(Problem("bad_id", f"size {v.id}: the id must be {v.item}:{v.code}"))
+    for g in defs.groups.values():
+        need(f"group {g.code}", "category", g.source_category, defs.categories)
     for o in defs.options.values():
         need(f"option {o.id}", "group", o.group, defs.groups)
         need(f"option {o.id}", "station", o.station, defs.stations)

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -20,7 +21,62 @@ const taxes = [
   TaxLine(name: 'Winchester meals tax', ratePct: '0.75', amount: '0.00'),
 ];
 
+Map<String, dynamic> fixture(String name) =>
+    jsonDecode(File('test/fixtures/$name.json').readAsStringSync()) as Map<String, dynamic>;
+
 void main() {
+  test("this screen's price for a dish includes the choices on the dishes chosen on it", () {
+    final c5 = ItemDetail.fromJson(fixture('item_c5'));
+    final request = LineRequest(variantId: 'C5:regular', entryId: 'dinner:C5');
+    fillDefaults(c5.groups, request);
+    expect(localPrice('Combination Plate', c5.variants, c5, request).unitPrice, '14.50');
+    final gtc = request.inside('entree_slot:gtc');
+    gtc.selections['addons'] = ['addons:shrimp', 'addons:sauce'];
+    gtc.prefixes['addons:sauce'] = 'no'; // left off: free, as on the hub
+    request.selections['rice_slot'] = ['rice_slot:brown'];
+    final priced = localPrice('Combination Plate', c5.variants, c5, request);
+    expect((priced.unitPrice, priced.ok), ('19.50', true)); // 14.50 + 4.00 shrimp + 1.00 brown rice, as the hub
+    // a required choice still open on the chosen dish is a problem named for that dish
+    gtc.selections.remove('rice');
+    expect(localPrice('Combination Plate', c5.variants, c5, request).problems, [
+      "Choose choice of rice for General Tso's Chicken",
+    ]);
+  });
+
+  test("the estimate keeps a choice's depth when it scales the line", () {
+    const read = Check(
+      lines: [
+        CheckLine(
+          lineId: 'L1',
+          name: 'Combination Plate',
+          qty: 1,
+          total: '19.50',
+          modifiers: [
+            CheckModifier("General Tso's Chicken"),
+            CheckModifier('Add shrimp', price: '4.00', amount: '4.00', depth: 1),
+          ],
+        ),
+      ],
+      subtotal: '19.50',
+      taxLines: taxes,
+      tax: '1.37',
+      taxRatePct: '7.00',
+      total: '20.87',
+    );
+    final order = Order(
+      orderId: 'o1',
+      status: 'open',
+      fields: const {},
+      lines: [const Line(lineId: 'L1', item: 'Combination Plate', qty: 2, status: 'active')],
+      fired: const {},
+    );
+    final line = estimateCheck(read, order, const {}).line('L1')!;
+    expect(line.modifiers.map((m) => (m.label, m.amount, m.depth)), [
+      ("General Tso's Chicken", '0.00', 0),
+      ('Add shrimp', '8.00', 1),
+    ]);
+  });
+
   test('a new check shows its table and dishes before the hub has heard of it', () {
     final order = withLocalOps(const Order.empty('o1'), [
       op('create', {'table': 'A7', 'guests': 4}),

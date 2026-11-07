@@ -131,3 +131,33 @@ def test_unmapped_categories_go_to_the_default_and_are_reported():
     defs, report = import_gloriafood(data, settings)
     assert defs.inherited(defs.items["N1"], "station") == "wok1"
     assert any("no station set" in n for n in report.notes)
+
+
+def test_the_soup_choice_is_the_soup_and_the_maki_combination_offers_the_rolls():
+    """groups.json: the lunch specials' soup group links to the dishes of the Soup category ("No Soup" stays a
+    word), and the maki combination's Roll group offers the Roll category itself instead of the export's copies."""
+    defs, report = load_restaurant_menu()
+    assert report.linked == 28  # 4 soups in each of two soup groups, 20 rolls
+    soup = defs.groups["soup_929530"]
+    assert [(defs.option_names(o).get("en"), o.linked_variant) for o in defs.options_of(soup.code)] == [
+        ("Miso Soup", "801:regular"),
+        ("Wonton Soup", "802:regular"),
+        ("Hot & Sour Soup", "803:regular"),
+        ("Egg Drop Soup", "804:regular"),
+        ("No Soup", None),
+    ]
+    engine = MenuEngine(defs)
+    line = engine.resolve(LineRequest("L01:regular", 1, "lunch:L01", (Selection(soup.code, "soup_929530:4904287"),)))
+    assert line.ok and line.line_total == D("14.95")
+    assert [(k.station, k.text, k.header) for k in line.kitchen_lines] == [
+        ("wok1", "1 Sweet & Sour Chicken · White Rice · Miso Soup", None),
+        ("soup", "1 Miso Soup", "L01 Sweet & Sour Chicken"),
+    ]
+    roll = defs.groups["roll_934419"]
+    assert roll.source_category == "roll_maki" and (roll.min_select, roll.max_select) == (3, 3)
+    assert [o.linked_variant for o in defs.options_of(roll.code)] == [f"K{n:02d}:regular" for n in range(1, 21)]
+    assert all(o.names == {} for o in defs.options_of(roll.code))  # called what the rolls are called
+    assert [n for n in report.notes if "kept as a word" in n] == [
+        "group 'Soup': option 'No Soup' is not a dish of soup; kept as a word",
+        "group 'Sushi Soup': option 'No Soup' is not a dish of soup; kept as a word",
+    ]

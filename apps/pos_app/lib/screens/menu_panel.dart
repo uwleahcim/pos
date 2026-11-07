@@ -332,17 +332,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     }
   }
 
-  void _togglePendingOption(GroupDetail group, OptionDetail option) {
+  void _togglePendingOption(_Ask ask, OptionDetail option) {
     final pending = _pending;
     if (pending == null || !option.available) return;
-    final current = pending.selections[group.groupId] ?? const [];
-    if (group.single) {
-      pending.selections[group.groupId] = [option.optionId];
-    } else if (current.contains(option.optionId)) {
-      pending.selections[group.groupId] = [...current]..remove(option.optionId);
-    } else if (group.maxSelect == null || current.length < group.maxSelect!) {
-      pending.selections[group.groupId] = [...current, option.optionId];
-    }
+    pending.toggle(ask, option);
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
@@ -378,7 +371,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (availableVariants.isEmpty) return;
 
     ItemDetail? detail;
-    final selections = <String, List<String>>{};
+    final choices = Choices();
     final requiredGroups = <GroupDetail>[];
 
     if (entry.hasOptions) {
@@ -399,17 +392,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         }
       }
       if (!mounted) return;
+      fillDefaults(detail.groups, choices);
       for (final g in detail.groups) {
-        final defaults = [
-          for (final o in g.options)
-            if (o.isDefault && o.available) o.optionId,
-        ];
-        if (defaults.isNotEmpty) {
-          selections[g.groupId] = defaults;
-        }
-        if (g.required && defaults.length < g.minSelect) {
-          requiredGroups.add(g);
-        }
+        if (g.required && (choices.selections[g.groupId]?.length ?? 0) < g.minSelect) requiredGroups.add(g);
       }
     }
 
@@ -421,7 +406,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       needsVariant: needsVariant,
       selectedVariantId: needsVariant ? null : availableVariants.first.variantId,
       requiredGroups: requiredGroups,
-      selections: selections,
+      choices: choices,
     );
 
     if (pending.isComplete) {
@@ -537,7 +522,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         if (pending != null) {
           final requiredCount =
               (pending.needsVariant ? pending.availableVariants.length : 0) +
-              pending.requiredGroups.fold<int>(0, (sum, g) => sum + g.options.length);
+              pending.asks.fold<int>(0, (sum, a) => sum + a.group.options.length);
           final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
           final neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
           final minTopReserve = searching ? (_searchBarHeight + gridHeightForRows(1)) : minCategoriesHeight;
@@ -1047,6 +1032,10 @@ class _SectionButton extends StatelessWidget {
   }
 }
 
+/// A dish tapped on the grid whose tap could not add it yet: the size or the required choices it still needs,
+/// asked in the tray under the dishes. A choice that is a dish (a roll of the maki combination) brings that
+/// dish's defaults and asks, under it, what they leave open ("Kappa Maki · Sauce"); the tray grows and shrinks
+/// with the questions. Once everything is answered the line goes on the check.
 class _PendingItemSelection {
   _PendingItemSelection({
     required this.entry,
@@ -1055,25 +1044,86 @@ class _PendingItemSelection {
     required this.needsVariant,
     this.selectedVariantId,
     required this.requiredGroups,
-    required this.selections,
-  });
+    required this.choices,
+  }) {
+    _askPicked(detail?.groups ?? const [], choices, '');
+  }
 
   final MenuEntry entry;
   final ItemDetail? detail;
   final List<VariantOffer> availableVariants;
   final bool needsVariant;
   String? selectedVariantId;
-  final List<GroupDetail> requiredGroups;
-  final Map<String, List<String>> selections;
 
-  bool get isComplete {
-    if (selectedVariantId == null) return false;
-    for (final g in requiredGroups) {
-      final count = selections[g.groupId]?.length ?? 0;
-      if (count < g.minSelect) return false;
+  /// The dish's own required groups that its defaults do not answer.
+  final List<GroupDetail> requiredGroups;
+  final Choices choices;
+
+  /// For each chosen choice that is a dish (by its path of option ids): that dish's required groups its
+  /// defaults did not answer, asked under it for as long as it stays chosen.
+  final Map<String, List<GroupDetail>> _nestedAsks = {};
+
+  /// Every question the tray asks, the dish's own first, then those on each chosen dish in menu order.
+  List<_Ask> get asks => [
+    for (final g in requiredGroups) _Ask(g, choices, path: ''),
+    ..._asksInside(detail?.groups ?? const [], choices, ''),
+  ];
+
+  List<_Ask> _asksInside(List<GroupDetail> groups, Choices choices, String path) => [
+    for (final g in groups)
+      for (final o in g.options)
+        if (o.groups.isNotEmpty && choices.picked(g.groupId, o.optionId)) ...[
+          for (final ng in _nestedAsks['$path${o.optionId}'] ?? const <GroupDetail>[])
+            _Ask(ng, choices.inside(o.optionId), path: '$path${o.optionId}/', under: o.name),
+          ..._asksInside(o.groups, choices.inside(o.optionId), '$path${o.optionId}/'),
+        ],
+  ];
+
+  void _askPicked(List<GroupDetail> groups, Choices choices, String path) {
+    for (final g in groups) {
+      for (final o in g.options) {
+        if (o.groups.isEmpty || !choices.picked(g.groupId, o.optionId)) continue;
+        _askInside(o, choices, '$path${o.optionId}');
+        _askPicked(o.groups, choices.inside(o.optionId), '$path${o.optionId}/');
+      }
     }
-    return true;
   }
+
+  /// A dish was chosen as a choice: it comes with its defaults, and what they leave open is asked under it.
+  void _askInside(OptionDetail option, Choices choices, String key) {
+    final inside = choices.inside(option.optionId);
+    if (inside.selections.isEmpty) fillDefaults(option.groups, inside);
+    _nestedAsks[key] = [
+      for (final g in option.groups)
+        if (g.required && (inside.selections[g.groupId]?.length ?? 0) < g.minSelect) g,
+    ];
+  }
+
+  /// A tap on a choice in the tray: a single-pick group takes it, a multi-pick group adds or removes it up to
+  /// its limit. A choice that is a dish starts asking that dish's open questions; one taken off stops.
+  void toggle(_Ask ask, OptionDetail option) {
+    final group = ask.group;
+    final choices = ask.choices;
+    final current = choices.selections[group.groupId] ?? const <String>[];
+    if (group.single) {
+      choices.selections[group.groupId] = [option.optionId];
+    } else if (current.contains(option.optionId)) {
+      choices.selections[group.groupId] = [...current]..remove(option.optionId);
+    } else if (group.maxSelect == null || current.length < group.maxSelect!) {
+      choices.selections[group.groupId] = [...current, option.optionId];
+    }
+    for (final o in group.options) {
+      if (o.groups.isEmpty) continue;
+      final key = '${ask.path}${o.optionId}';
+      if (!choices.picked(group.groupId, o.optionId)) {
+        _nestedAsks.remove(key);
+      } else if (!_nestedAsks.containsKey(key)) {
+        _askInside(o, choices, key);
+      }
+    }
+  }
+
+  bool get isComplete => selectedVariantId != null && asks.every((a) => a.answered);
 
   ChosenLine toChosenLine() {
     final variant = availableVariants.firstWhere(
@@ -1081,41 +1131,36 @@ class _PendingItemSelection {
       orElse: () => availableVariants.first,
     );
     final name = entry.variants.length > 1 ? '${entry.name} (${variant.name})' : entry.name;
-    var priceCents = _parseCents(variant.price);
-    final modifiers = <CheckModifier>[];
-    for (final g in detail?.groups ?? const <GroupDetail>[]) {
-      final pickedIds = selections[g.groupId] ?? const [];
-      for (final o in g.options) {
-        if (pickedIds.contains(o.optionId)) {
-          if (!o.isDefault) modifiers.add(CheckModifier(o.name, price: o.free ? '0.00' : o.price));
-          if (!o.free && priceCents != null) {
-            final extra = _parseCents(o.price);
-            if (extra != null) priceCents += extra;
-          }
-        }
-      }
-    }
-    final unitPrice = priceCents != null ? (priceCents / 100.0).toStringAsFixed(2) : variant.price;
+    final request = LineRequest.withChoices(variant.variantId, entry.entryId, choices);
+    final groups = detail?.groups ?? const <GroupDetail>[];
     return ChosenLine(
       name: name,
-      request: LineRequest(
-        variantId: variant.variantId,
-        entryId: entry.entryId,
-        selections: {
-          for (final MapEntry(:key, :value) in selections.entries)
-            if (value.isNotEmpty) key: [...value],
-        },
-      ),
-      unitPrice: unitPrice,
-      modifiers: modifiers,
+      request: request,
+      // the menu's own prices until the hub answers, as the sheet does when no hub answers
+      unitPrice: localPrice(name, availableVariants, detail, request).unitPrice,
+      modifiers: pickedModifiers(groups, request),
       itemId: entry.item,
     );
   }
 }
 
-int? _parseCents(String price) {
-  final d = double.tryParse(price);
-  return d == null ? null : (d * 100).round();
+/// A question the tray asks: a group on the dish itself, or on a chosen choice that is a dish, with the
+/// choices it is answered in.
+class _Ask {
+  const _Ask(this.group, this.choices, {required this.path, this.under});
+
+  final GroupDetail group;
+  final Choices choices;
+
+  /// The option ids of the dishes this group sits under, slash-separated and slash-terminated; '' on the dish.
+  final String path;
+
+  /// The chosen dish this group is on, when it is on one.
+  final String? under;
+
+  String get label => under == null ? group.name : '$under · ${group.name}';
+  int get count => choices.selections[group.groupId]?.length ?? 0;
+  bool get answered => count >= group.minSelect;
 }
 
 class _RequiredSelectionsSection extends StatelessWidget {
@@ -1132,7 +1177,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
   final int crossAxisCount;
   final double tileHeight;
   final ValueChanged<VariantOffer> onSelectVariant;
-  final void Function(GroupDetail group, OptionDetail option) onToggleOption;
+  final void Function(_Ask ask, OptionDetail option) onToggleOption;
   final VoidCallback onClose;
 
   @override
@@ -1167,18 +1212,18 @@ class _RequiredSelectionsSection extends StatelessWidget {
                   selected: pending.selectedVariantId == v.variantId,
                   onTap: () => onSelectVariant(v),
                 ),
-            for (final g in pending.requiredGroups)
-              for (final o in g.options)
+            for (final ask in pending.asks)
+              for (final o in ask.group.options)
                 _ModifierButton(
-                  key: ValueKey('req-option:${g.groupId}:${o.optionId}'),
-                  groupLabel: g.minSelect > 1
-                      ? '${g.name} (${(pending.selections[g.groupId] ?? const []).length}/${g.minSelect})'
-                      : g.name,
+                  key: ValueKey('req-option:${ask.path}${ask.group.groupId}:${o.optionId}'),
+                  groupLabel: ask.group.minSelect > 1
+                      ? '${ask.label} (${ask.count}/${ask.group.minSelect})'
+                      : ask.label,
                   name: o.name,
                   priceLabel: o.free ? null : '+${o.price}',
                   available: o.available,
-                  selected: (pending.selections[g.groupId] ?? const []).contains(o.optionId),
-                  onTap: () => onToggleOption(g, o),
+                  selected: ask.choices.picked(ask.group.groupId, o.optionId),
+                  onTap: () => onToggleOption(ask, o),
                 ),
           ],
         ),
@@ -1474,12 +1519,10 @@ class _ItemSheetState extends State<ItemSheet> {
     try {
       final entryId = widget.entry.entryId.isEmpty ? null : widget.entry.entryId;
       final detail = await widget.api.item(widget.entry.item, entryId: entryId);
-      for (final g in widget.initial == null ? detail.groups : const <GroupDetail>[]) {
-        final defaults = [
-          for (final o in g.options)
-            if (o.isDefault && o.available) o.optionId,
-        ];
-        if (defaults.isNotEmpty) _request.selections[g.groupId] = defaults;
+      if (widget.initial == null) {
+        fillDefaults(detail.groups, _request);
+      } else {
+        _fillInside(detail.groups, _request); // a line reopened: the dishes it chose come with their defaults
       }
       if (mounted) setState(() => _detail = detail);
       _reprice();
@@ -1506,9 +1549,22 @@ class _ItemSheetState extends State<ItemSheet> {
     });
   }
 
-  void _toggle(GroupDetail group, OptionDetail option) {
+  /// The defaults of every chosen dish that has no choices on it yet, down through the levels.
+  void _fillInside(List<GroupDetail> groups, Choices choices) {
+    for (final g in groups) {
+      for (final o in g.options) {
+        if (o.groups.isEmpty || !choices.picked(g.groupId, o.optionId)) continue;
+        final inside = choices.inside(o.optionId);
+        if (inside.selections.isEmpty) fillDefaults(o.groups, inside);
+        _fillInside(o.groups, inside);
+      }
+    }
+  }
+
+  /// A tap on a choice, on the dish or on a chosen dish one level down ([choices] is that level's).
+  void _toggle(Choices choices, GroupDetail group, OptionDetail option) {
     setState(() {
-      final current = _request.selections[group.groupId] ?? [];
+      final current = choices.selections[group.groupId] ?? [];
       final chosen = current.contains(option.optionId);
       final armed = _armed;
       _armed = null;
@@ -1517,26 +1573,30 @@ class _ItemSheetState extends State<ItemSheet> {
         // The same word again takes it off and leaves the plain choice.
         final full = !chosen && !group.single && group.maxSelect != null && current.length >= group.maxSelect!;
         if (!full) {
-          if (_request.prefixes[option.optionId] == armed) {
-            _request.prefixes.remove(option.optionId);
+          if (choices.prefixes[option.optionId] == armed) {
+            choices.prefixes.remove(option.optionId);
           } else {
-            _request.prefixes[option.optionId] = armed;
+            choices.prefixes[option.optionId] = armed;
           }
           if (!chosen) {
-            _request.selections[group.groupId] = group.single ? [option.optionId] : [...current, option.optionId];
+            choices.selections[group.groupId] = group.single ? [option.optionId] : [...current, option.optionId];
           }
         }
       } else if (group.single) {
-        _request.selections[group.groupId] = chosen && !group.required ? [] : [option.optionId];
+        choices.selections[group.groupId] = chosen && !group.required ? [] : [option.optionId];
       } else if (chosen) {
-        _request.selections[group.groupId] = [...current]..remove(option.optionId);
+        choices.selections[group.groupId] = [...current]..remove(option.optionId);
       } else if (group.maxSelect == null || current.length < group.maxSelect!) {
-        _request.selections[group.groupId] = [...current, option.optionId];
+        choices.selections[group.groupId] = [...current, option.optionId];
       }
       // a word only means something on a choice that is on the line
-      final kept = _request.selections[group.groupId] ?? const <String>[];
+      final kept = choices.selections[group.groupId] ?? const <String>[];
       for (final o in group.options) {
-        if (!kept.contains(o.optionId)) _request.prefixes.remove(o.optionId);
+        if (!kept.contains(o.optionId)) choices.prefixes.remove(o.optionId);
+      }
+      // a dish chosen as a choice comes with its own defaults, asked right under it
+      if (option.groups.isNotEmpty && kept.contains(option.optionId) && !choices.nested.containsKey(option.optionId)) {
+        fillDefaults(option.groups, choices.inside(option.optionId));
       }
     });
     _reprice();
@@ -1544,25 +1604,66 @@ class _ItemSheetState extends State<ItemSheet> {
 
   /// The choices that differ from the menu's defaults, as the check lists them, each with its price; a
   /// marked choice is listed with its word even when it is the default ("No white rice"), and a choice left
-  /// off ("no") is free, as the backend makes it.
-  List<CheckModifier> get _picked => [
-    for (final g in _detail?.groups ?? const <GroupDetail>[])
-      for (final o in g.options)
-        if ((_request.selections[g.groupId] ?? const []).contains(o.optionId) &&
-            (_request.prefixes[o.optionId] != null || !o.isDefault))
-          CheckModifier(
-            _request.prefixes[o.optionId] == null ? o.name : '${instructions[_request.prefixes[o.optionId]]} ${o.name}',
-            price: o.free || _request.prefixes[o.optionId] == 'no' ? '0.00' : o.price,
-          ),
-  ];
+  /// off ("no") is free, as the backend makes it. The choices on a chosen dish follow it one level deeper.
+  List<CheckModifier> get _picked => pickedModifiers(_detail?.groups ?? const <GroupDetail>[], _request);
 
   /// A choice's chip: its word when it has one, and its price unless the word is "no" (the backend charges
   /// nothing for a choice left off).
-  String _optionLabel(OptionDetail o) {
-    final mark = _request.prefixes[o.optionId];
+  String _optionLabel(Choices choices, OptionDetail o) {
+    final mark = choices.prefixes[o.optionId];
     final name = mark == null ? o.name : '${instructions[mark]} ${o.name}';
     return o.free || mark == 'no' ? name : '$name +${o.price}';
   }
+
+  /// A dish's groups as chips, each chosen choice that is a dish followed by that dish's own groups in a
+  /// block under it, one step in, so a roll's sauce is asked right under the roll.
+  List<Widget> _groupBlocks(
+    ThemeData theme,
+    ColorScheme scheme,
+    List<GroupDetail> groups,
+    Choices choices,
+    int depth,
+  ) => [
+    for (final g in groups) ...[
+      Text(
+        g.required ? '${g.name} (required)' : g.name,
+        style: theme.textTheme.titleSmall?.copyWith(color: g.required ? scheme.primary : scheme.onSurface),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final o in g.options)
+            FilterChip(
+              key: depth == 0 ? null : ValueKey('choice:${o.optionId}@$depth'),
+              label: Text(_optionLabel(choices, o)),
+              selected: choices.picked(g.groupId, o.optionId),
+              onSelected: o.available ? (_) => _toggle(choices, g, o) : null,
+            ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      for (final o in g.options)
+        if (o.groups.isNotEmpty && choices.picked(g.groupId, o.optionId))
+          Container(
+            key: ValueKey('inside:${o.optionId}'),
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.only(left: 12),
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: scheme.outlineVariant, width: 2)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(o.name, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                ..._groupBlocks(theme, scheme, o.groups, choices.inside(o.optionId), depth + 1),
+              ],
+            ),
+          ),
+    ],
+  ];
 
   /// One tap for the kitchen's usual words. A word waits for the next choice tapped, then goes on it.
   Widget _instructionRow(ThemeData theme, ColorScheme scheme) => Padding(
@@ -1656,28 +1757,7 @@ class _ItemSheetState extends State<ItemSheet> {
                       const SizedBox(height: 14),
                     ],
                     if (detail.groups.isNotEmpty) _instructionRow(theme, scheme),
-                    for (final g in detail.groups) ...[
-                      Text(
-                        g.required ? '${g.name} (required)' : g.name,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: g.required ? scheme.primary : scheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
-                        children: [
-                          for (final o in g.options)
-                            FilterChip(
-                              label: Text(_optionLabel(o)),
-                              selected: (_request.selections[g.groupId] ?? const []).contains(o.optionId),
-                              onSelected: o.available ? (_) => _toggle(g, o) : null,
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                    ],
+                    ..._groupBlocks(theme, scheme, detail.groups, _request, 0),
                     TextField(
                       controller: _note,
                       decoration: const InputDecoration(

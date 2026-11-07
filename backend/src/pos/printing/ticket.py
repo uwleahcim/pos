@@ -24,6 +24,7 @@ class TicketLine:
     seat: int | None = None
     void: bool = False
     changed: bool = False  # modified after the course was fired
+    header: str | None = None  # the dish this one is part of, when it is a combo's or a lunch special's choice
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,8 @@ def render(
         seat = f" [s{line.seat}]" if line.seat else ""
         inv = line.void
         b.line(f"{prefix}{line.qty} x {line.label}{seat}", big=True, bold=line.void or line.changed, invert=inv)
+        if line.header:
+            b.line(f"    with {line.header}", invert=inv)
         for mod in line.modifiers:
             b.line(f"    + {mod}", invert=inv)
         if line.note:

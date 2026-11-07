@@ -155,6 +155,7 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
                     seat=line.seat,
                     void=void,
                     changed=not void and line.modified_after_fire,
+                    header=k.get("header") or None,
                 )
             )
     return out

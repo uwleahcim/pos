@@ -1,0 +1,377 @@
+{
+ "item": "C5",
+ "name": "Combination Plate",
+ "kind": "combo",
+ "variants": [
+  {
+   "variant_id": "C5:regular",
+   "name": "Regular",
+   "price": "14.50",
+   "price_source": "variant_base",
+   "status": "available"
+  }
+ ],
+ "groups": [
+  {
+   "group_id": "entree_slot",
+   "name": "Entree",
+   "min_select": 1,
+   "max_select": 1,
+   "free_count": 0,
+   "allow_quantity": false,
+   "options": [
+    {
+     "option_id": "entree_slot:gtc",
+     "name": "General Tso's Chicken",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": true,
+     "linked_variant": "GTC:lunch",
+     "status": "available",
+     "kitchen_label": "左宗鸡 (L)",
+     "linked_item": "GTC",
+     "groups": [
+      {
+       "group_id": "spice",
+       "name": "Spice level",
+       "min_select": 0,
+       "max_select": 1,
+       "free_count": 0,
+       "allow_quantity": false,
+       "options": [
+        {
+         "option_id": "spice:mild",
+         "name": "Mild",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "少辣",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "spice:medium",
+         "name": "Medium",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": true,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": null,
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "spice:extra",
+         "name": "Extra spicy",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "加辣",
+         "linked_item": null,
+         "groups": []
+        }
+       ]
+      },
+      {
+       "group_id": "rice",
+       "name": "Choice of rice",
+       "min_select": 1,
+       "max_select": 1,
+       "free_count": 0,
+       "allow_quantity": false,
+       "options": [
+        {
+         "option_id": "rice:white",
+         "name": "White rice",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": true,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": null,
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "rice:brown",
+         "name": "Brown rice",
+         "price": "1.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "糙米",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "rice:none",
+         "name": "No rice",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "不要饭",
+         "linked_item": null,
+         "groups": []
+        }
+       ]
+      },
+      {
+       "group_id": "addons",
+       "name": "Add-ons",
+       "min_select": 0,
+       "max_select": null,
+       "free_count": 0,
+       "allow_quantity": true,
+       "options": [
+        {
+         "option_id": "addons:shrimp",
+         "name": "Add shrimp",
+         "price": "4.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "加虾",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "addons:sauce",
+         "name": "Extra sauce",
+         "price": "0.50",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "多汁",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "addons:nomsg",
+         "name": "No MSG",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "不要味精",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "addons:sauceside",
+         "name": "Sauce on side",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "汁另放",
+         "linked_item": null,
+         "groups": []
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "option_id": "entree_slot:bb",
+     "name": "Beef with Broccoli",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": "BB:lunch",
+     "status": "available",
+     "kitchen_label": "芥兰牛 (L)",
+     "linked_item": "BB",
+     "groups": [
+      {
+       "group_id": "spice",
+       "name": "Spice level",
+       "min_select": 0,
+       "max_select": 1,
+       "free_count": 0,
+       "allow_quantity": false,
+       "options": [
+        {
+         "option_id": "spice:mild",
+         "name": "Mild",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "少辣",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "spice:medium",
+         "name": "Medium",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": true,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": null,
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "spice:extra",
+         "name": "Extra spicy",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "加辣",
+         "linked_item": null,
+         "groups": []
+        }
+       ]
+      },
+      {
+       "group_id": "rice",
+       "name": "Choice of rice",
+       "min_select": 1,
+       "max_select": 1,
+       "free_count": 0,
+       "allow_quantity": false,
+       "options": [
+        {
+         "option_id": "rice:white",
+         "name": "White rice",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": true,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": null,
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "rice:brown",
+         "name": "Brown rice",
+         "price": "1.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "糙米",
+         "linked_item": null,
+         "groups": []
+        },
+        {
+         "option_id": "rice:none",
+         "name": "No rice",
+         "price": "0.00",
+         "price_mode": "delta",
+         "is_default": false,
+         "linked_variant": null,
+         "status": "available",
+         "kitchen_label": "不要饭",
+         "linked_item": null,
+         "groups": []
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "group_id": "side_slot",
+   "name": "Side",
+   "min_select": 1,
+   "max_select": 1,
+   "free_count": 0,
+   "allow_quantity": false,
+   "options": [
+    {
+     "option_id": "side_slot:eggroll",
+     "name": "Egg roll",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": true,
+     "linked_variant": "EGGROLL:regular",
+     "status": "available",
+     "kitchen_label": "蛋卷",
+     "linked_item": "EGGROLL",
+     "groups": []
+    },
+    {
+     "option_id": "side_slot:springroll",
+     "name": "Spring roll",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": "SPRINGROLL:regular",
+     "status": "available",
+     "kitchen_label": "春卷",
+     "linked_item": "SPRINGROLL",
+     "groups": []
+    }
+   ]
+  },
+  {
+   "group_id": "rice_slot",
+   "name": "Rice",
+   "min_select": 1,
+   "max_select": 1,
+   "free_count": 0,
+   "allow_quantity": false,
+   "options": [
+    {
+     "option_id": "rice_slot:pfr",
+     "name": "Pork fried rice",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": true,
+     "linked_variant": "PFR:side",
+     "status": "available",
+     "kitchen_label": "叉烧炒饭 (small)",
+     "linked_item": "PFR",
+     "groups": []
+    },
+    {
+     "option_id": "rice_slot:white",
+     "name": "White rice",
+     "price": "0.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": "WRICE:side",
+     "status": "available",
+     "kitchen_label": "白饭",
+     "linked_item": "WRICE",
+     "groups": []
+    },
+    {
+     "option_id": "rice_slot:brown",
+     "name": "Brown rice",
+     "price": "1.00",
+     "price_mode": "delta",
+     "is_default": false,
+     "linked_variant": "BRICE:side",
+     "status": "available",
+     "kitchen_label": "糙米饭",
+     "linked_item": "BRICE",
+     "groups": []
+    }
+   ]
+  }
+ ],
+ "tax_class": "prepared_food",
+ "station": null,
+ "second_name": "套餐"
+}

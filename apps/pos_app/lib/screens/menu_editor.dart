@@ -419,7 +419,11 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
             title: Text(nameOf(group), style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-            subtitle: Text(catalog.optionsOf(key).map(nameOf).join(', '), maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              catalog.optionsOf(key).map((o) => optionName(catalog, o)).join(', '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             selected: _selected?.kind == 'group' && _selected?.key == key,
             onTap: () => setState(() => _selected = _Selection('group', key)),
           ),
@@ -688,17 +692,31 @@ class ItemEditor extends StatelessWidget {
               label: const Text('Add a group'),
               onPressed: () async {
                 final taken = {...own, ...inherited}.map((a) => a['group']).toSet();
-                final group = await showDialog<String>(
+                var group = await showDialog<String>(
                   context: context,
                   builder: (_) => _PickDialog(
                     title: 'Ask for which options?',
                     options: {
                       for (final g in catalog.groups())
                         if (!taken.contains(g['code'])) g['code'] as String: nameOf(g),
+                      _fromCategory: 'A new group offering the dishes of a category…',
                     },
                   ),
                 );
                 if (group == null) return;
+                if (group == _fromCategory) {
+                  // the maki combination offers the Roll category: every roll on sale, kept in step with it
+                  if (!context.mounted) return;
+                  final category = await showDialog<String>(
+                    context: context,
+                    builder: (_) => _PickDialog(
+                      title: 'Offer the dishes of which category?',
+                      options: {for (final c in catalog.categories()) c['code'] as String: nameOf(c)},
+                    ),
+                  );
+                  if (category == null) return;
+                  group = newSourcedGroup(catalog, category);
+                }
                 catalog.put('attachment', {
                   'owner_kind': 'item',
                   'owner': itemKey,
@@ -841,6 +859,8 @@ class GroupEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     final group = catalog.get('group', groupKey)!;
     final options = catalog.optionsOf(groupKey);
+    final source = group['source_category'] as String?;
+    final sourceCategory = source == null ? null : catalog.get('category', source);
     final usedBy = catalog
         .all('attachment')
         .where((a) => a['group'] == groupKey)
@@ -880,20 +900,63 @@ class GroupEditor extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 12),
+        _dropdown<String?>(
+          label: 'Options come from',
+          value: source,
+          items: {
+            null: 'Options typed here',
+            for (final c in catalog.categories()) c['code'] as String: 'The dishes of ${nameOf(c)}',
+          },
+          onChanged: (v) {
+            group['source_category'] = v;
+            syncSourcedOptions(catalog, groupKey);
+            onChanged();
+          },
+        ),
+        if (sourceCategory != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Every dish on sale in ${nameOf(sourceCategory)} is an option here, kept in step with the category '
+              'each time the menu is saved. Options added by hand stay beside them.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         _heading(context, 'Options'),
         for (final o in options)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Row(
               children: [
-                SizedBox(width: 200, child: _text('${o['id']}/en', 'Option', nameOf(o), (t) => _setName(o, 'en', t))),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: 140,
-                  child: _text('${o['id']}/zh', '中文', (o['names'] as Map?)?['zh'] as String? ?? '', (t) {
-                    _setName(o, 'zh', t);
-                  }),
-                ),
+                if (o['linked_variant'] != null)
+                  // a choice that is a dish is called what the dish is called; a rename follows
+                  SizedBox(
+                    width: 352,
+                    child: InputDecorator(
+                      decoration: InputDecoration(
+                        labelText: sourceCategory != null ? 'Dish of ${nameOf(sourceCategory)}' : 'Dish',
+                        isDense: true,
+                        border: const OutlineInputBorder(),
+                      ),
+                      child: Text(
+                        optionName(catalog, o),
+                        key: ValueKey('${o['id']}/dish'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                else ...[
+                  SizedBox(width: 200, child: _text('${o['id']}/en', 'Option', nameOf(o), (t) => _setName(o, 'en', t))),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 140,
+                    child: _text('${o['id']}/zh', '中文', (o['names'] as Map?)?['zh'] as String? ?? '', (t) {
+                      _setName(o, 'zh', t);
+                    }),
+                  ),
+                ],
                 const SizedBox(width: 12),
                 SizedBox(
                   width: 110,
@@ -919,14 +982,44 @@ class GroupEditor extends StatelessWidget {
                     onChanged();
                   },
                 ),
-                IconButton(
-                  tooltip: 'Remove this option',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () {
-                    catalog.delete('option', o['id'] as String);
-                    onChanged();
-                  },
-                ),
+                if (o['linked_variant'] == null)
+                  IconButton(
+                    key: ValueKey('${o['id']}/link'),
+                    tooltip: 'Make this option a dish from the menu',
+                    icon: const Icon(Icons.link),
+                    onPressed: () async {
+                      final variant = await showDialog<String>(
+                        context: context,
+                        builder: (_) => _SearchPickDialog(title: 'Which dish?', options: dishChoices(catalog)),
+                      );
+                      if (variant == null) return;
+                      o['linked_variant'] = variant;
+                      o['names'] = <String, dynamic>{}; // called what the dish is called
+                      o['kitchen_label'] = null;
+                      onChanged();
+                    },
+                  )
+                else if (sourceCategory == null || o['linked_variant'] == null)
+                  IconButton(
+                    key: ValueKey('${o['id']}/unlink'),
+                    tooltip: 'Make this option a word again',
+                    icon: const Icon(Icons.link_off),
+                    onPressed: () {
+                      o['names'] = {'en': optionName(catalog, o)};
+                      o['linked_variant'] = null;
+                      onChanged();
+                    },
+                  ),
+                // a dish the category put here comes back on save: only its own options can go
+                if (sourceCategory == null || o['linked_variant'] == null)
+                  IconButton(
+                    tooltip: 'Remove this option',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () {
+                      catalog.delete('option', o['id'] as String);
+                      onChanged();
+                    },
+                  ),
               ],
             ),
           ),
@@ -1209,6 +1302,112 @@ void removeItem(MenuCatalog catalog, String itemKey) {
   catalog.delete('item', itemKey);
 }
 
+/// The pick that stands for "a new group from a category" in the add-a-group dialog.
+const _fromCategory = '__from_category__';
+
+/// A new group that offers the dishes of a category (the Roll category for the maki combination): named like
+/// the category, one pick, its options from the category. The dish's editor sets how many picks after.
+String newSourcedGroup(MenuCatalog catalog, String categoryKey) {
+  final category = catalog.get('category', categoryKey)!;
+  final code = _uniqueCode(catalog, 'group', _slug(nameOf(category)));
+  catalog.put('group', {
+    'code': code,
+    'names': Map<String, dynamic>.from(category['names'] as Map? ?? {'en': categoryKey}),
+    'min_select': 1,
+    'max_select': 1,
+    'free_count': 0,
+    'allow_quantity': false,
+    'allow_duplicates': false,
+    'display': 'inline',
+    'source_category': categoryKey,
+    'sort': catalog.groups().length,
+  });
+  syncSourcedOptions(catalog, code);
+  return code;
+}
+
+/// Gives a group whose options come from a category (`source_category`) the options the category's dishes
+/// call for, as the hub does on every save (pos.menu.linked.sync): one option per dish on sale in the category
+/// or the categories under it, one per size when a dish has several, each linked to the dish and named after
+/// it. Options linked to a dish no longer there go; options typed by hand, and the prices and defaults set on
+/// the ones kept, stay. Returns what changed, as text.
+List<String> syncSourcedOptions(MenuCatalog catalog, String groupKey) {
+  final group = catalog.get('group', groupKey);
+  final category = group?['source_category'] as String?;
+  if (group == null || category == null || catalog.get('category', category) == null) return const [];
+  final wanted = <String, Map<String, dynamic>>{};
+  for (final item in catalog.itemsUnder(category)) {
+    if (item['active'] == false) continue;
+    final itemCode = item['code'] as String;
+    final sizes = catalog.variantsOf(itemCode).where((v) => v['active'] != false).toList();
+    for (final (n, v) in sizes.indexed) {
+      final code = sizes.length > 1 ? '$itemCode-${v['code']}' : itemCode;
+      wanted['$groupKey:$code'] = {
+        'id': '$groupKey:$code',
+        'group': groupKey,
+        'code': code,
+        'names': <String, dynamic>{},
+        'kitchen_label': null,
+        'price_mode': 'delta',
+        'price': '0.00',
+        'is_default': false,
+        'max_qty': null,
+        'effects': <dynamic>[],
+        'linked_variant': v['id'],
+        'child_groups': <String>[],
+        'station': null,
+        'sort': ((item['sort'] as int?) ?? 0) * 10 + n,
+        'active': true,
+      };
+    }
+  }
+  final changed = <String>[];
+  for (final o in catalog.optionsOf(groupKey)) {
+    final id = o['id'] as String;
+    final fresh = wanted.remove(id);
+    if (fresh != null) {
+      o['linked_variant'] = fresh['linked_variant'];
+      o['sort'] = fresh['sort'];
+    } else if (o['linked_variant'] != null) {
+      catalog.delete('option', id);
+      changed.add('removed $id');
+    }
+  }
+  for (final fresh in wanted.values) {
+    catalog.put('option', fresh);
+    changed.add('added ${fresh['id']}');
+  }
+  return changed;
+}
+
+/// What an option is called: its own name, or, for an option that is a dish, the dish's name, with the size
+/// when the dish has several (as the hub shows it, pos.menu.defs.Definitions.option_names).
+String optionName(MenuCatalog catalog, Map<String, dynamic> option, [String locale = 'en']) {
+  final names = (option['names'] as Map?)?.cast<String, dynamic>() ?? const {};
+  final linked = option['linked_variant'] as String?;
+  final variant = linked == null ? null : catalog.get('variant', linked);
+  if (variant == null || names.entries.any((e) => e.key != 'kitchen' && '${e.value}'.isNotEmpty)) {
+    return nameOf(option, locale);
+  }
+  final dish = nameOf(catalog.get('item', variant['item'] as String), locale);
+  return catalog.variantsOf(variant['item'] as String).length > 1 ? '$dish (${nameOf(variant, locale)})' : dish;
+}
+
+/// Every size of every dish, by variant id, for the dish picker: "Miso Soup", "Sweet & Sour Sauce (Medium)".
+Map<String, String> dishChoices(MenuCatalog catalog) {
+  final out = <String, String>{};
+  for (final category in catalog.categories()) {
+    for (final item in catalog.itemsIn(category['code'] as String)) {
+      final sizes = catalog.variantsOf(item['code'] as String);
+      for (final v in sizes) {
+        final name = sizes.length > 1 ? '${nameOf(item)} (${nameOf(v)})' : nameOf(item);
+        out[v['id'] as String] = '$name · ${nameOf(category)}';
+      }
+    }
+  }
+  return out;
+}
+
 String _uniqueCode(MenuCatalog catalog, String kind, String base, {String prefix = ''}) {
   final clean = base.isEmpty ? kind : base;
   if (catalog.get(kind, '$prefix$clean') == null) return clean;
@@ -1454,6 +1653,58 @@ class _PickDialog extends StatelessWidget {
         SimpleDialogOption(onPressed: () => Navigator.of(context).pop(e.key), child: Text(e.value)),
     ],
   );
+}
+
+/// A pick from a long list (every dish on the menu), narrowed by typing.
+class _SearchPickDialog extends StatefulWidget {
+  const _SearchPickDialog({required this.title, required this.options});
+  final String title;
+  final Map<String, String> options;
+
+  @override
+  State<_SearchPickDialog> createState() => _SearchPickDialogState();
+}
+
+class _SearchPickDialogState extends State<_SearchPickDialog> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _query.toLowerCase();
+    final shown = [
+      for (final e in widget.options.entries)
+        if (q.isEmpty || e.value.toLowerCase().contains(q) || e.key.toLowerCase().contains(q)) e,
+    ];
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 420,
+        height: 440,
+        child: Column(
+          children: [
+            TextField(
+              key: const ValueKey('dish-search'),
+              autofocus: true,
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search', isDense: true),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: shown.length,
+                itemBuilder: (context, i) => ListTile(
+                  dense: true,
+                  title: Text(shown[i].value),
+                  onTap: () => Navigator.of(context).pop(shown[i].key),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
+    );
+  }
 }
 
 class _AuditTile extends StatelessWidget {

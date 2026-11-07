@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -170,3 +171,14 @@ def test_ascii_demo_has_no_graphics():
     assert plain.lines[0].label == "[CJK]" and plain.lines[1].label == "Kung Pao Chicken (Pt)"
     out = decode(render(plain, beep=False))
     assert not out.images and out.cuts == 1 and not out.unknown
+
+
+def test_a_choice_that_is_a_dish_prints_under_the_dish_it_came_with():
+    """The soup of a lunch special at the soup station says which special it belongs to."""
+    ticket = replace(
+        DEMO,
+        lines=(TicketLine(1, "Miso Soup", header="L01 Sweet & Sour Chicken"), TicketLine(2, "Wonton Soup")),
+    )
+    text = decode(render(ticket, beep=False)).text
+    assert "    with L01 Sweet & Sour Chicken" in text
+    assert text.index("1 x Miso Soup") < text.index("    with L01 Sweet & Sour Chicken") < text.index("2 x Wonton Soup")

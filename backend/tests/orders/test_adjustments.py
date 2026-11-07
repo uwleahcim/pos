@@ -491,6 +491,30 @@ def test_the_check_lists_each_choice_with_what_it_adds_for_the_quantity():
     line = check_for(state_with(*ops), massachusetts())["lines"][0]
     assert line["total"] == "23.50"
     assert line["modifiers"] == [
-        {"label": "Oat milk", "price": "0.75", "amount": "1.50"},
-        {"label": "Large", "price": "1.00", "amount": "2.00"},
+        {"label": "Oat milk", "price": "0.75", "amount": "1.50", "depth": 0},
+        {"label": "Large", "price": "1.00", "amount": "2.00", "depth": 0},
+    ]
+
+
+def test_the_check_keeps_a_default_choice_whose_own_choices_changed():
+    """The roll a maki combination comes with stays off the check, unless a sauce on it was changed: then the
+    roll reads above its sauce, so the sauce is not left hanging on its own."""
+    priced = {
+        **TEA,
+        "unit_price": "19.50",
+        "modifiers": [
+            {"label": "Kappa Maki", "price": "0.00", "defaulted": True, "depth": 0},
+            {"label": "Spicy mayo", "price": "0.50", "defaulted": False, "depth": 1},
+            {"label": "Tekka Maki", "price": "0.00", "defaulted": True, "depth": 0},
+            {"label": "Soy", "price": "0.00", "defaulted": True, "depth": 1},
+            {"label": "Miso Soup", "price": "0.00", "defaulted": False, "depth": 0},
+            {"label": "Hot", "price": "0.00", "defaulted": True, "depth": 1},
+        ],
+    }
+    ops = [make_op("create", at=0), make_op("add_line", at=1, line_id="L1", item="Maki", qty=1, priced=priced)]
+    line = check_for(state_with(*ops), massachusetts())["lines"][0]
+    assert [(m["label"], m["depth"]) for m in line["modifiers"]] == [
+        ("Kappa Maki", 0),
+        ("Spicy mayo", 1),
+        ("Miso Soup", 0),
     ]

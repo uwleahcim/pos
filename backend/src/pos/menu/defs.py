@@ -151,6 +151,10 @@ class Group:
     allow_duplicates: bool = False
     display: str = "inline"
     sort: int = 0
+    source_category: str | None = None
+    """The options come from this category: every dish on sale in it (and in the categories under it) is an
+    option linked to the dish, one per size when it has several, kept in step on every save (`linked.sync`).
+    Options added by hand stay beside them."""
 
 
 @dataclass(frozen=True)
@@ -419,6 +423,52 @@ class Definitions:
 
     def options_of(self, group_code: str) -> list[Option]:
         return sorted((o for o in self.options.values() if o.group == group_code), key=lambda o: (o.sort, o.code))
+
+    def linked_item(self, option: Option) -> Item | None:
+        """The dish an option stands for, when it is one (`linked_variant`)."""
+        variant = self.variants.get(option.linked_variant or "")
+        return self.items.get(variant.item) if variant is not None else None
+
+    def option_names(self, option: Option) -> Mapping[str, str]:
+        """What an option is called: its own names, or, when it has none, the dish it is linked to (with the
+        size when the dish has several), so a linked option follows the dish through a rename."""
+        if any(v for k, v in option.names.items() if k != "kitchen"):
+            return option.names
+        item = self.linked_item(option)
+        if item is None:
+            return option.names
+        variant = self.variants[option.linked_variant or ""]
+        if len(self.variants_of(item.code)) <= 1:
+            return item.names
+        names = dict(item.names)
+        for locale, text in list(names.items()):
+            size = (
+                self.localizer.text(variant.names, locale)
+                if locale != "kitchen"
+                else self.localizer.kitchen(variant.names)
+            )
+            names[locale] = f"{text} ({size})" if size else text
+        return names
+
+    def option_kitchen_label(self, option: Option) -> str | None:
+        """What the kitchen reads for an option: its own label, else the linked dish's kitchen name."""
+        if option.kitchen_label:
+            return option.kitchen_label
+        item = self.linked_item(option)
+        if item is None:
+            return None
+        label = self.localizer.kitchen(item.names)
+        variant = self.variants[option.linked_variant or ""]
+        if len(self.variants_of(item.code)) > 1:
+            label = f"{label} ({self.localizer.kitchen(variant.names)})"
+        return label or None
+
+    def items_in(self, category_code: str) -> list[Item]:
+        """The dishes of a category and of the categories under it, in menu order."""
+        found = [
+            i for i in self.items.values() if any(c.code == category_code for c in self.category_chain(i.category))
+        ]
+        return sorted(found, key=lambda i: (i.sort, i.code))
 
     def variants_of(self, item_code: str) -> list[Variant]:
         return sorted((v for v in self.variants.values() if v.item == item_code), key=lambda v: (v.sort, v.code))

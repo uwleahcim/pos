@@ -164,6 +164,158 @@ void main() {
     expect(catalog.entriesOf('GTC').map((e) => e['id']), ['dinner:87']); // the other menu keeps the dish
   });
 
+  /// The small menu with a Soup category under Mains: two soups, one in two sizes, and one off sale.
+  MenuCatalog withSoups() {
+    final catalog = MenuCatalog.fromJson(catalogJson());
+    catalog.put('category', {
+      'code': 'soup',
+      'names': {'en': 'Soup', 'zh': '汤'},
+      'parent': 'mains',
+      'station': 'wok2',
+      'sort': 1,
+    });
+    void soup(String code, String name, int sort, {bool active = true}) {
+      catalog.put('item', {
+        'code': code,
+        'category': 'soup',
+        'names': {'en': name},
+        'station': null,
+        'active': active,
+        'sort': sort,
+      });
+    }
+
+    soup('801', 'Miso Soup', 0);
+    soup('803', 'Hot & Sour Soup', 1);
+    soup('804', 'Egg Drop Soup', 2, active: false);
+    catalog.put('variant', newVariant('801', 'regular', 'Regular', '2.50', 0));
+    catalog.put('variant', newVariant('803', 'small', 'Small', '3.25', 0));
+    catalog.put('variant', newVariant('803', 'large', 'Large', '6.50', 1));
+    catalog.put('variant', newVariant('804', 'regular', 'Regular', '2.50', 0));
+    return catalog;
+  }
+
+  test('a group that offers a category gets an option per dish on sale, named after the dish', () {
+    final catalog = withSoups();
+    final code = newSourcedGroup(catalog, 'soup');
+    expect(code, 'soup');
+    final group = catalog.get('group', 'soup')!;
+    expect(group['names'], {'en': 'Soup', 'zh': '汤'});
+    expect((group['source_category'], group['min_select'], group['max_select']), ('soup', 1, 1));
+    // one option per dish, one per size when it has several, the dish off sale left out; each named for its dish
+    expect(catalog.optionsOf('soup').map((o) => o['id']), ['soup:801', 'soup:803-small', 'soup:803-large']);
+    expect(catalog.optionsOf('soup').map((o) => optionName(catalog, o)), [
+      'Miso Soup',
+      'Hot & Sour Soup (Small)',
+      'Hot & Sour Soup (Large)',
+    ]);
+    expect(catalog.get('option', 'soup:801')!['linked_variant'], '801:regular');
+    expect(catalog.get('option', 'soup:801')!['names'], isEmpty);
+
+    // the editor's own option stays and keeps its name; a price set on a dish's option stays too
+    catalog.put('option', {
+      'id': 'soup:none',
+      'group': 'soup',
+      'code': 'none',
+      'names': {'en': 'No soup'},
+      'price': '0.00',
+      'is_default': true,
+      'linked_variant': null,
+      'sort': 99,
+      'active': true,
+    });
+    catalog.get('option', 'soup:801')!['price'] = '1.00';
+    catalog.get('item', '804')!['active'] = true; // back on sale
+    catalog.get('item', '801')!['category'] = 'mains'; // out of the category (still under Mains, but Mains is not Soup)
+    expect(syncSourcedOptions(catalog, 'soup'), ['removed soup:801', 'added soup:804']);
+    expect(catalog.optionsOf('soup').map((o) => optionName(catalog, o)), [
+      'Hot & Sour Soup (Small)',
+      'Hot & Sour Soup (Large)',
+      'Egg Drop Soup',
+      'No soup',
+    ]);
+    expect(syncSourcedOptions(catalog, 'soup'), isEmpty); // done once
+    // the whole subtree: a group that offers Mains offers the soups too
+    final mains = newSourcedGroup(catalog, 'mains');
+    expect(catalog.optionsOf(mains).map((o) => o['id']), [
+      '$mains:801', // the soup moved to Mains sorts with the chicken (both 0), then by code
+      '$mains:GTC',
+      '$mains:803-small',
+      '$mains:803-large',
+      '$mains:804',
+    ]);
+    expect(catalog.categoryChain('soup'), ['soup', 'mains']);
+    // a group whose options are typed is left alone
+    expect(syncSourcedOptions(catalog, 'rice'), isEmpty);
+    expect(catalog.optionsOf('rice').map((o) => o['id']), ['rice:white']);
+    // a hand-made option linked to a dish takes the dish's name until it is named itself
+    final white = catalog.get('option', 'rice:white')!;
+    white['linked_variant'] = '801:regular';
+    white['names'] = <String, dynamic>{};
+    expect(optionName(catalog, white), 'Miso Soup');
+    white['names'] = {'en': 'The soup'};
+    expect(optionName(catalog, white), 'The soup');
+    expect(dishChoices(catalog)['803:small'], 'Hot & Sour Soup (Small) · Soup');
+  });
+
+  testWidgets('the group editor offers a category, shows its dishes read-only and links a typed option to a dish', (
+    tester,
+  ) async {
+    final catalog = withSoups();
+    var changes = 0;
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: StatefulBuilder(
+              builder: (context, setState) =>
+                  GroupEditor(catalog: catalog, groupKey: 'rice', onChanged: () => setState(() => changes++)),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Options come from'), findsOneWidget);
+    expect(find.byKey(const ValueKey('rice:white/link')), findsOneWidget);
+
+    // the typed option becomes the Miso Soup: it reads as the dish, and can be a word again
+    await tester.tap(find.byKey(const ValueKey('rice:white/link')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('dish-search')), 'miso');
+    await tester.pumpAndSettle();
+    expect(find.text('Hot & Sour Soup (Small) · Soup'), findsNothing);
+    await tester.tap(find.text('Miso Soup · Soup'));
+    await tester.pumpAndSettle();
+    expect(catalog.get('option', 'rice:white')!['linked_variant'], '801:regular');
+    expect(find.byKey(const ValueKey('rice:white/dish')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('rice:white/dish'))).data, 'Miso Soup');
+    await tester.tap(find.byKey(const ValueKey('rice:white/unlink')));
+    await tester.pumpAndSettle();
+    expect(catalog.get('option', 'rice:white')!['linked_variant'], isNull);
+    expect(catalog.get('option', 'rice:white')!['names'], {'en': 'Miso Soup'}); // keeps the name it showed
+
+    // the group offers the Soup category: its dishes are the options, each read-only and not removable
+    await tester.tap(find.text('Options typed here'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('The dishes of Soup').last);
+    await tester.pumpAndSettle();
+    expect(catalog.get('group', 'rice')!['source_category'], 'soup');
+    expect(catalog.optionsOf('rice').map((o) => o['id']), [
+      'rice:801',
+      'rice:white',
+      'rice:803-small',
+      'rice:803-large',
+    ]);
+    expect(find.byKey(const ValueKey('rice:803-small/dish')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rice:803-small/unlink')), findsNothing);
+    expect(find.textContaining('Every dish on sale in Soup is an option here'), findsOneWidget);
+    expect(find.byTooltip('Remove this option'), findsOneWidget); // only the typed option can go
+    expect(changes, greaterThan(0));
+  });
+
   test('prices are kept as dollars and cents', () {
     expect(normalizePrice('8.5'), '8.50');
     expect(normalizePrice('12'), '12.00');

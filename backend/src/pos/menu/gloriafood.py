@@ -6,9 +6,11 @@ groups attached to the item or the whole category. The format is documented at
 https://github.com/GlobalFood/integration_docs/tree/master/fetch_menu.
 
 What the export does not carry is filled from `ImportSettings`: which kitchen station cooks each category,
-the tax class behind each GloriaFood tax category, and the menus (Food, Lunch with its hours, Drinks) with
-the categories each one sells. Chinese names and kitchen labels are not in the export; they are added later
-through the spreadsheet round trip.
+the tax class behind each GloriaFood tax category, the menus (Food, Lunch with its hours, Drinks) with the
+categories each one sells, and which option groups offer dishes rather than words (`groups.json`): the soup
+choice on a lunch special is the real Miso Soup, and the maki combination offers the Roll category itself.
+Chinese names and kitchen labels are not in the export; they are added later through the spreadsheet round
+trip.
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import linked
 from .bar import add_bar
 from .defs import (
     Allergen,
@@ -117,6 +120,10 @@ class ImportSettings:
     category_stations: Mapping[str, str | None] = field(default_factory=dict)  # category name -> station
     default_station: str | None = None
     menus: tuple[MenuSpec, ...] = DEFAULT_MENUS
+    linked_groups: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """By the export's group name: `{"items_from": <category name>}` links each option to the dish of that
+    name in the category (an option with no such dish, "No Soup", stays a plain option); `{"category":
+    <category name>}` makes the group offer the whole category instead of the export's copies of its dishes."""
     include_inactive_categories: bool = True
     """Online-only switches: the export marks beer and wine inactive because they are not sold online, but
     the bar sells them at the table. Items marked inactive stay out either way."""
@@ -135,12 +142,13 @@ class ImportReport:
     items: int = 0
     variants: int = 0
     groups: int = 0
+    linked: int = 0  # options that are dishes
     notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
             f"{self.categories} categories, {self.items} items, {self.variants} variants, "
-            f"{self.groups} modifier groups; {len(self.notes)} notes"
+            f"{self.groups} modifier groups ({self.linked} options are dishes); {len(self.notes)} notes"
         )
 
 
@@ -174,6 +182,45 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "x"
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _link_groups(defs: Definitions, settings: ImportSettings, codes: Mapping[str, str], report: ImportReport) -> None:
+    """Turn the groups `settings.linked_groups` names into groups of dishes (see `ImportSettings`)."""
+    categories = {cat.names.get("en", ""): cat.code for cat in defs.categories.values()}
+    for name, spec in settings.linked_groups.items():
+        code = codes.get(name)
+        if code is None:
+            report.notes.append(f"groups.json names a group {name!r} the export does not have")
+            continue
+        category = categories.get(spec.get("category") or spec.get("items_from") or "")
+        if category is None:
+            report.notes.append(f"group {name!r}: no category {spec.get('category') or spec.get('items_from')!r}")
+            continue
+        if spec.get("category"):
+            # the whole category: the export's copies of its dishes go, the dishes themselves come (linked.sync)
+            for opt in defs.options_of(code):
+                del defs.options[opt.id]
+            defs.groups[code] = replace(defs.groups[code], source_category=category)
+            report.linked += len(linked.wanted_options(defs, defs.groups[code]))
+            continue
+        dishes: dict[str, list[Item]] = {}
+        for item in defs.items_in(category):
+            dishes.setdefault(_norm(item.names.get("en", "")), []).append(item)
+        for opt in defs.options_of(code):
+            found = dishes.get(_norm(opt.names.get("en", "")), [])
+            variants = [v for v in defs.variants_of(found[0].code) if v.active] if len(found) == 1 else []
+            if len(variants) != 1:
+                report.notes.append(
+                    f"group {name!r}: option {opt.names.get('en')!r} is not a dish of {category}; kept as a word"
+                )
+                continue
+            defs.options[opt.id] = replace(opt, linked_variant=variants[0].id, names={}, kitchen_label=None)
+            report.linked += 1
+    linked.sync(defs)
+
+
 def import_gloriafood(
     data: Mapping[str, Any], settings: ImportSettings | None = None
 ) -> tuple[Definitions, ImportReport]:
@@ -203,12 +250,14 @@ def import_gloriafood(
         defs.add(spec.menu())
 
     groups: dict[int, str] = {}
+    group_names: dict[str, str] = {}  # the export's group name -> code, for groups.json
 
     def group_code(g: Mapping[str, Any]) -> str:
         if g["id"] in groups:
             return groups[g["id"]]
         code = f"{_slug(g['name'])}_{g['id']}"
         groups[g["id"]] = code
+        group_names.setdefault(g["name"], code)
         required = bool(g.get("required"))
         max_select = g.get("force_max") or None
         defs.add(
@@ -343,6 +392,7 @@ def import_gloriafood(
                 )
             if re.search(r"\d+\.\d\d?$", name):
                 report.notes.append(f"{code}: name {name!r} ends in what looks like a price")
+    _link_groups(defs, settings, group_names, report)
     if data.get("currency", "USD") != "USD":
         report.notes.append(f"currency {data.get('currency')} is not USD")
     return defs, report
@@ -357,6 +407,7 @@ BUNDLED = DATA / "gloriafood_menu.json"
 """The restaurant's online menu as exported on 2026-10-27; the POS menu until the real one is curated."""
 STATIONS = DATA / "stations.json"
 MENUS = DATA / "menus.json"
+GROUPS = DATA / "groups.json"
 
 
 def menus_from(path: Path | str = MENUS) -> tuple[MenuSpec, ...]:
@@ -370,15 +421,29 @@ def menus_from(path: Path | str = MENUS) -> tuple[MenuSpec, ...]:
     return menus
 
 
-def settings_from(path: Path | str = STATIONS, menus: Path | str = MENUS) -> ImportSettings:
-    """Stations and the category-to-station map from a JSON file like `data/stations.json`, and the menus
-    from one like `data/menus.json`."""
+def linked_groups_from(path: Path | str = GROUPS) -> dict[str, dict[str, str]]:
+    """Which of the export's option groups offer dishes, from a JSON file like `data/groups.json`."""
+    config = json.loads(Path(path).read_text(encoding="utf-8"))
+    out: dict[str, dict[str, str]] = {}
+    for name, spec in (config.get("linked") or {}).items():
+        if not isinstance(spec, Mapping) or not (spec.get("category") or spec.get("items_from")):
+            raise ValueError(f'{path}: group {name!r} needs "category" or "items_from"')
+        out[str(name)] = {str(k): str(v) for k, v in spec.items()}
+    return out
+
+
+def settings_from(
+    path: Path | str = STATIONS, menus: Path | str = MENUS, groups: Path | str = GROUPS
+) -> ImportSettings:
+    """Stations and the category-to-station map from a JSON file like `data/stations.json`, the menus from
+    one like `data/menus.json`, and the groups that offer dishes from one like `data/groups.json`."""
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     return ImportSettings(
         stations=config.get("stations", {}),
         category_stations=config.get("categories", {}),
         default_station=config.get("default_station"),
         menus=menus_from(menus),
+        linked_groups=linked_groups_from(groups),
     )
 
 

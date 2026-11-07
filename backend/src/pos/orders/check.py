@@ -57,15 +57,16 @@ def check_for(
                 "unit_price": str(unit),
                 "total": str(total),
                 "discount": "0.00",  # what came off this line itself, filled in below
-                # each choice that is not the dish's default, with what it adds to the line for its quantity
+                # each choice that is not the dish's default, with what it adds to the line for its quantity;
+                # `depth` 1 is a choice of a choice (the sauce on a roll of the maki combination)
                 "modifiers": [
                     {
                         "label": m["label"],
                         "price": str(_money(m.get("price"))),
                         "amount": str(cents(_money(m.get("price")) * line.qty)),
+                        "depth": int(m.get("depth") or 0),
                     }
-                    for m in priced.get("modifiers", ())
-                    if not m.get("defaulted")
+                    for m in shown_modifiers(priced.get("modifiers", ()))
                 ],
                 "tax_class": priced.get("tax_class"),
             }
@@ -167,6 +168,25 @@ def check_for(
         "due": str(cents(max(total - paid, ZERO))),
         "unpriced": unpriced,
     }
+
+
+def shown_modifiers(rows: Any) -> list[dict[str, Any]]:
+    """The choices a check lists under a dish: those that are not the dish's defaults, and a default whose
+    own choices (one level deeper) differ, so a changed sauce reads under the roll it is on, not on its own."""
+    rows = [dict(m) for m in rows]
+    shown: list[dict[str, Any]] = []
+    for i, m in enumerate(rows):
+        if not m.get("defaulted"):
+            shown.append(m)
+            continue
+        depth = int(m.get("depth") or 0)
+        for later in rows[i + 1 :]:
+            if int(later.get("depth") or 0) <= depth:
+                break
+            if not later.get("defaulted"):
+                shown.append(m)
+                break
+    return shown
 
 
 def _money(value: Any) -> Decimal:
