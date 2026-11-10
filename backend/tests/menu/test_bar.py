@@ -84,7 +84,7 @@ def test_the_bar_sections_come_last_on_the_drinks_menu_and_offer_how_a_pour_is_s
     assert rocks.ok and rocks.line_total == D("8.95") and "ROCKS" in rocks.kitchen_lines[0].text
     neat = engine.resolve(LineRequest("makers_mark:pour"))
     assert neat.ok and "ROCKS" not in neat.kitchen_lines[0].text
-    assert [g.code for g, _ in defs.attachments_for("hibiki_21")] == ["served"]
+    assert [g.code for g, _ in defs.attachments_for("hibiki_21")] == ["served", "drink_options"]  # + the original POS's
     assert [v.names["en"] for v in defs.variants_of("hibiki_21")] == ["1 oz"]
     # wine by the glass and the bottle, or the bottle alone, as the printed list has it
     white = next(s for s in drinks.sections if s.name == "White Wine")
@@ -93,9 +93,9 @@ def test_the_bar_sections_come_last_on_the_drinks_menu_and_offer_how_a_pour_is_s
     assert [v.code for v in defs.variants_of("merlot_wente")] == ["bottle"]
     halves = [(v.code, v.base_price) for v in defs.variants_of("pinot_grigio_santa_margherita")]
     assert halves == [("half", D("25")), ("bottle", D("50"))]
-    assert [g.code for g, _ in defs.attachments_for("riesling_schlink_haus")] == []
+    assert [g.code for g, _ in defs.attachments_for("riesling_schlink_haus")] == ["drink_options"]  # the original POS's
     # sake comes hot or cold, and does not ask rocks or neat
-    assert [g.code for g, _ in defs.attachments_for("sake_gekkeikan")] == ["temperature"]
+    assert [g.code for g, _ in defs.attachments_for("sake_gekkeikan")] == ["temperature", "drink_options"]
     hot = engine.resolve(LineRequest("sake_gekkeikan:regular", 1, None, (Selection("temperature", "temperature:hot"),)))
     assert hot.ok and hot.line_total == D("8") and "HOT" in hot.kitchen_lines[0].text
 
@@ -107,7 +107,7 @@ def test_the_printed_cocktails_and_beer_prices_join_the_export_s_own_categories(
     mixed = next(s for s in drinks.sections if s.name == "Mixed Drinks")
     names = [e.name for e in mixed.entries]
     assert names[:4] == ["Mai Tai (to go)", "White Mai Tai", "Scorpion Bowl for 1", "Zombie"]  # the export's first
-    assert "China Sky Rita" in names and len(names) == 26
+    assert "China Sky Rita" in names and len(names) == 52  # 26 from the printed list, 26 from the original POS
     zombie = next(e for e in mixed.entries if e.name == "Zombie")
     assert zombie.number is None and [(v.name, v.price) for v in zombie.variants] == [("Regular", D("9.25"))]
     assert defs.items["zombie"].description["en"].startswith("Dark and light rums")
@@ -119,7 +119,7 @@ def test_the_printed_cocktails_and_beer_prices_join_the_export_s_own_categories(
     assert budweiser == (D("4.00"), D("5.50"))
     assert defs.variants["E09:regular"].base_price == D("6.50")
     foreign = next(s for s in drinks.sections if s.name == "Foreign Beer")
-    assert [e.name for e in foreign.entries][-1] == "Non-Alcoholic Beer"
+    assert [e.name for e in foreign.entries][-2:] == ["Non-Alcoholic Beer", "Tsing Tao (can)"]  # the original POS last
     na = engine.resolve(LineRequest("na_beer:regular"))
     assert na.ok and na.line_total == D("6.50") and na.tax_class == "prepared_food"
 

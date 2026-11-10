@@ -98,7 +98,7 @@ def test_a_choice_cooked_at_the_dish_s_own_station_folds_into_its_line():
     assert roll.source_category == "roll_maki"
     rolls = defs.options_of(roll.code)
     assert [o.id for o in rolls[:3]] == ["roll_934419:K01", "roll_934419:K02", "roll_934419:K03"]
-    assert dict(defs.option_names(rolls[1])) == {"en": "Kanikyu"}  # the dish's own spelling, not the export's copy
+    assert dict(defs.option_names(rolls[1])) == {"en": "Kanikyu", "kitchen": "sr:KANIYU"}  # the dish's own names
     soup = defs.groups["sushi_soup_2334003"]
     line = engine.resolve(
         LineRequest(
@@ -111,8 +111,8 @@ def test_a_choice_cooked_at_the_dish_s_own_station_folds_into_its_line():
     assert line.ok, list(line.problems) + [p for c in line.children for p in c.problems]
     assert line.line_total == D("24.95")
     assert [(k.station, k.text, k.header) for k in line.kitchen_lines] == [
-        ("sushi", "1 Maki Combination · Kappa Maki · Kanikyu · Tekka Maki · Hot & Sour Soup", None),
-        ("soup", "1 Hot & Sour Soup", "J55 Maki Combination"),
+        ("sushi", "1 sr:MAKI COMBO s · sr:KAPPA MAKI · sr:KANIYU · sr:TEKKA MAKI · 酸辣湯 HOT & SOUR SOUP", None),
+        ("soup", "1 酸辣湯 HOT & SOUR SOUP", "J55 sr:MAKI COMBO s"),
     ]
     # a roll that ran out is sold out as a choice too
     engine.set_availability("K02:regular", "sold_out")
@@ -188,8 +188,8 @@ def test_a_note_on_a_chosen_dish_travels_with_it_to_the_kitchen_and_the_check():
     assert line.ok, list(line.problems) + [p for c in line.children for p in c.problems]
     assert line.children[0].notes == "extra hot"
     assert [(k.station, k.text, k.header, k.note) for k in line.kitchen_lines] == [
-        ("wok1", "1 Sweet & Sour Chicken · White Rice · Miso Soup (extra hot)", None, None),
-        ("soup", "1 Miso Soup", "L01 Sweet & Sour Chicken", "extra hot"),
+        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · White Rice · 日本湯 MISO SOUP (extra hot)", None, None),
+        ("soup", "1 日本湯 MISO SOUP", "L01 L甜酸雞 LUN:SWEET & SOUR CHKN", "extra hot"),
     ]
     priced = MenuService(defs).priced(
         {

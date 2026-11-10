@@ -12,7 +12,11 @@ there too. Without `--apply` it only lists what it would do. A row deleted in th
 files still carry it, so delete it from the files too. When the files link an option to a dish (the soup with
 a lunch special is the real Miso Soup) or make a group offer a whole category (the maki combination offers
 the Roll category), the stored group follows (`linked.relink`): the export's own copies of the dishes go,
-the dishes come, and an option the editor added stays. On a hub: `hubctl menu import [--apply]`.
+the dishes come, and an option the editor added stays. When the files name a dish or a category in a
+language the stored one has no name in (the Chinese names and kitchen labels from the restaurant's original
+POS, `legacy_pos.json`), or send a dish to a station where the stored dish inherits its category's, the
+stored row takes the name or the station (`fill`); a name the editor typed, in any language, and a station
+the editor set stay. On a hub: `hubctl menu import [--apply]`.
 """
 
 from __future__ import annotations
@@ -101,6 +105,32 @@ def missing(stored: Definitions, bundled: Definitions) -> tuple[Definitions, lis
     return merged, added
 
 
+def fill(merged: Definitions, bundled: Definitions) -> list[str]:
+    """Give the rows of `merged` the names and stations the bundled files have and they lack, in place; what
+    was filled, as text.
+
+    A dish, category or section with no name in a language the files name it in takes that name (the
+    Chinese name and the kitchen label the original POS printed); a name it already has, in any language,
+    stays, so what the editor typed wins. A dish inheriting its category's station takes the files' station
+    when the files send it elsewhere (sweet and sour chicken to the fryer); a station the editor set stays."""
+    filled: list[str] = []
+    for kind, attr in (("item", "items"), ("category", "categories"), ("section", "sections")):
+        held_all = getattr(merged, attr)
+        for key, wanted in getattr(bundled, attr).items():
+            held = held_all.get(key)
+            if held is None:
+                continue
+            missing_names = {k: v for k, v in wanted.names.items() if v and not held.names.get(k)}
+            if missing_names:
+                held = replace(held, names={**held.names, **missing_names})
+                filled.append(f"{kind} {key} named {', '.join(sorted(missing_names))}")
+            if attr == "items" and wanted.station is not None and held.station is None:
+                held = replace(held, station=wanted.station)
+                filled.append(f"item {key} cooks at {wanted.station}")
+            held_all[key] = held
+    return filled
+
+
 def reprice(merged: Definitions, bundled: Definitions, before: Definitions) -> list[str]:
     """Move each price in `merged` still at `before`'s value to `bundled`'s, in place; what moved, as text.
 
@@ -137,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         merged, added = missing(merged, bundled)
         changed += linked.relink(merged, bundled)
         changed += linked.sync(merged)
+        changed += fill(merged, bundled)
         updated = []
         if source in ("", "gloriafood"):
             updated = reprice(merged, bundled, load_gloriafood(BUNDLED, settings_from(STATIONS))[0])
@@ -145,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         for line in changed + added + updated:
             print(line)
-        print(f"{len(changed)} moves, {len(added)} definitions to add, {len(updated)} prices to update")
+        print(f"{len(changed)} moves and fills, {len(added)} definitions to add, {len(updated)} prices to update")
         if not args.apply:
             print("dry run; add --apply to save them")
             return 0
