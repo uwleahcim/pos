@@ -15,7 +15,7 @@ from pos.menu.bar import BAR, import_bar
 from pos.menu.defs import Entry, Item, Variant
 from pos.menu.engine import MenuEngine
 from pos.menu.gloriafood import BUNDLED, DEFAULT_MENUS, STATIONS, load_gloriafood, load_restaurant_menu, settings_from
-from pos.menu.seed import main, missing, reprice, restructure
+from pos.menu.seed import fill, main, missing, reprice, restructure
 
 DSN = os.environ.get("POS_TEST_DATABASE_URL")
 
@@ -92,7 +92,9 @@ def test_restructure_moves_the_drinks_to_their_menu_with_everything_the_editor_g
     assert "section drinks/mixed_drinks moved from dinner/mixed_drinks with 27 entries" in changed  # 26 + the punch
     assert "section drinks/beverages added beside dinner/beverages with 7 entries" in changed  # 6 + the Arnold Palmer
     assert "section drinks/whiskey moved from dinner/whiskey with 25 entries" in changed
-    assert "menu drinks" in added and not [a for a in added if a.startswith(("section", "entry drinks:"))]
+    assert "menu drinks" in added and not [a for a in added if a.startswith("section drinks/")]
+    # no dish the hub already sold is added to the drinks again; the original POS's new drinks are new
+    assert not [a for a in added if a.startswith("entry drinks:") and a.removeprefix("entry drinks:") in stored.items]
     assert merged.menus["dinner"].names == {"en": "Food", "zh": "菜品"} and merged.menus["drinks"].priority == -10
     # the moved section keeps the editor's name and colour, and every dish, the editor's punch included
     assert "dinner/mixed_drinks" not in merged.sections
@@ -117,13 +119,39 @@ def test_restructure_moves_the_drinks_to_their_menu_with_everything_the_editor_g
     assert [s.name for s in drinks.sections][:2] == ["Cocktails", "Beverages"] and "Cocktails" not in [
         s.name for s in food.sections
     ]
-    assert {e.item for s in food.sections + drinks.sections for e in s.entries} == {
+    sold = {e.item for s in food.sections + drinks.sections for e in s.entries}
+    assert {i for i in sold if not merged.items[i].attrs.get("legacy_pos")} == {
         e.item for e in stored.entries if e.menu != "lunch"
     }
     assert stored.sections["dinner/mixed_drinks"].names == {"en": "Cocktails"}  # the input was left alone
     # done once: a second run finds nothing to move or add
     again, changed_again = restructure(merged, bundled)
     assert changed_again == [] and missing(again, bundled)[1] == []
+
+
+def test_fill_gives_a_stored_menu_the_names_and_stations_it_lacks_and_keeps_the_editor_s():
+    """A hub seeded from the export alone has English names only; the original POS's Chinese names and
+    kitchen labels arrive, and a name or station the editor set is left as it is."""
+    stored = before_the_bar()
+    chicken = stored.items["C01"]
+    stored.items["C01"] = replace(chicken, names={**chicken.names, "zh": "糖醋雞"}, station="wok2")  # the editor's
+    soup = stored.categories["soup"]
+    stored.categories["soup"] = replace(soup, names={"en": "Soups"})
+    bundled, _ = load_restaurant_menu()
+    merged, added = missing(stored, bundled)
+    filled = fill(merged, bundled)
+    assert "item C02 named kitchen, zh" in filled and "item H29 cooks at fryer" in filled
+    assert "category soup named zh" in filled and "section dinner/soup named zh" in filled
+    cashew = merged.items["C02"].names
+    assert cashew == {"en": "Diced Chicken with Cashew Nuts", "zh": "腰果雞", "kitchen": "腰果雞 DIC CHKN CSHW r"}
+    assert merged.items["H29"].station == "fryer"
+    assert merged.items["C01"].names["zh"] == "糖醋雞" and merged.items["C01"].station == "wok2"  # the editor's
+    assert merged.items["C01"].names["kitchen"] == "甜酸雞 SWT&SOUR CHKN r"  # it had no label, so it takes one
+    assert merged.categories["soup"].names == {"en": "Soups", "zh": "湯"}
+    assert "item A18" in added and "group spice" in added and "attachment category:chicken/spice" in added
+    assert stored.items["C02"].names == {"en": "Diced Chicken with Cashew Nuts"}  # the input was left alone
+    assert admin.problems(merged) == ([], [])
+    assert fill(merged, bundled) == []
 
 
 def test_restructure_leaves_a_menu_the_editor_renamed_alone():
@@ -192,9 +220,8 @@ def test_the_command_moves_a_hub_s_drinks_to_their_menu(capsys):
     stored = store.load()
     store.close()
     assert stored.menus["dinner"].names["en"] == "Food" and stored.menus["drinks"].names["en"] == "Drinks"
-    assert "dinner/mixed_drinks" not in stored.sections and stored.sections["drinks/mixed_drinks"].names == {
-        "en": "Cocktails"
-    }
+    assert "dinner/mixed_drinks" not in stored.sections
+    assert stored.sections["drinks/mixed_drinks"].names == {"en": "Cocktails", "zh": "調酒"}  # the editor's, + the fill
     by_id = {e.id: e for e in stored.entries}
     assert "dinner:house_punch" not in by_id and by_id["drinks:house_punch"].section == "drinks/mixed_drinks"
     assert by_id["drinks:arnold_palmer"].number == "B99" and by_id["dinner:arnold_palmer"].number == "B99"

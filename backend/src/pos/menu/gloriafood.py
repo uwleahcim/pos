@@ -9,8 +9,8 @@ What the export does not carry is filled from `ImportSettings`: which kitchen st
 the tax class behind each GloriaFood tax category, the menus (Food, Lunch with its hours, Drinks) with the
 categories each one sells, and which option groups offer dishes rather than words (`groups.json`): the soup
 choice on a lunch special is the real Miso Soup, and the maki combination offers the Roll category itself.
-Chinese names and kitchen labels are not in the export; they are added later through the spreadsheet round
-trip.
+Chinese names and kitchen labels are not in the export; they come from the restaurant's original POS
+(`legacy_pos.json`, `legacy.py`), with the dishes, prices and modifier groups it had and the export lacks.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from .defs import (
     Variant,
     money,
 )
+from .legacy import add_legacy
 
 NUMBERED = re.compile(r"^\s*([A-Z]{0,2}\d{1,3}[A-Z]?)\s*:?\s+(.+?)\s*$")
 """'L01:   Sweet & Sour Chicken', '02   Kaniyu', '801: Miso Soup': the menu number, then the name."""
@@ -448,8 +449,9 @@ def settings_from(
 
 
 def load_restaurant_menu() -> tuple[Definitions, ImportReport]:
-    """The bundled export with the bundled stations, then the bar's bottles (`bar.py`): what a hub serves by
-    default."""
+    """The bundled export with the bundled stations, then the bar's bottles (`bar.py`), then what the
+    restaurant's original POS knew (`legacy.py`): what a hub serves by default."""
     defs, report = load_gloriafood(BUNDLED, settings_from(STATIONS))
     report.notes.append(add_bar(defs).summary())
+    report.notes.append(add_legacy(defs).summary())
     return defs, report

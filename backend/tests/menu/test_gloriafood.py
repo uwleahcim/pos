@@ -34,9 +34,7 @@ def test_the_bundled_menu_loads_clean():
     # beer is off online but sold at the bar; the inactive orange juice stays out
     assert defs.items["E09"].names["en"] == "Tsing Tao" and defs.inherited(defs.items["E09"], "tax_class") == "alcohol"
     assert not any(item.names["en"] == "Orange Juice" for item in defs.items.values())
-    assert (
-        sorted(i.names["en"] for i in defs.items.values() if i.tax_class == "gift_card")[0] == "Gift Certificate $100"
-    )
+    assert "Gift Certificate $100" in {i.names["en"] for i in defs.items.values() if i.tax_class == "gift_card"}
 
 
 def test_dishes_price_and_route_to_their_stations():
@@ -48,7 +46,7 @@ def test_dishes_price_and_route_to_their_stations():
         assert line.ok, line.problems
         return line
 
-    chicken = sell("C01:regular")  # the category's rice group defaults to white rice
+    chicken = sell("C02:regular")  # the category's rice group defaults to white rice
     assert (chicken.line_total, chicken.kitchen_lines[0].station) == (D("17.95"), "wok1")
     assert "White Rice" in chicken.kitchen_lines[0].text
     assert sell("K01:regular").kitchen_lines[0].station == "sushi"
@@ -59,7 +57,7 @@ def test_dishes_price_and_route_to_their_stations():
 
     rice = next(g for g in defs.groups.values() if g.names["en"] == "Rice")
     brown = next(o for o in defs.options_of(rice.code) if o.names["en"] == "Brown Rice")
-    assert "Brown Rice" in sell("C01:regular", (rice.code, brown.id)).kitchen_lines[0].text
+    assert "Brown Rice" in sell("C02:regular", (rice.code, brown.id)).kitchen_lines[0].text
 
     roll_group = next(g for g in defs.groups.values() if g.names["en"] == "Roll")
     assert (roll_group.min_select, roll_group.max_select) == (3, 3)
@@ -151,8 +149,8 @@ def test_the_soup_choice_is_the_soup_and_the_maki_combination_offers_the_rolls()
     line = engine.resolve(LineRequest("L01:regular", 1, "lunch:L01", (Selection(soup.code, "soup_929530:4904287"),)))
     assert line.ok and line.line_total == D("14.95")
     assert [(k.station, k.text, k.header) for k in line.kitchen_lines] == [
-        ("wok1", "1 Sweet & Sour Chicken · White Rice · Miso Soup", None),
-        ("soup", "1 Miso Soup", "L01 Sweet & Sour Chicken"),
+        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · White Rice · 日本湯 MISO SOUP", None),
+        ("soup", "1 日本湯 MISO SOUP", "L01 L甜酸雞 LUN:SWEET & SOUR CHKN"),
     ]
     roll = defs.groups["roll_934419"]
     assert roll.source_category == "roll_maki" and (roll.min_select, roll.max_select) == (3, 3)

@@ -16,7 +16,7 @@ the POS shows both as tabs." The drinks are not a flag on dishes or categories: 
 
 | Menu | Code | Sells | Open |
 | --- | --- | --- | --- |
-| Food | `dinner` | Every category of the kitchen's menu, plus **Beverages** (tea, soda, juice) and Gift Certificates | Always |
+| Food | `dinner` | Every category of the kitchen's menu, Desserts (from the original POS), plus **Beverages** (tea, soda, juice) and Gift Certificates | Always |
 | Lunch | `lunch` | Lunch Specials | Mon to Sat 11:00 to 15:00 |
 | Drinks | `drinks` | Mixed Drinks (the cocktails), **Beverages**, Domestic Beer, Foreign Beer, White Wine, Red Wine, Sparkling Wine, Sake & Plum Wine, and the shelves from `bar.json`: Whiskey, Vodka, Gin, Rum, Tequila, Cognac & Brandy, Liqueurs & Cordials, Aperitifs & Vermouth | Always |
 
@@ -52,7 +52,10 @@ menu resolves to `bar` or `soda`, never to a wok.
   "drinks"`); a bar category marked `existing` (the cocktails into Mixed Drinks, a beer into Foreign Beer)
   joins the export's category on every menu that category is on.
 - `gloriafood.py` builds one section per (menu, category) and one entry per (menu, dish); `bar.py` adds
-  the shelves to the Drinks menu.
+  the shelves to the Drinks menu; `legacy.py` adds what the restaurant's original POS knew and the export
+  did not (`legacy_pos.json`: Chinese names and kitchen labels, stations, 89 dishes, the dining room's
+  prices, the original POS's modifier groups, `docs/original-pos.md`). A dish added to an export category
+  goes on every menu that category is on, so a fountain soda is on Food and Drinks like the export's cans.
 - A hub seeds its database from these files once. From then on the database is the menu and the editor
   changes it (`pos-menu-storage`, `menu_admin.py`).
 
@@ -68,6 +71,9 @@ does it (`pos.menu.seed`):
 - a category the files put on a second menu as well gets its section there and its dishes mirrored
   (`section drinks/beverages added beside dinner/beverages`);
 - a menu still called "Menu" is renamed Food; one the editor renamed keeps its name;
+- a stored dish, category or section takes the names it lacks (the Chinese name and kitchen label from the
+  original POS) and a dish that inherits its station takes the one the original POS printed at; a name or
+  station set in the editor stays (`docs/original-pos.md`);
 - then, as before, whatever the files have and the database lacks is added, and a price moves only while
   it is still the online export's.
 

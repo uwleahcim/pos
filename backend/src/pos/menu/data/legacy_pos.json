@@ -1,0 +1,3291 @@
+{
+  "_about": "What the restaurant's original POS knew and the GloriaFood export did not, from the merged sheet of 2026-11-10 (legacy.py adds it after the export and the bar). categories: Chinese names for the export's categories, and a new category with its menu, station and sort. items: for a dish the export has, its Chinese name, the label the original POS printed for the kitchen (the ticket shows both, Chinese first), and the station it printed at when that is not the category's. prices: the dining room's price where it differs from the online one (online kept for the record; a running hub moves a price only while it is still the export's). new: dishes and drinks only the original POS sold, numbered as it numbered them, each with its price in one regular size, its category, and the groups it offers beyond its category's. groups: the original POS's modifier groups, every option with the kitchen label it printed; a price is what the option adds. attachments: which categories (by name) and dishes (by code) offer which group. Edit and run `hubctl update`; a running hub takes additions, names it lacks and the prices with `hubctl menu import --apply`, leaving everything the menu editor changed as it is.",
+  "categories": {
+    "Lunch Specials": {
+      "zh": "午特"
+    },
+    "Appetizers": {
+      "zh": "頭抬"
+    },
+    "Soup": {
+      "zh": "湯"
+    },
+    "Chicken": {
+      "zh": "雞"
+    },
+    "Pork": {
+      "zh": "肉"
+    },
+    "Beef": {
+      "zh": "牛"
+    },
+    "Seafood": {
+      "zh": "海鮮"
+    },
+    "Moo Shu": {
+      "zh": "木須"
+    },
+    "House Specials": {
+      "zh": "大廚菜"
+    },
+    "Fried Rice": {
+      "zh": "炒飯"
+    },
+    "Lo Mein": {
+      "zh": "撈麵"
+    },
+    "Chow Fun": {
+      "zh": "河粉"
+    },
+    "Roll (Maki)": {
+      "zh": "捲"
+    },
+    "Sushi": {
+      "zh": "壽司"
+    },
+    "Sashimi": {
+      "zh": "刺身"
+    },
+    "Extras": {
+      "zh": "其他"
+    },
+    "Mixed Drinks": {
+      "zh": "調酒"
+    },
+    "Beverages": {
+      "zh": "飲料"
+    },
+    "Desserts": {
+      "new": true,
+      "zh": "點心",
+      "menu": "dinner",
+      "station": "takeout",
+      "sort": 24,
+      "note": "the original POS's DESERT category; the export has no desserts"
+    }
+  },
+  "items": {
+    "801": {
+      "zh": "日本湯",
+      "kitchen": "MISO SOUP"
+    },
+    "802": {
+      "zh": "雲吞湯",
+      "kitchen": "WONTON SOUP"
+    },
+    "803": {
+      "zh": "酸辣湯",
+      "kitchen": "HOT & SOUR SOUP"
+    },
+    "804": {
+      "zh": "蛋花湯",
+      "kitchen": "EGG DROP SOUP"
+    },
+    "805": {
+      "zh": "蔬菜豆腐湯",
+      "kitchen": "BEAN VEG SOUP",
+      "station": "wok1"
+    },
+    "806": {
+      "zh": "本樓湯",
+      "kitchen": "HOUSE SPL SOUP",
+      "station": "wok1"
+    },
+    "807": {
+      "zh": "海鮮酸辣湯",
+      "kitchen": "H&S SEAFOOD SOUP",
+      "station": "wok1"
+    },
+    "808": {
+      "zh": "三鮮湯",
+      "kitchen": "CHINA SKY 3 SHELL SOUP (FOR 2)",
+      "station": "wok1"
+    },
+    "A01": {
+      "zh": "素春卷",
+      "kitchen": "VEG SPRING ROL"
+    },
+    "A02": {
+      "zh": "春卷",
+      "kitchen": "SPRING ROLL"
+    },
+    "A03": {
+      "zh": "燒賣",
+      "kitchen": "SHAO MAI"
+    },
+    "A04": {
+      "zh": "雞翅",
+      "kitchen": "CHKN WING"
+    },
+    "A05": {
+      "zh": "雞條",
+      "kitchen": "CHKN FINGER"
+    },
+    "A06": {
+      "zh": "鍋貼",
+      "kitchen": "FRIED DUMPLING"
+    },
+    "A07": {
+      "zh": "水餃",
+      "kitchen": "STEAM DUMPLING"
+    },
+    "A08": {
+      "zh": "排骨",
+      "kitchen": "SPARE RIB"
+    },
+    "A09": {
+      "zh": "無骨排",
+      "kitchen": "BONELSS RIB"
+    },
+    "A10": {
+      "zh": "牛串",
+      "kitchen": "TERIYAKI BEEF"
+    },
+    "A11": {
+      "zh": "蟹角",
+      "kitchen": "CRAB RAGOON"
+    },
+    "A12": {
+      "zh": "涼麵",
+      "kitchen": "COLD NOODLE SES"
+    },
+    "A13": {
+      "zh": "蔥油餅",
+      "kitchen": "SCALION PANCAK"
+    },
+    "A14": {
+      "zh": "芝麻排骨",
+      "kitchen": "SESM SPARE RIB"
+    },
+    "A15": {
+      "zh": "雞鬆",
+      "kitchen": "CHKN SOONG f",
+      "station": "wok1"
+    },
+    "A16": {
+      "zh": "龍蝦鬆",
+      "kitchen": "LOBSTER SOONG f",
+      "station": "wok1"
+    },
+    "A17": {
+      "zh": "五味蝦",
+      "kitchen": "FIVE SPL SHRMP",
+      "station": "wok1"
+    },
+    "A19": {
+      "zh": "兩人餐",
+      "kitchen": "APP PLATTER(2)"
+    },
+    "A20": {
+      "zh": "素鍋貼"
+    },
+    "A21": {
+      "zh": "素水餃"
+    },
+    "A22": {
+      "zh": "一人餐"
+    },
+    "A26": {
+      "zh": "椒鹽翅膀"
+    },
+    "B01": {
+      "zh": "芥蘭牛",
+      "kitchen": "BEEF BROCCOLI r"
+    },
+    "B02": {
+      "zh": "雪豆牛",
+      "kitchen": "BEEF SNOW PEA r"
+    },
+    "B03": {
+      "zh": "素菜牛",
+      "kitchen": "BEEF VEG r"
+    },
+    "B04": {
+      "zh": "四川牛",
+      "kitchen": "SHRD BEF SZCH r"
+    },
+    "B05": {
+      "zh": "魚香牛",
+      "kitchen": "BEEF GARLC SA r"
+    },
+    "B06": {
+      "zh": "湖南牛",
+      "kitchen": "HUNAN BEEF r"
+    },
+    "B07": {
+      "zh": "子薑牛",
+      "kitchen": "GNGR BEF STBN r"
+    },
+    "B11": {
+      "zh": "蘑菇牛"
+    },
+    "C01": {
+      "zh": "甜酸雞",
+      "kitchen": "SWT&SOUR CHKN r",
+      "station": "fryer"
+    },
+    "C02": {
+      "zh": "腰果雞",
+      "kitchen": "DIC CHKN CSHW r"
+    },
+    "C03": {
+      "zh": "芥蘭雞",
+      "kitchen": "SLC CHKN BRCL r"
+    },
+    "C04": {
+      "zh": "魚香雞",
+      "kitchen": "SLC CHKN GRLC r"
+    },
+    "C05": {
+      "zh": "素菜雞",
+      "kitchen": "SLC CHKN VEG r"
+    },
+    "C06": {
+      "zh": "子薑雞",
+      "kitchen": "GNGR CHKN STB r"
+    },
+    "C07": {
+      "zh": "湖南雞",
+      "kitchen": "HUNAN CHKN r"
+    },
+    "C08": {
+      "zh": "茄子雞",
+      "kitchen": "SLC CHKN EGPL r"
+    },
+    "C09": {
+      "zh": "怪味雞",
+      "kitchen": "CHKN AMAZING r"
+    },
+    "C10": {
+      "zh": "乾炒麵"
+    },
+    "C12": {
+      "zh": "宮保雞"
+    },
+    "C13": {
+      "zh": "九層塔雞"
+    },
+    "H01": {
+      "zh": "羅太會",
+      "kitchen": "VEG PARADISE r"
+    },
+    "H02": {
+      "zh": "左宗豆腐",
+      "kitchen": "GEN TS0 TOFU r"
+    },
+    "H03": {
+      "zh": "芝麻豆腐",
+      "kitchen": "C.SESAME TOFU r"
+    },
+    "H04": {
+      "zh": "豆腐煲",
+      "kitchen": "SIZ TOFU POT r"
+    },
+    "H05": {
+      "zh": "雞片煲",
+      "kitchen": "SIZ CHKN POT r"
+    },
+    "H06": {
+      "zh": "左宗雞",
+      "kitchen": "GEN TSO CHKN r"
+    },
+    "H07": {
+      "zh": "鳳梨雞",
+      "kitchen": "PINEAPLE CHKN r"
+    },
+    "H08": {
+      "zh": "芝麻雞",
+      "kitchen": "C.SESAME CHKN r"
+    },
+    "H09": {
+      "zh": "陳皮雞",
+      "kitchen": "TANGRINE CHKN r"
+    },
+    "H10": {
+      "zh": "芝麻牛",
+      "kitchen": "C.SESAME BEEF r"
+    },
+    "H11": {
+      "zh": "陳皮牛",
+      "kitchen": "TANGRINE BEEF r"
+    },
+    "H12": {
+      "zh": "雙味羊",
+      "kitchen": "LAMB 2 STYLES r"
+    },
+    "H13": {
+      "zh": "湖南羊",
+      "kitchen": "HUNAN LAMB r"
+    },
+    "H14": {
+      "zh": "九層三味",
+      "kitchen": "BASIL DELIGHT r"
+    },
+    "H15": {
+      "zh": "芒果雙味",
+      "kitchen": "MANGOES DUO r"
+    },
+    "H16": {
+      "zh": "左宗蝦",
+      "kitchen": "LADY TSO SHMP r"
+    },
+    "H17": {
+      "zh": "怪味蝦",
+      "kitchen": "PRAWN AMAZING r"
+    },
+    "H18": {
+      "zh": "海鮮大會",
+      "kitchen": "NEPTUN BLESNG r"
+    },
+    "H19": {
+      "zh": "芝麻蝦",
+      "kitchen": "C.SESAME SHMP r"
+    },
+    "H20": {
+      "zh": "椒鹽大蝦",
+      "kitchen": "JB SHMP HKSTY r"
+    },
+    "H21": {
+      "zh": "雞蝦雙味",
+      "kitchen": "DYNASTY DUO r"
+    },
+    "H22": {
+      "zh": "果汁蝦",
+      "kitchen": "IMPRIAL SHMP r"
+    },
+    "H23": {
+      "zh": "蝦貝雙味",
+      "kitchen": "IMPRIAL COUPL r"
+    },
+    "H24": {
+      "zh": "海鮮兩麵黃",
+      "kitchen": "CHN SKY SEAFD r"
+    },
+    "H25": {
+      "zh": "海鮮煲",
+      "kitchen": "SIZ SEFOD POT r"
+    },
+    "H26": {
+      "zh": "全家福",
+      "kitchen": "HAPPY FAMILY r"
+    },
+    "H27": {
+      "zh": "脆皮魚",
+      "kitchen": "C.SPICY FISH r"
+    },
+    "H28": {
+      "zh": "蒙古牛",
+      "kitchen": "MONGOLAN BEEF r"
+    },
+    "H29": {
+      "zh": "北京鴨",
+      "kitchen": "PEKING DUCK pp",
+      "station": "fryer"
+    },
+    "H30": {
+      "zh": "龍蝦雙味",
+      "kitchen": "TWIN LOBSTER r"
+    },
+    "I01": {
+      "zh": "毛豆",
+      "kitchen": "EDAMAME"
+    },
+    "I02": {
+      "zh": "日本豆腐",
+      "kitchen": "AGEDADHI TOFU"
+    },
+    "I03": {
+      "zh": "小素甜不辣",
+      "kitchen": "APP:VEG TEMPURA"
+    },
+    "I05": {
+      "zh": "日本鍋貼",
+      "kitchen": "GOYZA"
+    },
+    "I06": {
+      "zh": "小蝦甜不辣",
+      "kitchen": "APP:SHRMP TEMPURA"
+    },
+    "I11": {
+      "zh": "田園沙拉",
+      "kitchen": "GARDEN SALAD"
+    },
+    "I12": {
+      "zh": "海藻沙拉",
+      "kitchen": "SEAWEED SALAD"
+    },
+    "I13": {
+      "zh": "海鮮沙拉",
+      "kitchen": "SEAFOOD SALAD"
+    },
+    "I21": {
+      "zh": "雞牛菜肉麵",
+      "kitchen": "YAKI UDON"
+    },
+    "I22": {
+      "zh": "蟹貝烏冬麵",
+      "kitchen": "SEAFOOD YAKI UDON"
+    },
+    "I23": {
+      "zh": "烏冬湯麵",
+      "kitchen": "NABEYAKI UDON"
+    },
+    "I24": {
+      "zh": "素烏冬麵",
+      "kitchen": "VEGI UDON"
+    },
+    "I25": {
+      "zh": "淨烏冬麵"
+    },
+    "I26": {
+      "zh": "雞烏冬麵"
+    },
+    "I31": {
+      "zh": "蔬菜甜不辣",
+      "kitchen": "VEG TEMPURA ssr"
+    },
+    "I33": {
+      "zh": "蝦甜不辣",
+      "kitchen": "SHMP TEMPRA ssr"
+    },
+    "I34": {
+      "zh": "海鮮甜不辣",
+      "kitchen": "SFOD TEMPRA ssr"
+    },
+    "I41": {
+      "zh": "日豆腐串",
+      "kitchen": "TOFU TERYKI ssr"
+    },
+    "I42": {
+      "zh": "日雞串",
+      "kitchen": "CHKN TERYKI ssr"
+    },
+    "I43": {
+      "zh": "日牛串",
+      "kitchen": "BEEF TERYKI ssr"
+    },
+    "I44": {
+      "zh": "日魚串",
+      "kitchen": "SALMN TRYKI ssr"
+    },
+    "I45": {
+      "zh": "日蝦串",
+      "kitchen": "SHMP TERYKI ssr"
+    },
+    "J01": {
+      "kitchen": "su:TAMAGO"
+    },
+    "J02": {
+      "kitchen": "su:INARI"
+    },
+    "J03": {
+      "kitchen": "su:SAKE"
+    },
+    "J04": {
+      "kitchen": "su:MAGURO"
+    },
+    "J05": {
+      "kitchen": "su:TAKO"
+    },
+    "J06": {
+      "kitchen": "su:SABA"
+    },
+    "J07": {
+      "kitchen": "su:TOBIKO"
+    },
+    "J09": {
+      "kitchen": "su:TAI"
+    },
+    "J11": {
+      "kitchen": "su:EBI"
+    },
+    "J14": {
+      "kitchen": "su:ALBACORE"
+    },
+    "J15": {
+      "kitchen": "su:UNAGI"
+    },
+    "J16": {
+      "kitchen": "su:HAMACHI"
+    },
+    "J17": {
+      "kitchen": "su:KANIKAMA"
+    },
+    "J21": {
+      "kitchen": "sa:TAMAGO"
+    },
+    "J23": {
+      "kitchen": "sa:SAKE"
+    },
+    "J24": {
+      "kitchen": "sa:MAGURO"
+    },
+    "J25": {
+      "kitchen": "sa:TAKO"
+    },
+    "J26": {
+      "kitchen": "sa:SABA"
+    },
+    "J27": {
+      "kitchen": "sa:TOBIKO"
+    },
+    "J29": {
+      "kitchen": "SA:TAI"
+    },
+    "J31": {
+      "kitchen": "sa:EBI"
+    },
+    "J34": {
+      "kitchen": "sa:ALBACORE"
+    },
+    "J35": {
+      "kitchen": "sa:UNAGI"
+    },
+    "J36": {
+      "kitchen": "sa:HAMACHI"
+    },
+    "J37": {
+      "kitchen": "sa:KANIKAMA"
+    },
+    "J51": {
+      "kitchen": "sr:SPIDER ROL s"
+    },
+    "J52": {
+      "kitchen": "sr:CHINA SKY s"
+    },
+    "J53": {
+      "kitchen": "sr:RAINBOW s"
+    },
+    "J54": {
+      "zh": "雙蝦",
+      "kitchen": "sr:DRAGON ROL s"
+    },
+    "J55": {
+      "kitchen": "sr:MAKI COMBO s"
+    },
+    "J56": {
+      "kitchen": "sp:SUSHI REG ss"
+    },
+    "J57": {
+      "kitchen": "sp:SUSHI DLX ss"
+    },
+    "J58": {
+      "kitchen": "sp:SASHM REG ss"
+    },
+    "J59": {
+      "kitchen": "sp:SASHM DLX ss"
+    },
+    "J60": {
+      "kitchen": "sp:TEKKA DON s"
+    },
+    "J61": {
+      "kitchen": "sp:CHIRASHI s"
+    },
+    "J62": {
+      "kitchen": "sp:UNAGI DON s"
+    },
+    "J63": {
+      "kitchen": "sp:SSU COMBO ss"
+    },
+    "J64": {
+      "kitchen": "sp:SA&SU CMB ss"
+    },
+    "J65": {
+      "kitchen": "sp:TRIPLE SU s"
+    },
+    "J66": {
+      "kitchen": "sp:TRIPLE SA s"
+    },
+    "J67": {
+      "kitchen": "sp:LOVE BOAT s"
+    },
+    "J68": {
+      "kitchen": "sp:CHNSKY SPL s"
+    },
+    "K01": {
+      "kitchen": "sr:KAPPA MAKI"
+    },
+    "K02": {
+      "kitchen": "sr:KANIYU"
+    },
+    "K03": {
+      "kitchen": "sr:TEKKA MAKI"
+    },
+    "K04": {
+      "kitchen": "sr:SALMON ROLL"
+    },
+    "K05": {
+      "kitchen": "sr:TUNA AVOCDO"
+    },
+    "K06": {
+      "kitchen": "sr:AVOCADO"
+    },
+    "K07": {
+      "kitchen": "sr:ALASKA"
+    },
+    "K08": {
+      "kitchen": "sr:NEGI HAMCHI"
+    },
+    "K09": {
+      "zh": "番薯"
+    },
+    "K10": {
+      "kitchen": "sr:SPCY TUNA"
+    },
+    "K11": {
+      "kitchen": "sr:SPCY SALMON"
+    },
+    "K12": {
+      "kitchen": "sr:UNAKYO"
+    },
+    "K13": {
+      "kitchen": "sr:EEL & AVO"
+    },
+    "K14": {
+      "kitchen": "sr:CALIFORNIA"
+    },
+    "K15": {
+      "kitchen": "sr:BOSTON ROLL"
+    },
+    "K16": {
+      "kitchen": "sr:FUTO MAKI"
+    },
+    "K17": {
+      "kitchen": "sr:VEG MAKI"
+    },
+    "K18": {
+      "kitchen": "sr:TEMPURA ROL"
+    },
+    "K19": {
+      "kitchen": "sr:CUCMBR AVO"
+    },
+    "L01": {
+      "zh": "L甜酸雞",
+      "kitchen": "LUN:SWEET & SOUR CHKN"
+    },
+    "L02": {
+      "zh": "L腰果雞",
+      "kitchen": "LUN:CHKN/ CASHEW NUTS"
+    },
+    "L03": {
+      "zh": "L芥蘭雞",
+      "kitchen": "LUN:CHKN/ BROCCOLI"
+    },
+    "L04": {
+      "zh": "L怪味雞",
+      "kitchen": "LUN:AMAZING CHKN"
+    },
+    "L05": {
+      "zh": "L魚香雞",
+      "kitchen": "LUN:CHKN/ GARLIC S."
+    },
+    "L06": {
+      "zh": "L湖南肉",
+      "kitchen": "LUN:HUNAN PORK"
+    },
+    "L07": {
+      "zh": "L子薑肉",
+      "kitchen": "LUN:GINGER PORK/ STR BEAN"
+    },
+    "L08": {
+      "zh": "L芥蘭牛",
+      "kitchen": "LUN:BEEF/ BROCCOLI"
+    },
+    "L09": {
+      "zh": "L四川牛",
+      "kitchen": "LUN:BEEF SZECHN STY"
+    },
+    "L10": {
+      "zh": "L蘑菇牛",
+      "kitchen": "LUN:BEEF/ MUSHROOM"
+    },
+    "L11": {
+      "zh": "L魚香蝦",
+      "kitchen": "LUN:SHMP/ GARLIC S."
+    },
+    "L12": {
+      "zh": "L什菜蝦",
+      "kitchen": "LUN:SHMP/ ASSORTED VEG."
+    },
+    "L13": {
+      "zh": "L干燒蝦",
+      "kitchen": "LUN:SHMP/ CHILI S."
+    },
+    "L14": {
+      "zh": "L素什錦",
+      "kitchen": "LUN:BUDDHIST DELIGHT"
+    },
+    "L15": {
+      "zh": "L左宗雞",
+      "kitchen": "LUN:GEN. TSO'S CHKN"
+    },
+    "L16": {
+      "zh": "L陳皮牛",
+      "kitchen": "LUN:TANGERINE BEEF"
+    },
+    "L17": {
+      "zh": "L芝麻雞",
+      "kitchen": "LUN:CRSPY SESM CHCKN"
+    },
+    "L18": {
+      "zh": "L芝麻蝦",
+      "kitchen": "LUN:CRISPY SESAME SHMP"
+    },
+    "L19": {
+      "zh": "L炒三鮮",
+      "kitchen": "LUN:TRIPLE DELIGHT"
+    },
+    "L20": {
+      "zh": "L雞蝦雙味",
+      "kitchen": "LUN:DYNASTY DUO"
+    },
+    "L21": {
+      "zh": "L炸蝦",
+      "station": "sushi"
+    },
+    "L22": {
+      "station": "sushi"
+    },
+    "M01": {
+      "zh": "木須雞",
+      "kitchen": "CHKN MOO SHU p"
+    },
+    "M02": {
+      "zh": "木須肉",
+      "kitchen": "PORK MOO SHU p"
+    },
+    "M03": {
+      "zh": "木須牛",
+      "kitchen": "BEEF MOO SHU p"
+    },
+    "M04": {
+      "zh": "木須菜",
+      "kitchen": "VEG MOO SHI p"
+    },
+    "M05": {
+      "zh": "木須蝦",
+      "kitchen": "SHMP MOO SHU p"
+    },
+    "M06": {
+      "zh": "本樓木須",
+      "kitchen": "HOUSE MOO SHU p"
+    },
+    "M07": {
+      "zh": "雙星木須",
+      "kitchen": "DSTAR MOO SHU p"
+    },
+    "M08": {
+      "zh": "一木餅",
+      "kitchen": "ADD 1 PANCKE p"
+    },
+    "N01": {
+      "zh": "雞炒飯",
+      "kitchen": "CHKN FR RICE"
+    },
+    "N02": {
+      "zh": "肉炒飯",
+      "kitchen": "PORK FR RICE"
+    },
+    "N03": {
+      "zh": "牛炒飯",
+      "kitchen": "BEEF FR RICE"
+    },
+    "N04": {
+      "zh": "菜炒飯",
+      "kitchen": "VEG. FR RICE"
+    },
+    "N05": {
+      "zh": "蝦炒飯",
+      "kitchen": "SHMP FR RICE"
+    },
+    "N06": {
+      "zh": "本樓炒飯",
+      "kitchen": "HOUSE SP FR RICE"
+    },
+    "N07": {
+      "zh": "淨炒飯"
+    },
+    "N08": {
+      "zh": "青蔥蛋飯白"
+    },
+    "N11": {
+      "zh": "雞撈麵",
+      "kitchen": "CHKN LO MEIN"
+    },
+    "N12": {
+      "zh": "肉撈麵",
+      "kitchen": "PORK LO MEIN"
+    },
+    "N13": {
+      "zh": "牛撈麵",
+      "kitchen": "BEEF LO MEIN"
+    },
+    "N14": {
+      "zh": "菜撈麵",
+      "kitchen": "VEG. LO MEIN"
+    },
+    "N15": {
+      "zh": "蝦撈麵",
+      "kitchen": "SHMP LO MEIN"
+    },
+    "N16": {
+      "zh": "本樓撈麵",
+      "kitchen": "HOUSE SP LO MEIN"
+    },
+    "N17": {
+      "zh": "淨撈麵"
+    },
+    "N18": {
+      "zh": "蒜撈麵"
+    },
+    "N21": {
+      "zh": "雞河粉",
+      "kitchen": "CHKN CHOW FUN"
+    },
+    "N22": {
+      "zh": "肉河粉",
+      "kitchen": "PORK CHOW FUN"
+    },
+    "N23": {
+      "zh": "牛河粉",
+      "kitchen": "BEEF CHOW FUN"
+    },
+    "N24": {
+      "zh": "菜河粉",
+      "kitchen": "VEG. CHOW FUN"
+    },
+    "N25": {
+      "zh": "蝦河粉",
+      "kitchen": "SHMP CHOW FUN"
+    },
+    "N26": {
+      "zh": "本樓河粉",
+      "kitchen": "HOUSE SP CHOW FUN"
+    },
+    "P01": {
+      "zh": "京醬肉",
+      "kitchen": "SHRD PORK PEK r"
+    },
+    "P02": {
+      "zh": "素菜肉",
+      "kitchen": "SLC PORK VEG r"
+    },
+    "P03": {
+      "zh": "芥蘭肉",
+      "kitchen": "SLC PORK BRCL r"
+    },
+    "P04": {
+      "zh": "雪豆肉",
+      "kitchen": "SLC PORK SNPE r"
+    },
+    "P05": {
+      "zh": "回鍋肉",
+      "kitchen": "T.SAUTED PORK r"
+    },
+    "P06": {
+      "zh": "魚香肉",
+      "kitchen": "SLC PORK GRLC r"
+    },
+    "P07": {
+      "zh": "湖南肉",
+      "kitchen": "HUNAN PORK r"
+    },
+    "P08": {
+      "zh": "子薑肉",
+      "kitchen": "GNGR PORK STB r"
+    },
+    "P09": {
+      "zh": "龍蝦汁"
+    },
+    "P10": {
+      "zh": "麻婆豆腐肉"
+    },
+    "R01": {
+      "kitchen": "CAN SODA"
+    },
+    "R03": {
+      "kitchen": "MILK"
+    },
+    "R04": {
+      "kitchen": "JUICE"
+    },
+    "R08": {
+      "kitchen": "RAMUNE"
+    },
+    "S01": {
+      "zh": "腰果蝦",
+      "kitchen": "SHMP CASHEW r"
+    },
+    "S02": {
+      "zh": "素菜蝦",
+      "kitchen": "SHMP VEG r"
+    },
+    "S03": {
+      "zh": "芥蘭蝦",
+      "kitchen": "SHMP BROCCOLI r"
+    },
+    "S04": {
+      "zh": "雪豆蝦",
+      "kitchen": "SHMP SNOW PEA r"
+    },
+    "S05": {
+      "zh": "魚香蝦",
+      "kitchen": "SHMP GARLIC S r"
+    },
+    "S06": {
+      "zh": "子薑蝦",
+      "kitchen": "GNGR SHMP STB r"
+    },
+    "S07": {
+      "zh": "干燒蝦",
+      "kitchen": "SHMP CHILI S r"
+    },
+    "S08": {
+      "zh": "魚香干貝",
+      "kitchen": "SCLP GARLIC r"
+    },
+    "S09": {
+      "zh": "干燒干貝",
+      "kitchen": "SCLPS CHILI r"
+    },
+    "S12": {
+      "zh": "炒三鮮",
+      "kitchen": "TRIPLE DELGHT r"
+    },
+    "S13": {
+      "zh": "魚香龍蝦",
+      "kitchen": "LOBSTER GARLC r"
+    },
+    "S14": {
+      "zh": "薑蔥龍蝦",
+      "kitchen": "LOBSTER GNGR r"
+    },
+    "S15": {
+      "zh": "蝦龍糊"
+    },
+    "S17": {
+      "zh": "蔥燒大蝦"
+    },
+    "V01": {
+      "zh": "素什錦",
+      "kitchen": "BUDHST DELGHT r"
+    },
+    "V02": {
+      "zh": "清炒四季豆",
+      "kitchen": "STRNG BEAN r"
+    },
+    "V03": {
+      "zh": "清炒菠菜",
+      "kitchen": "SPINACH r"
+    },
+    "V04": {
+      "zh": "豆腐蔬菜",
+      "kitchen": "BEAN CRD VEG r"
+    },
+    "V05": {
+      "zh": "麻婆豆腐",
+      "kitchen": "MAPO TOFU r"
+    },
+    "V06": {
+      "zh": "魚香芥蘭",
+      "kitchen": "BROCOLI GARLC r"
+    },
+    "V07": {
+      "zh": "魚香素菜",
+      "kitchen": "VEG GARLIC r"
+    },
+    "V08": {
+      "zh": "魚香茄子",
+      "kitchen": "EGPLANT GARLC r"
+    },
+    "V09": {
+      "zh": "冬菇白菜",
+      "kitchen": "MUSH/GREEN r"
+    },
+    "V11": {
+      "zh": "清炒白菜"
+    },
+    "V21": {
+      "zh": "水煮素什錦",
+      "kitchen": "STM:MIX VEG r."
+    },
+    "V22": {
+      "zh": "水煮素菜雞",
+      "kitchen": "STM:CHKN VEG r"
+    },
+    "V23": {
+      "zh": "水煮芥蘭雞",
+      "kitchen": "STM:CHKN/BROC r"
+    },
+    "V24": {
+      "zh": "水煮雪豆雞",
+      "kitchen": "STM:CHKN/SPEA r"
+    },
+    "V25": {
+      "zh": "水煮素菜蝦",
+      "kitchen": "STM:SHMP/VEG r"
+    },
+    "V26": {
+      "zh": "水煮芥蘭蝦",
+      "kitchen": "STM:SHMP/BRC r"
+    },
+    "V27": {
+      "zh": "水煮雪豆蝦",
+      "kitchen": "STM:SHMP/SPEA r"
+    },
+    "V28": {
+      "zh": "水煮海大會",
+      "kitchen": "STM:SEAFD PLT r"
+    },
+    "Y13": {
+      "station": "sushi"
+    },
+    "Y21": {
+      "kitchen": "+P:DUCK SA"
+    },
+    "Y22": {
+      "kitchen": "+P:GINGER SA"
+    },
+    "Y23": {
+      "kitchen": "+P:MUSTARD SA"
+    },
+    "Y24": {
+      "kitchen": "+P:HOISON SA"
+    },
+    "Y28": {
+      "kitchen": "+P:TAMARI*"
+    },
+    "Y43": {
+      "station": "sushi"
+    }
+  },
+  "prices": [
+    {
+      "variant": "C13:regular",
+      "name": "Basil Chicken",
+      "price": 19.95,
+      "online": 18.95
+    },
+    {
+      "variant": "N23:regular",
+      "name": "Beef Chow Fun",
+      "price": 14.95,
+      "online": 14.5
+    },
+    {
+      "variant": "N25:regular",
+      "name": "Shrimp Chow Fun",
+      "price": 16.95,
+      "online": 17.95
+    },
+    {
+      "variant": "N26:regular",
+      "name": "House Special Chow Fun",
+      "price": 16.95,
+      "online": 17.95
+    },
+    {
+      "variant": "K19:regular",
+      "name": "Cucumber Avocado Roll",
+      "price": 8.5,
+      "online": 7.95
+    },
+    {
+      "variant": "Y43:regular",
+      "name": "Spicy Mayo",
+      "price": 1.0,
+      "online": 0.95
+    },
+    {
+      "variant": "R02:regular",
+      "name": "Bottled Spring Water",
+      "price": 2.0,
+      "online": 1.95
+    },
+    {
+      "variant": "R03:regular",
+      "name": "Organic Milk",
+      "price": 2.0,
+      "online": 2.5
+    },
+    {
+      "variant": "R04:regular",
+      "name": "Juice",
+      "price": 2.0,
+      "online": 2.5
+    },
+    {
+      "variant": "R08:regular",
+      "name": "Ramune",
+      "price": 3.45,
+      "online": 3.95
+    }
+  ],
+  "new": [
+    {
+      "code": "A18",
+      "category": "Appetizers",
+      "name": "Crispy Calamari with Salt & Pepper",
+      "price": 17.95,
+      "zh": "椒鹽魷魚",
+      "kitchen": "CRISPY CALRMRI",
+      "station": "wok1"
+    },
+    {
+      "code": "A23",
+      "category": "Appetizers",
+      "name": "Appetizer Platter (for 3)",
+      "price": 39.95,
+      "zh": "三人餐",
+      "groups": [
+        "platter"
+      ]
+    },
+    {
+      "code": "A24",
+      "category": "Appetizers",
+      "name": "Add One Leaf",
+      "price": 0.95,
+      "zh": "加葉子"
+    },
+    {
+      "code": "A25",
+      "category": "Appetizers",
+      "name": "Fried Shrimp",
+      "price": 17.95
+    },
+    {
+      "code": "A27",
+      "category": "Appetizers",
+      "name": "Teriyaki Chicken (appetizer)",
+      "price": 10.95,
+      "zh": "雞肉串"
+    },
+    {
+      "code": "811",
+      "category": "Soup",
+      "name": "Large Miso Soup (quart)",
+      "price": 8.5,
+      "zh": "大日本湯"
+    },
+    {
+      "code": "812",
+      "category": "Soup",
+      "name": "Large Wonton Soup (quart)",
+      "price": 8.5,
+      "zh": "大雲吞湯"
+    },
+    {
+      "code": "813",
+      "category": "Soup",
+      "name": "Large Hot & Sour Soup (quart)",
+      "price": 8.5,
+      "zh": "大酸辣湯"
+    },
+    {
+      "code": "814",
+      "category": "Soup",
+      "name": "Large Egg Drop Soup (quart)",
+      "price": 8.5,
+      "zh": "大蛋花湯"
+    },
+    {
+      "code": "822",
+      "category": "Soup",
+      "name": "Chicken Noodle Soup",
+      "price": 10.95,
+      "zh": "雞麵湯",
+      "station": "wok1"
+    },
+    {
+      "code": "823",
+      "category": "Soup",
+      "name": "Chicken Rice Soup",
+      "price": 10.95,
+      "zh": "雞飯湯",
+      "station": "wok1"
+    },
+    {
+      "code": "824",
+      "category": "Soup",
+      "name": "Wonton Broth",
+      "price": 2.75,
+      "zh": "清湯",
+      "station": "wok1"
+    },
+    {
+      "code": "831",
+      "category": "Extras",
+      "name": "Sweet & Sour Sauce",
+      "price": 2.5,
+      "zh": "紅醬",
+      "station": "fryer"
+    },
+    {
+      "code": "832",
+      "category": "Extras",
+      "name": "Brown Sauce",
+      "price": 2.5,
+      "zh": "宮保醬",
+      "station": "wok1"
+    },
+    {
+      "code": "833",
+      "category": "Extras",
+      "name": "Sesame Sauce",
+      "price": 2.5,
+      "zh": "芝麻醬",
+      "station": "wok1"
+    },
+    {
+      "code": "C11",
+      "category": "Chicken",
+      "name": "Chicken with Snow Peas",
+      "price": 17.95,
+      "zh": "雪豆雞"
+    },
+    {
+      "code": "S10",
+      "category": "Seafood",
+      "name": "Calamari with Hunan Sauce",
+      "price": 21.95,
+      "zh": "湖南魷魚",
+      "kitchen": "CALAMRI HUNAN r"
+    },
+    {
+      "code": "S16",
+      "category": "Seafood",
+      "name": "Stir-Fried Seafood",
+      "price": 24.95,
+      "zh": "蔥燒蝦貝"
+    },
+    {
+      "code": "V10",
+      "category": "Vegetables",
+      "name": "Vegetable Chow Mein",
+      "price": 15.95,
+      "zh": "素炒麵"
+    },
+    {
+      "code": "V30",
+      "category": "Health Food",
+      "name": "Steamed Broccoli",
+      "price": 15.95,
+      "zh": "水煮芥蘭"
+    },
+    {
+      "code": "N27",
+      "category": "Chow Fun",
+      "name": "Plain Chow Fun",
+      "price": 14.95,
+      "zh": "淨河粉"
+    },
+    {
+      "code": "I07",
+      "category": "Japanese Appetizers",
+      "name": "Sunomono",
+      "price": 7.95,
+      "kitchen": "SUNOMONO"
+    },
+    {
+      "code": "I08",
+      "category": "Japanese Appetizers",
+      "name": "Sushi Appetizer",
+      "price": 12.95,
+      "kitchen": "SUSHI (APP)",
+      "station": "sushi",
+      "groups": [
+        "sushi_options"
+      ]
+    },
+    {
+      "code": "I09",
+      "category": "Japanese Appetizers",
+      "name": "Sashimi Appetizer",
+      "price": 14.95,
+      "kitchen": "SASHIMI (APP)",
+      "station": "sushi",
+      "groups": [
+        "sushi_options"
+      ]
+    },
+    {
+      "code": "I46",
+      "category": "Teriyaki",
+      "name": "Seafood Teriyaki",
+      "price": 29.95,
+      "zh": "日海鮮串",
+      "kitchen": "SEFOD TRYKI ssr"
+    },
+    {
+      "code": "K21",
+      "category": "Sushi & Sashimi Entrees",
+      "name": "Fire Dragon Roll",
+      "price": 18.95
+    },
+    {
+      "code": "K22",
+      "category": "Sushi & Sashimi Entrees",
+      "name": "Scallop Special",
+      "price": 22.95
+    },
+    {
+      "code": "K23",
+      "category": "Sushi & Sashimi Entrees",
+      "name": "Caterpillar Roll",
+      "price": 18.95
+    },
+    {
+      "code": "J22",
+      "category": "Sashimi",
+      "name": "Inari",
+      "price": 6.0,
+      "kitchen": "sa:INARI"
+    },
+    {
+      "code": "Y00",
+      "category": "Extras",
+      "name": "Pan Fried Noodle",
+      "price": 6.5,
+      "station": "wok1"
+    },
+    {
+      "code": "Y02",
+      "category": "Extras",
+      "name": "Lettuce Wrap",
+      "price": 0.75,
+      "kitchen": "LETTUCE WRAP"
+    },
+    {
+      "code": "Y26",
+      "category": "Extras",
+      "name": "Soy Sauce",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y27",
+      "category": "Extras",
+      "name": "Soy Sauce (low sodium)",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y32",
+      "category": "Extras",
+      "name": "Fortune Cookie",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y33",
+      "category": "Extras",
+      "name": "Chopsticks",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y34",
+      "category": "Extras",
+      "name": "Flatware",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y35",
+      "category": "Extras",
+      "name": "Napkins",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y36",
+      "category": "Extras",
+      "name": "Paper Plates",
+      "price": 0.0,
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y41",
+      "category": "Extras",
+      "name": "Wasabi",
+      "price": 0.0,
+      "station": "sushi",
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y42",
+      "category": "Extras",
+      "name": "Sushi Ginger",
+      "price": 0.0,
+      "station": "sushi",
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "Y44",
+      "category": "Extras",
+      "name": "Unagi Sauce",
+      "price": 1.0,
+      "station": "sushi",
+      "groups": [
+        "charge"
+      ]
+    },
+    {
+      "code": "D01",
+      "category": "Desserts",
+      "name": "Ice Cream",
+      "price": 4.95
+    },
+    {
+      "code": "D02",
+      "category": "Desserts",
+      "name": "Pineapple",
+      "price": 3.95
+    },
+    {
+      "code": "G010",
+      "category": "Gift Certificates",
+      "name": "Gift Certificate $10",
+      "price": 10.0,
+      "tax_class": "gift_card"
+    },
+    {
+      "code": "W011",
+      "category": "Beverages",
+      "name": "Coke",
+      "price": 2.0
+    },
+    {
+      "code": "W012",
+      "category": "Beverages",
+      "name": "Diet Coke",
+      "price": 2.0
+    },
+    {
+      "code": "W10",
+      "category": "Beverages",
+      "name": "Sprite",
+      "price": 2.0,
+      "kitchen": "SPRITE"
+    },
+    {
+      "code": "W013",
+      "category": "Beverages",
+      "name": "Ginger Ale",
+      "price": 2.0
+    },
+    {
+      "code": "W014",
+      "category": "Beverages",
+      "name": "Tonic Water",
+      "price": 2.0
+    },
+    {
+      "code": "W015",
+      "category": "Beverages",
+      "name": "Soda Water",
+      "price": 2.0
+    },
+    {
+      "code": "W016",
+      "category": "Beverages",
+      "name": "Lemonade",
+      "price": 2.0
+    },
+    {
+      "code": "W017",
+      "category": "Beverages",
+      "name": "Sweetened Iced Tea",
+      "price": 2.0
+    },
+    {
+      "code": "W010",
+      "category": "Beverages",
+      "name": "Cranberry Juice",
+      "price": 2.0
+    },
+    {
+      "code": "W018",
+      "category": "Beverages",
+      "name": "Cranberry Soda",
+      "price": 2.0
+    },
+    {
+      "code": "W07",
+      "category": "Beverages",
+      "name": "Shirley Temple",
+      "price": 2.0,
+      "kitchen": "SHIRLEY TEMPLE"
+    },
+    {
+      "code": "R06",
+      "category": "Beverages",
+      "name": "Green Tea",
+      "price": 2.0
+    },
+    {
+      "code": "W49",
+      "category": "Beverages",
+      "name": "Hot Tea",
+      "price": 2.0
+    },
+    {
+      "code": "W08",
+      "category": "Beverages",
+      "name": "Fiji Water",
+      "price": 2.95,
+      "kitchen": "FIJI NATURAL ARTESIAN"
+    },
+    {
+      "code": "W05",
+      "category": "Beverages",
+      "name": "Hawaiian Punch",
+      "price": 4.0,
+      "kitchen": "HAWAII PUNCH",
+      "station": "bar"
+    },
+    {
+      "code": "W04",
+      "category": "Beverages",
+      "name": "Coconut Dream",
+      "price": 6.0,
+      "kitchen": "COCONUT DREAM",
+      "station": "bar"
+    },
+    {
+      "code": "W31",
+      "category": "Beverages",
+      "name": "Virgin Strawberry Piña Colada",
+      "price": 6.0,
+      "station": "bar"
+    },
+    {
+      "code": "W32",
+      "category": "Beverages",
+      "name": "Virgin Strawberry Daiquiri",
+      "price": 6.0,
+      "station": "bar"
+    },
+    {
+      "code": "W20",
+      "category": "Mixed Drinks",
+      "name": "Koko Moko",
+      "price": 9.25,
+      "kitchen": "KOKO MOKO",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W21",
+      "category": "Mixed Drinks",
+      "name": "Blue Genie",
+      "price": 9.25,
+      "kitchen": "BLUE GENIE",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W25",
+      "category": "Mixed Drinks",
+      "name": "Peppermint Patty",
+      "price": 12.0,
+      "kitchen": "PEPPERMINT PATTY",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W28",
+      "category": "Mixed Drinks",
+      "name": "Chocolate Martini",
+      "price": 14.0,
+      "kitchen": "CHOCOLATE MARTINI",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W33",
+      "category": "Mixed Drinks",
+      "name": "Grey Goose Martini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W40",
+      "category": "Mixed Drinks",
+      "name": "Piña Colada",
+      "price": 10.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W41",
+      "category": "Mixed Drinks",
+      "name": "Strawberry Piña Colada",
+      "price": 10.0,
+      "kitchen": "PINA COLADA-STRAWBERRY",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W42",
+      "category": "Mixed Drinks",
+      "name": "Kahlúa Piña Colada",
+      "price": 10.0,
+      "kitchen": "PINA COLADA KAHLUA",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W43",
+      "category": "Mixed Drinks",
+      "name": "Midori Piña Colada",
+      "price": 10.0,
+      "kitchen": "PINA COLADA MIDORI",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W44",
+      "category": "Mixed Drinks",
+      "name": "Strawberry Daiquiri",
+      "price": 10.0,
+      "kitchen": "DAIQUIRI STRAWBERRY",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W45",
+      "category": "Mixed Drinks",
+      "name": "Banana Daiquiri",
+      "price": 10.0,
+      "kitchen": "DAIQUIRI BANANA",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W46",
+      "category": "Mixed Drinks",
+      "name": "Midori Daiquiri",
+      "price": 10.0,
+      "kitchen": "DAIQUIRI MIDORI",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "W48",
+      "category": "Mixed Drinks",
+      "name": "Midori Margarita",
+      "price": 10.0,
+      "kitchen": "MARGARITA MIDORI",
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z01",
+      "category": "Mixed Drinks",
+      "name": "Absolut Soda",
+      "price": 7.95,
+      "tax_class": "alcohol",
+      "description": "Calvin's"
+    },
+    {
+      "code": "Z03",
+      "category": "Mixed Drinks",
+      "name": "Ketel One Martini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z06",
+      "category": "Mixed Drinks",
+      "name": "Bombay Sapphire Martini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z07",
+      "category": "Mixed Drinks",
+      "name": "Special Mai Tai",
+      "price": 11.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z09",
+      "category": "Mixed Drinks",
+      "name": "Tall Mai Tai",
+      "price": 11.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z10",
+      "category": "Mixed Drinks",
+      "name": "Manhattan",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Z11",
+      "category": "Mixed Drinks",
+      "name": "Mario Special",
+      "price": 4.5,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "R11",
+      "category": "Mixed Drinks",
+      "name": "Zombie (to go)",
+      "price": 9.25,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Q01",
+      "category": "Mixed Drinks",
+      "name": "Ginger Margarita",
+      "price": 10.5,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Q02",
+      "category": "Mixed Drinks",
+      "name": "Lychee Royal",
+      "price": 9.95,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Q03",
+      "category": "Mixed Drinks",
+      "name": "Lychee Martini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Q04",
+      "category": "Mixed Drinks",
+      "name": "Peach Pomtini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "Q05",
+      "category": "Mixed Drinks",
+      "name": "Piña Colada Tini",
+      "price": 14.0,
+      "tax_class": "alcohol"
+    },
+    {
+      "code": "X101",
+      "category": "Foreign Beer",
+      "name": "Tsing Tao (can)",
+      "price": 8.0,
+      "tax_class": "alcohol"
+    }
+  ],
+  "groups": {
+    "spice": {
+      "name": {
+        "en": "Spice",
+        "zh": "辣度"
+      },
+      "max": 1,
+      "sort": 80,
+      "options": [
+        {
+          "code": "none",
+          "name": "No spicy",
+          "kitchen_label": "NO SPICY"
+        },
+        {
+          "code": "mild",
+          "name": "Mild spicy",
+          "kitchen_label": "MILD SPICY"
+        },
+        {
+          "code": "hot",
+          "name": "Hot",
+          "kitchen_label": "HOT"
+        },
+        {
+          "code": "extra_hot",
+          "name": "Extra hot",
+          "kitchen_label": "XXXhot"
+        }
+      ]
+    },
+    "allergy": {
+      "name": {
+        "en": "Allergy",
+        "zh": "過敏"
+      },
+      "sort": 81,
+      "options": [
+        {
+          "code": "shrimp",
+          "name": "Shrimp allergy",
+          "kitchen_label": "*SHMP ALGY"
+        },
+        {
+          "code": "shellfish",
+          "name": "Shellfish allergy",
+          "kitchen_label": "*SHEL ALGY"
+        },
+        {
+          "code": "nut",
+          "name": "Nut allergy",
+          "kitchen_label": "*NUT ALRGY"
+        },
+        {
+          "code": "gluten_free",
+          "name": "Gluten free",
+          "kitchen_label": "*GLUT FREE"
+        }
+      ]
+    },
+    "preparation": {
+      "name": {
+        "en": "Preparation",
+        "zh": "做法"
+      },
+      "sort": 82,
+      "options": [
+        {
+          "code": "no_msg",
+          "name": "No MSG",
+          "kitchen_label": "NO MSG"
+        },
+        {
+          "code": "sugar",
+          "name": "Sugar",
+          "kitchen_label": "SUGER"
+        },
+        {
+          "code": "salt",
+          "name": "Salt",
+          "kitchen_label": "SALT"
+        },
+        {
+          "code": "oil",
+          "name": "Oil",
+          "kitchen_label": "OIL"
+        },
+        {
+          "code": "corn_starch",
+          "name": "Corn starch",
+          "kitchen_label": "CORN STRCH"
+        },
+        {
+          "code": "vinegar",
+          "name": "Vinegar",
+          "kitchen_label": "VINGER"
+        },
+        {
+          "code": "crispy",
+          "name": "Crispy",
+          "kitchen_label": "CRISPY"
+        },
+        {
+          "code": "not_fried",
+          "name": "Not fried",
+          "kitchen_label": "NO FRY"
+        },
+        {
+          "code": "fry_back",
+          "name": "Fry back",
+          "kitchen_label": "Fry BK"
+        },
+        {
+          "code": "boiled",
+          "name": "Boiled",
+          "kitchen_label": "BOILNG"
+        },
+        {
+          "code": "small_pieces",
+          "name": "Small pieces",
+          "kitchen_label": "SM PIECE"
+        },
+        {
+          "code": "well_done",
+          "name": "Well done",
+          "kitchen_label": "WELLdn"
+        },
+        {
+          "code": "medium",
+          "name": "Medium",
+          "kitchen_label": "MEDIUM"
+        },
+        {
+          "code": "raw",
+          "name": "Raw",
+          "kitchen_label": "RAW"
+        },
+        {
+          "code": "white_meat",
+          "name": "White meat",
+          "kitchen_label": "WHT MEAT"
+        },
+        {
+          "code": "pan_fried",
+          "name": "Pan fried",
+          "kitchen_label": "P/F"
+        },
+        {
+          "code": "take_out",
+          "name": "Take out",
+          "kitchen_label": "TAKE OUT"
+        },
+        {
+          "code": "dry_noodle",
+          "name": "Dry noodle",
+          "kitchen_label": "DRY NOODL"
+        },
+        {
+          "code": "fortune_cookie",
+          "name": "Fortune cookie",
+          "kitchen_label": "F COOKIE"
+        },
+        {
+          "code": "chopsticks",
+          "name": "Chopsticks",
+          "kitchen_label": "CHOPSTIX"
+        },
+        {
+          "code": "napkin",
+          "name": "Napkin",
+          "kitchen_label": "NAPKIN"
+        }
+      ]
+    },
+    "sauces": {
+      "name": {
+        "en": "Sauces",
+        "zh": "醬"
+      },
+      "sort": 83,
+      "options": [
+        {
+          "code": "sauce",
+          "name": "Sauce",
+          "kitchen_label": "SAUCE"
+        },
+        {
+          "code": "gravy",
+          "name": "Gravy",
+          "kitchen_label": "GRAVY"
+        },
+        {
+          "code": "brown_sauce",
+          "name": "Brown sauce",
+          "kitchen_label": "BROWNSAUCE"
+        },
+        {
+          "code": "white_sauce",
+          "name": "White sauce",
+          "kitchen_label": "WHITESAUCE"
+        },
+        {
+          "code": "hoisin",
+          "name": "Hoisin sauce",
+          "kitchen_label": "HOSIN SA"
+        },
+        {
+          "code": "dumpling_sauce",
+          "name": "Dumpling sauce",
+          "kitchen_label": "Dump/S"
+        },
+        {
+          "code": "hot_oil",
+          "name": "Hot oil",
+          "kitchen_label": "HOT OIL"
+        },
+        {
+          "code": "mustard",
+          "name": "Mustard sauce",
+          "kitchen_label": "MUSTA S"
+        },
+        {
+          "code": "duck_sauce",
+          "name": "Duck sauce",
+          "kitchen_label": "DUCK SA"
+        },
+        {
+          "code": "soy_sauce",
+          "name": "Soy sauce",
+          "kitchen_label": "SOY/S"
+        },
+        {
+          "code": "ginger_sauce",
+          "name": "Ginger sauce",
+          "kitchen_label": "GINGER S"
+        },
+        {
+          "code": "egg_foo_young_sauce",
+          "name": "Egg foo young sauce",
+          "kitchen_label": "EFY/S"
+        },
+        {
+          "code": "hot_garlic_sauce",
+          "name": "Hot garlic sauce",
+          "kitchen_label": "H.G.S."
+        },
+        {
+          "code": "black_bean_sauce",
+          "name": "Black bean sauce",
+          "kitchen_label": "B.B.S."
+        },
+        {
+          "code": "free_duck_sauce",
+          "name": "Duck sauce (free)",
+          "kitchen_label": "F DUCK S"
+        },
+        {
+          "code": "free_mustard_sauce",
+          "name": "Mustard sauce (free)",
+          "kitchen_label": "F MUSD S"
+        }
+      ]
+    },
+    "ingredients": {
+      "name": {
+        "en": "Ingredients",
+        "zh": "配料"
+      },
+      "sort": 84,
+      "options": [
+        {
+          "code": "broccoli",
+          "name": "Broccoli",
+          "kitchen_label": "BROCOL"
+        },
+        {
+          "code": "pineapple",
+          "name": "Pineapple",
+          "kitchen_label": "PINEAPPLE"
+        },
+        {
+          "code": "cabbage",
+          "name": "Cabbage",
+          "kitchen_label": "CABAGE"
+        },
+        {
+          "code": "spinach",
+          "name": "Spinach",
+          "kitchen_label": "SPINACH"
+        },
+        {
+          "code": "pepper",
+          "name": "Pepper",
+          "kitchen_label": "PEPPER"
+        },
+        {
+          "code": "sesame",
+          "name": "Sesame",
+          "kitchen_label": "SESAME"
+        },
+        {
+          "code": "jicama",
+          "name": "Jicama",
+          "kitchen_label": "JICAMA"
+        },
+        {
+          "code": "mushroom",
+          "name": "Mushroom",
+          "kitchen_label": "MASHRO"
+        },
+        {
+          "code": "black_mushroom",
+          "name": "Black mushroom",
+          "kitchen_label": "BLK MUSHR"
+        },
+        {
+          "code": "carrot",
+          "name": "Carrot",
+          "kitchen_label": "CARROT"
+        },
+        {
+          "code": "cashew",
+          "name": "Cashew",
+          "kitchen_label": "CASHEW",
+          "price": 2.0
+        },
+        {
+          "code": "scallion",
+          "name": "Scallion",
+          "kitchen_label": "SCALLION"
+        },
+        {
+          "code": "onion",
+          "name": "Onion",
+          "kitchen_label": "ONION"
+        },
+        {
+          "code": "sprouts",
+          "name": "Sprouts",
+          "kitchen_label": "SPROUT"
+        },
+        {
+          "code": "snow_peas",
+          "name": "Snow peas",
+          "kitchen_label": "SNOWPEA"
+        },
+        {
+          "code": "peas",
+          "name": "Peas",
+          "kitchen_label": "PEA"
+        },
+        {
+          "code": "celery",
+          "name": "Celery",
+          "kitchen_label": "CELERY"
+        },
+        {
+          "code": "garlic",
+          "name": "Garlic",
+          "kitchen_label": "GARLIC"
+        },
+        {
+          "code": "ginger",
+          "name": "Ginger",
+          "kitchen_label": "GINGER"
+        },
+        {
+          "code": "cucumber",
+          "name": "Cucumber",
+          "kitchen_label": "CUCUMBER"
+        },
+        {
+          "code": "vegetables",
+          "name": "Vegetables",
+          "kitchen_label": "VEG."
+        },
+        {
+          "code": "asparagus",
+          "name": "Asparagus",
+          "kitchen_label": "ASPARAGUS"
+        },
+        {
+          "code": "string_beans",
+          "name": "String beans",
+          "kitchen_label": "STRING BN"
+        },
+        {
+          "code": "tomato",
+          "name": "Tomato",
+          "kitchen_label": "TOMATO"
+        },
+        {
+          "code": "zucchini",
+          "name": "Zucchini",
+          "kitchen_label": "ZUCCHINI"
+        },
+        {
+          "code": "basil",
+          "name": "Basil",
+          "kitchen_label": "BASIL"
+        },
+        {
+          "code": "sweet_potato",
+          "name": "Sweet potato",
+          "kitchen_label": "SWET POTAT"
+        },
+        {
+          "code": "seaweed",
+          "name": "Seaweed",
+          "kitchen_label": "SEAWEED"
+        },
+        {
+          "code": "egg",
+          "name": "Egg",
+          "kitchen_label": "EGG"
+        },
+        {
+          "code": "tofu",
+          "name": "Tofu",
+          "kitchen_label": "TOFU"
+        },
+        {
+          "code": "fried_tofu",
+          "name": "Fried tofu",
+          "kitchen_label": "FRI TOFU"
+        },
+        {
+          "code": "chicken",
+          "name": "Chicken",
+          "kitchen_label": "CHICKN"
+        },
+        {
+          "code": "beef",
+          "name": "Beef",
+          "kitchen_label": "BEEF"
+        },
+        {
+          "code": "pork",
+          "name": "Pork",
+          "kitchen_label": "PORK"
+        },
+        {
+          "code": "roast_pork",
+          "name": "Roast pork",
+          "kitchen_label": "R PORK"
+        },
+        {
+          "code": "small_shrimp",
+          "name": "Small shrimp",
+          "kitchen_label": "SM SHRMP"
+        },
+        {
+          "code": "large_shrimp",
+          "name": "Large shrimp",
+          "kitchen_label": "LG SHRMP"
+        },
+        {
+          "code": "scallop",
+          "name": "Scallop",
+          "kitchen_label": "SCALLOP"
+        },
+        {
+          "code": "seafood",
+          "name": "Seafood",
+          "kitchen_label": "SEAFOD"
+        }
+      ]
+    },
+    "sushi_options": {
+      "name": {
+        "en": "Sushi options",
+        "zh": "壽司"
+      },
+      "sort": 85,
+      "options": [
+        {
+          "code": "ginger",
+          "name": "Ginger",
+          "kitchen_label": "GINGER"
+        },
+        {
+          "code": "wasabi",
+          "name": "Wasabi",
+          "kitchen_label": "WASABI"
+        },
+        {
+          "code": "soy_sauce",
+          "name": "Soy sauce",
+          "kitchen_label": "SOY SA"
+        },
+        {
+          "code": "cucumber",
+          "name": "Cucumber",
+          "kitchen_label": "CUCUMB"
+        },
+        {
+          "code": "avocado",
+          "name": "Avocado",
+          "kitchen_label": "AVOCADO",
+          "price": 0.5
+        },
+        {
+          "code": "crab",
+          "name": "Crab",
+          "kitchen_label": "CRAB"
+        },
+        {
+          "code": "fish_egg",
+          "name": "Fish egg",
+          "kitchen_label": "FISH EGG",
+          "price": 0.5
+        },
+        {
+          "code": "onion",
+          "name": "Onion",
+          "kitchen_label": "ONION"
+        },
+        {
+          "code": "tuna",
+          "name": "Tuna",
+          "kitchen_label": "TUNA"
+        },
+        {
+          "code": "california",
+          "name": "California",
+          "kitchen_label": "CALI."
+        },
+        {
+          "code": "yamagobo",
+          "name": "Yamagobo",
+          "kitchen_label": "YAMAGOBO R"
+        },
+        {
+          "code": "oshinko",
+          "name": "Oshinko",
+          "kitchen_label": "OSHINKO Y"
+        },
+        {
+          "code": "salmon",
+          "name": "Salmon",
+          "kitchen_label": "SALMON"
+        },
+        {
+          "code": "ebi",
+          "name": "Shrimp (ebi)",
+          "kitchen_label": "SHMP (EBI)"
+        },
+        {
+          "code": "kani",
+          "name": "Kani (crab stick)",
+          "kitchen_label": "KANI(CARB)"
+        },
+        {
+          "code": "eel",
+          "name": "Eel",
+          "kitchen_label": "EEL"
+        },
+        {
+          "code": "hamachi",
+          "name": "Hamachi",
+          "kitchen_label": "HAMACHI"
+        },
+        {
+          "code": "albacore",
+          "name": "Albacore",
+          "kitchen_label": "ALBAC"
+        },
+        {
+          "code": "octopus",
+          "name": "Octopus",
+          "kitchen_label": "OCTOPUS"
+        },
+        {
+          "code": "squid",
+          "name": "Squid",
+          "kitchen_label": "SQUID"
+        },
+        {
+          "code": "shellfish",
+          "name": "Shellfish",
+          "kitchen_label": "SHELL FISH"
+        },
+        {
+          "code": "saba",
+          "name": "Saba",
+          "kitchen_label": "SABA"
+        },
+        {
+          "code": "tempura_flakes",
+          "name": "Tempura flakes",
+          "kitchen_label": "TEMPURA FL"
+        },
+        {
+          "code": "inside_out",
+          "name": "Inside out",
+          "kitchen_label": "INSIDE OUT",
+          "price": 0.75
+        },
+        {
+          "code": "hand_roll",
+          "name": "Hand roll",
+          "kitchen_label": "HAND ROLL",
+          "price": 1.0
+        },
+        {
+          "code": "soy_paper",
+          "name": "Soy paper",
+          "kitchen_label": "SOY PAPER",
+          "price": 1.0
+        },
+        {
+          "code": "brown_rice",
+          "name": "Brown rice",
+          "kitchen_label": "BROWN RICE"
+        },
+        {
+          "code": "unagi_sauce",
+          "name": "Unagi sauce",
+          "kitchen_label": "UNAGI SA"
+        },
+        {
+          "code": "spicy_mayo",
+          "name": "Spicy mayo",
+          "kitchen_label": "SPICY MAYO"
+        },
+        {
+          "code": "cream_sauce",
+          "name": "Cream sauce",
+          "kitchen_label": "CREAM SA"
+        },
+        {
+          "code": "sesame",
+          "name": "Sesame",
+          "kitchen_label": "SESAME"
+        },
+        {
+          "code": "dried_bonito",
+          "name": "Dried bonito",
+          "kitchen_label": "D BONITO"
+        },
+        {
+          "code": "dressing_on_side",
+          "name": "Dressing on the side",
+          "kitchen_label": "DS ON SIDE"
+        },
+        {
+          "code": "gluten_free",
+          "name": "Gluten free",
+          "kitchen_label": "GLUT FREE"
+        },
+        {
+          "code": "split_container",
+          "name": {
+            "en": "Split container",
+            "zh": "分盒"
+          },
+          "kitchen_label": "SPLIT CONT"
+        }
+      ]
+    },
+    "drink_options": {
+      "name": {
+        "en": "Drink options",
+        "zh": "酒水"
+      },
+      "sort": 85,
+      "options": [
+        {
+          "code": "on_the_rocks",
+          "name": "On the rocks",
+          "kitchen_label": "ON ROCK"
+        },
+        {
+          "code": "rocks_on_side",
+          "name": "Rocks on the side",
+          "kitchen_label": "ROCK SIDE"
+        },
+        {
+          "code": "neat",
+          "name": "Neat",
+          "kitchen_label": "NEAT"
+        },
+        {
+          "code": "up",
+          "name": "Up",
+          "kitchen_label": "UP"
+        },
+        {
+          "code": "tall",
+          "name": "Tall",
+          "kitchen_label": "TALL"
+        },
+        {
+          "code": "frozen",
+          "name": "Frozen",
+          "kitchen_label": "FROZEN"
+        },
+        {
+          "code": "virgin",
+          "name": "Virgin",
+          "kitchen_label": "VIRGIN"
+        },
+        {
+          "code": "extra_dry",
+          "name": "Extra dry",
+          "kitchen_label": "XTRA DRY"
+        },
+        {
+          "code": "olive",
+          "name": "Olive",
+          "kitchen_label": "OLIVE"
+        },
+        {
+          "code": "twist",
+          "name": "Twist",
+          "kitchen_label": "TWIST"
+        },
+        {
+          "code": "lime",
+          "name": "Lime",
+          "kitchen_label": "LIME"
+        },
+        {
+          "code": "fruit",
+          "name": "Fruit",
+          "kitchen_label": "FRUIT"
+        },
+        {
+          "code": "splash",
+          "name": "Splash",
+          "kitchen_label": "SPLASH"
+        },
+        {
+          "code": "ice",
+          "name": "Ice",
+          "kitchen_label": "ICE"
+        },
+        {
+          "code": "water",
+          "name": "Water",
+          "kitchen_label": "WATER"
+        },
+        {
+          "code": "lite",
+          "name": "Lite",
+          "kitchen_label": "LITE"
+        },
+        {
+          "code": "sour",
+          "name": "Sour",
+          "kitchen_label": "SOUR"
+        },
+        {
+          "code": "sour_mix",
+          "name": "Sour mix",
+          "kitchen_label": "SOUR MIX"
+        },
+        {
+          "code": "seasonal",
+          "name": "Seasonal",
+          "kitchen_label": "SEASONAL"
+        },
+        {
+          "code": "vinegar",
+          "name": "Vinegar",
+          "kitchen_label": "VINGER"
+        },
+        {
+          "code": "coke",
+          "name": "Coke",
+          "kitchen_label": "COKE"
+        },
+        {
+          "code": "diet_coke",
+          "name": "Diet Coke",
+          "kitchen_label": "D COKE"
+        },
+        {
+          "code": "ginger_ale",
+          "name": "Ginger ale",
+          "kitchen_label": "GINGER ALE"
+        },
+        {
+          "code": "soda_water",
+          "name": "Soda water",
+          "kitchen_label": "SODA WATER"
+        },
+        {
+          "code": "tonic_water",
+          "name": "Tonic water",
+          "kitchen_label": "TONIC WATR"
+        },
+        {
+          "code": "cranberry_juice",
+          "name": "Cranberry juice",
+          "kitchen_label": "CRAN. J."
+        },
+        {
+          "code": "orange_juice",
+          "name": "Orange juice",
+          "kitchen_label": "O. J."
+        },
+        {
+          "code": "pineapple_juice",
+          "name": "Pineapple juice",
+          "kitchen_label": "PINEAPP J."
+        },
+        {
+          "code": "tomato_juice",
+          "name": "Tomato juice",
+          "kitchen_label": "TOMATO J."
+        },
+        {
+          "code": "lime_juice",
+          "name": "Lime juice",
+          "kitchen_label": "LIME J."
+        },
+        {
+          "code": "titos",
+          "name": "Tito's",
+          "kitchen_label": "TITOS"
+        },
+        {
+          "code": "grey_goose",
+          "name": "Grey Goose",
+          "kitchen_label": "GREY GOOSE"
+        },
+        {
+          "code": "absolut",
+          "name": "Absolut",
+          "kitchen_label": "ABSOLUTE"
+        },
+        {
+          "code": "abs_wand",
+          "name": "Abs Wand",
+          "kitchen_label": "ABS WAND"
+        },
+        {
+          "code": "gin",
+          "name": "Gin",
+          "kitchen_label": "GIN"
+        }
+      ]
+    },
+    "platter": {
+      "name": {
+        "en": "Platter"
+      },
+      "sort": 10,
+      "allow_quantity": true,
+      "options": [
+        {
+          "code": "veg_spring_roll",
+          "name": "Vegetable spring roll",
+          "kitchen_label": "VEG SPRING"
+        },
+        {
+          "code": "spring_roll",
+          "name": "Spring roll",
+          "kitchen_label": "SPRING ROL"
+        },
+        {
+          "code": "chicken_wings",
+          "name": "Chicken wings",
+          "kitchen_label": "CHKN WING"
+        },
+        {
+          "code": "chicken_fingers",
+          "name": "Chicken fingers",
+          "kitchen_label": "CHKN FINGR"
+        },
+        {
+          "code": "spare_ribs",
+          "name": "Spare ribs",
+          "kitchen_label": "SPARE RIBS",
+          "price": 2.0
+        },
+        {
+          "code": "boneless_ribs",
+          "name": "Boneless ribs",
+          "kitchen_label": "BONLES RIB"
+        },
+        {
+          "code": "beef_teriyaki",
+          "name": "Beef teriyaki",
+          "kitchen_label": "BEEF TERIY"
+        },
+        {
+          "code": "crab_rangoon",
+          "name": "Crab rangoon",
+          "kitchen_label": "RANGOON"
+        }
+      ]
+    },
+    "wings": {
+      "name": {
+        "en": "Wings"
+      },
+      "sort": 10,
+      "options": [
+        {
+          "code": "spicy",
+          "name": "Spicy",
+          "kitchen_label": "SPICY"
+        },
+        {
+          "code": "well_done",
+          "name": "Well done",
+          "kitchen_label": "WELL DONE"
+        },
+        {
+          "code": "salt_pepper",
+          "name": "Salt & pepper",
+          "kitchen_label": "SALT&PEPR",
+          "price": 2.0
+        },
+        {
+          "code": "take_out",
+          "name": "Take out",
+          "kitchen_label": "TAKE OUT"
+        },
+        {
+          "code": "wings",
+          "name": "Wings",
+          "kitchen_label": "WINGS"
+        },
+        {
+          "code": "box",
+          "name": "Box",
+          "kitchen_label": "BOX"
+        }
+      ]
+    },
+    "charge": {
+      "name": {
+        "en": "Charge"
+      },
+      "max": 1,
+      "sort": 10,
+      "options": [
+        {
+          "code": "c010",
+          "name": "$0.10",
+          "price": 0.1
+        },
+        {
+          "code": "c025",
+          "name": "$0.25",
+          "price": 0.25
+        },
+        {
+          "code": "c050",
+          "name": "$0.50",
+          "price": 0.5
+        },
+        {
+          "code": "c075",
+          "name": "$0.75",
+          "price": 0.75
+        },
+        {
+          "code": "c100",
+          "name": "$1.00",
+          "price": 1.0
+        },
+        {
+          "code": "c125",
+          "name": "$1.25",
+          "price": 1.25
+        },
+        {
+          "code": "c150",
+          "name": "$1.50",
+          "price": 1.5
+        },
+        {
+          "code": "c200",
+          "name": "$2.00",
+          "price": 2.0
+        },
+        {
+          "code": "c250",
+          "name": "$2.50",
+          "price": 2.5
+        },
+        {
+          "code": "c300",
+          "name": "$3.00",
+          "price": 3.0
+        },
+        {
+          "code": "c500",
+          "name": "$5.00",
+          "price": 5.0
+        }
+      ]
+    }
+  },
+  "attachments": [
+    {
+      "category": "Lunch Specials",
+      "group": "spice"
+    },
+    {
+      "category": "Lunch Specials",
+      "group": "allergy"
+    },
+    {
+      "category": "Lunch Specials",
+      "group": "preparation"
+    },
+    {
+      "category": "Lunch Specials",
+      "group": "sauces"
+    },
+    {
+      "category": "Lunch Specials",
+      "group": "ingredients"
+    },
+    {
+      "category": "Appetizers",
+      "group": "spice"
+    },
+    {
+      "category": "Appetizers",
+      "group": "allergy"
+    },
+    {
+      "category": "Appetizers",
+      "group": "preparation"
+    },
+    {
+      "category": "Appetizers",
+      "group": "sauces"
+    },
+    {
+      "category": "Appetizers",
+      "group": "ingredients"
+    },
+    {
+      "category": "Soup",
+      "group": "spice"
+    },
+    {
+      "category": "Soup",
+      "group": "allergy"
+    },
+    {
+      "category": "Soup",
+      "group": "preparation"
+    },
+    {
+      "category": "Soup",
+      "group": "sauces"
+    },
+    {
+      "category": "Soup",
+      "group": "ingredients"
+    },
+    {
+      "category": "Chicken",
+      "group": "spice"
+    },
+    {
+      "category": "Chicken",
+      "group": "allergy"
+    },
+    {
+      "category": "Chicken",
+      "group": "preparation"
+    },
+    {
+      "category": "Chicken",
+      "group": "sauces"
+    },
+    {
+      "category": "Chicken",
+      "group": "ingredients"
+    },
+    {
+      "category": "Pork",
+      "group": "spice"
+    },
+    {
+      "category": "Pork",
+      "group": "allergy"
+    },
+    {
+      "category": "Pork",
+      "group": "preparation"
+    },
+    {
+      "category": "Pork",
+      "group": "sauces"
+    },
+    {
+      "category": "Pork",
+      "group": "ingredients"
+    },
+    {
+      "category": "Beef",
+      "group": "spice"
+    },
+    {
+      "category": "Beef",
+      "group": "allergy"
+    },
+    {
+      "category": "Beef",
+      "group": "preparation"
+    },
+    {
+      "category": "Beef",
+      "group": "sauces"
+    },
+    {
+      "category": "Beef",
+      "group": "ingredients"
+    },
+    {
+      "category": "Seafood",
+      "group": "spice"
+    },
+    {
+      "category": "Seafood",
+      "group": "allergy"
+    },
+    {
+      "category": "Seafood",
+      "group": "preparation"
+    },
+    {
+      "category": "Seafood",
+      "group": "sauces"
+    },
+    {
+      "category": "Seafood",
+      "group": "ingredients"
+    },
+    {
+      "category": "Vegetables",
+      "group": "spice"
+    },
+    {
+      "category": "Vegetables",
+      "group": "allergy"
+    },
+    {
+      "category": "Vegetables",
+      "group": "preparation"
+    },
+    {
+      "category": "Vegetables",
+      "group": "sauces"
+    },
+    {
+      "category": "Vegetables",
+      "group": "ingredients"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "spice"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "allergy"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "preparation"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "sauces"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "ingredients"
+    },
+    {
+      "category": "House Specials",
+      "group": "spice"
+    },
+    {
+      "category": "House Specials",
+      "group": "allergy"
+    },
+    {
+      "category": "House Specials",
+      "group": "preparation"
+    },
+    {
+      "category": "House Specials",
+      "group": "sauces"
+    },
+    {
+      "category": "House Specials",
+      "group": "ingredients"
+    },
+    {
+      "category": "Fried Rice",
+      "group": "spice"
+    },
+    {
+      "category": "Fried Rice",
+      "group": "allergy"
+    },
+    {
+      "category": "Fried Rice",
+      "group": "preparation"
+    },
+    {
+      "category": "Fried Rice",
+      "group": "sauces"
+    },
+    {
+      "category": "Fried Rice",
+      "group": "ingredients"
+    },
+    {
+      "category": "Lo Mein",
+      "group": "spice"
+    },
+    {
+      "category": "Lo Mein",
+      "group": "allergy"
+    },
+    {
+      "category": "Lo Mein",
+      "group": "preparation"
+    },
+    {
+      "category": "Lo Mein",
+      "group": "sauces"
+    },
+    {
+      "category": "Lo Mein",
+      "group": "ingredients"
+    },
+    {
+      "category": "Chow Fun",
+      "group": "spice"
+    },
+    {
+      "category": "Chow Fun",
+      "group": "allergy"
+    },
+    {
+      "category": "Chow Fun",
+      "group": "preparation"
+    },
+    {
+      "category": "Chow Fun",
+      "group": "sauces"
+    },
+    {
+      "category": "Chow Fun",
+      "group": "ingredients"
+    },
+    {
+      "category": "Health Food",
+      "group": "spice"
+    },
+    {
+      "category": "Health Food",
+      "group": "allergy"
+    },
+    {
+      "category": "Health Food",
+      "group": "preparation"
+    },
+    {
+      "category": "Health Food",
+      "group": "sauces"
+    },
+    {
+      "category": "Health Food",
+      "group": "ingredients"
+    },
+    {
+      "category": "Japanese Appetizers",
+      "group": "spice"
+    },
+    {
+      "category": "Japanese Appetizers",
+      "group": "allergy"
+    },
+    {
+      "category": "Japanese Appetizers",
+      "group": "preparation"
+    },
+    {
+      "category": "Japanese Appetizers",
+      "group": "sauces"
+    },
+    {
+      "category": "Japanese Appetizers",
+      "group": "ingredients"
+    },
+    {
+      "category": "Salad",
+      "group": "spice"
+    },
+    {
+      "category": "Salad",
+      "group": "allergy"
+    },
+    {
+      "category": "Salad",
+      "group": "preparation"
+    },
+    {
+      "category": "Salad",
+      "group": "sauces"
+    },
+    {
+      "category": "Salad",
+      "group": "ingredients"
+    },
+    {
+      "category": "Udon",
+      "group": "spice"
+    },
+    {
+      "category": "Udon",
+      "group": "allergy"
+    },
+    {
+      "category": "Udon",
+      "group": "preparation"
+    },
+    {
+      "category": "Udon",
+      "group": "sauces"
+    },
+    {
+      "category": "Udon",
+      "group": "ingredients"
+    },
+    {
+      "category": "Tempura",
+      "group": "spice"
+    },
+    {
+      "category": "Tempura",
+      "group": "allergy"
+    },
+    {
+      "category": "Tempura",
+      "group": "preparation"
+    },
+    {
+      "category": "Tempura",
+      "group": "sauces"
+    },
+    {
+      "category": "Tempura",
+      "group": "ingredients"
+    },
+    {
+      "category": "Teriyaki",
+      "group": "spice"
+    },
+    {
+      "category": "Teriyaki",
+      "group": "allergy"
+    },
+    {
+      "category": "Teriyaki",
+      "group": "preparation"
+    },
+    {
+      "category": "Teriyaki",
+      "group": "sauces"
+    },
+    {
+      "category": "Teriyaki",
+      "group": "ingredients"
+    },
+    {
+      "category": "Roll (Maki)",
+      "group": "sushi_options"
+    },
+    {
+      "category": "Roll (Maki)",
+      "group": "allergy"
+    },
+    {
+      "category": "Sushi",
+      "group": "sushi_options"
+    },
+    {
+      "category": "Sushi",
+      "group": "allergy"
+    },
+    {
+      "category": "Sashimi",
+      "group": "sushi_options"
+    },
+    {
+      "category": "Sashimi",
+      "group": "allergy"
+    },
+    {
+      "category": "Sushi & Sashimi Entrees",
+      "group": "sushi_options"
+    },
+    {
+      "category": "Sushi & Sashimi Entrees",
+      "group": "allergy"
+    },
+    {
+      "category": "Mixed Drinks",
+      "group": "drink_options"
+    },
+    {
+      "category": "Beverages",
+      "group": "drink_options"
+    },
+    {
+      "category": "Domestic Beer",
+      "group": "drink_options"
+    },
+    {
+      "category": "Foreign Beer",
+      "group": "drink_options"
+    },
+    {
+      "category": "White Wine",
+      "group": "drink_options"
+    },
+    {
+      "category": "Red Wine",
+      "group": "drink_options"
+    },
+    {
+      "category": "Sparkling Wine",
+      "group": "drink_options"
+    },
+    {
+      "category": "Sake & Plum Wine",
+      "group": "drink_options"
+    },
+    {
+      "category": "Whiskey",
+      "group": "drink_options"
+    },
+    {
+      "category": "Vodka",
+      "group": "drink_options"
+    },
+    {
+      "category": "Gin",
+      "group": "drink_options"
+    },
+    {
+      "category": "Rum",
+      "group": "drink_options"
+    },
+    {
+      "category": "Tequila",
+      "group": "drink_options"
+    },
+    {
+      "category": "Cognac & Brandy",
+      "group": "drink_options"
+    },
+    {
+      "category": "Liqueurs & Cordials",
+      "group": "drink_options"
+    },
+    {
+      "category": "Aperitifs & Vermouth",
+      "group": "drink_options"
+    },
+    {
+      "category": "Moo Shu",
+      "group": "extra_pancake_933359",
+      "note": "the export's Extra Pancake group (0.50 each, any number) from the Peking Duck, as the original POS offered +1 to +6 pancakes on every moo shu"
+    },
+    {
+      "item": "A19",
+      "group": "platter"
+    },
+    {
+      "item": "A22",
+      "group": "platter"
+    },
+    {
+      "item": "A04",
+      "group": "wings"
+    },
+    {
+      "item": "Y31",
+      "group": "charge"
+    },
+    {
+      "item": "Y43",
+      "group": "charge"
+    }
+  ]
+}
