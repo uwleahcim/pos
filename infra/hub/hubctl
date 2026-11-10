@@ -46,6 +46,7 @@ case "${1:-status}" in
   psql) compose exec db psql -U pos -d pos ;;
   printers)
     # hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star   (empty string clears)
+    # Only a seed: the printers a manager saves in the app (Location settings > Printers) win once saved.
     [[ $# -ge 2 ]] || { echo "usage: hubctl printers name=host[:port][/escpos|star],..." >&2; exit 2; }
     sed -i -E '/^POS_PRINTERS=/d' "$POS_HOME/.env"
     printf 'POS_PRINTERS=%s\n' "$2" >> "$POS_HOME/.env"

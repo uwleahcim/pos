@@ -49,6 +49,13 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
   soup station prints "** extra hot **" under its own line, together with the order line's note when there
   is one. A void prints inverse at both.
 
+## A choice that sends the dish elsewhere
+
+An option may also send the **whole dish** to a second station (`routes_to`): the original POS's **Take
+out** under Preparation sends the dish, with its choices, to the takeout counter to be bagged, while its own
+station still cooks it. The printer button on an option in the menu editor sets it; `docs/printing.md` has
+the printers and the stations.
+
 ## In the menu editor
 
 - **Option groups › a group › Options come from.** Pick a category and the group offers its dishes; the

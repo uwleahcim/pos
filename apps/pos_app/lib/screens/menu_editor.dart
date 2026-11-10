@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../menu_admin.dart';
+import '../printers.dart';
 import '../settings.dart';
 
 /// The menu editor, for managers: dishes by category on the left, the chosen dish, category or option
@@ -31,6 +32,7 @@ class _Selection {
 class _MenuEditorScreenState extends State<MenuEditorScreen> {
   String? _token;
   MenuCatalog? _catalog;
+  StationList? _stations; // which stations have a printer, for the dish's Prints at line; null on an older hub
   String? _error;
   bool _busy = false;
   _Pane _pane = _Pane.dishes;
@@ -78,6 +80,12 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
       if (mounted) setState(() => _error = err.message);
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+    try {
+      final stations = await widget.api.printStations();
+      if (mounted) setState(() => _stations = stations);
+    } on ApiException {
+      // an older hub: the dish says its station, not whether a printer serves it
     }
   }
 
@@ -472,9 +480,10 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
           itemKey: s.key,
           onChanged: _changed,
           onDeleted: () => setState(() => _selected = null),
+          stations: _stations,
         ),
         'category' => CategoryEditor(catalog: catalog, categoryKey: s.key, onChanged: _changed),
-        _ => GroupEditor(catalog: catalog, groupKey: s.key, onChanged: _changed),
+        _ => GroupEditor(catalog: catalog, groupKey: s.key, onChanged: _changed, stations: _stations),
       };
       child = SingleChildScrollView(
         key: ValueKey('${s.kind}/${s.key}/${catalog.revision}'),
@@ -488,7 +497,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
 
 // --- the editors ----------------------------------------------------------------------------------------
 
-/// One dish: its names, where it cooks, its sizes and prices, where it sits on the menus, its option groups.
+/// One dish: its names, where it prints, its sizes and prices, where it sits on the menus, its option groups.
 class ItemEditor extends StatelessWidget {
   const ItemEditor({
     super.key,
@@ -496,12 +505,16 @@ class ItemEditor extends StatelessWidget {
     required this.itemKey,
     required this.onChanged,
     required this.onDeleted,
+    this.stations,
   });
 
   final MenuCatalog catalog;
   final String itemKey;
   final VoidCallback onChanged;
   final VoidCallback onDeleted;
+
+  /// The stations as the hub lists them, with the printer serving each; null when the hub did not say.
+  final StationList? stations;
 
   @override
   Widget build(BuildContext context) {
@@ -543,19 +556,35 @@ class ItemEditor extends StatelessWidget {
                 onChanged();
               },
             ),
-            _dropdown<String?>(
-              label: 'Cooked at',
-              value: item['station'] as String?,
-              items: {
-                null: 'Category\'s station (${category?['station'] ?? 'none'})',
-                for (final s in catalog.stations()) s['code'] as String: nameOf(s),
-              },
-              onChanged: (v) {
-                item['station'] = v;
-                onChanged();
-              },
-            ),
           ],
+        ),
+        _heading(context, 'Prints at'),
+        _dropdown<String?>(
+          label: 'Station',
+          value: item['station'] as String?,
+          items: {
+            null: 'Category\'s station (${_stationName(catalog, category?['station'] as String?)})',
+            for (final s in catalog.stations()) s['code'] as String: nameOf(s),
+            _newStation: 'A new station…',
+          },
+          onChanged: (v) async {
+            if (v == _newStation) {
+              final code = await newStation(context, catalog);
+              if (code == null) return;
+              item['station'] = code;
+            } else {
+              item['station'] = v;
+            }
+            onChanged();
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            _printsAtLine(catalog, (item['station'] ?? category?['station']) as String?, stations),
+            key: const ValueKey('prints-at'),
+            style: theme.textTheme.bodySmall,
+          ),
         ),
         _heading(context, 'Sizes and prices'),
         for (final v in sizes)
@@ -849,11 +878,14 @@ class CategoryEditor extends StatelessWidget {
 
 /// An option group (choice of rice, spice level): its rules and its options with their prices.
 class GroupEditor extends StatelessWidget {
-  const GroupEditor({super.key, required this.catalog, required this.groupKey, required this.onChanged});
+  const GroupEditor({super.key, required this.catalog, required this.groupKey, required this.onChanged, this.stations});
 
   final MenuCatalog catalog;
   final String groupKey;
   final VoidCallback onChanged;
+
+  /// The stations as the hub lists them, with the printer serving each; null when the hub did not say.
+  final StationList? stations;
 
   @override
   Widget build(BuildContext context) {
@@ -982,6 +1014,30 @@ class GroupEditor extends StatelessWidget {
                     onChanged();
                   },
                 ),
+                IconButton(
+                  key: ValueKey('${o['id']}/routes'),
+                  tooltip: o['routes_to'] == null
+                      ? 'Also print the dish at another station (take out, say)'
+                      : 'Also prints the dish at ${_stationName(catalog, o['routes_to'] as String?)}',
+                  icon: Icon(
+                    o['routes_to'] == null ? Icons.print_outlined : Icons.print,
+                    color: o['routes_to'] == null ? null : Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: () async {
+                    final picked = await showDialog<String>(
+                      context: context,
+                      builder: (_) => _RouteDialog(
+                        option: optionName(catalog, o),
+                        current: o['routes_to'] as String?,
+                        stations: catalog.stations(),
+                        served: stations,
+                      ),
+                    );
+                    if (picked == null) return;
+                    o['routes_to'] = picked == _nowhere ? null : picked;
+                    onChanged();
+                  },
+                ),
                 if (o['linked_variant'] == null)
                   IconButton(
                     key: ValueKey('${o['id']}/link'),
@@ -1042,6 +1098,7 @@ class GroupEditor extends StatelessWidget {
               'linked_variant': null,
               'child_groups': <String>[],
               'station': null,
+              'routes_to': null,
               'sort': options.length,
               'active': true,
             });
@@ -1063,6 +1120,90 @@ class GroupEditor extends StatelessWidget {
     // the kitchen reads the option's label; keep it with the English name unless someone set it apart
     if (locale == 'en' && row.containsKey('kitchen_label')) row['kitchen_label'] = names['en'];
     onChanged();
+  }
+}
+
+// --- stations -------------------------------------------------------------------------------------------
+
+/// The value of "A new station…" in a station list; no station code can be it.
+const _newStation = '\u0000new';
+
+/// What the route dialog returns for "nowhere else"; no station code can be it.
+const _nowhere = '\u0000nowhere';
+
+String _stationName(MenuCatalog catalog, String? code) => code == null ? 'none' : nameOf(catalog.get('station', code));
+
+/// One line under the station: whether a printer serves it, as the hub says; nothing when it did not.
+String _printsAtLine(MenuCatalog catalog, String? station, StationList? stations) {
+  if (station == null) return 'No station: this dish prints no kitchen ticket.';
+  final name = _stationName(catalog, station);
+  final info = stations?.byCode(station);
+  if (stations == null) return 'Prints at $name.';
+  if (info?.printer != null) return 'Prints on the $name printer.';
+  return 'No printer for $name yet: it prints on the first printer in the list. '
+      'Add one under Location settings › Printers.';
+}
+
+/// Asks for a new station's name and adds it to the menu; its code, or null when nothing was typed.
+Future<String?> newStation(BuildContext context, MenuCatalog catalog) async {
+  final name = await showDialog<String>(
+    context: context,
+    builder: (_) => const _TextDialog(title: 'New station', label: 'Name, e.g. "Dessert"'),
+  );
+  if (name == null || name.trim().isEmpty) return null;
+  final code = _uniqueCode(catalog, 'station', _slug(name.trim()));
+  catalog.put('station', {
+    'code': code,
+    'names': {'en': name.trim()},
+    'printers': <String>[],
+    'cross_contact': <String>[],
+  });
+  return code;
+}
+
+/// Where a choice sends the dish as well: "nowhere else", or one of the stations, each saying whether a
+/// printer serves it.
+class _RouteDialog extends StatelessWidget {
+  const _RouteDialog({required this.option, required this.current, required this.stations, this.served});
+
+  final String option;
+  final String? current;
+  final List<Map<String, dynamic>> stations;
+  final StationList? served;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SimpleDialog(
+      title: Text('"$option" also prints the dish at'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: Text(
+            'The dish, with its choices, prints at that station as well as its own: "Take out" sends it to the '
+            'takeout counter to be bagged.',
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+        ListTile(
+          key: const ValueKey('route:nowhere'),
+          leading: Icon(current == null ? Icons.radio_button_checked : Icons.radio_button_off),
+          title: const Text('Nowhere else'),
+          onTap: () => Navigator.of(context).pop(_nowhere),
+        ),
+        for (final s in stations)
+          ListTile(
+            key: ValueKey('route:${s['code']}'),
+            leading: Icon(current == s['code'] ? Icons.radio_button_checked : Icons.radio_button_off),
+            title: Text(nameOf(s)),
+            subtitle: switch (served?.byCode(s['code'] as String)) {
+              null => null,
+              final info => Text(info.printer == null ? 'no printer yet' : 'has a printer'),
+            },
+            onTap: () => Navigator.of(context).pop(s['code'] as String),
+          ),
+      ],
+    );
   }
 }
 
@@ -1356,6 +1497,7 @@ List<String> syncSourcedOptions(MenuCatalog catalog, String groupKey) {
         'linked_variant': v['id'],
         'child_groups': <String>[],
         'station': null,
+        'routes_to': null,
         'sort': ((item['sort'] as int?) ?? 0) * 10 + n,
         'active': true,
       };

@@ -14,6 +14,9 @@ screen holds:
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
 - **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
+- **Printers**: its own screen: each printer with the station it prints for, its address and language, its
+  fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
+  finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
 - **Sign in by face**: the location's switch (off to start), how the hub stands with its face models (and,

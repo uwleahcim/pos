@@ -5,17 +5,20 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
+import '../printers.dart';
 import '../tags.dart';
 import '../takeout.dart';
 import 'face_enroll_dialog.dart';
+import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'tag_enroll_dialog.dart';
+import 'theme.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
-/// which screen each desk phone is linked to, face sign-in with each staff member's enrollment and tag, and
-/// the hands-free switching between people. The hub keeps them; a terminal reads them when it opens an
-/// order. Behind the manager PIN.
+/// the kitchen printers (on their own screen), which screen each desk phone is linked to, face sign-in with
+/// each staff member's enrollment and tag, and the hands-free switching between people. The hub keeps them;
+/// a terminal reads them when it opens an order. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
   const LocationSettingsScreen({
     super.key,
@@ -101,6 +104,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   HandsFree? _handsFree; // the hands-free switching as the hub has it; null until it answers (an older hub)
   bool _handsFreeBusy = false;
   String? _handsFreeMessage;
+  PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
+  StationList? _stations; // the stations the menu prints at, with the ones missing a printer
 
   @override
   void initState() {
@@ -153,6 +158,45 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       // an older hub: the list holds this device and Other
     }
     await _loadFaces();
+    await _loadPrinters();
+  }
+
+  Future<void> _loadPrinters() async {
+    try {
+      final printers = await widget.api.printerSettings();
+      final stations = await widget.api.printStations();
+      if (!mounted) return;
+      setState(() {
+        _printers = printers;
+        _stations = stations;
+      });
+    } on ApiException {
+      // an older hub without printer settings: the card says so
+    }
+  }
+
+  Future<void> _openPrinters() async {
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => PrintersScreen(api: widget.api, token: widget.token),
+      ),
+    );
+    if (mounted) await _loadPrinters();
+  }
+
+  /// One line on the printers: how many, and the stations the menu prints at that have none.
+  String get _printersLine {
+    final printers = _printers;
+    if (printers == null) return 'The hub has not answered about printers (an older hub: update it)';
+    final count = printers.printers.length;
+    final head = count == 0
+        ? 'No printer yet'
+        : '$count ${count == 1 ? 'printer' : 'printers'}'
+              '${printers.source == 'env' ? ' from the hub\'s POS_PRINTERS' : ''}';
+    final missing = _stations?.missing ?? const [];
+    if (missing.isEmpty) return count == 0 ? '$head: add the kitchen\'s printers' : head;
+    final names = missing.map((code) => _stations!.nameOf(code)).join(', ');
+    return '$head · no printer for $names';
   }
 
   Future<void> _loadFaces() async {
@@ -543,6 +587,20 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               subtitle: Text(_quotesSummary),
               trailing: const Icon(Icons.chevron_right),
               onTap: _quoteTimes,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              key: const ValueKey('printers'),
+              leading: Icon(
+                (_stations?.missing.isNotEmpty ?? false) ? Icons.print_disabled_outlined : Icons.print_outlined,
+                color: (_stations?.missing.isNotEmpty ?? false) ? scheme.error : null,
+              ),
+              title: const Text('Printers'),
+              subtitle: Text(_printersLine),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openPrinters,
             ),
           ),
           const SizedBox(height: 12),
