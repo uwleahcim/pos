@@ -50,6 +50,9 @@ def test_the_whole_menu_loads_clean_with_everything_the_file_adds():
     note = report.notes[-1]
     assert note.startswith("original POS: 266 dishes named, 13 re-stationed, 89 dishes added, 10 prices set, 10 groups")
     data = legacy()
+    # "Take out" under Preparation (and under the sauces) sends the dish to the takeout station as well
+    take_out = [o for o in defs.options.values() if o.code == "take_out"]
+    assert len(take_out) == 2 and {o.routes_to for o in take_out} == {"takeout"}
     for code, spec in data["items"].items():
         item = defs.items[code]
         assert item.names.get("zh") == spec.get("zh")

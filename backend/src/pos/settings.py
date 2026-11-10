@@ -14,6 +14,10 @@
   in switches the screen to that person at once (on by default: a server walks up and orders); `away_seconds`:
   how long the camera may go without seeing the person signed in by face before the screen signs them out
   (0 keeps them signed in until someone else steps up or they sign out).
+- `printers`: the kitchen printers (`pos/printing/service.py`): each with the station it serves, its address,
+  its language (escpos or star) and the ids of the printers that take its tickets when it fails, in order;
+  and `takeout_station`, the station a to-go order prints whole at (null for none). An empty list leaves the
+  hub on `POS_PRINTERS`.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -32,6 +36,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from .printing.ticket import DIALECTS
 from .sync.pgstore import ReadOnlyError
 
 CHANNELS = ("counter", "phone", "online", "delivery", "catering")
@@ -50,8 +55,14 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "desk_phones": {"links": []},
     "faces": {"enabled": False},
     "presence": {"switch": True, "away_seconds": 60},
+    "printers": {"printers": [], "takeout_station": "takeout"},
 }
 AWAY_MAX = 3600
+STATION = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+"""A kitchen station's code as the menu names it (`wok1`, `takeout`)."""
+PRINTER_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+ADDRESS = re.compile(r"^(?P<host>[A-Za-z0-9.-]{1,253})(?::(?P<port>\d{1,5}))?$")
+"""A printer's address: a host name or IP, with a port when it is not 9100."""
 EXTENSION = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
 """A PBX extension (the endpoint's name): digits as a rule, never spaces or slashes."""
 DEVICE = re.compile(r"^[A-Za-z0-9]{1,40}$")
@@ -172,6 +183,76 @@ def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
     if not 0 <= away <= AWAY_MAX:
         raise ValueError(f"away_seconds is 0 (never) to {AWAY_MAX}")
     return {"switch": switch, "away_seconds": int(away)}
+
+
+def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The printers as the app may set them, checked: `printers`, a list of `{id, station, address, dialect,
+    fallbacks}` in the order they stand (the first takes whatever has no printer of its own), and
+    `takeout_station`. A printer sent without an id (new on the screen) gets one; ids never change after that,
+    since the other printers' fallbacks name them. Raises ValueError on a bad value."""
+    raw = data.get("printers") or []
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("printers must be a list of {id, station, address, dialect, fallbacks}")
+    taken: set[str] = set()
+    for entry in raw:
+        ident = entry.get("id")
+        if ident in (None, ""):
+            continue
+        if not isinstance(ident, str) or not PRINTER_ID.match(ident):
+            raise ValueError(f"a printer id is letters, digits, - or _, not {ident!r}")
+        if ident in taken:
+            raise ValueError(f"the printer id {ident!r} is listed twice")
+        taken.add(ident)
+    printers: list[dict[str, Any]] = []
+    for entry in raw:
+        station = str(entry.get("station") or "").strip()
+        if not station:
+            raise ValueError("every printer needs the station it prints for")
+        if not STATION.match(station):
+            raise ValueError(f"a station is a short code of letters, digits, - or _, not {station!r}")
+        address = str(entry.get("address") or "").strip()
+        if not address:
+            raise ValueError(f"the {station} printer needs its address")
+        found = ADDRESS.match(address)
+        if found is None or (found.group("port") and not 0 < int(found.group("port")) < 65536):
+            raise ValueError(f"a printer address is a host or IP, with :port when it is not 9100, not {address!r}")
+        dialect = str(entry.get("dialect") or "escpos")
+        if dialect not in DIALECTS:
+            languages = ", ".join(sorted(DIALECTS))
+            raise ValueError(f"the {station} printer's language is one of {languages}, not {dialect!r}")
+        ident = entry.get("id")
+        if ident in (None, ""):
+            ident = next(f"p{n}" for n in itertools.count(1) if f"p{n}" not in taken)
+            taken.add(ident)
+        fallbacks = entry.get("fallbacks") or []
+        if not isinstance(fallbacks, list | tuple):
+            raise ValueError(f"the {station} printer's fallbacks must list printer ids")
+        printers.append(
+            {
+                "id": str(ident),
+                "station": station,
+                "address": address,
+                "dialect": dialect,
+                "fallbacks": [str(f) for f in fallbacks],
+            }
+        )
+    for printer in printers:
+        seen: list[str] = []
+        for fallback in printer["fallbacks"]:
+            if fallback == printer["id"]:
+                raise ValueError(f"the {printer['station']} printer cannot be its own fallback")
+            if fallback not in taken:
+                raise ValueError(f"the {printer['station']} printer falls back to {fallback!r}, which is not a printer")
+            if fallback in seen:
+                raise ValueError(f"the {printer['station']} printer lists the fallback {fallback!r} twice")
+            seen.append(fallback)
+        printer["fallbacks"] = seen
+    takeout = data.get("takeout_station")
+    if takeout in ("", None):
+        takeout = None
+    elif not isinstance(takeout, str) or not STATION.match(takeout):
+        raise ValueError(f"the takeout station is a station code, not {takeout!r}")
+    return {"printers": printers, "takeout_station": takeout}
 
 
 def _new_course_id(name: str, taken: set[str]) -> str:

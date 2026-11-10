@@ -154,6 +154,21 @@ def test_fill_gives_a_stored_menu_the_names_and_stations_it_lacks_and_keeps_the_
     assert fill(merged, bundled) == []
 
 
+def test_fill_sends_the_take_out_choice_to_the_takeout_station_unless_the_editor_chose_a_station():
+    """A hub that had the preparation group before "Take out" learned to route the dish gets the routing;
+    one whose editor already set where a choice goes keeps that."""
+    bundled, _ = load_restaurant_menu()
+    stored = before_the_bar()
+    merged, _added = missing(stored, bundled)
+    merged.options["preparation:take_out"] = replace(merged.options["preparation:take_out"], routes_to=None)
+    merged.options["wings:take_out"] = replace(merged.options["wings:take_out"], routes_to="wok2")
+    filled = fill(merged, bundled)
+    assert "option preparation:take_out also prints the dish at takeout" in filled
+    assert merged.options["preparation:take_out"].routes_to == "takeout"
+    assert merged.options["wings:take_out"].routes_to == "wok2" and "option wings:take_out" not in " ".join(filled)
+    assert fill(merged, bundled) == []
+
+
 def test_restructure_leaves_a_menu_the_editor_renamed_alone():
     stored = before_the_drinks_menu()
     stored.menus["dinner"] = replace(stored.menus["dinner"], names={"en": "Dinner", "zh": "晚餐"})

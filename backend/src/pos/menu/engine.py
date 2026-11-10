@@ -8,7 +8,7 @@ Every derived value carries its provenance, and anything wrong with a request co
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -603,7 +603,17 @@ class MenuEngine:
                 children.extend(self._apply_group(ctx, child_group, {}, child_by_group.get(code, []), own_header))
             results.append(
                 ResolvedModifier(
-                    group.code, opt.id, sq, label, delta, effects, tuple(children), defaulted, opt.station, prefix
+                    group.code,
+                    opt.id,
+                    sq,
+                    label,
+                    delta,
+                    effects,
+                    tuple(children),
+                    defaulted,
+                    opt.station,
+                    prefix,
+                    opt.routes_to,
                 )
             )
         if max_select is not None and units > max_select:
@@ -911,6 +921,16 @@ class MenuEngine:
         for child in children:
             for kl in child.kitchen_lines:
                 lines.append(kl)
+        # A choice that sends the dish somewhere else as well ("take out" to the takeout station): the whole
+        # dish, with its choices, prints there too, as it does at its own station.
+        routed = {m.routes_to for m in flatten_modifiers(modifiers) if m.routes_to}
+        for station_code in sorted(routed):
+            for kl in list(lines):
+                if kl.origin in ("line", "slot", "component") and kl.station != station_code:
+                    lines.append(replace(kl, station=station_code, origin="route"))
+            if not any(kl.station == station_code for kl in lines):
+                text = f"{qty} {kitchen_name}" + (" · " + " · ".join(labels) if labels else "")
+                lines.append(KitchenLine(station_code, qty, text, labels, header, "route", note=notes))
         return tuple(lines)
 
     # --- inventory and reporting --------------------------------------------------------------

@@ -112,7 +112,9 @@ def fill(merged: Definitions, bundled: Definitions) -> list[str]:
     A dish, category or section with no name in a language the files name it in takes that name (the
     Chinese name and the kitchen label the original POS printed); a name it already has, in any language,
     stays, so what the editor typed wins. A dish inheriting its category's station takes the files' station
-    when the files send it elsewhere (sweet and sour chicken to the fryer); a station the editor set stays."""
+    when the files send it elsewhere (sweet and sour chicken to the fryer); a station the editor set stays. A
+    choice that sends the dish to a second station in the files does so on the hub too, unless the editor set
+    one."""
     filled: list[str] = []
     for kind, attr in (("item", "items"), ("category", "categories"), ("section", "sections")):
         held_all = getattr(merged, attr)
@@ -128,6 +130,14 @@ def fill(merged: Definitions, bundled: Definitions) -> list[str]:
                 held = replace(held, station=wanted.station)
                 filled.append(f"item {key} cooks at {wanted.station}")
             held_all[key] = held
+    # A choice the files send somewhere else as well ("take out" to the takeout station) does so on the hub
+    # too, unless the editor already set where it goes.
+    for key, wanted in bundled.options.items():
+        held_option = merged.options.get(key)
+        if held_option is None or wanted.routes_to is None or held_option.routes_to is not None:
+            continue
+        merged.options[key] = replace(held_option, routes_to=wanted.routes_to)
+        filled.append(f"option {key} also prints the dish at {wanted.routes_to}")
     return filled
 
 

@@ -1,11 +1,19 @@
 """Tickets from orders: a `fire` or a void of a sent line turns into one job per kitchen printer, delivered
 by the hub or a relay.
 
-Printers come from `POS_PRINTERS`, e.g. `kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`
-(name=host[:port][/dialect]). A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the
-default); the cloud cannot reach a LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for
-a terminal relay to claim. Either way the job store is the queue; the printing itself is retried in the
-background and never holds up the order call.
+Printers are the location's setting (`settings/printers`, a manager's screen in the app): each one serves
+a kitchen station (wok1, fryer, bar, takeout, ...), speaks ESC/POS or StarPRNT and names the printers that
+take its tickets when it fails, in order. `POS_PRINTERS` (name=host[:port][/dialect], e.g.
+`kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`) seeds a hub whose setting is still empty.
+
+Routing: a line prints at the printer serving its station; the first printer also takes every station that
+has no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone, online, delivery,
+catering) prints whole at the takeout station's printer too, for the bag to be packed and checked.
+
+A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
+LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
+the job store is the queue; the printing itself is retried in the background and never holds up the order
+call.
 """
 
 from __future__ import annotations
@@ -34,9 +42,23 @@ DEFAULT_LEAD_MINUTES = 15
 
 @dataclass(frozen=True)
 class Printer:
+    """One printer: `name` is the station it serves (its code, `wok1`), `fallbacks` the ids of the printers
+    that take its tickets when it does not answer, in order. `id` tells two printers on one station apart;
+    it is the name unless the setting gave one."""
+
     name: str
     address: str  # host or host:port
     dialect: str = "escpos"
+    fallbacks: tuple[str, ...] = ()
+    id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", self.name)
+
+    @property
+    def station(self) -> str:
+        return self.name
 
     @classmethod
     def parse(cls, spec: str) -> Printer:
@@ -49,10 +71,38 @@ class Printer:
             raise ValueError(f"printer {name}: unknown dialect {dialect!r}")
         return cls(name=name, address=address, dialect=dialect)
 
+    def as_setting(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "station": self.name,
+            "address": self.address,
+            "dialect": self.dialect,
+            "fallbacks": list(self.fallbacks),
+        }
+
 
 def printers_from_env(value: str | None = None) -> list[Printer]:
     raw = os.environ.get("POS_PRINTERS", "") if value is None else value
     return [Printer.parse(spec) for spec in raw.split(",") if spec.strip()]
+
+
+def printers_from_setting(setting: Mapping[str, Any]) -> list[Printer]:
+    """The printers as the `printers` setting holds them (checked by `pos.settings.clean_printers`)."""
+    return [
+        Printer(
+            name=str(p["station"]),
+            address=str(p["address"]),
+            dialect=str(p.get("dialect") or "escpos"),
+            fallbacks=tuple(str(f) for f in p.get("fallbacks", ())),
+            id=str(p.get("id") or p["station"]),
+        )
+        for p in setting.get("printers", ())
+    ]
+
+
+def is_to_go(state: OrderState) -> bool:
+    """A counter, phone, online, delivery or catering order: anything that leaves in a bag."""
+    return str(state.fields.get("order_type") or "dine_in") != "dine_in"
 
 
 def kitchen_changes(before: OrderState | None, after: OrderState) -> tuple[list[Line], list[Line]]:
@@ -143,9 +193,16 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
         kitchen = (line.priced or {}).get("kitchen")
         if not kitchen:  # a line typed on the phase 0 demo screen
             kitchen = [{"qty": 1, "label": line.item, "labels": []}]
+        said: set[tuple[Any, ...]] = set()
         for k in kitchen:
             if routes is not None and not routes(k.get("station")):
                 continue
+            # A dish sent to a second station (a "take out" choice, a to-go order) is the same words again
+            # there; a printer that takes both stations says it once.
+            words = (k.get("qty", 1), k.get("label"), tuple(k.get("labels", ())), k.get("header"), k.get("note"))
+            if words in said:
+                continue
+            said.add(words)
             out.append(
                 TicketLine(
                     qty=line.qty * int(k.get("qty", 1)),
@@ -191,7 +248,7 @@ def ticket_for_fire(
 class PrintService:
     def __init__(
         self,
-        printers: list[Printer],
+        printers: list[Printer] | Callable[[], list[Printer]],
         *,
         store: JobStore | None = None,
         direct: bool = True,
@@ -201,7 +258,7 @@ class PrintService:
         now: Callable[[], int] = wall_clock_ms,
         late_after_ms: int = LATE_AFTER_MS,
     ) -> None:
-        self.printers = printers
+        self._printers = printers
         self.store = store or JobStore()
         self.direct = direct
         self._send = send
@@ -214,13 +271,32 @@ class PrintService:
         self.course_names: Callable[[], Mapping[str, str]] | None = None
         """Course id -> name as the manager set it (the API wires the coursing setting in); a ticket prints
         the name, or the id of a course that is no longer on the list."""
+        self.station_names: Callable[[], Mapping[str, str]] | None = None
+        """Station code -> name as the menu has it (`wok1` -> `Wok 1`), for the head of the ticket."""
+        self.takeout_station: Callable[[], str | None] = lambda: None
+        """The station a to-go order prints whole at, besides its lines' own stations; None for none."""
 
     @classmethod
     def from_env(cls) -> PrintService:
         return cls(printers_from_env(), direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0")
 
+    @property
+    def printers(self) -> list[Printer]:
+        """The printers as they stand now: the setting is read each time, so a save takes effect at once."""
+        return list(self._printers() if callable(self._printers) else self._printers)
+
+    @printers.setter
+    def printers(self, printers: list[Printer] | Callable[[], list[Printer]]) -> None:
+        self._printers = printers
+
     def printer(self, name: str) -> Printer | None:
-        return next((p for p in self.printers if p.name == name), None)
+        """By id, else the first printer on the station of that name."""
+        printers = self.printers
+        return next((p for p in printers if p.id == name), None) or next((p for p in printers if p.name == name), None)
+
+    def station_name(self, code: str) -> str:
+        names = self.station_names() if self.station_names is not None else {}
+        return names.get(code) or code
 
     def on_ops(self, ops_of: Callable[[str], list[Op]], ops: list[Op]) -> list[PrintJob]:
         """Called after operations are stored. Each order's tickets come from comparing the order before and
@@ -257,43 +333,76 @@ class PrintService:
         late: datetime | None = None,
         delay: float = 0.0,
     ) -> list[PrintJob]:
-        """`delay` seconds holds the tickets back (a future order's lead time); the hub's retry loop and the
-        relays pick them up when they are due."""
+        """One ticket per printer that has lines in this change. `delay` seconds holds the tickets back (a
+        future order's lead time); the hub's retry loop and the relays pick them up when they are due."""
         with self._lock:
             ticket_no = next(self._tickets)
         jobs = []
-        named = {p.name for p in self.printers}
+        printers = self.printers
         courses = self.course_names() if self.course_names is not None else {}
-        for i, printer in enumerate(self.printers):
+        for printer, routes in self.routing(printers, to_go=is_to_go(state)):
             ticket = ticket_for(
                 state,
                 sent,
                 voided,
-                station=printer.name,
+                station=self.station_name(printer.name),
                 ticket_no=ticket_no,
-                routes=self._routes(printer, i == 0, named),
+                routes=routes,
                 late=late,
             )
             if ticket is None:
                 continue
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.name}", delay=delay))
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
         return jobs
 
-    @staticmethod
-    def _routes(printer: Printer, first: bool, named: set[str]) -> Callable[[str | None], bool]:
-        """A printer named after a station takes that station's lines; the first printer also takes every
-        station without a printer of its own, so nothing fired is ever left unprinted."""
+    def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Callable[[str | None], bool]]]:
+        """Which lines each printer takes, by station: a printer takes its own station (the first printer on
+        a station, when two share one); the first printer in the list also takes every station without a
+        printer and lines with none, so nothing fired is left unprinted; and the takeout station's printer
+        takes every line of a to-go order, whole, for the bag."""
+        served: dict[str, Printer] = {}
+        for printer in printers:
+            served.setdefault(printer.name, printer)
+        takeout = self.takeout_station() if to_go else None
+        out = []
+        for i, printer in enumerate(printers):
+            own = {printer.name} if served[printer.name] is printer else set()
+            first = i == 0
+            everything = takeout is not None and printer is served.get(takeout)
+            out.append((printer, self._takes(own, first=first, served=set(served), everything=everything)))
+        return out
 
+    @staticmethod
+    def _takes(own: set[str], *, first: bool, served: set[str], everything: bool) -> Callable[[str | None], bool]:
         def takes(station: str | None) -> bool:
-            return station == printer.name or (first and station not in named)
+            return everything or station in own or (first and station not in served)
 
         return takes
 
-    def queue(self, ticket: Ticket, printer: Printer, *, job_id: str | None = None, delay: float = 0.0) -> PrintJob:
+    def queue(
+        self,
+        ticket: Ticket,
+        printer: Printer,
+        *,
+        job_id: str | None = None,
+        delay: float = 0.0,
+        printers: list[Printer] | None = None,
+    ) -> PrintJob:
+        """Renders the ticket for the printer and for each of its fallbacks (headed with whose ticket it is),
+        and queues it; a hub starts writing it at once."""
         data = render(ticket, dots=self._dots, font=self._font, dialect=printer.dialect)
-        job = self.store.create(printer.address, data, job_id=job_id, delay=delay)
+        fallbacks = []
+        by_id = {p.id: p for p in (printers if printers is not None else self.printers)}
+        for fallback_id in printer.fallbacks:
+            fallback = by_id.get(fallback_id)
+            if fallback is None or fallback.address == printer.address:
+                continue
+            copy = replace(ticket, reprinted_from=ticket.station)
+            rendered = render(copy, dots=self._dots, font=self._font, dialect=fallback.dialect)
+            fallbacks.append((fallback.address, rendered))
+        job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if self.direct and delay <= 0:
             threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
         return job
@@ -304,7 +413,7 @@ class PrintService:
     def start_retrying(self, interval: float = 3.0) -> None:
         """A daemon that gives undelivered jobs another go every `interval` seconds, and prints a future
         order's tickets when their time comes (hubs only)."""
-        if not self.direct or not self.printers:
+        if not self.direct:
             return
 
         def loop() -> None:

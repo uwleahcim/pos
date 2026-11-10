@@ -8,7 +8,7 @@ know when to reload.
 
 The tables follow "Schema sketch" in the Menu Engine Design. Three columns are added: `code` on
 `menu_section`, `menu_entry` and `recipe_component` (the in-memory ids, e.g. "dinner/chefs",
-"dinner:87"), plus `station_id` on `modifier_option`, `defaults`/`locked` on `recipe_component` and
+"dinner:87"), plus `station_id` and `routes_to_id` on `modifier_option`, `defaults`/`locked` on `recipe_component` and
 `source_category_id` on `modifier_group` (a group whose options are a category's dishes), which the engine
 already has. A hub creates the tables on start, like the order log, and adds a column a table gained since.
 """
@@ -150,10 +150,13 @@ CREATE TABLE IF NOT EXISTS modifier_option (
   linked_variant_id uuid REFERENCES item_variant DEFERRABLE INITIALLY DEFERRED,
   child_group_ids   uuid[] NOT NULL DEFAULT '{}',
   station_id        uuid REFERENCES station DEFERRABLE INITIALLY DEFERRED,
+  routes_to_id      uuid REFERENCES station DEFERRABLE INITIALLY DEFERRED,
   sort              int NOT NULL DEFAULT 0,
   active            boolean NOT NULL DEFAULT true,
   UNIQUE (group_id, code)
 );
+ALTER TABLE modifier_option
+  ADD COLUMN IF NOT EXISTS routes_to_id uuid REFERENCES station DEFERRABLE INITIALLY DEFERRED;
 CREATE TABLE IF NOT EXISTS modifier_attachment (
   id         uuid PRIMARY KEY,
   owner_kind owner_kind NOT NULL CHECK (owner_kind IN ('item','category')),
@@ -613,6 +616,7 @@ def _rows(defs: Definitions, ids: _Ids) -> dict[str, list[dict[str, Any]]]:
                 "linked_variant_id": ids.id("item_variant", o.linked_variant),
                 "child_group_ids": [ids.id("modifier_group", g) for g in o.child_groups],
                 "station_id": ids.id("station", o.station),
+                "routes_to_id": ids.id("station", o.routes_to),
                 "sort": o.sort,
                 "active": o.active,
             }
@@ -900,6 +904,7 @@ def _definitions(rows: Mapping[str, list[dict[str, Any]]], localizer: Localizer 
                 ids.code("item_variant", r["linked_variant_id"]),
                 tuple(ids.code("modifier_group", g) for g in r["child_group_ids"]),
                 ids.code("station", r["station_id"]),
+                ids.code("station", r.get("routes_to_id")),
                 r["sort"],
                 r["active"],
             )
