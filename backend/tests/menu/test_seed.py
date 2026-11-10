@@ -220,9 +220,8 @@ def test_the_command_moves_a_hub_s_drinks_to_their_menu(capsys):
     stored = store.load()
     store.close()
     assert stored.menus["dinner"].names["en"] == "Food" and stored.menus["drinks"].names["en"] == "Drinks"
-    assert "dinner/mixed_drinks" not in stored.sections and stored.sections["drinks/mixed_drinks"].names == {
-        "en": "Cocktails"
-    }
+    assert "dinner/mixed_drinks" not in stored.sections
+    assert stored.sections["drinks/mixed_drinks"].names == {"en": "Cocktails", "zh": "調酒"}  # the editor's, + the fill
     by_id = {e.id: e for e in stored.entries}
     assert "dinner:house_punch" not in by_id and by_id["drinks:house_punch"].section == "drinks/mixed_drinks"
     assert by_id["drinks:arnold_palmer"].number == "B99" and by_id["dinner:arnold_palmer"].number == "B99"
