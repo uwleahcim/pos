@@ -1937,7 +1937,8 @@
         {
           "code": "take_out",
           "name": "Take out",
-          "kitchen_label": "TAKE OUT"
+          "kitchen_label": "TAKE OUT",
+          "routes_to": "takeout"
         },
         {
           "code": "dry_noodle",
@@ -2706,7 +2707,8 @@
         {
           "code": "take_out",
           "name": "Take out",
-          "kitchen_label": "TAKE OUT"
+          "kitchen_label": "TAKE OUT",
+          "routes_to": "takeout"
         },
         {
           "code": "wings",

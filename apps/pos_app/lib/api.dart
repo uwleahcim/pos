@@ -12,6 +12,7 @@ import 'floor.dart';
 import 'menu.dart';
 import 'phone.dart';
 import 'pricing.dart';
+import 'printers.dart';
 import 'settings.dart';
 import 'takeout.dart';
 
@@ -383,6 +384,44 @@ class PosApi {
         body: jsonEncode(links.toJson()),
       ),
     ),
+  );
+
+  /// The kitchen printers as the hub keeps them, with where they came from (the setting, or the hub's
+  /// POS_PRINTERS until a manager saves).
+  Future<PrinterSettings> printerSettings() async => PrinterSettings.fromJson(await _get('/settings/printers'));
+
+  /// A manager (token from [adminSession]) sets the printers for the whole location. A printer without an id
+  /// is new and gets one from the hub; the rest keep theirs, since fallbacks name them.
+  Future<PrinterSettings> savePrinterSettings(String token, PrinterSettings printers) async => PrinterSettings.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/printers'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(printers.toJson()),
+      ),
+    ),
+  );
+
+  /// The stations the menu prints at, with the printer serving each and the ones that have none yet.
+  Future<StationList> printStations() async => StationList.fromJson(await _get('/print/stations'));
+
+  /// The hub looks for printers (port 9100) on the subnets of [addresses] (this terminal's own and the hub's),
+  /// of its printers and of itself, and says which language each one speaks. A few seconds (manager token).
+  Future<List<FoundPrinter>> discoverPrinters(String token, {List<String> addresses = const []}) async {
+    final json = await _post(
+      '/print/discover',
+      {'addresses': addresses},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 40),
+    );
+    return [
+      for (final f in json['found'] as List? ?? const []) FoundPrinter.fromJson((f as Map).cast<String, dynamic>()),
+    ];
+  }
+
+  /// Whether the printer at [address] answers and which language it speaks, without printing (manager token).
+  Future<FoundPrinter> identifyPrinter(String token, String address) async => FoundPrinter.fromJson(
+    await _post('/print/identify', {'address': address}, headers: _bearer(token), timeout: const Duration(seconds: 15)),
   );
 
   /// The calls answered in the last two minutes on the desk phones linked to [device], each with when it was

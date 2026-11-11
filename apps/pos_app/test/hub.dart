@@ -100,6 +100,18 @@ class Hub {
   final tagsForgotten = <String>[];
   String? tagTakenBy;
   Map<String, dynamic> handsFree = {'switch': true, 'away_seconds': 60};
+
+  /// Printers: the setting it keeps (`GET/PUT /settings/printers`), the token the last save carried, a reason
+  /// to refuse the next save with, the stations it lists (`GET /print/stations`), what a scan finds, what it
+  /// says about an address, and the test prints asked for.
+  Map<String, dynamic> printers = {'printers': [], 'takeout_station': 'takeout', 'source': 'none'};
+  String? printersAuth;
+  String? refusePrinters;
+  Map<String, dynamic> stations = {'stations': [], 'missing': [], 'takeout_station': 'takeout'};
+  List<Map<String, dynamic>> found = [];
+  Map<String, dynamic> identity = {'reachable': false};
+  final scans = <Map<String, dynamic>>[];
+  final testPrints = <String>[];
   final enrolled = <(String, bool)>[]; // (staff id, replace) per view posted
   final forgotten = <String>[];
   String? faceAuth; // the token the last manager call about faces carried
@@ -247,6 +259,45 @@ class Hub {
           deskPhones = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(deskPhones);
+      case '/settings/printers':
+        if (request.method == 'PUT') {
+          printersAuth = request.headers['authorization'];
+          if (refusePrinters != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refusePrinters},
+            }, 422);
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          var n = 0;
+          printers = {
+            ...body,
+            'printers': [
+              for (final p in body['printers'] as List) {...p as Map, 'id': (p['id'] as String?) ?? 'p${++n}'},
+            ],
+            'source': 'settings',
+          };
+        }
+        return json(printers);
+      case '/print/stations':
+        return json(stations);
+      case '/print/discover':
+        printersAuth = request.headers['authorization'];
+        scans.add(jsonDecode(request.body) as Map<String, dynamic>);
+        return json({'subnets': [], 'found': found});
+      case '/print/identify':
+        printersAuth = request.headers['authorization'];
+        final address = (jsonDecode(request.body) as Map)['address'] as String;
+        return json({'address': address, ...identity});
+      case '/print/test':
+        final printer = (jsonDecode(request.body) as Map)['printer'] as String;
+        final known = (printers['printers'] as List).any((p) => (p as Map)['id'] == printer);
+        if (!known) {
+          return json({
+            'detail': {'error': 'no_such_printer'},
+          }, 404);
+        }
+        testPrints.add(printer);
+        return json({'job_id': 'test:$printer', 'status': 'queued'}, 202);
       case '/phones/status':
         return json(pbxStatus);
       case '/faces/status':

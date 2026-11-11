@@ -37,8 +37,9 @@ from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.numbers import OrderNumbers
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
+from ..printing import discover
 from ..printing.jobs import PrintJob
-from ..printing.service import PrintService
+from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
 from ..push.apns import ApnsSender, sender_from_env
 from ..push.devices import PushDevices, clean_device, default_push_devices
@@ -49,6 +50,7 @@ from ..settings import (
     SettingStore,
     clean_coursing,
     clean_desk_phones,
+    clean_printers,
     clean_quotes,
     default_settings,
 )
@@ -238,6 +240,34 @@ class DeskPhonesIn(BaseModel):
     links: list[DeskPhoneLinkIn] = Field(default_factory=list)
 
 
+class PrinterIn(BaseModel):
+    id: str | None = Field(None, description="left out for a printer new on the screen: the hub names it")
+    station: str = Field(description="the kitchen station this printer prints for, by its code (wok1, bar, takeout)")
+    address: str = Field(description="host or IP, with :port when it is not 9100")
+    dialect: str = Field("escpos", description="escpos or star")
+    fallbacks: list[str] = Field(default_factory=list, description="ids of the printers that take over, in order")
+
+
+class PrintersIn(BaseModel):
+    """The location's printers in the order they stand, and the station a to-go order prints whole at."""
+
+    printers: list[PrinterIn] = Field(default_factory=list)
+    takeout_station: str | None = "takeout"
+
+
+class DiscoverIn(BaseModel):
+    """Where to look for printers: the addresses the terminal has (its own and the hub's) name the subnets,
+    with any given outright; the hub adds its printers' and its own."""
+
+    addresses: list[str] = Field(default_factory=list)
+    subnets: list[str] = Field(default_factory=list)
+    port: int = Field(9100, ge=1, le=65535)
+
+
+class IdentifyIn(BaseModel):
+    address: str
+
+
 PAYMENT_METHODS = frozenset({"cash", "elsewhere", "card"})
 
 
@@ -417,6 +447,8 @@ def job_out(job: PrintJob, *, with_data: bool = False, due_in: float = 0.0) -> d
         "done_by": job.done_by,
         "last_error": job.last_error,
         "due_in": round(due_in),  # seconds until a future order's ticket may print; 0 for the rest
+        "fallbacks": [address for address, _ in job.fallbacks],
+        "moved": job.moved,
     }
     if with_data:
         out["data_b64"] = base64.b64encode(job.data).decode("ascii")
@@ -475,9 +507,18 @@ def create_app(
     app.state.staff = staff if staff is not None else demo_directory()
     app.state.photos = photos if photos is not None else PhotoStore()
     app.state.preferences = preferences if preferences is not None else default_preferences()
-    app.state.printing = printing if printing is not None else PrintService.from_env()
     app.state.tokens = tokens if tokens is not None else Tokens()
     app.state.settings = settings if settings is not None else default_settings()
+
+    def printers_now() -> list[Printer]:
+        """The manager's printers; a hub whose setting is still empty prints as POS_PRINTERS says."""
+        return printers_from_setting(app.state.settings.get("printers")) or printers_from_env()
+
+    app.state.printing = (
+        printing
+        if printing is not None
+        else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0")
+    )
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or "the restaurant"
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
@@ -519,6 +560,12 @@ def create_app(
     app.state.printing.course_names = lambda: {
         c["id"]: c["name"] for c in app.state.settings.get("coursing")["courses"]
     }
+    # The ticket is headed with the station's name as the menu has it, and a to-go order prints whole at the
+    # takeout station the manager chose.
+    app.state.printing.station_names = lambda: {
+        code: app.state.menu.defs.localizer.text(st.names, "en") for code, st in app.state.menu.defs.stations.items()
+    }
+    app.state.printing.takeout_station = lambda: app.state.settings.get("printers")["takeout_station"]
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -670,6 +717,29 @@ def create_app(
         saved = write_setting("desk_phones", body.model_dump(), clean_desk_phones)
         app.state.answered.links_changed()  # every screen waiting for a call hears where it stands now
         return saved
+
+    @app.get("/settings/printers")
+    def read_printers() -> dict[str, Any]:
+        """The kitchen printers: each with its station, address, language and fallbacks, in the order they
+        stand, and the station a to-go order prints whole at. `source` says where they come from: the setting,
+        or `env` (POS_PRINTERS on a hub whose setting is still empty, shown so a save keeps them)."""
+        settings: SettingStore = app.state.settings
+        setting = settings.get("printers")
+        if setting["printers"]:
+            return {**setting, "source": "settings"}
+        seeded = printers_from_env()
+        return {
+            "printers": [p.as_setting() for p in seeded],
+            "takeout_station": setting["takeout_station"],
+            "source": "env" if seeded else "none",
+        }
+
+    @app.put("/settings/printers")
+    def write_printers(body: PrintersIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager sets the printers for the location. A printer sent without an id is new and gets one;
+        the rest keep theirs, since fallbacks name them. The next ticket prints by the new list."""
+        manager_from(app.state.tokens, authorization)
+        return {**write_setting("printers", body.model_dump(), clean_printers), "source": "settings"}
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")
@@ -1022,11 +1092,79 @@ def create_app(
     # Printing: the hub prints its own jobs; a terminal in relay mode claims what is left ------------------
     @app.get("/print/printers")
     def list_printers() -> dict[str, Any]:
+        """The printers as they stand: `name` is the station each prints for; a relay prints to `address`."""
         printing: PrintService = app.state.printing
         return {
-            "printers": [{"name": p.name, "address": p.address, "dialect": p.dialect} for p in printing.printers],
+            "printers": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "station": p.name,
+                    "address": p.address,
+                    "dialect": p.dialect,
+                    "fallbacks": list(p.fallbacks),
+                }
+                for p in printing.printers
+            ],
             "direct": printing.direct,
         }
+
+    @app.get("/print/stations")
+    def list_stations() -> dict[str, Any]:
+        """Every station the menu knows, with how many dishes print there (their own or their category's), how
+        many choices send a dish there as well, and the id of the printer serving it, if any; `missing` lists
+        the stations with dishes and no printer, the takeout station among them when to-go orders print there.
+        The printer settings screen shows these as the printers to add."""
+        printing: PrintService = app.state.printing
+        menu: MenuService = app.state.menu
+        defs = menu.defs
+        served: dict[str, str] = {}
+        for p in printing.printers:
+            served.setdefault(p.name, p.id)
+        takeout = app.state.settings.get("printers")["takeout_station"]
+        dishes: dict[str, int] = {}
+        for item in defs.items.values():
+            station = defs.inherited(item, "station") if item.active else None
+            if station:
+                dishes[station] = dishes.get(station, 0) + 1
+        routed: dict[str, int] = {}
+        for option in defs.options.values():
+            if option.routes_to and option.active:
+                routed[option.routes_to] = routed.get(option.routes_to, 0) + 1
+        codes = list(defs.stations) + [c for c in (*dishes, *routed, *served, takeout) if c and c not in defs.stations]
+        stations = [
+            {
+                "code": code,
+                "name": defs.localizer.text(defs.stations[code].names, "en") if code in defs.stations else code,
+                "known": code in defs.stations,
+                "dishes": dishes.get(code, 0),
+                "choices": routed.get(code, 0),
+                "printer": served.get(code),
+                "takeout": code == takeout,
+            }
+            for code in dict.fromkeys(codes)
+        ]
+        missing = [
+            st["code"] for st in stations if st["printer"] is None and (st["dishes"] or st["choices"] or st["takeout"])
+        ]
+        return {"stations": stations, "takeout_station": takeout, "missing": missing}
+
+    @app.post("/print/discover")
+    async def discover_printers(body: DiscoverIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Looks for printers (port 9100 open) on the subnets of the addresses given, of the printers already
+        set and of this machine, and tells each one's language. A few seconds."""
+        manager_from(app.state.tokens, authorization)
+        printing: PrintService = app.state.printing
+        hints = [*body.addresses, *(p.address for p in printing.printers), *discover.own_addresses()]
+        subnets = [*body.subnets, *discover.subnets_for(hints)][: discover.MAX_SUBNETS]
+        found = await discover.discover(subnets, port=body.port)
+        return {"subnets": subnets, "found": [f.as_json() for f in found]}
+
+    @app.post("/print/identify")
+    async def identify_printer(body: IdentifyIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Whether the printer at an address answers, and which language it speaks, without printing."""
+        manager_from(app.state.tokens, authorization)
+        return (await discover.identify(body.address)).as_json()
 
     @app.get("/print/jobs")
     def list_jobs(status: str | None = Query(None, pattern="^(queued|leased|done|failed)$")) -> dict[str, Any]:
@@ -1059,12 +1197,12 @@ def create_app(
 
     @app.post("/print/test", status_code=202)
     def test_print(body: TestPrintIn) -> dict[str, Any]:
-        """The demo ticket to a configured printer, by name: the settings screen's test button."""
+        """The demo ticket to a configured printer, by id or station: the settings screen's test button."""
         printing: PrintService = app.state.printing
         printer = printing.printer(body.printer)
         if printer is None:
-            raise HTTPException(404, {"error": "no_such_printer", "printers": [p.name for p in printing.printers]})
-        job = printing.queue(replace(DEMO, station=printer.name), printer)
+            raise HTTPException(404, {"error": "no_such_printer", "printers": [p.id for p in printing.printers]})
+        job = printing.queue(replace(DEMO, station=printing.station_name(printer.name)), printer)
         return job_out(job)
 
     add_menu_admin(app)

@@ -40,7 +40,7 @@ class Ticket:
     guests: int | None = None
     course: str | None = None
     at: datetime = field(default_factory=datetime.now)
-    reprinted_from: str | None = None  # "Wok" on a backup printer's copy
+    reprinted_from: str | None = None  # "Wok 1" on the copy a fallback printer gets when Wok 1's is down
     late: datetime | None = None  # when the operator took it, if it reached the backend late (ADR 6)
     order_no: int | None = None  # counter mode: the number called at the shelf
     customer: str = ""  # the name on a takeout order
@@ -73,7 +73,8 @@ def render(
             bold=True,
         )
     if ticket.reprinted_from:
-        b.line(f"reprinted from {ticket.reprinted_from}", center=True, bold=True)
+        # A fallback printer's copy: whoever stands here carries it to the station it is for.
+        b.line(f"{ticket.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))
     if ticket.order_no is not None or ticket.customer:
         # A takeout order is called by number and name at the shelf, so they are the biggest thing on it.

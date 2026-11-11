@@ -16,6 +16,8 @@ merges after any disconnect.
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`
+- Printers and stations (where a dish prints, the printers with their fallbacks set from the app, finding them on
+  the network, to-go orders at the takeout counter): `docs/printing.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

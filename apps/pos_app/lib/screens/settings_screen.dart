@@ -149,7 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final printers = await api.printers();
       if (printers.isEmpty) {
-        setState(() => _printMessage = 'The backend has no printers configured (POS_PRINTERS on the hub)');
+        setState(() => _printMessage = 'No printers set yet: a manager adds them under Location settings › Printers');
         return;
       }
       for (final p in printers) {

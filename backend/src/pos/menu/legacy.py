@@ -159,6 +159,9 @@ def import_legacy(defs: Definitions, data: Mapping[str, Any]) -> LegacyReport:
         )
         report.groups += 1
         for sort, opt in enumerate(group.get("options", ())):
+            routes_to = opt.get("routes_to")
+            if routes_to is not None and routes_to not in defs.stations:
+                raise ValueError(f"original POS: option {opt['code']!r} of {code!r}: unknown station {routes_to!r}")
             defs.add(
                 Option(
                     f"{code}:{opt['code']}",
@@ -169,6 +172,7 @@ def import_legacy(defs: Definitions, data: Mapping[str, Any]) -> LegacyReport:
                     price_mode="delta",
                     price=money(opt.get("price") or 0),
                     is_default=bool(opt.get("default", False)),
+                    routes_to=routes_to,
                     sort=sort,
                 )
             )

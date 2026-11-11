@@ -30,19 +30,13 @@ Food (0), Drinks (-10).
 ## Where a drink prints
 
 Printing never looks at the menu. A dish prints at its **station**, inherited from its category
-(`stations.json`, editable per category in the menu editor), and a kitchen printer named after a station
-takes that station's lines; the first printer takes every station that has no printer of its own
-(`docs/menu-engine-design.md`, "Kitchen routing"; `backend/src/pos/printing/service.py`). Every category
-on the Drinks menu cooks at the `bar` station, except Beverages, at `soda`. So with the hub's printers set
-as
-
-```
-hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star
-```
-
-the cocktails, beer, wine and spirits print at the bar and nothing else does; the soft drinks go to the
-first printer (the kitchen) until a printer is named `soda`. A test keeps it so: everything on the Drinks
-menu resolves to `bar` or `soda`, never to a wok.
+(`stations.json`, editable per category and per dish in the menu editor), and the printer set for that
+station under Location settings › Printers takes that station's lines; the first printer takes every station
+that has no printer of its own (`docs/printing.md`; `backend/src/pos/printing/service.py`). Every category
+on the Drinks menu cooks at the `bar` station, except Beverages, at `soda`. So with a printer for `bar` and
+one for the kitchen stations, the cocktails, beer, wine and spirits print at the bar and nothing else does;
+the soft drinks go to the first printer until a printer is set for `soda` (the Printers screen suggests it).
+A test keeps it so: everything on the Drinks menu resolves to `bar` or `soda`, never to a wok.
 
 ## The data
 

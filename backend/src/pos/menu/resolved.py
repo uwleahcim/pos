@@ -37,6 +37,7 @@ class ResolvedModifier:
     defaulted: bool = False
     station: str | None = None
     prefix: str | None = None  # no | extra | side | light, already written into kitchen_label
+    routes_to: str | None = None  # a station the whole dish prints at as well, for this choice
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class KitchenLine:
     text: str
     labels: tuple[str, ...] = ()
     header: str | None = None  # the combo's number and name for child lines
-    origin: str = "line"  # line | slot | component | modifier
+    origin: str = "line"  # line | slot | component | modifier | route (a copy sent to a second station)
     allergy_note: str | None = None
     note: str | None = None  # the kitchen note on this dish itself (a slot dish's, from its selection)
 

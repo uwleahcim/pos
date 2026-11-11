@@ -178,12 +178,9 @@ def test_fired_lines_go_to_their_station_printer_and_the_rest_to_the_first():
     )
     store = c.app.state.store
     fire = store.for_order("o1")[-1]
-    named = {"kitchen", "bar"}
     kitchen, bar = (
-        ticket_for_fire(
-            store.state("o1"), fire, station=p.name, ticket_no=1, routes=PrintService._routes(p, i == 0, named)
-        )
-        for i, p in enumerate(printing.printers)
+        ticket_for_fire(store.state("o1"), fire, station=p.name, ticket_no=1, routes=routes)
+        for p, routes in printing.routing(printing.printers, to_go=False)
     )
     assert [t.label for t in kitchen.lines] == ["左宗鸡 (Qt)", "加州卷"]  # wok and sushi: no printer of their own
     assert [(t.qty, t.label) for t in bar.lines] == [(2, "Tsingtao")]

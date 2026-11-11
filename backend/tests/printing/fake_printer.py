@@ -8,10 +8,15 @@ from dataclasses import dataclass, field
 
 
 class FakePrinter:
-    def __init__(self) -> None:
+    """`kind` star: sends status bytes to whoever connects, unasked, as a Star in StarPRNT mode does on port
+    9100. `kind` epson: quiet until asked, and answers `GS I 67` / `GS I 66` with its model and maker."""
+
+    def __init__(self, kind: str = "star", model: str = "TM-T88VII") -> None:
         self._server = socket.create_server(("127.0.0.1", 0))
         self.port = self._server.getsockname()[1]
         self.address = f"127.0.0.1:{self.port}"
+        self.kind = kind
+        self.model = model
         self.jobs: list[bytes] = []
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -23,11 +28,25 @@ class FakePrinter:
             except OSError:
                 return
             with conn:
-                conn.sendall(b"\x00\x00\x00\x00")  # status bytes, unasked, like a Star on port 9100
+                if self.kind == "star":
+                    conn.sendall(b"\x00\x00\x00\x00")  # status bytes, unasked, like a Star on port 9100
                 chunks = []
                 while chunk := conn.recv(65536):
                     chunks.append(chunk)
-                self.jobs.append(b"".join(chunks))
+                    if self.kind == "epson":
+                        answer = b""
+                        if b"\x1d\x49\x43" in chunk:
+                            answer += b"\x5f" + self.model.encode() + b"\x00"
+                        if b"\x1d\x49\x42" in chunk:
+                            answer += b"\x5fEPSON\x00"
+                        if answer:
+                            try:
+                                conn.sendall(answer)
+                            except OSError:
+                                pass
+                data = b"".join(chunks)
+                if data and not (self.kind == "epson" and data.startswith(b"\x1d\x49")):
+                    self.jobs.append(data)
 
     def close(self) -> None:
         self._server.close()

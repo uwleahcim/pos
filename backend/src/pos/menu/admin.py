@@ -283,6 +283,7 @@ def _references(defs: Definitions) -> list[Problem]:
     for o in defs.options.values():
         need(f"option {o.id}", "group", o.group, defs.groups)
         need(f"option {o.id}", "station", o.station, defs.stations)
+        need(f"option {o.id}", "station", o.routes_to, defs.stations)
         if o.id != f"{o.group}:{o.code}":
             out.append(Problem("bad_id", f"option {o.id}: the id must be {o.group}:{o.code}"))
     for a in defs.attachments:

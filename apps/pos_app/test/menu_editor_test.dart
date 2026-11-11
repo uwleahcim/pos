@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/menu_admin.dart';
+import 'package:pos_app/printers.dart';
 import 'package:pos_app/screens/menu_editor.dart';
 import 'package:pos_app/settings.dart';
 
@@ -314,6 +315,81 @@ void main() {
     expect(find.textContaining('Every dish on sale in Soup is an option here'), findsOneWidget);
     expect(find.byTooltip('Remove this option'), findsOneWidget); // only the typed option can go
     expect(changes, greaterThan(0));
+  });
+
+  testWidgets('a dish says where it prints and whether a printer serves it; a choice can send it elsewhere too', (
+    tester,
+  ) async {
+    final catalog = withSoups();
+    final stations = StationList.fromJson({
+      'stations': [
+        {'code': 'wok1', 'name': 'Wok 1', 'dishes': 2, 'choices': 0, 'printer': null, 'takeout': false},
+        {'code': 'wok2', 'name': 'Wok 2', 'dishes': 1, 'choices': 0, 'printer': 'p2', 'takeout': false},
+      ],
+      'missing': ['wok1'],
+      'takeout_station': 'takeout',
+    });
+    var changes = 0;
+    await tester.binding.setSurfaceSize(const Size(1400, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    Widget editor(Widget Function(void Function()) build) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: StatefulBuilder(builder: (context, setState) => build(() => setState(() => changes++))),
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      editor(
+        (changed) =>
+            ItemEditor(catalog: catalog, itemKey: 'GTC', onChanged: changed, onDeleted: () {}, stations: stations),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Prints at'), findsOneWidget);
+    // General Tso's inherits Wok 1 from Mains, which has no printer yet
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('prints-at'))).data,
+      startsWith('No printer for Wok 1 yet: it prints on the first printer in the list.'),
+    );
+    await tester.tap(find.text("Category's station (Wok 1)"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Wok 2').last);
+    await tester.pumpAndSettle();
+    expect(catalog.get('item', 'GTC')!['station'], 'wok2');
+    expect(tester.widget<Text>(find.byKey(const ValueKey('prints-at'))).data, 'Prints on the Wok 2 printer.');
+
+    // a new station from the dish itself
+    await tester.tap(find.text('Wok 2').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('A new station…').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Dessert');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    expect(catalog.get('station', 'dessert')!['names'], {'en': 'Dessert'});
+    expect(catalog.get('item', 'GTC')!['station'], 'dessert');
+    expect(changes, greaterThan(1));
+
+    // the rice group: White rice also sends the dish to Wok 2
+    await tester.pumpWidget(
+      editor((changed) => GroupEditor(catalog: catalog, groupKey: 'rice', onChanged: changed, stations: stations)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Also print the dish at another station (take out, say)'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('rice:white/routes')));
+    await tester.pumpAndSettle();
+    expect(find.text('"White rice" also prints the dish at'), findsOneWidget);
+    expect(find.text('no printer yet'), findsOneWidget); // Wok 1
+    await tester.tap(find.byKey(const ValueKey('route:wok2')));
+    await tester.pumpAndSettle();
+    expect(catalog.get('option', 'rice:white')!['routes_to'], 'wok2');
+    expect(find.byTooltip('Also prints the dish at Wok 2'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('rice:white/routes')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('route:nowhere')));
+    await tester.pumpAndSettle();
+    expect(catalog.get('option', 'rice:white')!['routes_to'], isNull);
   });
 
   test('prices are kept as dollars and cents', () {

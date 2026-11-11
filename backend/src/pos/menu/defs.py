@@ -136,6 +136,7 @@ class Option:
     linked_variant: str | None = None
     child_groups: tuple[str, ...] = ()
     station: str | None = None
+    routes_to: str | None = None  # a station the whole dish prints at as well when this is chosen ("take out")
     sort: int = 0
     active: bool = True
 
