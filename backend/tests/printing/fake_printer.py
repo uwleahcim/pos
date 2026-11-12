@@ -1,4 +1,5 @@
-"""A fake Epson: a TCP server on a free port that keeps every byte it receives, and a decoder for tests."""
+"""Pretend printers: a TCP server on a free port that keeps every byte it receives and answers the questions
+`pos.printing.discover` asks, a pretend SNMP agent, and a decoder for tests."""
 
 from __future__ import annotations
 
@@ -6,20 +7,47 @@ import socket
 import threading
 from dataclasses import dataclass, field
 
+from pos.printing.discover import _ber, _ber_int, _ber_oid, _tlv
+
+STAR_STATUS = bytes.fromhex("23 86 00 00 00 00 00 00 00")  # a StarPRNT status block, nine bytes, all well
+EPSON_AUTO_STATUS = bytes.fromhex("14 00 00 0f")  # ESC/POS automatic status: online, paper in
+QUESTIONS = (b"\x1b\x06\x01", b"\x10\x04\x01", b"\x1d\x49\x43", b"\x1d\x49\x42")
+SETTLE = b"\x00settle\x00"
+
 
 class FakePrinter:
-    """`kind` star: sends status bytes to whoever connects, unasked, as a Star in StarPRNT mode does on port
-    9100. `kind` epson: quiet until asked, and answers `GS I 67` / `GS I 66` with its model and maker."""
+    """`kind` star: a Star in StarPRNT mode; sends its status block to whoever connects (`unasked`, as on port
+    9100) and whenever `ESC ACK SOH` asks. `kind` epson: answers `DLE EOT 1` with a status byte and `GS I 67` /
+    `GS I 66` with its model and maker; with `unasked` it also sends its automatic status on connect, as an
+    Epson with ASB left on does. `kind` other: an office printer, which answers nothing.
 
-    def __init__(self, kind: str = "star", model: str = "TM-T88VII") -> None:
+    `jobs` is what would have come out on paper; `heard` is everything received, questions included."""
+
+    def __init__(self, kind: str = "star", model: str = "TM-T88VII", unasked: bool | None = None) -> None:
         self._server = socket.create_server(("127.0.0.1", 0))
         self.port = self._server.getsockname()[1]
         self.address = f"127.0.0.1:{self.port}"
         self.kind = kind
         self.model = model
+        self.unasked = kind == "star" if unasked is None else unasked
         self.jobs: list[bytes] = []
+        self.heard: list[bytes] = []
+        self._settled = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
+
+    def _answer(self, chunk: bytes) -> bytes:
+        answer = b""
+        if self.kind == "star" and QUESTIONS[0] in chunk:
+            answer += STAR_STATUS
+        if self.kind == "epson":
+            if QUESTIONS[1] in chunk:
+                answer += b"\x16"
+            if QUESTIONS[2] in chunk:
+                answer += b"\x5f" + self.model.encode() + b"\x00"
+            if QUESTIONS[3] in chunk:
+                answer += b"\x5fEPSON\x00"
+        return answer
 
     def _serve(self) -> None:
         while True:
@@ -27,29 +55,82 @@ class FakePrinter:
                 conn, _ = self._server.accept()
             except OSError:
                 return
+            chunks = []
             with conn:
-                if self.kind == "star":
-                    conn.sendall(b"\x00\x00\x00\x00")  # status bytes, unasked, like a Star on port 9100
-                chunks = []
-                while chunk := conn.recv(65536):
-                    chunks.append(chunk)
-                    if self.kind == "epson":
-                        answer = b""
-                        if b"\x1d\x49\x43" in chunk:
-                            answer += b"\x5f" + self.model.encode() + b"\x00"
-                        if b"\x1d\x49\x42" in chunk:
-                            answer += b"\x5fEPSON\x00"
-                        if answer:
-                            try:
-                                conn.sendall(answer)
-                            except OSError:
-                                pass
-                data = b"".join(chunks)
-                if data and not (self.kind == "epson" and data.startswith(b"\x1d\x49")):
-                    self.jobs.append(data)
+                try:
+                    if self.unasked and self.kind == "star":
+                        conn.sendall(STAR_STATUS)
+                    if self.unasked and self.kind == "epson":
+                        conn.sendall(EPSON_AUTO_STATUS)
+                    while chunk := conn.recv(65536):
+                        chunks.append(chunk)
+                        if answer := self._answer(chunk):
+                            conn.sendall(answer)
+                except OSError:
+                    pass  # whoever connected hung up without reading: what it sent still counts
+            data = b"".join(chunks)
+            if data == SETTLE:
+                self._settled.set()
+                continue
+            if data:
+                self.heard.append(data)
+            for question in QUESTIONS:
+                data = data.replace(question, b"")
+            if data:
+                self.jobs.append(data)
+
+    def settle(self) -> None:
+        """Returns once everything sent so far is in `heard` and `jobs`: connections are served one at a time,
+        so a last one that says only "settle" is behind all the others."""
+        self._settled.clear()
+        with socket.create_connection(("127.0.0.1", self.port)) as conn:
+            conn.sendall(SETTLE)
+        assert self._settled.wait(3), "the pretend printer did not settle"
 
     def close(self) -> None:
         self._server.close()
+
+
+class FakeSnmp:
+    """What a printer's SNMP agent does, on a free UDP port: answers a GetRequest for an object it has with
+    the string, and for one it lacks with noSuchName, as SNMPv1 does."""
+
+    def __init__(self, objects: dict[str, str]) -> None:
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.bind(("127.0.0.1", 0))
+        self.port = self._socket.getsockname()[1]
+        self.objects = {_ber_oid(oid): text.encode() for oid, text in objects.items()}
+        self.asked = 0
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                packet, sender = self._socket.recvfrom(4096)
+            except OSError:
+                return
+            self.asked += 1
+            _, message, _ = _tlv(packet, 0)
+            _, _version, at = _tlv(message, 0)
+            _, community, at = _tlv(message, at)
+            _, pdu, _ = _tlv(message, at)
+            _, request_id, at = _tlv(pdu, 0)
+            _, _status, at = _tlv(pdu, at)
+            _, _index, at = _tlv(pdu, at)
+            _, bindings, _ = _tlv(pdu, at)
+            _, binding, _ = _tlv(bindings, 0)
+            _, oid, _ = _tlv(binding, 0)
+            oid = _ber(0x06, oid)
+            value = self.objects.get(oid)
+            status = 0 if value is not None else 2  # noSuchName
+            answer = _ber(0x30, oid + (_ber(0x04, value) if value is not None else _ber(0x05, b"")))
+            pdu = _ber(
+                0xA2, _ber(0x02, request_id) + _ber_int(status) + _ber_int(0 if value else 1) + _ber(0x30, answer)
+            )
+            self._socket.sendto(_ber(0x30, _ber_int(0) + _ber(0x04, community) + pdu), sender)
+
+    def close(self) -> None:
+        self._socket.close()
 
 
 @dataclass

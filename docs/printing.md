@@ -24,46 +24,46 @@ when that option is chosen.
 
 - **Prints for the station**: one of the menu's stations, or a new station's code typed. Two printers on
   one station: the first in the list prints it; the second is useful as the first one's fallback.
-- **IP address**, with `:port` when it is not 9100. The magnifier asks the printer what it is: a Star in
-  StarPRNT mode sends its status to whoever connects, an Epson answers `GS I` with its model and maker; the
-  language switches to what the printer said, and the model is shown. A printer that answers neither is
-  listed as reachable with the language to pick.
+- **IP address**, with `:port` when it is not 9100. The magnifier asks the printer what it is, and the
+  language switches to what it said (see **How a printer is told apart**).
 - **Language**: ESC/POS (an Epson, and most others) or Star (StarPRNT).
 - **When it is down, print its tickets at**: the fallbacks, from a list of the other printers, dragged into
   the order they are tried.
 - **Test print**: the demo ticket, with the station's name on it.
 
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
-printers already set, and lists what answers with its language and model; **Add** fills a new printer's
-address and language. (The hub's API runs in a container that does not see the LAN's hardware addresses,
-so the scan is by port, and the terminal tells the hub which subnets it is on.)
+printers already set, and lists what answers: receipt printers first, each with its name and language and
+an **Add** that fills a new printer's address and language; then anything that said nothing, to add and
+set by hand; then whatever else listens on that port (an office printer: "Canon MF644C · not a receipt
+printer"), named so it is not a mystery and not offered. (The hub's API runs in a container that does not
+see the LAN's hardware addresses, so the scan is by port, and the terminal tells the hub which subnets it
+is on.)
 
-The screen lists every station the menu prints at that has **no printer** ("Fryer · 42 dishes", "Takeout ·
-2 choices, to-go orders"); tapping one adds its printer, the address to be typed. Until then, that
-station's dishes print on the first printer in the list, so nothing fired is lost.
+### How a printer is told apart
 
-**To-go orders** (counter, phone, online, delivery, catering) print **whole at the takeout station** too,
-for the bag to be packed and checked, while each dish prints where it is cooked. The station is a setting
-on the same screen (Takeout to start; Nowhere else turns it off).
+Without printing: nothing printable is sent to a printer that has not already answered as ESC/POS, since a
+letter sent to the wrong printer waits in its buffer for the next ticket, or comes out of a laser as a page.
 
-## Fallbacks
+1. **What it sends unasked.** Either make may send its status to whoever connects (an Epson with automatic
+   status left on does, and so may a Star), so the bytes are read for whose they are: an ESC/POS status is
+   four bytes starting `0xx1xx00` (`14 00 00 0f`), a StarPRNT block starts with an odd byte that holds its
+   length (`23 86 00 …`).
+2. **`ESC ACK SOH`**, StarPRNT's "send your status now": a Star answers with the block, an Epson ignores it.
+3. **`DLE EOT 1`**, ESC/POS's: an ESC/POS printer of any make answers one byte, `0xx1xx10`.
+4. **`GS I`**, only once it is known to speak ESC/POS: the model and the maker.
+5. **Its name over SNMP** (UDP 161, community `public`): the IEEE 1284 device id, else the device
+   description. This names the office printers, and settles the language of a receipt printer that kept
+   quiet on its port ("mC-Print3 · Star (StarPRNT), going by its name").
 
-A ticket is rendered for its printer and for each of its fallbacks when it is queued. The hub writes it to
-the printer at once and retries every three seconds; after two failed attempts at a printer the job moves
-to the next fallback, and round again when every one has failed, so a dead printer costs seconds, not the
-ticket. A fallback's copy is headed with the station it is for and `WOK 1 PRINTER DOWN, PRINTED HERE`, so
-whoever stands there carries it over. A relay terminal (the cloud path, `spikes/printing`) follows the same
-list: a job it reports failed moves on in the same way.
+A printer found silent is asked once more, alone: some take one connection at a time and are still closing
+the scan's. When the screen gets one wrong, `sudo hubctl print <ip> identify` on the hub prints the verdict
+and every answer behind it:
 
-## Setting up a hub
-
-- A hub that has never had printers saved from the app prints as `POS_PRINTERS` in `/opt/pos/.env` says
-  (`hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`); the Printers screen shows those with
-  a note, and the first save keeps them as the setting, which wins from then on.
-- After this change: `sudo hubctl update`, then `sudo hubctl menu import --apply` (it gives the Take out
-  options their takeout routing on a hub that already has them), rebuild the apps, and open Location
-  settings › Printers: give each station its printer (the Epson at 172.19.1.162 speaks ESC/POS, the Star
-  mC-Print3 at 172.19.1.14 StarPRNT), set the fallbacks, Save.
+```
+10.27.1.14: EPSON TM-T88VII: ESC/POS
+  unasked: 14 00 00 0f
+  GS I: 5f 54 4d 2d 54 38 38 56 49 49 00 5f 45 50 53 4f 4e 00
+```
 
 ## The API
 
@@ -72,7 +72,8 @@ list: a job it reports failed moves on in the same way.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with
-  its language and model. `POST /print/identify` (manager): one address.
+  its `dialect`, `model`, `maker`, `kind` (`receipt`, `other` or null), whether the language is `guessed`
+  from the name, and what was `heard`. `POST /print/identify` (manager): one address.
 - `GET /print/printers`, `POST /print/test` (by id or station) and the relay's job calls as before; a job
   lists its `fallbacks` and how often it `moved`.
 
