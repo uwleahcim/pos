@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
@@ -10,11 +12,13 @@ import 'call_screen.dart';
 import 'camera.dart';
 import 'desk_phone_watcher.dart';
 import 'face_signin.dart';
+import 'frames.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
 import 'print_relay.dart';
 import 'push.dart';
+import 'queue_store.dart';
 import 'ringer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
@@ -29,19 +33,30 @@ import 'tags.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  FrameWatch.shared.start(); // counts the frames drawn late: Settings shows them under Smoothness
   final settings = await Settings.load();
   // The last menu, dishes, floor and tax rates read stay on disk, so the screen can still take orders when
   // no backend answers (ADR 6).
   final api = PosApi(settings, cache: await ReadCache.load());
-  // Builds before 2026-11-12 kept those reads in the preference store, over ten megabytes of it, which the
-  // store rewrote whole on every write: they are taken out, slowly, once the app is up.
-  unawaited(SharedPreferences.getInstance().then(ReadCache.forgetLegacy));
-  final outbox = Outbox(api, settings);
-  await outbox.restore();
+  // The taps and the audit photos not sent yet are files too, beside the saved reads: a tap costs the same
+  // however many are waiting. What an older build left in the preference store is taken over on the way.
+  final prefs = await SharedPreferences.getInstance();
+  final support = (await getApplicationSupportDirectory()).path;
+  final outbox = Outbox(api, settings, store: JournalStore(File('$support/outbox.log'), id: Outbox.idField));
+  await outbox.restore(legacy: prefs);
   final session = Session(api);
   final camera = EventCamera.forPlatform();
-  final photos = PhotoQueue(api, settings, camera, session);
-  await photos.restore();
+  final photos = PhotoQueue(
+    api,
+    settings,
+    camera,
+    session,
+    store: FolderStore(Directory('$support/photo_queue'), id: PhotoQueue.idField),
+  );
+  await photos.restore(legacy: prefs);
+  // Builds before 2026-11-12 kept the saved reads in the preference store as well, over ten megabytes of it,
+  // which the store rewrote whole on every write: they are taken out, slowly, once the app is up.
+  unawaited(ReadCache.forgetLegacy(prefs));
   final relay = PrintRelay(api, settings)..bind();
   // Who is at this screen, for as long as the app runs: the camera signs people in and switches between them
   // hands-free (docs/face-signin.md), and a badge reader on the keyboard does the same by tag.

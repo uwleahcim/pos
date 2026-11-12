@@ -78,6 +78,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   int _answers = 0;
   int _deskCalls = 0;
   bool _ordering = false; // the to-go form is open
+  bool _inFront = true; // no check, screen or dialog is open over this one
 
   @override
   void initState() {
@@ -85,13 +86,24 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _orderRequests = widget.phone?.orderRequests ?? 0;
     _answers = widget.phone?.answers ?? 0;
     _deskCalls = widget.deskPhones?.calls ?? 0;
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+    // Under an open check nobody sees the list: it stops asking, and reads again the moment it is back.
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_inFront) _refresh();
+    });
     widget.outbox.addListener(_onOutbox);
     widget.phone?.addListener(_onPhone);
     widget.deskPhones?.addListener(_onDeskPhone);
     // A desk phone picked up just before someone signed in: its call is still waiting, if it is fresh.
     WidgetsBinding.instance.addPostFrameCallback((_) => _takeDeskCall());
     _refresh();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final inFront = ModalRoute.isCurrentOf(context) ?? true;
+    if (inFront && !_inFront) _refresh();
+    _inFront = inFront;
   }
 
   @override
@@ -161,10 +173,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!_ordering) await _newOrder(caller: caller);
   }
 
+  /// How far back "Show closed" lists: a day of checks, not every check the restaurant ever took.
+  static const _closedWithin = Duration(hours: 24);
+
   Future<void> _refresh() async {
     try {
-      final orders = await widget.api.listOrders(status: _showClosed ? null : 'open');
-      if (mounted) setState(() => _orders = orders);
+      final orders = await widget.api.listOrders(
+        status: _showClosed ? null : 'open',
+        within: _showClosed ? _closedWithin : null,
+      );
+      // A backend with nothing new hands back the list it gave last time: nothing to redraw then.
+      if (mounted && !identical(orders, _orders)) setState(() => _orders = orders);
     } on ApiException {
       // The status bar already shows the outage; the list keeps its last picture.
     }

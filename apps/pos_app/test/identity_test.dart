@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/display_dialog.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -130,14 +132,17 @@ void main() {
     final session = Session(api);
     await session.signInWithPin('mac1', '1111');
     final camera = FakeCamera();
-    final photos = PhotoQueue(api, settings, camera, session, prefs: prefs);
+    final dir = await Directory.systemTemp.createTemp('pos_photos');
+    addTearDown(() => dir.delete(recursive: true));
+    final photos = PhotoQueue(api, settings, camera, session, store: FolderStore(dir, id: PhotoQueue.idField));
 
     backendUp = false;
     await photos.capture('fire', opId: 'op1');
     await photos.flush();
     expect(camera.snaps, 1);
     expect(photos.pending, 1);
-    expect(prefs.getStringList('photos')!.length, 1);
+    expect(dir.listSync(), hasLength(1)); // a file of its own, waiting
+    expect(prefs.getKeys().where((k) => k.startsWith('photo')), isEmpty);
 
     backendUp = true;
     await photos.flush();
@@ -148,12 +153,13 @@ void main() {
     expect(sent['staff_id'], 's1');
     expect(sent['device'], 'mac1');
     expect(base64Decode(sent['jpeg_b64'] as String).take(2), [0xff, 0xd8]);
+    expect(dir.listSync(), isEmpty);
   });
 
   test('no camera means no photo and no error', () async {
     final settings = Settings(device: 'mac1', endpoints: const ['http://hub1:8000']);
     final api = PosApi(settings, client: client());
-    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: await SharedPreferences.getInstance());
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), store: MemoryStore());
     await photos.capture('close');
     expect(photos.pending, 0);
     expect(photos.taken, 0);

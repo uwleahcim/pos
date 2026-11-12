@@ -15,6 +15,7 @@ import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
@@ -217,8 +218,8 @@ Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async 
   final hub = Hub();
   final api = PosApi(settings, client: MockClient(hub.handle));
   final session = Session(api)..staff = Staff(staffId: 's3', name: 'Mike', role: role, method: 'pin');
-  final outbox = Outbox(api, settings, prefs: prefs);
-  final photos = PhotoQueue(api, settings, NoCamera(), session, prefs: prefs);
+  final outbox = Outbox(api, settings, store: MemoryStore());
+  final photos = PhotoQueue(api, settings, NoCamera(), session, store: MemoryStore());
   tester.view
     ..physicalSize = const Size(1100, 800)
     ..devicePixelRatio = 1;

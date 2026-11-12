@@ -10,6 +10,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -125,7 +126,29 @@ class Hub {
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
 
+  /// Every request that reached the hub, as `METHOD path?query`, and how many of its reads it answered with
+  /// "nothing new" (304).
+  final requests = <String>[];
+  int unchanged = 0;
+
+  /// Whether the hub names its answers (an `ETag` on every read, 304 for a read the terminal already has),
+  /// as hubs do since 2026-11-12. Off, it is an older hub: every read comes in full.
+  bool namesAnswers = true;
+
+  /// The hub as the terminal reaches it: [answer], with every read named like the real hub names them.
   Future<http.Response> handle(http.Request request) async {
+    requests.add('${request.method} ${request.url.path}${request.url.hasQuery ? '?${request.url.query}' : ''}');
+    final response = await answer(request);
+    if (!namesAnswers || request.method != 'GET' || response.statusCode != 200) return response;
+    final etag = 'W/"${base64Encode(response.bodyBytes).hashCode}-${response.bodyBytes.length}"';
+    if (request.headers['if-none-match'] == etag) {
+      unchanged += 1;
+      return http.Response('', 304, headers: {'etag': etag});
+    }
+    return http.Response.bytes(response.bodyBytes, 200, headers: {...response.headers, 'etag': etag});
+  }
+
+  Future<http.Response> answer(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
     if (path == '/signin' && request.method == 'POST') {
@@ -435,8 +458,8 @@ Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async 
   final hub = Hub();
   final api = PosApi(settings, client: MockClient(hub.handle));
   final session = Session(api)..staff = Staff(staffId: 's3', name: 'Mike', role: role, method: 'pin');
-  final outbox = Outbox(api, settings, prefs: prefs);
-  final photos = PhotoQueue(api, settings, NoCamera(), session, prefs: prefs);
+  final outbox = Outbox(api, settings, store: MemoryStore());
+  final photos = PhotoQueue(api, settings, NoCamera(), session, store: MemoryStore());
   tester.view
     ..physicalSize = const Size(1100, 800)
     ..devicePixelRatio = 1;

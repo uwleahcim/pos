@@ -11,6 +11,7 @@ import 'package:pos_app/floor.dart';
 import 'package:pos_app/local_order.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/status_bar.dart';
 import 'package:pos_app/settings.dart';
@@ -83,7 +84,7 @@ Future<(FakeBackends, PosApi, Outbox, ReadCache)> harness({
   }
   final cache = await ReadCache.open(folder);
   final api = PosApi(settings, client: backends.client(), timeout: const Duration(milliseconds: 200), cache: cache);
-  final outbox = Outbox(api, settings, prefs: prefs);
+  final outbox = Outbox(api, settings, store: MemoryStore());
   return (backends, api, outbox, cache);
 }
 

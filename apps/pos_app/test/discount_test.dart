@@ -11,6 +11,7 @@ import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/pricing.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -150,8 +151,8 @@ Future<(List<Map<String, dynamic>>, List<String>)> pump(WidgetTester tester) asy
       return json({'revision': 0});
     }),
   );
-  final outbox = Outbox(api, settings, prefs: prefs);
-  final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+  final outbox = Outbox(api, settings, store: MemoryStore());
+  final photos = PhotoQueue(api, settings, NoCamera(), Session(api), store: MemoryStore());
   tester.view
     ..physicalSize = const Size(1100, 800)
     ..devicePixelRatio = 1;

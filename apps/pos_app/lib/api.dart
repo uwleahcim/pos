@@ -309,6 +309,10 @@ class ApiException implements Exception {
 /// reaches a backend but is refused (4xx) is not retried elsewhere: the answer would be the same. With a
 /// [ReadCache], the reads a screen needs to take an order (menu, dishes, floor, tax rates) are saved as they
 /// come and served from disk when nothing answers at all (ADR 6).
+///
+/// The reads a screen repeats (the open orders, the floor, the open check, the menu) say which answer they
+/// already have, and a backend with nothing new says so in a few bytes: the call then returns the very same
+/// object as last time, so a screen can tell with [identical] that there is nothing to redraw.
 class PosApi {
   PosApi(this.settings, {http.Client? client, this.timeout = const Duration(seconds: 2), this.cache})
     : _client = client ?? http.Client();
@@ -321,12 +325,17 @@ class PosApi {
 
   Future<Map<String, dynamic>> health() => _get('/health');
 
-  Future<List<Order>> listOrders({String? status}) async {
-    final json = await _get('/orders', query: status == null ? null : {'status': status});
-    return (json['orders'] as List).map((o) => Order.fromJson(o as Map<String, dynamic>)).toList();
-  }
+  /// The orders for a list, newest activity first: those at [status], or all of them. With [within], only
+  /// the ones that changed that recently and the ones still open, so a list of every order is a day long,
+  /// not the restaurant's whole history. Each line comes without its choices and price (`brief`): a list
+  /// shows neither, and they are nine tenths of the answer; [order] reads one order whole.
+  Future<List<Order>> listOrders({String? status, Duration? within}) => _repeated(
+    '/orders',
+    query: {'status': ?status, if (within != null) 'hours': (within.inMinutes / 60).toString(), 'brief': 'true'},
+    (json) => (json['orders'] as List).map((o) => Order.fromJson(o as Map<String, dynamic>)).toList(),
+  );
 
-  Future<Order> order(String orderId) async => Order.fromJson(await _get('/orders/$orderId'));
+  Future<Order> order(String orderId) => _repeated('/orders/$orderId', Order.fromJson);
 
   /// The order this number opened last today, as the hub finds it (the digits match, the location's day,
   /// a voided order does not count), or null when the number opened none today.
@@ -337,30 +346,30 @@ class PosApi {
   }
 
   /// The floor plan with every table's open checks; the last one read when nothing answers.
-  Future<FloorPlan> floor() async => FloorPlan.fromJson(await _remembered('floor', '/floor'));
+  Future<FloorPlan> floor() => _repeated('/floor', FloorPlan.fromJson, remember: 'floor');
 
   /// 86 a size or option (`sold_out`), or bring it back (`available`).
   Future<void> set86(String targetId, {required bool soldOut, String? by}) =>
       _post('/menu/86', {'target_id': targetId, 'status': soldOut ? 'sold_out' : 'available', 'by': ?by});
 
-  /// What the table owes. The tax rates on every answer are kept for [savedTaxes].
-  Future<Check> check(String orderId) async {
-    final json = await _get('/orders/$orderId/check');
-    await cache?.put('taxes', {
+  /// What the table owes. The tax rates on every new answer are kept for [savedTaxes].
+  Future<Check> check(String orderId) => _repeated(
+    '/orders/$orderId/check',
+    Check.fromJson,
+    fresh: (json) async => cache?.put('taxes', {
       'tax_lines': [
         for (final t in json['tax_lines'] as List? ?? const []) {...t as Map<String, dynamic>, 'amount': '0.00'},
       ],
       'tax_rate_pct': json['tax_rate_pct'] ?? '',
-    });
-    return Check.fromJson(json);
-  }
+    }),
+  );
 
   /// Minutes each channel promises a takeout order, and which channels may pay at pickup.
   Future<Quotes> quotes() async => Quotes.fromJson(await _get('/settings/quotes'));
 
   /// Whether dishes are coursed, the courses by name and where a new dish goes; the last answer read when
   /// nothing answers, so a check can still be coursed the usual way (ADR 6).
-  Future<Coursing> coursing() async => Coursing.fromJson(await _remembered('coursing', '/settings/coursing'));
+  Future<Coursing> coursing() => _repeated('/settings/coursing', Coursing.fromJson, remember: 'coursing');
 
   /// A manager (token from [adminSession]) sets the coursing for every terminal. A course without an id is
   /// new; the answer carries the id the hub gave it.
@@ -543,11 +552,15 @@ class PosApi {
 
   /// The menus open now on this channel, in the given language, and the revision they were read at; the
   /// last ones read when nothing answers.
-  Future<(int, List<Menu>)> menus({String channel = 'pos', String locale = 'en'}) async {
-    final json = await _remembered('menu:$channel:$locale', '/menu', query: {'channel': channel, 'locale': locale});
-    final menus = (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
-    return (json['revision'] as int? ?? 0, menus);
-  }
+  Future<(int, List<Menu>)> menus({String channel = 'pos', String locale = 'en'}) => _repeated(
+    '/menu',
+    query: {'channel': channel, 'locale': locale},
+    remember: 'menu:$channel:$locale',
+    (json) => (
+      json['revision'] as int? ?? 0,
+      (json['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList(),
+    ),
+  );
 
   /// Moves whenever a manager saves the menu: a screen showing the menu reloads when it does.
   Future<int> menuRevision() async => (await _get('/menu/revision'))['revision'] as int? ?? 0;
@@ -557,8 +570,11 @@ class PosApi {
   Future<ItemDetail> item(String itemId, {String? entryId, String locale = 'en'}) async {
     final name = _itemName(itemId, entryId, locale);
     try {
-      return ItemDetail.fromJson(
-        await _remembered(name, '/menu/items/$itemId', query: {'entry': ?entryId, 'locale': locale}),
+      return await _repeated(
+        '/menu/items/$itemId',
+        ItemDetail.fromJson,
+        query: {'entry': ?entryId, 'locale': locale},
+        remember: name,
       );
     } on ApiException catch (err) {
       if (err.status != null || cache == null) rethrow;
@@ -602,19 +618,66 @@ class PosApi {
 
   static String _itemName(String itemId, String? entryId, String locale) => 'item:$itemId|${entryId ?? ''}:$locale';
 
-  /// A read served from the cache when no backend answers. A backend that answers and refuses is not
-  /// papered over: the saved answer would be wrong.
-  Future<Map<String, dynamic>> _remembered(String name, String path, {Map<String, String>? query}) async {
+  /// The last answer of each read a screen repeats: the name the backend gave it (its `ETag`) and what it
+  /// was parsed into. The most recently used [_keep] are kept (each open check is two of them).
+  final _answers = <String, (String, Object)>{};
+  static const _keep = 64;
+
+  /// A read a screen repeats, parsed by [parse]. The request names the answer this device already has
+  /// (`If-None-Match`); a backend with nothing newer answers 304 with no body, and the object parsed last
+  /// time comes back as it is: nothing is downloaded, decoded, parsed or saved, and the caller can tell by
+  /// [identical] that nothing changed. A backend that names nothing (one older than 2026-11-12) is simply
+  /// read in full every time, as before.
+  ///
+  /// A new answer goes to [fresh] first. With [remember], it is also saved under that name in the
+  /// [ReadCache], as the text it came as, and read back from there when no backend answers (a backend that
+  /// answers and refuses is not papered over: the saved answer would be wrong).
+  Future<T> _repeated<T extends Object>(
+    String path,
+    T Function(Map<String, dynamic> json) parse, {
+    Map<String, String>? query,
+    String? remember,
+    Future<void> Function(Map<String, dynamic> json)? fresh,
+  }) async {
+    final key = query == null || query.isEmpty ? path : '$path?${Uri(queryParameters: query).query}';
+    final had = _answers[key];
+    final http.Response response;
     try {
-      final json = await _get(path, query: query);
-      await cache?.put(name, json);
-      return json;
-    } on ApiException catch (err) {
-      if (err.status != null) rethrow;
-      final saved = await cache?.get(name);
+      response = await _send(
+        (base) => _client.get(
+          Uri.parse('$base$path').replace(queryParameters: query),
+          headers: had == null ? null : {'if-none-match': had.$1},
+        ),
+      );
+    } on ApiException {
+      final saved = remember == null ? null : await cache?.get(remember);
       if (saved == null) rethrow;
-      return saved;
+      return parse(saved);
     }
+    if (response.statusCode == 304 && had != null && had.$2 is T) {
+      _answers
+        ..remove(key)
+        ..[key] = had; // used last: the last to go
+      if (remember != null) await cache?.touch(remember); // still what a backend says: the saved copy is as new
+      return had.$2 as T;
+    }
+    if (response.statusCode >= 400) throw _refused(response);
+    final Map<String, dynamic> json;
+    try {
+      json = jsonDecode(response.body) as Map<String, dynamic>;
+    } on FormatException catch (err) {
+      throw ApiException('unreadable answer: $err');
+    }
+    await fresh?.call(json);
+    if (remember != null) await cache?.putText(remember, response.body);
+    final value = parse(json);
+    final etag = response.headers['etag'];
+    _answers.remove(key);
+    if (etag != null) {
+      _answers[key] = (etag, value);
+      if (_answers.length > _keep) _answers.remove(_answers.keys.first);
+    }
+    return value;
   }
 
   /// The backend's price for a configured line, before it is added.

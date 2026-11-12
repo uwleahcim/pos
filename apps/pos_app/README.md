@@ -43,6 +43,26 @@ the same way; a category's page puts it on or off each menu with every dish in i
 changed; the backend checks the whole menu and either saves it or says what is wrong. Screens showing the
 menu ask every five seconds whether it changed and reload when it has.
 
+## Staying smooth
+
+The app has to hold sixty frames a second on an old tablet as well as on a Mac. What keeps it there, and
+what a change to a screen must not undo:
+
+- Nothing big or frequent goes through the preference store (`SharedPreferences`), which rewrites itself
+  whole on every write. Saved reads are files (`ReadCache`), the taps not sent yet are a journal that is only
+  added to (`JournalStore`), audit photos are a file each (`FolderStore`).
+- A read a screen repeats goes through the repeated reads of `PosApi`: the hub answers `304` while nothing
+  changed and the call returns the very same object, so the screen compares with `identical` and does not
+  redraw. A list that is under another screen does not poll.
+- A widget that moves by `setState` on every frame (the menu's trays) hands its children the same widget
+  objects from frame to frame (`_tilesOf` in `screens/menu_panel.dart`), so only what moves is built again.
+  `test/menu_frames_test.dart` counts the rebuilds.
+- Work on megabytes (every dish's choices at once) runs in a worker isolate.
+
+Settings shows, under Smoothness, how many frames this device drew late since the app started and the
+latest of them, split into building the screen and painting it. Start over, do the thing that feels slow,
+and look again: that is how to find what one device struggles with.
+
 ## Android tablets and phones
 
 Two ways to put the app on a Galaxy tablet or phone. Neither needs a signing key: the APK is signed with the
