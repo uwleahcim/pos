@@ -1,5 +1,6 @@
-/// Kitchen printers as the location's setting: each prints for one station (wok1, fryer, bar, takeout),
-/// speaks ESC/POS or StarPRNT and names the printers that take its tickets when it fails, in order. The hub
+/// Kitchen printers as the location's setting: each prints for one station or several (wok1, fryer, bar,
+/// takeout), speaks ESC/POS or StarPRNT (set, or found out from the printer: "auto") and names the printers
+/// that take its tickets when it fails, in order. The hub
 /// keeps them (`GET/PUT /settings/printers`; a manager sets them under Location settings › Printers) and
 /// routes every ticket by them; `GET /print/stations` says which stations the menu prints at and which have
 /// no printer yet.
@@ -10,60 +11,75 @@ import 'package:flutter/foundation.dart';
 /// The languages a printer may speak, as the hub names them, with what the screen calls each.
 const dialectLabels = {'escpos': 'ESC/POS (Epson and most)', 'star': 'Star (StarPRNT)'};
 
-/// One printer: its id (the hub's, once saved; the other printers' fallbacks name it), the station it prints
-/// for, its address (host or IP, with :port when it is not 9100), its language and its fallbacks in order.
+/// The same in a word or two, for a button.
+const dialectShort = {'escpos': 'ESC/POS', 'star': 'Star'};
+
+/// A printer's language setting that is no language: the hub prints in the one the printer was found to
+/// speak ([PrinterConfig.detected]).
+const autoDialect = 'auto';
+
+/// One printer: its id (the hub's, once saved; the other printers' fallbacks name it), the stations it prints
+/// for, its address (host or IP, with :port when it is not 9100), its language ([dialect]: `escpos`, `star`,
+/// or `auto` with [detected], what the printer itself answered) and its fallbacks in order.
 @immutable
 class PrinterConfig {
   const PrinterConfig({
     this.id,
-    required this.station,
+    required this.stations,
     required this.address,
-    this.dialect = 'escpos',
+    this.dialect = autoDialect,
+    this.detected,
     this.fallbacks = const [],
   });
 
-  factory PrinterConfig.fromJson(Map<String, dynamic> json) => PrinterConfig(
-    id: json['id'] as String?,
-    station: json['station'] as String? ?? '',
-    address: json['address'] as String? ?? '',
-    dialect: json['dialect'] as String? ?? 'escpos',
-    fallbacks: [for (final f in json['fallbacks'] as List? ?? const []) f as String],
-  );
+  factory PrinterConfig.fromJson(Map<String, dynamic> json) {
+    final stations = [
+      for (final s in json['stations'] as List? ?? const [])
+        if (s is String && s.isNotEmpty) s,
+    ];
+    final one = json['station'] as String? ?? '';
+    return PrinterConfig(
+      id: json['id'] as String?,
+      stations: stations.isNotEmpty ? stations : [if (one.isNotEmpty) one], // an older hub: one station each
+      address: json['address'] as String? ?? '',
+      dialect: json['dialect'] as String? ?? 'escpos',
+      detected: json['detected'] as String?,
+      fallbacks: [for (final f in json['fallbacks'] as List? ?? const []) f as String],
+    );
+  }
 
   final String? id;
-  final String station;
+  final List<String> stations;
   final String address;
   final String dialect;
+  final String? detected;
   final List<String> fallbacks;
+
+  /// The first station it prints for; empty when it has none yet.
+  String get station => stations.isEmpty ? '' : stations.first;
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'station': station,
+    'stations': stations,
     'address': address,
     'dialect': dialect,
+    'detected': detected,
     'fallbacks': fallbacks,
   };
-
-  PrinterConfig copyWith({String? id, String? station, String? address, String? dialect, List<String>? fallbacks}) =>
-      PrinterConfig(
-        id: id ?? this.id,
-        station: station ?? this.station,
-        address: address ?? this.address,
-        dialect: dialect ?? this.dialect,
-        fallbacks: fallbacks ?? this.fallbacks,
-      );
 
   @override
   bool operator ==(Object other) =>
       other is PrinterConfig &&
       other.id == id &&
-      other.station == station &&
+      listEquals(other.stations, stations) &&
       other.address == address &&
       other.dialect == dialect &&
+      other.detected == detected &&
       listEquals(other.fallbacks, fallbacks);
 
   @override
-  int get hashCode => Object.hash(id, station, address, dialect, Object.hashAll(fallbacks));
+  int get hashCode => Object.hash(id, Object.hashAll(stations), address, dialect, detected, Object.hashAll(fallbacks));
 }
 
 /// The printers as the hub keeps them, in the order they stand (the first takes whatever has no printer of
@@ -196,6 +212,9 @@ class FoundPrinter {
 
   /// "EPSON TM-T88VII", "Canon MF644C"; empty when it gave no name.
   String get name => [maker, model].whereType<String>().where((s) => s.isNotEmpty).join(' ');
+
+  /// For a list to pick from: "10.27.1.14 · EPSON TM-T88VII", or the address alone when it gave no name.
+  String get pick => name.isEmpty ? address : '$address · $name';
 
   /// One line about it: "EPSON TM-T88VII · ESC/POS", "Star (StarPRNT)", "Canon MF644C · not a receipt printer".
   String get line {

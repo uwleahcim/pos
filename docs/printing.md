@@ -20,24 +20,34 @@ when that option is chosen.
 
 ## Printers
 
-**Location settings › Printers** (managers). Each printer:
+**Location settings › Printers** (managers). One card per printer:
 
-- **Prints for the station**: one of the menu's stations, or a new station's code typed. Two printers on
-  one station: the first in the list prints it; the second is useful as the first one's fallback.
-- **IP address**, with `:port` when it is not 9100. The magnifier asks the printer what it is, and the
-  language switches to what it said (see **How a printer is told apart**).
-- **Language**: ESC/POS (an Epson, and most others) or Star (StarPRNT).
+- **Prints for**: the stations it prints for, each a chip with its own bin. **Add a station** lists the
+  menu's stations that no printer has yet, and **A new station…** takes a code typed. Several stations may
+  share one printer: their dishes come out on one ticket, headed with every station's name ("WOK 1 +
+  FRYER"; past three, "WOK 1 + 3 MORE").
+- **IP address**, typed, with `:port` when it is not 9100. The **magnifier** turns the field into a list of
+  the printers the hub finds on the network ("10.27.1.14 · EPSON TM-T88VII"), each with the stations it
+  prints for already when another card has it; an office printer is listed and cannot be picked. **Look
+  again** in the list has the hub look once more; **Other** turns the field back into one to type in.
+  Picking a printer that has a card already moves this card's stations onto that one: one printer, one
+  card.
+- **Language**: **Auto** (what a new printer starts on), **ESC/POS** (an Epson, and most others) or **Star**
+  (StarPRNT). Auto prints in the language the printer itself answered with and shows it ("Auto: Star"); a
+  tap on Auto asks the printer again (see **How a printer is told apart**). A printer on Auto that has not
+  been asked yet is asked on Save, and one that has not answered prints in ESC/POS until it does. A language
+  set by hand that is not what the printer said is pointed out under it.
 - **When it is down, print its tickets at**: the fallbacks, from a list of the other printers, dragged into
   the order they are tried.
-- **Test print**: the demo ticket, with the station's name on it.
+- **Test print**: the demo ticket, with the stations' names on it.
 
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
 printers already set, and lists what answers: receipt printers first, each with its name and language and
-an **Add** that fills a new printer's address and language; then anything that said nothing, to add and
-set by hand; then whatever else listens on that port (an office printer: "Canon MF644C · not a receipt
-printer"), named so it is not a mystery and not offered. (The hub's API runs in a container that does not
-see the LAN's hardware addresses, so the scan is by port, and the terminal tells the hub which subnets it
-is on.)
+an **Add** that makes a new card with its address (or the stations it prints for, when it has a card);
+then anything that said nothing, to add and set by hand; then whatever else listens on that port (an
+office printer: "Canon MF644C · not a receipt printer"), named so it is not a mystery and not offered. The
+magnifier's list is the same scan. (The hub's API runs in a container that does not see the LAN's hardware
+addresses, so the scan is by port, and the terminal tells the hub which subnets it is on.)
 
 ### How a printer is told apart
 
@@ -87,8 +97,12 @@ still known as a Star by step 3, without its model.
 
 ## The API
 
-- `GET /settings/printers`, `PUT /settings/printers` (manager): `printers` as `{id, station, address,
-  dialect, fallbacks}` in order, `takeout_station`; `source` says `settings`, `env` or `none`.
+- `GET /settings/printers`, `PUT /settings/printers` (manager): `printers` as `{id, stations, address,
+  dialect, detected, fallbacks}` in order, `takeout_station`; `source` says `settings`, `env` or `none`.
+  `stations` is the list of station codes the printer prints for (`station`, the first, is still sent and
+  still accepted alone, for an app not yet rebuilt). `dialect` is `escpos`, `star` or `auto`; with `auto` the
+  hub prints in `detected`, the language `POST /print/identify` or the scan heard, and in ESC/POS while that
+  is null. Two printers with one address are refused: one printer prints for several stations.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with

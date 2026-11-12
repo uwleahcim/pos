@@ -111,6 +111,7 @@ class Hub {
   List<Map<String, dynamic>> found = [];
   Map<String, dynamic> identity = {'reachable': false};
   final scans = <Map<String, dynamic>>[];
+  final identified = <String>[]; // the addresses `/print/identify` was asked about, in order
   final testPrints = <String>[];
   final enrolled = <(String, bool)>[]; // (staff id, replace) per view posted
   final forgotten = <String>[];
@@ -287,6 +288,7 @@ class Hub {
       case '/print/identify':
         printersAuth = request.headers['authorization'];
         final address = (jsonDecode(request.body) as Map)['address'] as String;
+        identified.add(address);
         return json({'address': address, ...identity});
       case '/print/test':
         final printer = (jsonDecode(request.body) as Map)['printer'] as String;

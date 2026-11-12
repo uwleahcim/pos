@@ -242,9 +242,11 @@ class DeskPhonesIn(BaseModel):
 
 class PrinterIn(BaseModel):
     id: str | None = Field(None, description="left out for a printer new on the screen: the hub names it")
-    station: str = Field(description="the kitchen station this printer prints for, by its code (wok1, bar, takeout)")
+    station: str = Field("", description="the kitchen station it prints for, by its code, when it is only one")
+    stations: list[str] = Field(default_factory=list, description="the stations it prints for (wok1, bar, takeout)")
     address: str = Field(description="host or IP, with :port when it is not 9100")
-    dialect: str = Field("escpos", description="escpos or star")
+    dialect: str = Field("escpos", description="escpos, star, or auto: the language the printer was found to speak")
+    detected: str | None = Field(None, description="what /print/identify said it speaks; printed in when auto")
     fallbacks: list[str] = Field(default_factory=list, description="ids of the printers that take over, in order")
 
 
@@ -720,9 +722,10 @@ def create_app(
 
     @app.get("/settings/printers")
     def read_printers() -> dict[str, Any]:
-        """The kitchen printers: each with its station, address, language and fallbacks, in the order they
-        stand, and the station a to-go order prints whole at. `source` says where they come from: the setting,
-        or `env` (POS_PRINTERS on a hub whose setting is still empty, shown so a save keeps them)."""
+        """The kitchen printers: each with its stations, address, language (`dialect`: escpos, star or auto, with
+        `detected`) and fallbacks, in the order they stand, and the station a to-go order prints whole at.
+        `source` says where they come from: the setting, or `env` (POS_PRINTERS on a hub whose setting is
+        still empty, shown so a save keeps them)."""
         settings: SettingStore = app.state.settings
         setting = settings.get("printers")
         if setting["printers"]:
@@ -1092,7 +1095,8 @@ def create_app(
     # Printing: the hub prints its own jobs; a terminal in relay mode claims what is left ------------------
     @app.get("/print/printers")
     def list_printers() -> dict[str, Any]:
-        """The printers as they stand: `name` is the station each prints for; a relay prints to `address`."""
+        """The printers as they stand: `name` is the station each prints for (the first of `stations`), `dialect`
+        the language its tickets are in (resolved when the setting says auto); a relay prints to `address`."""
         printing: PrintService = app.state.printing
         return {
             "printers": [
@@ -1100,6 +1104,7 @@ def create_app(
                     "id": p.id,
                     "name": p.name,
                     "station": p.name,
+                    "stations": list(p.stations),
                     "address": p.address,
                     "dialect": p.dialect,
                     "fallbacks": list(p.fallbacks),
@@ -1120,7 +1125,8 @@ def create_app(
         defs = menu.defs
         served: dict[str, str] = {}
         for p in printing.printers:
-            served.setdefault(p.name, p.id)
+            for station in p.stations:
+                served.setdefault(station, p.id)
         takeout = app.state.settings.get("printers")["takeout_station"]
         dishes: dict[str, int] = {}
         for item in defs.items.values():
@@ -1202,7 +1208,7 @@ def create_app(
         printer = printing.printer(body.printer)
         if printer is None:
             raise HTTPException(404, {"error": "no_such_printer", "printers": [p.id for p in printing.printers]})
-        job = printing.queue(replace(DEMO, station=printing.station_name(printer.name)), printer)
+        job = printing.queue(replace(DEMO, station=printing.head(printer)), printer)
         return job_out(job)
 
     add_menu_admin(app)
