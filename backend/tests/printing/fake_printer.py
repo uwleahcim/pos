@@ -1,35 +1,40 @@
 """Pretend printers: a TCP server on a free port that keeps every byte it receives and answers the questions
-`pos.printing.discover` asks, a pretend SNMP agent, and a decoder for tests."""
+`pos.printing.discover` asks, a pretend SNMP agent, a pretend Star answering Star's search, and a decoder
+for tests. The answers are the ones the restaurant's TM-T88VII and mC-Print3s gave."""
 
 from __future__ import annotations
 
 import socket
 import threading
+import time
 from dataclasses import dataclass, field
 
 from pos.printing.discover import _ber, _ber_int, _ber_oid, _tlv
 
-STAR_STATUS = bytes.fromhex("23 86 00 00 00 00 00 00 00")  # a StarPRNT status block, nine bytes, all well
+STAR_STATUS = bytes.fromhex("29 8a 00 00 00 00 00 04 00 00 00 06 00 00")  # an mC-Print3's status block, all well
 EPSON_AUTO_STATUS = bytes.fromhex("14 00 00 0f")  # ESC/POS automatic status: online, paper in
 QUESTIONS = (b"\x1b\x06\x01", b"\x10\x04\x01", b"\x1d\x49\x43", b"\x1d\x49\x42")
 SETTLE = b"\x00settle\x00"
 
 
 class FakePrinter:
-    """`kind` star: a Star in StarPRNT mode; sends its status block to whoever connects (`unasked`, as on port
-    9100) and whenever `ESC ACK SOH` asks. `kind` epson: answers `DLE EOT 1` with a status byte and `GS I 67` /
-    `GS I 66` with its model and maker; with `unasked` it also sends its automatic status on connect, as an
-    Epson with ASB left on does. `kind` other: an office printer, which answers nothing.
+    """`kind` star: a Star in StarPRNT mode; answers `ESC ACK SOH` with its status block and says nothing on
+    its own, as an mC-Print3 does (with `unasked` it sends the block to whoever connects). `kind` epson:
+    answers `DLE EOT 1` with a status byte and `GS I 67` / `GS I 66` with its model and maker; with `unasked`
+    it also sends its automatic status on connect, as an Epson with ASB on does; with `slow` it takes that
+    many seconds over the first status request of a connection, as a TM-T88VII left waiting does. `kind`
+    other: an office printer, which answers nothing.
 
     `jobs` is what would have come out on paper; `heard` is everything received, questions included."""
 
-    def __init__(self, kind: str = "star", model: str = "TM-T88VII", unasked: bool | None = None) -> None:
+    def __init__(self, kind: str = "star", model: str = "TM-T88VII", unasked: bool = False, slow: float = 0) -> None:
         self._server = socket.create_server(("127.0.0.1", 0))
         self.port = self._server.getsockname()[1]
         self.address = f"127.0.0.1:{self.port}"
         self.kind = kind
         self.model = model
-        self.unasked = kind == "star" if unasked is None else unasked
+        self.unasked = unasked
+        self.slow = slow
         self.jobs: list[bytes] = []
         self.heard: list[bytes] = []
         self._settled = threading.Event()
@@ -56,6 +61,7 @@ class FakePrinter:
             except OSError:
                 return
             chunks = []
+            awake = not self.slow
             with conn:
                 try:
                     if self.unasked and self.kind == "star":
@@ -64,6 +70,9 @@ class FakePrinter:
                         conn.sendall(EPSON_AUTO_STATUS)
                     while chunk := conn.recv(65536):
                         chunks.append(chunk)
+                        if not awake and QUESTIONS[1] in chunk:
+                            time.sleep(self.slow)
+                            awake = True
                         if answer := self._answer(chunk):
                             conn.sendall(answer)
                 except OSError:
@@ -93,6 +102,51 @@ class FakePrinter:
 
     def close(self) -> None:
         self._server.close()
+
+
+def star_search_reply(model: str = "mC-Print3", commands: str = "STAR", device: str = "MCP31 (STR-001)") -> bytes:
+    """An mC-Print3's answer to Star's search, 302 bytes, laid out as the real one: a header that says where
+    each section starts, then the model and firmware, the network settings, and the maker, command set,
+    device name and class. The hardware address is made up."""
+
+    def padded(text: str, size: int) -> bytes:
+        return text.encode().ljust(size, b"\x00")
+
+    header = padded("STR_BCAST", 16) + b"RS1.0.1\x00" + bytes.fromhex("01 2e 00 22 00 74 00 8a 01 2c")
+    first = bytes.fromhex("00 52") + padded(model, 16) + padded("3.81", 8) + padded("3.81", 8)
+    first += bytes.fromhex("20 00 00 00 00 00 00 00 31 00") + bytes.fromhex("00 11 62 00 00 01") + bytes(4)
+    first += bytes([10, 27, 1, 166]) + padded("DHCP", 16) + bytes([255, 255, 255, 0]) + bytes([10, 27, 1, 1])
+    second = bytes.fromhex("00 16 31") + bytes(13) + bytes.fromhex("30 00 31 00 31 00")
+    third = bytes.fromhex("00 a2") + padded("Star", 32) + padded(commands, 32) + padded(device, 64)
+    third += padded("PRINTER", 32)
+    reply = header + first + second + third + bytes(2)
+    assert len(reply) == 302
+    return reply
+
+
+class FakeStarSearch:
+    """A Star's ear for Star's search, on a free UDP port: answers the search with `reply` and nothing else."""
+
+    def __init__(self, reply: bytes | None = None) -> None:
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.bind(("127.0.0.1", 0))
+        self.port = self._socket.getsockname()[1]
+        self.reply = star_search_reply() if reply is None else reply
+        self.asked: list[bytes] = []
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                packet, sender = self._socket.recvfrom(4096)
+            except OSError:
+                return
+            self.asked.append(packet)
+            if packet.startswith(b"STR_BCAST"):
+                self._socket.sendto(self.reply, sender)
+
+    def close(self) -> None:
+        self._socket.close()
 
 
 class FakeSnmp:
