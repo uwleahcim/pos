@@ -11,7 +11,7 @@ from pos.menu import admin
 from pos.menu.service import MenuService, load_definitions
 from pos.printing.jobs import FALLBACK_AFTER
 from pos.printing.service import Printer, PrintService, printers_from_setting
-from pos.settings import SettingStore, clean_printers
+from pos.settings import SettingStore, clean_printers, fallback_loop
 from pos.sync.oplog import OpStore
 
 from ..conftest import T0
@@ -107,6 +107,32 @@ def test_the_setting_names_each_printer_and_checks_its_fallbacks():
         clean_printers({"printers": [{"station": "wok1", "address": "10.0.0.1:99999"}]})
     with pytest.raises(ValueError, match="needs the station"):
         clean_printers({"printers": [{"address": "10.0.0.1"}]})
+
+
+def test_fallbacks_that_go_round_in_a_loop_are_refused():
+    def printers(**fallbacks: list[str]) -> dict:
+        return {
+            "printers": [
+                {"id": ident, "station": f"st{n}", "address": f"10.0.0.{n}", "fallbacks": after}
+                for n, (ident, after) in enumerate(fallbacks.items(), start=1)
+            ]
+        }
+
+    # a chain, and two printers sharing a fallback, are no loop
+    clean_printers(printers(a=["b", "c"], b=["c"], c=[]))
+    clean_printers(printers(a=["c"], b=["c"], c=["d"], d=[]))
+    assert fallback_loop({"a": ["b", "c"], "b": ["c"], "c": []}) is None
+    assert fallback_loop({"a": ["b"], "b": ["a"]}) == ["a", "b", "a"]
+    assert fallback_loop({"a": ["b"], "b": ["c"], "c": ["d"], "d": ["b"]}) == ["b", "c", "d", "b"]
+    assert fallback_loop({"a": ["gone"], "b": []}) is None
+    with pytest.raises(ValueError, match="loop: the st1 printer falls back to the st2 printer, which falls back to"):
+        clean_printers(printers(a=["b"], b=["a"]))
+    with pytest.raises(ValueError) as refused:
+        clean_printers(printers(a=["b"], b=["c"], c=["a"], d=["a"]))
+    assert str(refused.value) == (
+        "the fallbacks go round in a loop: the st1 printer falls back to the st2 printer, which falls back to the "
+        "st3 printer, which falls back to the st1 printer. Take one of them out"
+    )
 
 
 def test_a_printer_may_print_for_several_stations_and_an_address_is_one_printer():

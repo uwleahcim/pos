@@ -186,6 +186,29 @@ def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
     return {"switch": switch, "away_seconds": int(away)}
 
 
+def fallback_loop(fallbacks: Mapping[str, list[str]]) -> list[str] | None:
+    """A way round the fallbacks that comes back to where it started, as the ids on it with the first one
+    again at the end (`["a", "b", "a"]`: a falls back to b, b to a); None when there is none. Ids that are no
+    printer's are passed over."""
+    done: set[str] = set()
+
+    def walk(ident: str, path: list[str]) -> list[str] | None:
+        if ident in path:
+            return [*path[path.index(ident) :], ident]
+        if ident in done:
+            return None
+        for following in fallbacks.get(ident, ()):
+            if following in fallbacks and (found := walk(following, [*path, ident])):
+                return found
+        done.add(ident)
+        return None
+
+    for start in fallbacks:
+        if found := walk(start, []):
+            return found
+    return None
+
+
 def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
     """The printers as the app may set them, checked: `printers`, a list of `{id, stations, address, dialect,
     detected, fallbacks}` in the order they stand (the first takes whatever has no printer of its own), and
@@ -194,7 +217,8 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
     `dialect` is `escpos`, `star` or `auto`: with `auto` the tickets go out in the language the printer was
     found to speak, `detected` (what `POST /print/identify` said of it; ESC/POS until it has been told). A
     printer sent without an id (new on the screen) gets one; ids never change after that, since the other
-    printers' fallbacks name them. Raises ValueError on a bad value."""
+    printers' fallbacks name them. Fallbacks may not go round in a loop (a printer falling back, directly or
+    through others, to one that falls back to it). Raises ValueError on a bad value."""
     raw = data.get("printers") or []
     if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
         raise ValueError("printers must be a list of {id, stations, address, dialect, fallbacks}")
@@ -268,6 +292,12 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"the {printer['station']} printer lists the fallback {fallback!r} twice")
             seen.append(fallback)
         printer["fallbacks"] = seen
+    loop = fallback_loop({printer["id"]: printer["fallbacks"] for printer in printers})
+    if loop:
+        names = {printer["id"]: printer["station"] for printer in printers}
+        said = f"the {names[loop[0]]} printer falls back to the {names[loop[1]]} printer"
+        said += "".join(f", which falls back to the {names[ident]} printer" for ident in loop[2:])
+        raise ValueError(f"the fallbacks go round in a loop: {said}. Take one of them out")
     takeout = data.get("takeout_station")
     if takeout in ("", None):
         takeout = None

@@ -38,7 +38,10 @@ when that option is chosen.
   been asked yet is asked on Save, and one that has not answered prints in ESC/POS until it does. A language
   set by hand that is not what the printer said is pointed out under it.
 - **When it is down, print its tickets at**: the fallbacks, from a list of the other printers, dragged into
-  the order they are tried.
+  the order they are tried. Fallbacks may not go round in a loop (Wok 1 falls back to Bar, Bar to Wok 1, or
+  the same through a third printer): a printer that already falls back to this one is greyed out in the list
+  with "would loop back here", a loop saved earlier is marked "loops back here" on its cards, and Save waits
+  until one of them is taken out. The hub refuses such a save too.
 - **Test print**: the demo ticket, with the stations' names on it.
 
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
@@ -99,6 +102,7 @@ still known as a Star by step 3, without its model.
 
 - `GET /settings/printers`, `PUT /settings/printers` (manager): `printers` as `{id, stations, address,
   dialect, detected, fallbacks}` in order, `takeout_station`; `source` says `settings`, `env` or `none`.
+  A `PUT` whose fallbacks go round in a loop is refused with 422 and the loop in words.
   `stations` is the list of station codes the printer prints for (`station`, the first, is still sent and
   still accepted alone, for an app not yet rebuilt). `dialect` is `escpos`, `star` or `auto`; with `auto` the
   hub prints in `detected`, the language `POST /print/identify` or the scan heard, and in ESC/POS while that

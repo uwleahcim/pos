@@ -8,7 +8,7 @@ import '../printers.dart';
 /// The kitchen printers, for a manager: each prints for one station of the menu or several, by its address
 /// (typed, or picked from the printers the hub finds on the LAN: the magnifier), in the language the printer
 /// itself answers with (Auto) or one set by hand, with the printers that take its tickets when it is down,
-/// in order. The screen says which stations the menu prints at and have no printer yet (one tap adds it)
+/// in order (never round in a loop). The screen says which stations the menu prints at and have no printer yet (one tap adds it)
 /// and sets the station a to-go order prints whole at. The hub keeps it all and routes the next ticket by
 /// it. Behind the manager PIN, from Location settings.
 class PrintersScreen extends StatefulWidget {
@@ -231,6 +231,11 @@ class _PrintersScreenState extends State<PrintersScreen> {
         );
         return;
       }
+    }
+    final loop = _loop;
+    if (loop != null) {
+      setState(() => _message = loop);
+      return;
     }
     setState(() {
       _busy = true;
@@ -782,27 +787,26 @@ class _PrintersScreenState extends State<PrintersScreen> {
             ),
             Row(
               children: [
+                // As wide as the card allows, so the list under it has room to say why a printer cannot be picked.
                 if (others.isNotEmpty)
-                  DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      key: ValueKey('fallback-add:${row.id}'),
-                      hint: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [Icon(Icons.add, size: 18), SizedBox(width: 4), Text('Add fallback')],
+                  Expanded(
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        key: ValueKey('fallback-add:${row.id}'),
+                        isExpanded: true,
+                        hint: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [Icon(Icons.add, size: 18), SizedBox(width: 4), Text('Add fallback')],
+                        ),
+                        items: [for (final other in others) _fallbackChoice(context, row, other)],
+                        onChanged: (picked) => setState(() {
+                          if (picked != null) row.fallbacks.add(picked);
+                        }),
                       ),
-                      items: [
-                        for (final other in others)
-                          DropdownMenuItem(
-                            value: other.id,
-                            child: Text(other.stations.isEmpty ? 'New printer' : _stationsOf(other)),
-                          ),
-                      ],
-                      onChanged: (picked) => setState(() {
-                        if (picked != null) row.fallbacks.add(picked);
-                      }),
                     ),
-                  ),
-                const Spacer(),
+                  )
+                else
+                  const Spacer(),
                 TextButton.icon(
                   key: ValueKey('printer-test:${row.id}'),
                   onPressed: () => _test(row),
@@ -1038,11 +1042,96 @@ class _PrintersScreenState extends State<PrintersScreen> {
     return ('Tap Auto to ask the printer which language it speaks. $untold', false);
   }
 
-  /// One fallback: the handle to move it (the order is the order tried), its name and the bin.
+  /// The way from [from] along the fallbacks to [to], both ends on it; null when there is none.
+  List<_PrinterRow>? _wayTo(_PrinterRow from, _PrinterRow to) {
+    final byId = {for (final r in _rows) r.id: r};
+    final cameFrom = <_PrinterRow, _PrinterRow?>{from: null};
+    final ahead = [from];
+    while (ahead.isNotEmpty) {
+      final at = ahead.removeAt(0);
+      if (at == to) {
+        final way = <_PrinterRow>[];
+        for (_PrinterRow? step = to; step != null; step = cameFrom[step]) {
+          way.insert(0, step);
+        }
+        return way;
+      }
+      for (final id in at.fallbacks) {
+        final next = byId[id];
+        if (next == null || cameFrom.containsKey(next)) continue;
+        cameFrom[next] = at;
+        ahead.add(next);
+      }
+    }
+    return null;
+  }
+
+  /// Why [other] cannot be a fallback of [row]: it falls back to [row] already, itself or through others,
+  /// so the two would go round in a loop. Null when it can.
+  String? _loopNote(_PrinterRow row, _PrinterRow other) {
+    final way = _wayTo(other, row);
+    if (way == null) return null;
+    if (way.length <= 2) return 'would loop back here';
+    final through = [for (final step in way.sublist(1, way.length - 1)) _fallbackName(step)].join(', then ');
+    return 'would loop back here through $through';
+  }
+
+  String _fallbackName(_PrinterRow row) => row.stations.isEmpty ? 'New printer' : _stationsOf(row);
+
+  /// A loop the fallbacks go round in, said in words; null when there is none.
+  String? get _loop {
+    for (final row in _rows) {
+      for (final id in row.fallbacks) {
+        final other = _rows.where((r) => r.id == id).firstOrNull;
+        final way = other == null ? null : _wayTo(other, row);
+        if (way == null) continue;
+        final said = StringBuffer('the ${_title(row)} falls back to the ${_title(way.first)}');
+        for (final step in way.skip(1)) {
+          said.write(', which falls back to the ${_title(step)}');
+        }
+        return 'The fallbacks go round in a loop: $said. Take one of them out.';
+      }
+    }
+    return null;
+  }
+
+  /// One printer in a card's list of fallbacks to add. One that would make a loop is shown, says why, and
+  /// cannot be picked.
+  DropdownMenuItem<String> _fallbackChoice(BuildContext context, _PrinterRow row, _PrinterRow other) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final loop = _loopNote(row, other);
+    return DropdownMenuItem(
+      key: ValueKey('fallback-choice:${row.id}:${other.id}'),
+      value: other.id,
+      enabled: loop == null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _fallbackName(other),
+            overflow: TextOverflow.ellipsis,
+            style: loop == null ? null : TextStyle(color: scheme.onSurface.withValues(alpha: 0.38)),
+          ),
+          if (loop != null)
+            Text(
+              loop,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// One fallback: the handle to move it (the order is the order tried), its name and the bin. One that
+  /// leads back to this printer (saved before loops were refused, or made by joining two cards) is marked.
   Widget _fallbackRow(BuildContext context, _PrinterRow row, int j) {
     final id = row.fallbacks[j];
     final other = _rows.where((r) => r.id == id).firstOrNull;
     final scheme = Theme.of(context).colorScheme;
+    final loops = other != null && _wayTo(other, row) != null;
     return Row(
       key: ValueKey('fallback:${row.id}:$id'),
       children: [
@@ -1062,8 +1151,9 @@ class _PrintersScreenState extends State<PrintersScreen> {
                 ? '$id (no longer a printer)'
                 : other.stations.isEmpty
                 ? 'New printer'
-                : '${_title(other)} · ${other.address.text}',
+                : '${_title(other)} · ${other.address.text}${loops ? ' · loops back here' : ''}',
             overflow: TextOverflow.ellipsis,
+            style: loops ? TextStyle(color: scheme.error) : null,
           ),
         ),
         IconButton(
