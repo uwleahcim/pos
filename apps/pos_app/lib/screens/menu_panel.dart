@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -81,6 +82,13 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   List<MenuSection> _lastOpen = const []; // kept while the items tray animates closed
   final _itemCache = <String, ItemDetail>{};
   final _localCounts = <String, int>{}; // fallback item counts when widget.qtyOf is not provided
+  final _tiles = <String, _Tiles>{}; // each grid's tiles as they were last built: see [_tilesOf]
+  var _counted = 0; // goes up whenever the count on a tile may have changed: see [_tilesOf]
+  (String, List<Menu>?, List<MenuEntry>)? _lastFound; // what the search last found, for what words on what menus
+  (List<Menu>, String, Widget)? _tabsBuilt; // the tabs as last built, for which menus with which one on screen
+  (bool, Widget)? _searchBuilt; // the search field as last built, with or without its Clear button
+  (_PendingItemSelection, int, int, double, Widget)? _trayBuilt; // the choices tray as last built: see [_trayFor]
+  var _answered = 0; // goes up with every answer given in the choices tray
   _PendingItemSelection? _pending;
   _PendingItemSelection? _lastPending; // kept while the required-selections tray animates closed
   int? _revision;
@@ -113,6 +121,13 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     super.initState();
     _load();
     _watch = Timer.periodic(MenuPanelCheck.every, (_) => _check());
+  }
+
+  /// The screen above drew again: the order may have changed, and with it the counts on the tiles.
+  @override
+  void didUpdateWidget(MenuPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _counted++;
   }
 
   @override
@@ -238,11 +253,15 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// What the search finds, on every menu open, whichever tab is showing: a soda typed on the Food tab is
   /// found at the bar too. A dish on two menus at the same sizes and prices (the soft drinks) is listed once,
   /// under its first menu; a dish the lunch menu sells as another size or price is listed from both.
+  ///
+  /// Looked up once for the words typed, not on every frame while a tray moves under the results.
   List<MenuEntry> get _found {
     final q = _search.text.trim().toLowerCase();
+    final last = _lastFound;
+    if (last != null && last.$1 == q && identical(last.$2, _menus)) return last.$3;
     final seen = <String>{};
     String offer(MenuEntry e) => '${e.item}|${e.variants.map((v) => '${v.variantId}=${v.price}').join(',')}';
-    return [
+    final found = [
       for (final m in _openMenus)
         for (final s in m.sections)
           for (final e in s.allEntries)
@@ -252,6 +271,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                 seen.add(offer(e)))
               e,
     ];
+    _lastFound = (q, _menus, found);
+    return found;
   }
 
   void _startTransition({required bool resetScroll, String? resetItemsSectionId}) {
@@ -310,6 +331,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     final key = '${chosen.request.entryId ?? ''}:${chosen.itemId ?? ''}';
     setState(() {
       _localCounts[key] = (_localCounts[key] ?? 0) + chosen.qty;
+      _counted++;
     });
     widget.onChosen(chosen);
   }
@@ -354,7 +376,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       _closePending();
       _choose(chosen);
     } else {
-      setState(() {});
+      setState(() => _answered++);
     }
   }
 
@@ -445,7 +467,136 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (chosen != null) _choose(chosen);
   }
 
+  /// The tiles of one grid (`grid` names it: the categories, the open category's dishes, what the search
+  /// found).
+  ///
+  /// While a tray opens or closes this panel is drawn again on every frame, to move the trays, and nothing
+  /// on a tile changes in between. Handed the list it already has, a grid does not go through its tiles at
+  /// all; handed new tiles, even ones that look the same, it builds every one of them again with everything
+  /// inside: over 800 widgets a frame with a full category open, measured 2026-11-12, which is where the
+  /// frames went on a slow tablet. So the tiles are kept, and a tile is built again only when what it shows
+  /// changes: the dish itself (a new menu, an 86), whether it is the open one, its count from the check. A
+  /// dish added to the check builds one tile, not the category.
+  List<Widget> _tilesOf(
+    String grid, {
+    required List<MenuSection> sections,
+    required List<MenuEntry> entries,
+    required int depth,
+    MenuSection? selected,
+  }) {
+    final pending = _pending;
+    final asking = pending == null ? -1 : entries.indexWhere((e) => _sameEntry(pending.entry, e));
+    final last = _tiles[grid];
+    final sameTiles =
+        last != null && listEquals(last.sections, sections) && listEquals(last.entries, entries) && last.depth == depth;
+    final sameState = sameTiles && last.selected == selected && last.asking == asking;
+    if (sameState && last.counted == _counted) return last.widgets;
+    // The counts are read from the check only when the check may have changed, not on every frame.
+    final qty = [for (final e in entries) _qtyOf(e)];
+    if (sameState && listEquals(last.qty, qty)) {
+      last.counted = _counted;
+      return last.widgets;
+    }
+    final widgets = <Widget>[
+      for (final (i, s) in sections.indexed)
+        if (sameTiles && (s == selected) == (s == last.selected))
+          last.widgets[i]
+        else
+          _SectionButton(
+            key: ValueKey('s:${s.sectionId}'),
+            section: s,
+            index: i,
+            selected: s == selected,
+            onTap: s == selected ? _close : () => _openAt(depth, s),
+          ),
+      for (final (i, e) in entries.indexed)
+        if (sameTiles && qty[i] == last.qty[i] && (i == asking) == (i == last.asking))
+          last.widgets[sections.length + i]
+        else
+          _EntryButton(
+            key: ValueKey('e:${e.entryId}:${e.item}'),
+            entry: e,
+            qty: qty[i],
+            selected: i == asking,
+            onTap: () => _tap(e),
+            onLongPress: () => _longPress(e),
+          ),
+    ];
+    _tiles[grid] = _Tiles(
+      sections: sections,
+      entries: entries,
+      depth: depth,
+      selected: selected,
+      asking: asking,
+      qty: qty,
+      counted: _counted,
+      widgets: widgets,
+    );
+    return widgets;
+  }
+
+  Widget _searchField(bool searching) {
+    final last = _searchBuilt;
+    if (last != null && last.$1 == searching) return last.$2;
+    final field = Center(
+      child: TextField(
+        controller: _search,
+        decoration: InputDecoration(
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: searching
+              ? IconButton(
+                  tooltip: 'Clear',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() {
+                    _search.clear();
+                    _pending = null;
+                  }),
+                )
+              : null,
+          hintText: 'Number or name',
+          isDense: true,
+        ),
+        onChanged: (_) => setState(() => _pending = null),
+      ),
+    );
+    _searchBuilt = (searching, field);
+    return field;
+  }
+
+  /// The tray that asks a dish's size and choices, the same widget until an answer changes what it shows:
+  /// every roll of the maki combination is a button in it, and none of them changes while the tray opens.
+  Widget _trayFor(_PendingItemSelection pending, int crossAxisCount, double tileHeight) {
+    final last = _trayBuilt;
+    if (last != null &&
+        identical(last.$1, pending) &&
+        last.$2 == _answered &&
+        last.$3 == crossAxisCount &&
+        last.$4 == tileHeight) {
+      return last.$5;
+    }
+    final tray = _RequiredSelectionsSection(
+      pending: pending,
+      crossAxisCount: crossAxisCount,
+      tileHeight: tileHeight,
+      onSelectVariant: _selectPendingVariant,
+      onToggleOption: _togglePendingOption,
+      onLongPressOption: _longPressPendingOption,
+      onClose: _closePending,
+    );
+    _trayBuilt = (pending, _answered, crossAxisCount, tileHeight, tray);
+    return tray;
+  }
+
+  Widget _tabsFor(List<Menu> menus, String selected) {
+    final last = _tabsBuilt;
+    if (last != null && identical(last.$1, menus) && last.$2 == selected) return last.$3;
+    final tabs = _MenuTabs(menus: menus, selected: selected, onSelected: _showMenu);
+    _tabsBuilt = (menus, selected, tabs);
+    return tabs;
+  }
+
   Widget _grid({
+    required String tiles,
     Key? key,
     ScrollController? controller,
     double extraBottomPadding = 0.0,
@@ -466,25 +617,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       crossAxisSpacing: _gridSpacing,
       mainAxisExtent: tileHeight,
     ),
-    children: [
-      for (final (i, s) in sections.indexed)
-        _SectionButton(
-          key: ValueKey('s:${s.sectionId}'),
-          section: s,
-          index: i,
-          selected: s == selected,
-          onTap: () => s == selected ? _close() : _openAt(depth, s),
-        ),
-      for (final e in entries)
-        _EntryButton(
-          key: ValueKey('e:${e.entryId}:${e.item}'),
-          entry: e,
-          qty: _qtyOf(e),
-          selected: _pending != null && _sameEntry(_pending!.entry, e),
-          onTap: () => _tap(e),
-          onLongPress: () => _longPress(e),
-        ),
-    ],
+    children: _tilesOf(tiles, sections: sections, entries: entries, depth: depth, selected: selected),
   );
 
   @override
@@ -659,38 +792,20 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           });
         }
 
+        // The field and the tabs are the same widgets from frame to frame, like the tiles ([_tilesOf]): only
+        // the fade and the heights around them move.
         final searchField = Opacity(
           opacity: currentSearchFactor,
-          child: IgnorePointer(
-            ignoring: currentSearchFactor < 0.5,
-            child: Center(
-              child: TextField(
-                controller: _search,
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: searching
-                      ? IconButton(
-                          tooltip: 'Clear',
-                          icon: const Icon(Icons.close),
-                          onPressed: () => setState(() {
-                            _search.clear();
-                            _pending = null;
-                          }),
-                        )
-                      : null,
-                  hintText: 'Number or name',
-                  isDense: true,
-                ),
-                onChanged: (_) => setState(() => _pending = null),
-              ),
-            ),
-          ),
+          child: IgnorePointer(ignoring: currentSearchFactor < 0.5, child: _searchField(searching)),
         );
 
+        // Each part has a key of its own: the top row and the trays come and go, and without keys the grids
+        // after them would be taken for other widgets and built from nothing, every tile, in a single frame.
         return Column(
           children: [
             if (showTop)
               SizedBox(
+                key: const ValueKey('menu-top'),
                 height: currentSearchHeight,
                 child: ClipRect(
                   child: OverflowBox(
@@ -703,7 +818,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                           ? searchField
                           : Row(
                               children: [
-                                _MenuTabs(menus: tabs, selected: _menu!.menu, onSelected: _showMenu),
+                                _tabsFor(tabs, _menu!.menu),
                                 const SizedBox(width: 8),
                                 Expanded(child: searchField),
                               ],
@@ -713,9 +828,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                 ),
               ),
             SizedBox(
+              key: const ValueKey('menu-categories'),
               height: currentCategoriesHeight,
               child: searching
                   ? _grid(
+                      tiles: 'search',
                       key: const ValueKey('search-grid'),
                       controller: _searchScroll,
                       extraBottomPadding: searchExtraBottomSpace,
@@ -726,6 +843,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                       tileHeight: tileHeight,
                     )
                   : _grid(
+                      tiles: 'categories',
                       key: ValueKey('categories-$depth'),
                       controller: _categoriesScroll,
                       extraBottomPadding: extraBottomSpace,
@@ -739,6 +857,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
             ),
             if (currentItemsHeight > 0.5 && displayHere != null)
               SizedBox(
+                key: const ValueKey('menu-dishes'),
                 height: currentItemsHeight,
                 child: ClipRect(
                   child: OverflowBox(
@@ -755,6 +874,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                           switchInCurve: Curves.easeOutCubic,
                           switchOutCurve: Curves.easeInCubic,
                           child: _grid(
+                            tiles: 'items',
                             key: ValueKey('items-${displayHere.sectionId}'),
                             controller: itemsScroll,
                             extraBottomPadding: itemsExtraBottomSpace,
@@ -779,15 +899,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                     alignment: Alignment.topCenter,
                     minHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
                     maxHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
-                    child: _RequiredSelectionsSection(
-                      pending: displayPending,
-                      crossAxisCount: crossAxisCount,
-                      tileHeight: tileHeight,
-                      onSelectVariant: _selectPendingVariant,
-                      onToggleOption: _togglePendingOption,
-                      onLongPressOption: _longPressPendingOption,
-                      onClose: _closePending,
-                    ),
+                    child: _trayFor(displayPending, crossAxisCount, tileHeight),
                   ),
                 ),
               ),
@@ -935,6 +1047,29 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
       jumpTo(desired);
     }
   }
+}
+
+/// One grid's tiles as they were last built, and what they were built from ([_MenuPanelState._tilesOf]).
+class _Tiles {
+  _Tiles({
+    required this.sections,
+    required this.entries,
+    required this.depth,
+    required this.selected,
+    required this.asking,
+    required this.qty,
+    required this.counted,
+    required this.widgets,
+  });
+
+  final List<MenuSection> sections;
+  final List<MenuEntry> entries;
+  final int depth;
+  final MenuSection? selected;
+  final int asking; // which of the dishes has its size or choices asked in the tray below, or -1
+  final List<int> qty; // the count on each dish's tile
+  int counted; // [_MenuPanelState._counted] when the counts were last read
+  final List<Widget> widgets;
 }
 
 /// The menus open now as tabs (Food, Drinks; Lunch at lunch), the one on screen filled in. One row shared

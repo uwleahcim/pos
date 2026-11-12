@@ -13,6 +13,7 @@ import 'package:pos_app/local_order.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/signin_screen.dart';
@@ -122,7 +123,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final settings = Settings(device: 't1', endpoints: ['http://hub1:8000', 'http://hub2:8000']);
     final api = PosApi(settings, client: MockClient((_) async => json({})));
-    final outbox = Outbox(api, settings, prefs: await SharedPreferences.getInstance());
+    final outbox = Outbox(api, settings, store: MemoryStore());
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -325,8 +326,8 @@ void main() {
         return json({'revision': 0});
       }),
     );
-    final outbox = Outbox(api, settings, prefs: prefs);
-    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+    final outbox = Outbox(api, settings, store: MemoryStore());
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), store: MemoryStore());
     List<(String, Map)> sent() => [for (final op in outbox.pendingOps) (op['kind'] as String, op['data'] as Map)];
 
     await tester.binding.setSurfaceSize(const Size(1000, 800));
@@ -434,8 +435,8 @@ void main() {
         return json({'revision': 0});
       }),
     );
-    final outbox = Outbox(api, settings, prefs: prefs);
-    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+    final outbox = Outbox(api, settings, store: MemoryStore());
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), store: MemoryStore());
     List<(String, Map)> sent() => [for (final op in outbox.pendingOps) (op['kind'] as String, op['data'] as Map)];
 
     await tester.binding.setSurfaceSize(const Size(1000, 800));
@@ -502,8 +503,8 @@ void main() {
         return json({'revision': 0});
       }),
     );
-    final outbox = Outbox(api, settings, prefs: prefs);
-    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), prefs: prefs);
+    final outbox = Outbox(api, settings, store: MemoryStore());
+    final photos = PhotoQueue(api, settings, NoCamera(), Session(api), store: MemoryStore());
     List<(String, Map)> sent() => [for (final op in outbox.pendingOps) (op['kind'] as String, op['data'] as Map)];
 
     await tester.binding.setSurfaceSize(const Size(1000, 800));

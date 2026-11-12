@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 
@@ -23,3 +23,8 @@ def today() -> date:
 def day_of(wall_ms: int) -> date:
     """The local calendar day a wall-clock stamp (milliseconds since the epoch) falls on."""
     return datetime.fromtimestamp(wall_ms / 1000, zone()).date()
+
+
+def start_ms(day: date) -> int:
+    """The wall-clock stamp (milliseconds since the epoch) at which a local calendar day begins."""
+    return int(datetime.combine(day, time.min, zone()).timestamp() * 1000)

@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/outbox.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,13 +46,16 @@ class FakeBackend {
   });
 }
 
-Future<(Settings, PosApi, Outbox, FakeBackend)> harness({List<String> endpoints = const ['http://hub1:8000']}) async {
+Future<(Settings, PosApi, Outbox, FakeBackend)> harness({
+  List<String> endpoints = const ['http://hub1:8000'],
+  QueueStore? store,
+}) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
   final settings = Settings(device: 't1', endpoints: endpoints, prefs: prefs);
   final backend = FakeBackend();
   final api = PosApi(settings, client: backend.client(), timeout: const Duration(milliseconds: 200));
-  final outbox = Outbox(api, settings, prefs: prefs);
+  final outbox = Outbox(api, settings, store: store ?? MemoryStore());
   return (settings, api, outbox, backend);
 }
 
@@ -70,7 +75,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final settings = Settings(device: '', endpoints: const [], prefs: prefs);
-    final outbox = Outbox(PosApi(settings), settings, prefs: prefs);
+    final outbox = Outbox(PosApi(settings), settings, store: MemoryStore());
     await settings.save(device: 'mac1', endpoints: ['http://hub1:8000']);
     await outbox.add('o1', 'create');
     expect(outbox.pendingOps.single['hlc'], endsWith('-mac1'));
@@ -87,7 +92,11 @@ void main() {
   });
 
   test('ops wait on disk while every backend is down, then go out on reconnect', () async {
-    final (_, api, outbox, backend) = await harness();
+    final dir = await Directory.systemTemp.createTemp('pos_outbox');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/outbox.log');
+    JournalStore journal() => JournalStore(file, id: Outbox.idField);
+    final (settings, api, outbox, backend) = await harness(store: journal());
     await outbox.add('o1', 'create', {'table': 4});
     await outbox.add('o1', 'add_line', {'line_id': 'L1', 'item': 'Tsingtao', 'qty': 2});
     await outbox.flush();
@@ -95,15 +104,51 @@ void main() {
     expect(api.connection.value.isOnline, isFalse);
 
     // A fresh outbox (the app restarted) restores the same queue from disk.
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getStringList('outbox')!.length, 2);
+    final restarted = Outbox(api, settings, store: journal());
+    await restarted.restore();
+    await restarted.flush();
+    expect(restarted.pendingOps, outbox.pendingOps);
 
     backend.up['http://hub1:8000'] = true;
-    await outbox.flush();
-    expect(outbox.pending, 0);
+    await restarted.flush();
+    expect(restarted.pending, 0);
     expect(api.connection.value.endpoint, 'http://hub1:8000');
     expect(backend.seen['http://hub1:8000']!.map((op) => op['kind']), ['create', 'add_line']);
-    expect(prefs.getStringList('outbox'), isEmpty);
+    expect(file.readAsStringSync(), isEmpty); // nothing waiting: nothing kept
+    expect(await journal().load(), isEmpty);
+  });
+
+  test('the queue an older build kept in the preference store goes out first', () async {
+    final dir = await Directory.systemTemp.createTemp('pos_outbox');
+    addTearDown(() => dir.delete(recursive: true));
+    JournalStore journal() => JournalStore(File('${dir.path}/outbox.log'), id: Outbox.idField);
+    final (settings, api, outbox, backend) = await harness(store: journal());
+    Map<String, dynamic> old(String id, String kind) => {
+      'op_id': id,
+      'order_id': 'o1',
+      'hlc': '0000000000001-0000-t1',
+      'device': 't1',
+      'kind': kind,
+      'data': <String, dynamic>{},
+    };
+    SharedPreferences.setMockInitialValues({
+      'outbox': [jsonEncode(old('a', 'create')), jsonEncode(old('b', 'fire'))],
+      'device': 't1',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    await outbox.restore(legacy: prefs);
+    await outbox.flush();
+    expect(outbox.pendingOps.map((op) => op['op_id']), ['a', 'b']);
+    expect(prefs.getKeys(), {'device'}); // taken over: the preference store no longer holds it
+    await outbox.add('o1', 'close');
+
+    // the app restarts with nothing sent yet: the same three, in the same order, from the file alone
+    final restarted = Outbox(api, settings, store: journal());
+    await restarted.restore(legacy: prefs);
+    backend.up['http://hub1:8000'] = true;
+    await restarted.flush();
+    expect(backend.seen['http://hub1:8000']!.map((op) => op['kind']), ['create', 'fire', 'close']);
   });
 
   test('failover: the standby takes the ops when the hub is down, the hub again when it returns', () async {

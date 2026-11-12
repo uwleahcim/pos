@@ -8,8 +8,10 @@ hub, a terminal or the cloud needs to agree on is in this module, so it can be t
 from __future__ import annotations
 
 import math
+import threading
 import time
-from collections.abc import Callable, Iterable
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -449,17 +451,90 @@ def replay(ops: Iterable[Op], order_id: str | None = None) -> OrderState:
     return state
 
 
+@dataclass(frozen=True)
+class OrderEntry:
+    """What the orders index keeps of one order, so a list can pick its orders without replaying the log:
+    where it stands, when it was opened and when it last changed (wall-clock ms), and how far its history
+    goes: `version`, the log's cursor when its newest operation arrived, and `tip`, that operation's id. The
+    two move whenever the order changes and never otherwise, so an order replayed at one (version, tip) is
+    good until they move. The tip is there for a hub whose database is rewound after a takeover: a cursor
+    alone could come to mean another history."""
+
+    order_id: str
+    status: str
+    first_ms: int | None
+    last_ms: int | None
+    version: int
+    tip: str
+
+    @staticmethod
+    def of(state: OrderState, version: int, tip: str) -> OrderEntry:
+        return OrderEntry(
+            order_id=state.order_id,
+            status=state.status,
+            first_ms=state.first.wall_ms if state.first is not None else None,
+            last_ms=state.last.wall_ms if state.last is not None else None,
+            version=version,
+            tip=tip,
+        )
+
+    def picked(self, status: str | None, opened_since: int | None, active_since: int | None) -> bool:
+        """Whether a list asking for this status, opened since then and changed since then wants the order."""
+        if status is not None and self.status != status:
+            return False
+        if opened_since is not None and (self.first_ms is None or self.first_ms < opened_since):
+            return False
+        return active_since is None or (self.last_ms is not None and self.last_ms >= active_since)
+
+
+class Views:
+    """Replayed orders, kept until they change: the screens ask for the open orders every two seconds, and
+    an order nobody touched replays to the same thing every time. Each is kept under the (version, tip) it
+    was replayed at, the least recently read go first, and what comes out is shared: read it, never change it
+    (`state` on a store replays a fresh one for that)."""
+
+    def __init__(self, keep: int = 2048) -> None:
+        self._keep = keep
+        self._kept: OrderedDict[str, tuple[int, str, OrderState]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, entry: OrderEntry) -> OrderState | None:
+        with self._lock:
+            kept = self._kept.get(entry.order_id)
+            if kept is None or (kept[0], kept[1]) != (entry.version, entry.tip):
+                return None
+            self._kept.move_to_end(entry.order_id)
+            return kept[2]
+
+    def put(self, order_id: str, version: int, tip: str, state: OrderState) -> None:
+        with self._lock:
+            self._kept[order_id] = (version, tip, state)
+            self._kept.move_to_end(order_id)
+            while len(self._kept) > self._keep:
+                self._kept.popitem(last=False)
+
+
 class OpStore:
-    """An append-only store of operations with a cursor, so peers can pull what they have not seen."""
+    """An append-only store of operations with a cursor, so peers can pull what they have not seen, and an
+    index of its orders (`index`, `entry`) with their replays kept until they change (`view`, `views`), so
+    reading the open orders costs nothing while nothing changes."""
 
     def __init__(self, physical: Callable[[], int] | None = None) -> None:
         self._ops: list[Op] = []
         self._ids: set[str] = set()
+        self._by_order: dict[str, list[Op]] = {}
+        self._versions: dict[str, tuple[int, str]] = {}  # order -> the cursor and id of its newest arrival
+        self._entries: dict[str, OrderEntry] = {}  # worked out when first asked for, again after a change
+        self._views = Views()
         self._physical = physical or (lambda: int(time.time() * 1000))
 
     @property
     def cursor(self) -> int:
         return len(self._ops)
+
+    def now_ms(self) -> int:
+        """The store's wall clock, the one operations are checked against."""
+        return self._physical()
 
     def __contains__(self, op_id: str) -> bool:
         return op_id in self._ids
@@ -480,6 +555,8 @@ class OpStore:
                 continue
             self._ids.add(op.op_id)
             self._ops.append(op)
+            self._by_order.setdefault(op.order_id, []).append(op)
+            self._versions[op.order_id] = (len(self._ops), op.op_id)
             accepted.append(op)
         return accepted
 
@@ -488,13 +565,52 @@ class OpStore:
         return self._ops[cursor:end]
 
     def for_order(self, order_id: str) -> list[Op]:
-        return [op for op in self._ops if op.order_id == order_id]
+        return list(self._by_order.get(order_id, ()))
 
     def order_ids(self) -> list[str]:
-        return sorted({op.order_id for op in self._ops})
+        return sorted(self._by_order)
 
     def state(self, order_id: str) -> OrderState:
+        """The order, replayed now: the caller's own copy, to change as it likes (`view` for a shared one)."""
         return replay(self.for_order(order_id), order_id)
 
     def op_ids(self) -> frozenset[str]:
         return frozenset(self._ids)
+
+    def entry(self, order_id: str) -> OrderEntry | None:
+        """The index's row for one order, or None for an order the log has never heard of."""
+        stamp = self._versions.get(order_id)
+        if stamp is None:
+            return None
+        entry = self._entries.get(order_id)
+        if entry is None or (entry.version, entry.tip) != stamp:
+            state = replay(self._by_order[order_id], order_id)
+            entry = self._entries[order_id] = OrderEntry.of(state, *stamp)
+            self._views.put(order_id, *stamp, state)
+        return entry
+
+    def index(
+        self, *, status: str | None = None, opened_since: int | None = None, active_since: int | None = None
+    ) -> list[OrderEntry]:
+        """The orders that stand at `status`, were opened at or after `opened_since` and last changed at or
+        after `active_since` (wall-clock ms), whichever of the three are given, by order id."""
+        entries = (self.entry(order_id) for order_id in sorted(self._by_order))
+        return [e for e in entries if e is not None and e.picked(status, opened_since, active_since)]
+
+    def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
+        """The orders of these index rows, in the same order, each replayed only if it changed since it was
+        last read. Shared: read them, never change them."""
+        out: list[OrderState] = []
+        for entry in entries:
+            state = self._views.get(entry)
+            if state is None:
+                state = replay(self._by_order[entry.order_id], entry.order_id)
+                self._views.put(entry.order_id, *self._versions[entry.order_id], state)
+            out.append(state)
+        return out
+
+    def view(self, order_id: str) -> OrderState | None:
+        """One order as it stands, replayed only if it changed since it was last read; None for an order the
+        log has never heard of. Shared: read it, never change it."""
+        entry = self.entry(order_id)
+        return None if entry is None else self.views([entry])[0]

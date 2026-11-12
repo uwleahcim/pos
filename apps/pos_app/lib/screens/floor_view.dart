@@ -27,13 +27,25 @@ class FloorViewState extends State<FloorView> {
   FloorPlan? _plan;
   String? _room; // null = the whole floor
   Timer? _timer;
+  bool _inFront = true; // no check, screen or dialog is open over the map
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => refresh());
+    // Under an open check nobody sees the map: it stops asking, and reads again the moment it is back.
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_inFront) refresh();
+    });
     widget.outbox?.addListener(_onOutbox);
     refresh();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final inFront = ModalRoute.isCurrentOf(context) ?? true;
+    if (inFront && !_inFront) refresh();
+    _inFront = inFront;
   }
 
   @override
@@ -50,7 +62,8 @@ class FloorViewState extends State<FloorView> {
   Future<void> refresh() async {
     try {
       final plan = await widget.api.floor();
-      if (mounted) setState(() => _plan = plan);
+      // A backend with nothing new hands back the plan it gave last time: nothing to redraw then.
+      if (mounted && !identical(plan, _plan)) setState(() => _plan = plan);
     } on ApiException {
       // The status bar shows the outage; the map keeps its last picture.
     }

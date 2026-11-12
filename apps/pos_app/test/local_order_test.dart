@@ -8,6 +8,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/local_order.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/outbox.dart';
+import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -473,7 +474,7 @@ void main() {
         return http.Response(jsonEncode({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': 1}), 202);
       }),
     );
-    final outbox = Outbox(api, settings, prefs: prefs);
+    final outbox = Outbox(api, settings, store: MemoryStore());
     await outbox.add('o1', 'add_line', {'line_id': 'L1', 'item': 'x'});
     await outbox.flush();
     expect(outbox.localOps('o1').length, 1); // still queued: the hub is down

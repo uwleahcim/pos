@@ -102,8 +102,11 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       final order = await widget.api.order(widget.orderId);
       final check = await widget.api.check(widget.orderId);
-      widget.outbox.seen(widget.orderId, mark);
-      if (mounted) {
+      final settled = widget.outbox.seen(widget.orderId, mark);
+      // A backend with nothing new hands back the order and the check it gave last time: nothing to redraw
+      // then, unless this read is the one that shows what this screen sent.
+      final same = identical(order, _read) && identical(check, _readCheck) && !settled;
+      if (mounted && !same) {
         setState(() {
           _read = order;
           _readCheck = check;

@@ -42,6 +42,7 @@ class ReadCache {
   final Map<String, int> _itemsRevision = {}; // channel:locale -> the menu revision whose dishes are all saved
   final Map<String, String> _memory = {}; // the in-memory answers, as their JSON text
   Future<void> _writes = Future.value(); // index writes, one after another
+  DateTime _indexAt = DateTime.fromMillisecondsSinceEpoch(0); // when the index was last written
 
   Future<void> _open() async {
     await folder.create(recursive: true);
@@ -104,6 +105,30 @@ class ReadCache {
     await _write(fileName(name), text);
     _at[name] = _now();
     await _saveIndex();
+  }
+
+  /// Saves an answer as the JSON text it came as from a backend, so the menu (a couple of hundred kilobytes)
+  /// is not encoded again on the UI thread just to be written. The text must be a JSON object: [get] decodes
+  /// it. For the answers kept in memory use [put].
+  Future<void> putText(String name, String text) async {
+    assert(!inMemory.contains(name), 'put() keeps $name in memory');
+    await _write(fileName(name), text);
+    _at[name] = _now();
+    await _saveIndex();
+  }
+
+  /// How long the index may run behind the times in memory: see [touch].
+  static const indexEvery = Duration(minutes: 5);
+
+  /// A backend just said the saved answer under `name` is still the one it would give: it counts as read
+  /// now ([readAt], the age the status details show). The floor is confirmed every two seconds while its
+  /// screen is up, so the time is kept in memory and the index written at most every [indexEvery]: a device
+  /// that loses power may think its copies up to that much older than they are.
+  Future<void> touch(String name) async {
+    if (!_at.containsKey(name)) return;
+    final now = _now();
+    _at[name] = now;
+    if (now.difference(_indexAt).abs() >= indexEvery) await _saveIndex();
   }
 
   /// Every dish of a menu at `revision`, already as JSON text (encoded off the UI thread), under the names
@@ -218,6 +243,7 @@ class ReadCache {
       'saved': {for (final MapEntry(key: name, value: at) in _at.entries) name: at.millisecondsSinceEpoch},
       'items_revision': _itemsRevision,
     });
+    _indexAt = _now();
     return _writes = _writes.then((_) => _write(_indexName, text));
   }
 }

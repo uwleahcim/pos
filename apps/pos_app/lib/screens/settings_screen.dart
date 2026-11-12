@@ -6,10 +6,12 @@ import '../api.dart';
 import '../call_screen.dart';
 import '../camera.dart';
 import '../faces.dart';
+import '../frames.dart';
 import '../phone.dart';
 import '../print_relay.dart';
 import '../push.dart';
 import '../settings.dart';
+import 'smoothness_card.dart';
 
 /// Device name, backend addresses and the phone. Shown on first start, and from the orders screen afterwards.
 /// With an [api] it also says how face sign-in stands, so a terminal that is not looking for faces says why.
@@ -24,6 +26,7 @@ class SettingsScreen extends StatefulWidget {
     this.push,
     this.screen,
     this.camera,
+    this.frames,
   });
 
   final Settings settings;
@@ -32,6 +35,9 @@ class SettingsScreen extends StatefulWidget {
   final PrintRelay? relay;
   final PhoneClient? phone;
   final EventCamera? camera;
+
+  /// How smoothly this device draws; the app's own count when not given.
+  final FrameWatch? frames;
 
   /// The hub's push registry for this screen (iOS): a line on whether a locked screen is woken.
   final PushRegistrar? push;
@@ -347,6 +353,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ),
+              if (!widget.firstRun) ...[
+                const SizedBox(height: 16),
+                SmoothnessCard(frames: widget.frames ?? FrameWatch.shared),
+              ],
               const SizedBox(height: 24),
               FilledButton(onPressed: _save, child: const Text('Save')),
             ],

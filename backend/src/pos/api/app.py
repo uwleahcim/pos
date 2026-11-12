@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -18,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
@@ -59,6 +61,7 @@ from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
 from .auth import manager_from
+from .conditional import ConditionalGet
 from .faces import add_face_signin
 from .menu_admin import add_menu_admin
 
@@ -88,6 +91,28 @@ class OpIn(BaseModel):
 
 
 _NEVER = HLC(0, 0, "")
+
+
+def polled(content: Any) -> Response:
+    """The answer to a read the screens poll, written straight to JSON. Handing FastAPI the same dict has it
+    walk and validate every value first, which for forty open checks took ten times as long as writing them
+    (21 ms against 2 ms, measured 2026-11-12); the bytes are the same."""
+    body = json.dumps(content, ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=jsonable_encoder)
+    return Response(body.encode("utf-8"), media_type="application/json")
+
+
+_LIST_LEAVES_OUT = ("request", "priced")
+
+
+def listed(state: OrderState) -> dict[str, Any]:
+    """An order as a list of orders needs it: the snapshot without what each line was configured as and
+    priced at, which is nine tenths of it and which only the order's own screen reads."""
+    snapshot = state.snapshot()
+    snapshot["lines"] = {
+        line_id: {k: v for k, v in line.items() if k not in _LIST_LEAVES_OUT}
+        for line_id, line in snapshot["lines"].items()
+    }
+    return snapshot
 
 
 def op_out(op: Op) -> dict[str, Any]:
@@ -573,10 +598,15 @@ def create_app(
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-    # Every dish's choices at once (`/menu/items`) is over ten megabytes of JSON for this menu and under two
+    # A read that is the same as the one a screen already has is answered 304, with no body (see the module).
+    app.add_middleware(ConditionalGet)
+    # Every dish's choices at once (`/menu/items`) is over ten megabytes of JSON for this menu and a couple of
     # hundred kilobytes compressed (the same rolls over and over); the menu itself a couple of hundred kilobytes.
-    # A client that accepts gzip (the app does) gets it compressed; one that does not gets it as before.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # A client that accepts gzip (the app does) gets it compressed; one that does not gets it as before. Level
+    # 5, not the default 9: the open orders go out to every screen whenever one of them changes, and the last
+    # levels cost the hub four times the work for a twentieth off the size (7.5 ms against 1.9 ms for forty
+    # checks, measured 2026-11-12).
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -620,14 +650,28 @@ def create_app(
         }
 
     @app.get("/orders")
-    def list_orders(status: str | None = Query(None, pattern="^(open|closed|void)$")) -> dict[str, Any]:
-        """Every order the store knows, newest activity first; `status` filters."""
+    def list_orders(
+        status: str | None = Query(None, pattern="^(open|closed|void)$"),
+        hours: float | None = Query(None, gt=0, le=24 * 366, description="only orders changed this recently"),
+        brief: bool = Query(False, description="lines without `request` and `priced`"),
+    ) -> Response:
+        """Every order the store knows, newest activity first; `status` filters. With `hours`, the orders
+        that changed within that many hours and, whatever their age, the ones still open: what a screen
+        lists, the same size on the hub's thousandth day as on its first. With `brief`, each line comes
+        without what it was configured as and priced at: a list shows neither, and they are most of the
+        answer. The orders come from the log's index and are replayed only when they changed, so a screen
+        asking every two seconds costs a query."""
         store: OpStore | PgOpStore = app.state.store
-        states = [store.state(order_id) for order_id in store.order_ids()]
-        if status is not None:
-            states = [state for state in states if state.status == status]
-        states.sort(key=lambda state: state.last or _NEVER, reverse=True)
-        return {"orders": [state.snapshot() for state in states], "cursor": store.cursor}
+        if hours is None:
+            entries = store.index(status=status)
+        else:
+            entries = store.index(status=status, active_since=store.now_ms() - int(hours * 3_600_000))
+            if status in (None, "open"):
+                recent = {entry.order_id for entry in entries}
+                entries += [entry for entry in store.index(status="open") if entry.order_id not in recent]
+        states = sorted(store.views(entries), key=lambda state: state.last or _NEVER, reverse=True)
+        orders = [listed(state) if brief else state.snapshot() for state in states]
+        return polled({"orders": orders, "cursor": store.cursor})
 
     @app.get("/orders/last")  # before /orders/{order_id}, which would take "last" for an id
     def read_last_order(phone: str = Query(min_length=1)) -> dict[str, Any]:
@@ -641,36 +685,38 @@ def create_app(
         return {"phone": phone_digits(phone), "day": day.isoformat(), "order": order}
 
     @app.get("/orders/{order_id}")
-    def read_order(order_id: str) -> dict[str, Any]:
+    def read_order(order_id: str) -> Response:
         store: OpStore | PgOpStore = app.state.store
-        ops = store.for_order(order_id)
-        if not ops:
+        state = store.view(order_id)
+        if state is None:
             raise HTTPException(404, "no such order")
-        return store.state(order_id).snapshot()
+        return polled(state.snapshot())
 
     @app.get("/orders/{order_id}/check")
-    def read_check(order_id: str) -> dict[str, Any]:
+    def read_check(order_id: str) -> Response:
         """What the table owes: priced lines, discounts, charges, subtotal, tax lines by jurisdiction, total."""
         store: OpStore | PgOpStore = app.state.store
-        if not store.for_order(order_id):
+        state = store.view(order_id)
+        if state is None:
             raise HTTPException(404, "no such order")
-        return check_for(store.state(order_id), app.state.taxes, app.state.pricing)
+        return polled(check_for(state, app.state.taxes, app.state.pricing))
 
     @app.get("/floor")
-    def read_floor() -> dict[str, Any]:
+    def read_floor() -> Response:
         """The floor plan with the open checks on each table, for the floor map."""
         store: OpStore | PgOpStore = app.state.store
-        states = [store.state(order_id) for order_id in store.order_ids()]
-        open_states = [s for s in states if s.status == "open"]
+        open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
         plan: FloorPlan = app.state.floor
         coursing = app.state.settings.get("coursing")
-        return {
-            **plan.as_json(),
-            "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
-            "status": table_status(open_states, totals),
-            "cursor": store.cursor,
-        }
+        return polled(
+            {
+                **plan.as_json(),
+                "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
+                "status": table_status(open_states, totals),
+                "cursor": store.cursor,
+            }
+        )
 
     # Location settings: a manager (token from /admin/session) sets them, every terminal reads them ---------
     def write_setting(key: str, data: Mapping[str, Any], clean: Callable[[Mapping[str, Any]], dict[str, Any]]) -> Any:
@@ -912,12 +958,9 @@ def create_app(
         by_staff: dict[str, Decimal] = {}
         by_approver: dict[str, Decimal] = {}
         removed = 0
-        for order_id in store.order_ids():
-            state = store.state(order_id)
-            if state.last is None or state.last.wall_ms < since:
-                continue
+        for state in store.views(store.index(active_since=since)):  # by order id; only the ones that recent
             check = check_for(state, app.state.taxes, app.state.pricing)
-            about = {"order_id": order_id, "table": state.fields.get("table"), "status": state.status}
+            about = {"order_id": state.order_id, "table": state.fields.get("table"), "status": state.status}
             for row in check["discounts"]:
                 discounts.append({**about, **row})
                 amount = Decimal(row["amount"])
