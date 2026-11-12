@@ -11,18 +11,19 @@ one does, so a call about an order already picked up still lands on it.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import date
 from typing import Protocol
 
 from .. import localtime
-from ..sync.oplog import OrderState
+from ..sync.oplog import OrderEntry, OrderState
 
 _NOT_DIGITS = re.compile(r"\D")
 
 
 class _Store(Protocol):
-    def order_ids(self) -> list[str]: ...
-    def state(self, order_id: str) -> OrderState: ...
+    def index(self, *, opened_since: int | None = None) -> list[OrderEntry]: ...
+    def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]: ...
 
 
 def phone_digits(raw: object) -> str:
@@ -35,13 +36,14 @@ def phone_digits(raw: object) -> str:
 
 
 def last_order(store: _Store, phone: object, *, day: date) -> OrderState | None:
-    """The order opened last on `day` by this number, or None: none opened, or the number is empty."""
+    """The order opened last on `day` by this number, or None: none opened, or the number is empty. Only the
+    orders opened since that day began are looked at, from the log's index; what comes back is the store's
+    shared replay, to read and not to change."""
     wanted = phone_digits(phone)
     if not wanted:
         return None
     last: OrderState | None = None
-    for order_id in store.order_ids():
-        state = store.state(order_id)
+    for state in store.views(store.index(opened_since=localtime.start_ms(day))):
         if state.status == "void" or state.first is None:
             continue
         if phone_digits(state.fields.get("phone")) != wanted or localtime.day_of(state.first.wall_ms) != day:
