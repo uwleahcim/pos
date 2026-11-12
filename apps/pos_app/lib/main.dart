@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'asset_ringer.dart';
@@ -32,6 +33,9 @@ Future<void> main() async {
   // The last menu, dishes, floor and tax rates read stay on disk, so the screen can still take orders when
   // no backend answers (ADR 6).
   final api = PosApi(settings, cache: await ReadCache.load());
+  // Builds before 2026-11-12 kept those reads in the preference store, over ten megabytes of it, which the
+  // store rewrote whole on every write: they are taken out, slowly, once the app is up.
+  unawaited(SharedPreferences.getInstance().then(ReadCache.forgetLegacy));
   final outbox = Outbox(api, settings);
   await outbox.restore();
   final session = Session(api);

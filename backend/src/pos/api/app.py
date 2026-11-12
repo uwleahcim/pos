@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from .. import localtime
@@ -572,6 +573,10 @@ def create_app(
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    # Every dish's choices at once (`/menu/items`) is over ten megabytes of JSON for this menu and under two
+    # hundred kilobytes compressed (the same rolls over and over); the menu itself a couple of hundred kilobytes.
+    # A client that accepts gzip (the app does) gets it compressed; one that does not gets it as before.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.get("/health")
     def health() -> dict[str, Any]:

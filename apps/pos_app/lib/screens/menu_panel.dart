@@ -157,20 +157,20 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           _itemCache.clear();
         });
       }
-      if (_prefetched != revision) unawaited(_prefetch(revision));
+      unawaited(_prefetch(revision));
     } on ApiException catch (err) {
       if (mounted) setState(() => _error = err.toString());
     }
   }
 
-  int? _prefetched; // the revision whose dishes are saved on this device
-
   /// Saves every dish's sizes and choices with the menu, so the screen can still configure a dish when no
-  /// backend answers (ADR 6). Quietly skipped when nothing answers or the hub is older than this call.
+  /// backend answers (ADR 6). The device keeps them per menu revision, so this downloads nothing while the
+  /// dishes of this revision are already saved: a panel opened for every order must not read ten megabytes
+  /// and write 559 dishes each time (it did, and the screen froze for seconds). Quietly skipped when nothing
+  /// answers or the hub is older than this call.
   Future<void> _prefetch(int revision) async {
     try {
-      await widget.api.prefetchItems();
-      _prefetched = revision;
+      await widget.api.prefetchItems(revision: revision);
     } on ApiException {
       // next load tries again
     }

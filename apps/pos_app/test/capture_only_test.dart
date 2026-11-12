@@ -25,10 +25,15 @@ Map<String, dynamic> fixture(String name) =>
 class FakeBackends {
   final Set<String> down = {};
   final List<Map<String, dynamic>> ops = [];
+  final List<String> requests = []; // the path of every read that reached a backend
+  int revision = 3; // the menu's revision; a save moves it
+
+  int reads(String path) => requests.where((p) => p == path).length;
 
   http.Client client() => MockClient((request) async {
     final base = '${request.url.scheme}://${request.url.host}:${request.url.port}';
     if (down.contains(base)) throw http.ClientException('connection refused', request.url);
+    if (request.method == 'GET') requests.add(request.url.path);
     if (request.method == 'POST' && request.url.path.endsWith('/ops')) {
       final batch = (jsonDecode(request.body) as List).cast<Map<String, dynamic>>();
       ops.addAll(batch);
@@ -41,11 +46,11 @@ class FakeBackends {
       );
     }
     final body = switch (request.url.path) {
-      '/menu' => fixture('menu')..['revision'] = 3,
-      '/menu/revision' => {'revision': 3},
+      '/menu' => fixture('menu')..['revision'] = revision,
+      '/menu/revision' => {'revision': revision},
       '/menu/items/GTC' => fixture('item_gtc'),
       '/menu/items' => {
-        'revision': 3,
+        'revision': revision,
         'items': [
           {...fixture('item_gtc'), 'entry_id': 'dinner:87'},
         ],
@@ -60,15 +65,35 @@ class FakeBackends {
   });
 }
 
-Future<(FakeBackends, PosApi, Outbox, ReadCache)> harness({List<String> endpoints = const ['http://hub:8000']}) async {
+/// A terminal: its settings, a pretend hub and cloud, its outbox and its saved reads, in [folder] (a new
+/// one by default; the folder of an earlier terminal makes this one the same device after a restart).
+Future<(FakeBackends, PosApi, Outbox, ReadCache)> harness({
+  List<String> endpoints = const ['http://hub:8000'],
+  Directory? folder,
+  FakeBackends? backends,
+}) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
   final settings = Settings(device: 't1', endpoints: endpoints, prefs: prefs);
-  final backends = FakeBackends();
-  final cache = ReadCache(prefs);
+  backends ??= FakeBackends();
+  if (folder == null) {
+    folder = await Directory.systemTemp.createTemp('pos_read_cache');
+    final made = folder;
+    addTearDown(() => made.delete(recursive: true));
+  }
+  final cache = await ReadCache.open(folder);
   final api = PosApi(settings, client: backends.client(), timeout: const Duration(milliseconds: 200), cache: cache);
   final outbox = Outbox(api, settings, prefs: prefs);
   return (backends, api, outbox, cache);
+}
+
+/// Lets real work (files, a worker isolate) finish: a pause, then a frame, until [done] or a few seconds pass.
+Future<void> settle(WidgetTester tester, bool Function() done) async {
+  for (var i = 0; i < 200 && !done(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await tester.pump();
+  }
+  expect(done(), isTrue);
 }
 
 void main() {
@@ -85,7 +110,7 @@ void main() {
     backends.down.clear();
     final (revision, menus) = await api.menus();
     expect(revision, 3);
-    expect(await api.prefetchItems(), 1);
+    expect(await api.prefetchItems(revision: revision), 1);
     await api.floor();
     await api.check('o1');
     expect(level(), ConnectionLevel.usual);
@@ -190,8 +215,12 @@ void main() {
   testWidgets('the status icon goes amber on a backup and red with the banner and the card when nothing answers', (
     tester,
   ) async {
-    final (backends, api, outbox, _) = await harness(endpoints: ['http://hub:8000', 'http://cloud:8000']);
-    await api.menus(); // saved while the hub answers
+    // files are real work: the harness and the read that saves the menu run as such
+    final (backends, api, outbox, _) = (await tester.runAsync(() async {
+      final made = await harness(endpoints: ['http://hub:8000', 'http://cloud:8000']);
+      await made.$2.menus(); // saved while the hub answers
+      return made;
+    }))!;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -241,9 +270,12 @@ void main() {
   testWidgets('the item sheet prices a dish from the saved menu when nothing answers and still adds it', (
     tester,
   ) async {
-    final (backends, api, _, _) = await harness();
-    await api.menus();
-    await api.prefetchItems();
+    final (backends, api, _, _) = (await tester.runAsync(() async {
+      final made = await harness();
+      await made.$2.menus();
+      await made.$2.prefetchItems(revision: 3);
+      return made;
+    }))!;
     backends.down.add('http://hub:8000');
     await expectLater(api.menuRevision(), throwsA(isA<ApiException>()));
 
@@ -265,16 +297,60 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('open'));
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(milliseconds: 200));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('price-estimated')), findsOneWidget);
-    expect(find.text('\$13.95'), findsOneWidget); // the pint with its free defaults
-    await tester.tap(find.text('Add'));
-    await tester.pumpAndSettle();
-    expect(result, isNotNull);
+    // the sheet reads the saved dish from its file: real work again
+    await tester.runAsync(() async {
+      await tester.tap(find.text('open'));
+      await settle(tester, () => find.byKey(const ValueKey('price-estimated')).evaluate().isNotEmpty);
+      expect(find.text('\$13.95'), findsOneWidget); // the pint with its free defaults
+      await tester.tap(find.text('Add'));
+      await settle(tester, () => result != null);
+    });
     expect(result!.unitPrice, '13.95');
     expect(result!.request.selections['rice'], ['rice:white']);
+  });
+  test('every dish is saved once per menu revision: another screen, or a restart, downloads nothing', () async {
+    final (backends, api, _, cache) = await harness();
+    final prefs = await SharedPreferences.getInstance();
+    await api.menus();
+    expect(await api.prefetchItems(revision: 3), 1);
+    expect(cache.itemsRevision(), 3);
+    expect(await api.prefetchItems(revision: 3), 0);
+    expect(backends.reads('/menu/items'), 1);
+    // nothing of it lands in the preference store, which rewrites itself whole on every write
+    expect(prefs.getKeys().where((k) => k.startsWith('read')), isEmpty);
+
+    // the app starts over on the same device: the dishes are still there
+    final (_, restarted, _, again) = await harness(folder: cache.folder, backends: backends);
+    expect(again.itemsRevision(), 3);
+    expect(await restarted.prefetchItems(revision: 3), 0);
+    expect(backends.reads('/menu/items'), 1);
+    expect((await restarted.item('GTC', entryId: 'dinner:87')).item, 'GTC');
+
+    // a manager saved the menu: the dishes are read again, once, however many screens ask at the same time
+    backends.revision = 4;
+    final both = await Future.wait([restarted.prefetchItems(revision: 4), restarted.prefetchItems(revision: 4)]);
+    expect(both, [1, 1]);
+    expect(backends.reads('/menu/items'), 2);
+    expect(again.itemsRevision(), 4);
+  });
+
+  testWidgets('opening the menu twice reads the menu twice and the dishes once', (tester) async {
+    await tester.runAsync(() async {
+      final (backends, api, _, _) = await harness();
+      Widget panel() => MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: (_) {}),
+        ),
+      );
+      await tester.pumpWidget(panel());
+      await settle(tester, () => backends.reads('/menu/items') == 1);
+      expect(backends.reads('/menu'), 1);
+      await tester.pumpWidget(const SizedBox()); // the order screen closes
+      await tester.pumpWidget(panel()); // and the next order opens
+      await settle(tester, () => backends.reads('/menu') == 2);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(backends.reads('/menu/items'), 1);
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 }
