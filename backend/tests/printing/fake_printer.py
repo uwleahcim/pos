@@ -68,16 +68,20 @@ class FakePrinter:
                             conn.sendall(answer)
                 except OSError:
                     pass  # whoever connected hung up without reading: what it sent still counts
-            data = b"".join(chunks)
-            if data == SETTLE:
-                self._settled.set()
-                continue
-            if data:
-                self.heard.append(data)
-            for question in QUESTIONS:
-                data = data.replace(question, b"")
-            if data:
-                self.jobs.append(data)
+                # Kept before the connection is closed: `send_raw` waits for that close, so a job is in `jobs`
+                # by the time whoever sent it carries on.
+                self._keep(b"".join(chunks))
+
+    def _keep(self, data: bytes) -> None:
+        if data == SETTLE:
+            self._settled.set()
+            return
+        if data:
+            self.heard.append(data)
+        for question in QUESTIONS:
+            data = data.replace(question, b"")
+        if data:
+            self.jobs.append(data)
 
     def settle(self) -> None:
         """Returns once everything sent so far is in `heard` and `jobs`: connections are served one at a time,
