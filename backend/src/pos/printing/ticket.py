@@ -13,6 +13,8 @@ from .escpos import Builder
 from .star import StarBuilder
 
 DIALECTS: dict[str, type[Builder]] = {"escpos": Builder, "star": StarBuilder}
+AUTO = "auto"
+"""A printer's language setting that is no language: print in the one the printer was found to speak."""
 
 
 @dataclass(frozen=True)

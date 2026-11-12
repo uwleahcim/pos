@@ -14,8 +14,9 @@
   in switches the screen to that person at once (on by default: a server walks up and orders); `away_seconds`:
   how long the camera may go without seeing the person signed in by face before the screen signs them out
   (0 keeps them signed in until someone else steps up or they sign out).
-- `printers`: the kitchen printers (`pos/printing/service.py`): each with the station it serves, its address,
-  its language (escpos or star) and the ids of the printers that take its tickets when it fails, in order;
+- `printers`: the kitchen printers (`pos/printing/service.py`): each with the stations it serves, its address,
+  its language (escpos, star, or auto with the one it was found to speak) and the ids of the printers that
+  take its tickets when it fails, in order;
   and `takeout_station`, the station a to-go order prints whole at (null for none). An empty list leaves the
   hub on `POS_PRINTERS`.
 
@@ -36,7 +37,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from .printing.ticket import DIALECTS
+from .printing.ticket import AUTO, DIALECTS
 from .sync.pgstore import ReadOnlyError
 
 CHANNELS = ("counter", "phone", "online", "delivery", "catering")
@@ -186,13 +187,17 @@ def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
-    """The printers as the app may set them, checked: `printers`, a list of `{id, station, address, dialect,
-    fallbacks}` in the order they stand (the first takes whatever has no printer of its own), and
-    `takeout_station`. A printer sent without an id (new on the screen) gets one; ids never change after that,
-    since the other printers' fallbacks name them. Raises ValueError on a bad value."""
+    """The printers as the app may set them, checked: `printers`, a list of `{id, stations, address, dialect,
+    detected, fallbacks}` in the order they stand (the first takes whatever has no printer of its own), and
+    `takeout_station`. A printer prints for one station or several (`stations`; `station` alone, as an older
+    app sends it, is a list of one, and what comes back carries both, `station` being the first). Its
+    `dialect` is `escpos`, `star` or `auto`: with `auto` the tickets go out in the language the printer was
+    found to speak, `detected` (what `POST /print/identify` said of it; ESC/POS until it has been told). A
+    printer sent without an id (new on the screen) gets one; ids never change after that, since the other
+    printers' fallbacks name them. Raises ValueError on a bad value."""
     raw = data.get("printers") or []
     if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
-        raise ValueError("printers must be a list of {id, station, address, dialect, fallbacks}")
+        raise ValueError("printers must be a list of {id, stations, address, dialect, fallbacks}")
     taken: set[str] = set()
     for entry in raw:
         ident = entry.get("id")
@@ -204,22 +209,36 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError(f"the printer id {ident!r} is listed twice")
         taken.add(ident)
     printers: list[dict[str, Any]] = []
+    addresses: dict[str, str] = {}
     for entry in raw:
-        station = str(entry.get("station") or "").strip()
-        if not station:
+        listed = entry.get("stations") or [entry.get("station")]
+        if not isinstance(listed, list | tuple):
+            raise ValueError("a printer's stations are a list of station codes")
+        stations = list(dict.fromkeys(str(code or "").strip() for code in listed))
+        stations = [code for code in stations if code]
+        if not stations:
             raise ValueError("every printer needs the station it prints for")
-        if not STATION.match(station):
-            raise ValueError(f"a station is a short code of letters, digits, - or _, not {station!r}")
+        for code in stations:
+            if not STATION.match(code):
+                raise ValueError(f"a station is a short code of letters, digits, - or _, not {code!r}")
+        station = stations[0]
         address = str(entry.get("address") or "").strip()
         if not address:
             raise ValueError(f"the {station} printer needs its address")
         found = ADDRESS.match(address)
         if found is None or (found.group("port") and not 0 < int(found.group("port")) < 65536):
             raise ValueError(f"a printer address is a host or IP, with :port when it is not 9100, not {address!r}")
+        if address.lower() in addresses:
+            raise ValueError(
+                f"the {addresses[address.lower()]} and {station} printers have the same address, {address}: "
+                "one printer prints for several stations, so list them on one"
+            )
+        addresses[address.lower()] = station
         dialect = str(entry.get("dialect") or "escpos")
-        if dialect not in DIALECTS:
-            languages = ", ".join(sorted(DIALECTS))
+        if dialect not in (*DIALECTS, AUTO):
+            languages = ", ".join((AUTO, *sorted(DIALECTS)))
             raise ValueError(f"the {station} printer's language is one of {languages}, not {dialect!r}")
+        detected = entry.get("detected")
         ident = entry.get("id")
         if ident in (None, ""):
             ident = next(f"p{n}" for n in itertools.count(1) if f"p{n}" not in taken)
@@ -231,8 +250,10 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
             {
                 "id": str(ident),
                 "station": station,
+                "stations": stations,
                 "address": address,
                 "dialect": dialect,
+                "detected": detected if detected in DIALECTS else None,
                 "fallbacks": [str(f) for f in fallbacks],
             }
         )

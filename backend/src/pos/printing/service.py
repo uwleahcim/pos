@@ -2,12 +2,14 @@
 by the hub or a relay.
 
 Printers are the location's setting (`settings/printers`, a manager's screen in the app): each one serves
-a kitchen station (wok1, fryer, bar, takeout, ...), speaks ESC/POS or StarPRNT and names the printers that
-take its tickets when it fails, in order. `POS_PRINTERS` (name=host[:port][/dialect], e.g.
+one kitchen station or several (wok1, fryer, bar, takeout, ...), speaks ESC/POS or StarPRNT (set, or as the
+printer was found to speak when the setting says `auto`) and names the printers that take its tickets when
+it fails, in order. `POS_PRINTERS` (name=host[:port][/dialect], e.g.
 `kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`) seeds a hub whose setting is still empty.
 
-Routing: a line prints at the printer serving its station; the first printer also takes every station that
-has no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone, online, delivery,
+Routing: a line prints at the printer serving its station; a printer serving several stations prints their
+lines on one ticket, headed with every station's name; the first printer also takes every station that has
+no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone, online, delivery,
 catering) prints whole at the takeout station's printer too, for the bag to be packed and checked.
 
 A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
@@ -31,7 +33,7 @@ from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
-from .ticket import DIALECTS, Ticket, TicketLine, render
+from .ticket import AUTO, DIALECTS, Ticket, TicketLine, render
 
 LATE_AFTER_MS = 10 * 60 * 1000
 """An operation stamped this long before it arrives was queued through an outage, flagged or not."""
@@ -42,19 +44,28 @@ DEFAULT_LEAD_MINUTES = 15
 
 @dataclass(frozen=True)
 class Printer:
-    """One printer: `name` is the station it serves (its code, `wok1`), `fallbacks` the ids of the printers
-    that take its tickets when it does not answer, in order. `id` tells two printers on one station apart;
-    it is the name unless the setting gave one."""
+    """One printer: `name` is the station it serves (its code, `wok1`), the first of `stations` when it
+    serves several; `fallbacks` the ids of the printers that take its tickets when it does not answer, in
+    order. `id` tells two printers on one station apart; it is the name unless the setting gave one.
+    `dialect` is the language its tickets are rendered in; `language` is what the setting says, which may be
+    `auto` (the dialect is then the one the printer was found to speak, `detected`)."""
 
     name: str
     address: str  # host or host:port
     dialect: str = "escpos"
     fallbacks: tuple[str, ...] = ()
     id: str = ""
+    stations: tuple[str, ...] = ()
+    language: str = ""
+    detected: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
             object.__setattr__(self, "id", self.name)
+        if not self.stations:
+            object.__setattr__(self, "stations", (self.name,))
+        if not self.language:
+            object.__setattr__(self, "language", self.dialect)
 
     @property
     def station(self) -> str:
@@ -75,8 +86,10 @@ class Printer:
         return {
             "id": self.id,
             "station": self.name,
+            "stations": list(self.stations),
             "address": self.address,
-            "dialect": self.dialect,
+            "dialect": self.language,
+            "detected": self.detected,
             "fallbacks": list(self.fallbacks),
         }
 
@@ -87,17 +100,27 @@ def printers_from_env(value: str | None = None) -> list[Printer]:
 
 
 def printers_from_setting(setting: Mapping[str, Any]) -> list[Printer]:
-    """The printers as the `printers` setting holds them (checked by `pos.settings.clean_printers`)."""
-    return [
-        Printer(
-            name=str(p["station"]),
-            address=str(p["address"]),
-            dialect=str(p.get("dialect") or "escpos"),
-            fallbacks=tuple(str(f) for f in p.get("fallbacks", ())),
-            id=str(p.get("id") or p["station"]),
+    """The printers as the `printers` setting holds them (checked by `pos.settings.clean_printers`). One set
+    to `auto` prints in the language it was found to speak, and in ESC/POS, which most printers speak, until
+    it has been told."""
+    out = []
+    for p in setting.get("printers", ()):
+        stations = tuple(str(code) for code in p.get("stations") or (p["station"],))
+        language = str(p.get("dialect") or "escpos")
+        detected = p.get("detected") if p.get("detected") in DIALECTS else None
+        out.append(
+            Printer(
+                name=stations[0],
+                address=str(p["address"]),
+                dialect=(detected or "escpos") if language == AUTO else language,
+                fallbacks=tuple(str(f) for f in p.get("fallbacks", ())),
+                id=str(p.get("id") or stations[0]),
+                stations=stations,
+                language=language,
+                detected=detected,
+            )
         )
-        for p in setting.get("printers", ())
-    ]
+    return out
 
 
 def is_to_go(state: OrderState) -> bool:
@@ -292,11 +315,18 @@ class PrintService:
     def printer(self, name: str) -> Printer | None:
         """By id, else the first printer on the station of that name."""
         printers = self.printers
-        return next((p for p in printers if p.id == name), None) or next((p for p in printers if p.name == name), None)
+        by_id = next((p for p in printers if p.id == name), None)
+        return by_id or next((p for p in printers if name in p.stations), None)
 
     def station_name(self, code: str) -> str:
         names = self.station_names() if self.station_names is not None else {}
         return names.get(code) or code
+
+    def head(self, printer: Printer) -> str:
+        """What heads the printer's tickets: its station's name, or every one's when it serves several
+        ("Wok 1 + Wok 2"; past three, "Wok 1 + 3 more")."""
+        names = [self.station_name(code) for code in printer.stations]
+        return " + ".join(names) if len(names) <= 3 else f"{names[0]} + {len(names) - 1} more"
 
     def on_ops(self, ops_of: Callable[[str], list[Op]], ops: list[Op]) -> list[PrintJob]:
         """Called after operations are stored. Each order's tickets come from comparing the order before and
@@ -345,7 +375,7 @@ class PrintService:
                 state,
                 sent,
                 voided,
-                station=self.station_name(printer.name),
+                station=self.head(printer),
                 ticket_no=ticket_no,
                 routes=routes,
                 late=late,
@@ -358,17 +388,18 @@ class PrintService:
         return jobs
 
     def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Callable[[str | None], bool]]]:
-        """Which lines each printer takes, by station: a printer takes its own station (the first printer on
-        a station, when two share one); the first printer in the list also takes every station without a
+        """Which lines each printer takes, by station: a printer takes its own stations (the first printer on
+        a station, when two list one); the first printer in the list also takes every station without a
         printer and lines with none, so nothing fired is left unprinted; and the takeout station's printer
         takes every line of a to-go order, whole, for the bag."""
         served: dict[str, Printer] = {}
         for printer in printers:
-            served.setdefault(printer.name, printer)
+            for station in printer.stations:
+                served.setdefault(station, printer)
         takeout = self.takeout_station() if to_go else None
         out = []
         for i, printer in enumerate(printers):
-            own = {printer.name} if served[printer.name] is printer else set()
+            own = {station for station in printer.stations if served[station] is printer}
             first = i == 0
             everything = takeout is not None and printer is served.get(takeout)
             out.append((printer, self._takes(own, first=first, served=set(served), everything=everything)))

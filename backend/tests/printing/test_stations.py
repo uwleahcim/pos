@@ -70,8 +70,24 @@ def test_the_setting_names_each_printer_and_checks_its_fallbacks():
     )
     assert cleaned == {
         "printers": [
-            {"id": "p1", "station": "wok1", "address": "172.19.1.162", "dialect": "escpos", "fallbacks": []},
-            {"id": "bar", "station": "bar", "address": "172.19.1.14:9100", "dialect": "star", "fallbacks": ["p1"]},
+            {
+                "id": "p1",
+                "station": "wok1",
+                "stations": ["wok1"],
+                "address": "172.19.1.162",
+                "dialect": "escpos",
+                "detected": None,
+                "fallbacks": [],
+            },
+            {
+                "id": "bar",
+                "station": "bar",
+                "stations": ["bar"],
+                "address": "172.19.1.14:9100",
+                "dialect": "star",
+                "detected": None,
+                "fallbacks": ["p1"],
+            },
         ],
         "takeout_station": None,
     }
@@ -93,6 +109,93 @@ def test_the_setting_names_each_printer_and_checks_its_fallbacks():
         clean_printers({"printers": [{"address": "10.0.0.1"}]})
 
 
+def test_a_printer_may_print_for_several_stations_and_an_address_is_one_printer():
+    cleaned = clean_printers(
+        {
+            "printers": [
+                {"stations": ["wok", " sushi ", "wok", ""], "address": "10.27.1.14"},
+                {"station": "bar", "stations": [], "address": "10.27.1.166", "dialect": "star"},
+            ]
+        }
+    )
+    line, bar = cleaned["printers"]
+    assert (line["station"], line["stations"]) == ("wok", ["wok", "sushi"])  # an older app reads the first
+    assert (bar["station"], bar["stations"]) == ("bar", ["bar"])
+    printers = printers_from_setting(cleaned)
+    assert [(p.name, p.stations) for p in printers] == [("wok", ("wok", "sushi")), ("bar", ("bar",))]
+    assert printers[0].as_setting() == line
+    assert Printer("wok", "10.0.0.1").stations == ("wok",)  # one made by hand serves the station it is named for
+    with pytest.raises(ValueError, match="same address, 10.27.1.14: one printer prints for several stations"):
+        clean_printers(
+            {"printers": [{"station": "wok", "address": "10.27.1.14"}, {"station": "sushi", "address": "10.27.1.14"}]}
+        )
+    with pytest.raises(ValueError, match="short code"):
+        clean_printers({"printers": [{"stations": ["wok", "sushi bar"], "address": "10.0.0.1"}]})
+    with pytest.raises(ValueError, match="list of station codes"):
+        clean_printers({"printers": [{"stations": "wok", "address": "10.0.0.1"}]})
+
+
+def test_a_printer_set_to_auto_prints_in_the_language_it_was_found_to_speak(monkeypatch):
+    cleaned = clean_printers(
+        {
+            "printers": [
+                {"station": "wok", "address": "10.27.1.166", "dialect": "auto", "detected": "star"},
+                {"station": "bar", "address": "10.27.1.14", "dialect": "auto"},
+                {"station": "sushi", "address": "10.27.1.15", "dialect": "escpos", "detected": "dotmatrix"},
+            ]
+        }
+    )
+    assert [(p["dialect"], p["detected"]) for p in cleaned["printers"]] == [
+        ("auto", "star"),
+        ("auto", None),
+        ("escpos", None),  # what it was found to speak is one of the languages, or nothing
+    ]
+    star, unknown, epson = printers_from_setting(cleaned)
+    assert (star.dialect, star.language, star.detected) == ("star", "auto", "star")
+    assert (unknown.dialect, unknown.language) == ("escpos", "auto")  # ESC/POS until it has been told
+    assert (epson.dialect, epson.language) == ("escpos", "escpos")
+    assert star.as_setting() == cleaned["printers"][0]  # the setting keeps "auto", not what it resolved to
+    monkeypatch.setenv("POS_PRINT_DIRECT", "0")
+    monkeypatch.delenv("POS_PRINTERS", raising=False)
+    c = TestClient(create_app(OpStore(physical=lambda: T0), menu=menu_with_takeout(), settings=SettingStore()))
+    saved = c.put("/settings/printers", json=cleaned, headers=manager(c)).json()
+    assert [(p["dialect"], p["detected"]) for p in saved["printers"]][:2] == [("auto", "star"), ("auto", None)]
+    assert [p["dialect"] for p in c.get("/print/printers").json()["printers"]] == ["star", "escpos", "escpos"]
+
+
+def test_a_printer_serving_two_stations_prints_their_dishes_on_one_ticket():
+    line, bar = FakePrinter("epson"), FakePrinter("epson")
+    try:
+        printing = PrintService(
+            [Printer("wok", line.address, id="p1", stations=("wok", "sushi")), Printer("bar", bar.address, id="p2")]
+        )
+        c = app_with(printing)
+        by_code = {s["code"]: s for s in c.get("/print/stations").json()["stations"]}
+        assert by_code["wok"]["printer"] == "p1" and by_code["sushi"]["printer"] == "p1"
+        assert "sushi" not in c.get("/print/stations").json()["missing"]
+        assert c.get("/print/printers").json()["printers"][0]["stations"] == ["wok", "sushi"]
+        rice = {"variant_id": "GTC:quart", "entry_id": "dinner:87", "selections": []}
+        c.post(
+            "/orders/o1/ops",
+            json=[
+                payload("a", "create", 0, table="12"),
+                payload("b", "add_line", 1, line_id="L1", item="?", request=rice),
+                payload("c", "add_line", 2, line_id="L2", item="?", request={"variant_id": "CALROLL:roll"}),
+                payload("d", "fire", 3, course="*"),
+            ],
+        )
+        wait_for(lambda: len(line.jobs) == 1)
+        ticket = decode(line.jobs[0])
+        assert ticket.text[0] == "WOK + SUSHI BAR" and ticket.cuts == 1  # one ticket, headed with both
+        assert [j["job_id"] for j in c.get("/print/jobs").json()["jobs"]] == ["d:p1"] and bar.jobs == []
+        assert c.post("/print/test", json={"printer": "sushi"}).status_code == 202  # by any of its stations
+        wait_for(lambda: len(line.jobs) == 2)
+        assert printing.head(Printer("a", "x", stations=("wok", "sushi", "bar", "takeout"))) == "Wok + 3 more"
+    finally:
+        line.close()
+        bar.close()
+
+
 def test_the_env_seeds_a_hub_until_a_manager_saves_printers(monkeypatch):
     monkeypatch.setenv("POS_PRINTERS", "kitchen=172.19.1.162/escpos,bar=172.19.1.14/star")
     monkeypatch.setenv("POS_PRINT_DIRECT", "0")
@@ -102,8 +205,10 @@ def test_the_env_seeds_a_hub_until_a_manager_saves_printers(monkeypatch):
     assert seeded["printers"][1] == {
         "id": "bar",
         "station": "bar",
+        "stations": ["bar"],
         "address": "172.19.1.14",
         "dialect": "star",
+        "detected": None,
         "fallbacks": [],
     }
     assert [p["name"] for p in c.get("/print/printers").json()["printers"]] == ["kitchen", "bar"]
