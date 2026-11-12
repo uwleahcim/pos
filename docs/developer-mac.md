@@ -10,7 +10,7 @@ Every version here comes from the repository, so the new Mac builds what CI buil
 | What | Version | Where it is pinned |
 | --- | --- | --- |
 | Xcode | The current one (27 at the time of writing) | The app builds for iOS 15 and macOS 12 or later (`apps/pos_app/ios`, `apps/pos_app/macos`) |
-| Flutter | The stable channel (3.47 at the time of writing), with Dart 3.13.7 or later | `apps/pos_app/pubspec.yaml` (`sdk: ^3.13.7`), `pubspec.lock` (`flutter: ">=3.44.0"`); CI installs `channel: stable` |
+| Flutter | The stable channel (3.47 at the time of writing), with Dart 3.13.7 or later | `apps/pos_app/pubspec.yaml` (`sdk: ^3.13.7`), `pubspec.lock` (`flutter: ">=3.44.0"`); CI installs stable 3.47.x: Flutter 3.50 (2026-11-11) deprecates `package:flutter/material.dart` for `package:material_ui`, which builds and runs but fails CI's `flutter analyze` until the app's imports move |
 | Android Studio | The current one, for the Android SDK and its own Java (17 or later) | `android/settings.gradle.kts` (Android Gradle plugin 9.1.0, Kotlin 2.4.0), `gradle-wrapper.properties` (Gradle 9.3.1), `app/build.gradle.kts` (Java 17); CI builds with Temurin 17 |
 | Python | 3.12, with uv for the environment | `backend/pyproject.toml` (`requires-python >= 3.12`); CI and the hub image run 3.12 |
 | ruff, pytest, Hypothesis | Current, from the `dev` extra | `backend/pyproject.toml`; CI runs `ruff check .` and `pytest` |

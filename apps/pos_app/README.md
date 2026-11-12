@@ -49,9 +49,10 @@ Two ways to put the app on a Galaxy tablet or phone. Neither needs a signing key
 debug key (the TODO in `android/app/build.gradle.kts`), which is fine for the restaurant's own devices.
 
 1. **No cable: the APK that CI builds.** Every push to main builds `app-release.apk` (64-bit ARM, which every
-   Galaxy tablet and phone is) and keeps it for 30 days as the `pos-app-apk` artifact of the `ci` workflow; a pull
-   request builds it only when it touches the Android project, and Actions, ci, **Run workflow** builds one from
-   any branch on demand. On the tablet, signed in to GitHub, open the latest green run under
+   Galaxy tablet and phone is) and keeps it for a week as the `pos-app-apk` artifact of the `ci` workflow; a pull
+   request builds it only when it touches the Android project (kept a day), and Actions, ci, **Run workflow**
+   builds one from any branch on demand. A run that says **APK built but not kept** found the account's artifact
+   storage full: free some under the account's Billing settings and run the workflow again. On the tablet, signed in to GitHub, open the latest green run under
    Actions, download the artifact (a zip), open it from My Files and tap the APK inside. Android asks once to let
    that app install unknown apps. A Samsung with Auto Blocker on (Settings, Security and privacy) refuses the
    install until it is off.

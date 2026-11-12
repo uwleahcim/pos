@@ -157,10 +157,19 @@ class StationList {
 }
 
 /// A printer the hub found on the LAN, or the answer about one address: whether it answers on port 9100,
-/// which language it spoke (null when it could not be told) and the model and maker it gave.
+/// which language it spoke (null when it could not be told), the model and maker it gave, and whether it is
+/// a receipt printer at all ([kind] `other`: it has a name and speaks neither language, an office printer).
 @immutable
 class FoundPrinter {
-  const FoundPrinter({required this.address, this.reachable = true, this.dialect, this.model, this.maker});
+  const FoundPrinter({
+    required this.address,
+    this.reachable = true,
+    this.dialect,
+    this.model,
+    this.maker,
+    this.kind,
+    this.guessed = false,
+  });
 
   factory FoundPrinter.fromJson(Map<String, dynamic> json) => FoundPrinter(
     address: json['address'] as String? ?? '',
@@ -168,6 +177,8 @@ class FoundPrinter {
     dialect: json['dialect'] as String?,
     model: json['model'] as String?,
     maker: json['maker'] as String?,
+    kind: json['kind'] as String?,
+    guessed: json['guessed'] as bool? ?? false,
   );
 
   final String address;
@@ -175,12 +186,23 @@ class FoundPrinter {
   final String? dialect;
   final String? model;
   final String? maker;
+  final String? kind;
 
-  /// One line about it: "TM-T88VII · ESC/POS", "Star (StarPRNT)", "answers, language unknown".
+  /// The language comes from the printer's name, not from an answer on its port.
+  final bool guessed;
+
+  /// Tickets cannot be printed on it: it answers on the printer port and is something else.
+  bool get other => kind == 'other';
+
+  /// "EPSON TM-T88VII", "Canon MF644C"; empty when it gave no name.
+  String get name => [maker, model].whereType<String>().where((s) => s.isNotEmpty).join(' ');
+
+  /// One line about it: "EPSON TM-T88VII · ESC/POS", "Star (StarPRNT)", "Canon MF644C · not a receipt printer".
   String get line {
     if (!reachable) return 'does not answer';
-    final language = dialect == null ? 'language unknown: pick it' : dialectLabels[dialect] ?? dialect!;
-    final name = [maker, model].whereType<String>().where((s) => s.isNotEmpty).join(' ');
+    if (other) return '$name · not a receipt printer';
+    var language = dialect == null ? 'language unknown: pick it' : dialectLabels[dialect] ?? dialect!;
+    if (guessed) language = '$language, going by its name';
     return name.isEmpty ? language : '$name · $language';
   }
 }

@@ -138,6 +138,8 @@ void main() {
         {'address': '172.19.1.162', 'reachable': true, 'dialect': 'escpos', 'model': 'TM-T88VII', 'maker': 'EPSON'},
         {'address': '172.19.1.14', 'reachable': true, 'dialect': 'star', 'model': null, 'maker': null},
         {'address': '172.19.1.90', 'reachable': true, 'dialect': null, 'model': null, 'maker': null},
+        {'address': '172.19.1.91', 'dialect': 'star', 'model': 'mC-Print3', 'kind': 'receipt', 'guessed': true},
+        {'address': '172.19.1.30', 'dialect': null, 'model': 'MF644C', 'maker': 'Canon', 'kind': 'other'},
       ];
     });
     expect(find.textContaining('No printer yet.'), findsOneWidget);
@@ -145,10 +147,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(t.hub.scans.single['addresses'], contains('172.19.1.44')); // this terminal's address names the subnet
     expect(t.hub.scans.single['addresses'], contains('hub')); // and the hub's
-    expect(find.text('3 printers on the network'), findsOneWidget);
+    expect(find.text('5 printers on the network'), findsOneWidget);
     expect(find.text('EPSON TM-T88VII · ESC/POS (Epson and most)'), findsOneWidget);
     expect(find.text('Star (StarPRNT)'), findsOneWidget);
     expect(find.text('language unknown: pick it'), findsOneWidget);
+    expect(find.text('mC-Print3 · Star (StarPRNT), going by its name'), findsOneWidget);
+    // the office printer answers on the printer port too: it is named, and not offered for tickets
+    expect(find.text('Canon MF644C · not a receipt printer'), findsOneWidget);
+    expect(find.byKey(const ValueKey('found-add:172.19.1.30')), findsNothing);
+    expect(find.byKey(const ValueKey('found-add:172.19.1.90')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('found-add:172.19.1.14')));
     await tester.pumpAndSettle();

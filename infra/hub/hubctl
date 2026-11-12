@@ -55,7 +55,8 @@ case "${1:-status}" in
     ;;
   print)
     # hubctl print 172.19.1.162 demo   (kitchen ticket, 80 mm)   |   hubctl print 172.19.1.162 drawer
-    [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer] [escpos|star]" >&2; exit 2; }
+    # hubctl print 172.19.1.162 identify   what the printer is and each answer it gave; prints nothing on paper
+    [[ $# -ge 2 ]] || { echo "usage: hubctl print <printer-ip[:port]> [demo|ascii|drawer|identify] [escpos|star]" >&2; exit 2; }
     compose exec -T api python -m pos.printing --printer "$2" --dialect "${4:-escpos}" "${3:-demo}"
     ;;
   menu)

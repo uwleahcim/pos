@@ -74,6 +74,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # 3.50 deprecates package:flutter/material.dart, and Analyze fails on the notice in every file:
+          # held at 3.47 until the app moves to package:material_ui (docs/developer-mac.md).
+          flutter-version: 3.47.x
           cache: true
       - name: Packages
         run: flutter pub get
@@ -128,18 +131,31 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # 3.50 deprecates package:flutter/material.dart, and Analyze fails on the notice in every file:
+          # held at 3.47 until the app moves to package:material_ui (docs/developer-mac.md).
+          flutter-version: 3.47.x
           cache: true
       - run: flutter pub get
       - name: Build Android (debug-signed APK, 64-bit ARM)
         # Every Galaxy tablet and phone the restaurant would install it on is arm64; the 32-bit ARM and x86_64
         # builds of a fat APK would triple the native compile for nothing.
         run: flutter build apk --release --target-platform android-arm64
-      # The APK stays with the run for 30 days: Actions, the run, Artifacts, pos-app-apk. Install it on a tablet or
-      # phone from there (apps/pos_app/README.md, "Android tablets and phones").
+      # The APK stays with the run: Actions, the run, Artifacts, pos-app-apk. Install it on a tablet or phone from
+      # there (apps/pos_app/README.md, "Android tablets and phones"). A week for main and a run on demand, a day
+      # for a pull request: at 59 MB each, a month of them used up the account's artifact storage, and GitHub
+      # then refuses every upload. The build above is the check, so a refused upload warns and does not fail.
       - name: Keep the APK
+        id: keep
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: pos-app-apk
           path: apps/pos_app/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 30
+          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
           if-no-files-found: error
+      - name: Say so when the APK could not be kept
+        if: steps.keep.outcome == 'failure'
+        run: >-
+          echo "::warning title=APK built but not kept::GitHub refused the upload (see the Keep the APK step; the
+          account's Actions artifact storage is most likely used up). Free storage or raise the Actions budget
+          under the account's Billing settings, then run this workflow again on demand."

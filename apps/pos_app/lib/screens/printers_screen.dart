@@ -449,7 +449,8 @@ class _PrintersScreenState extends State<PrintersScreen> {
     );
   }
 
-  /// The printers the hub found on the LAN, each with an Add button (or the station it already prints for).
+  /// What the hub found on the LAN: each receipt printer with an Add button (or the station it already
+  /// prints for), and whatever else answers on the printer port by its name, so it is not a mystery.
   Widget _foundCard(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
@@ -473,6 +474,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
               subtitle: Text(found.line, style: theme.textTheme.bodySmall),
               trailing: switch (_rows.where((r) => r.address.text.trim() == found.address).firstOrNull) {
                 final row? => Text(_nameOf(row.station).isEmpty ? 'Added' : _nameOf(row.station)),
+                null when found.other => null, // an office printer: listed so it is not a mystery, not offered
                 null => TextButton(
                   key: ValueKey('found-add:${found.address}'),
                   onPressed: () => _add(address: found.address, dialect: found.dialect, identity: found),
@@ -680,7 +682,9 @@ class _PrintersScreenState extends State<PrintersScreen> {
                           'asks the printer itself.',
                 key: ValueKey('printer-identity:${row.id}'),
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: identity != null && !identity.reachable ? scheme.error : scheme.onSurfaceVariant,
+                  color: identity != null && (!identity.reachable || identity.other)
+                      ? scheme.error
+                      : scheme.onSurfaceVariant,
                 ),
               ),
             ),

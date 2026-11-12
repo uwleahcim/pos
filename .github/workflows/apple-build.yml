@@ -18,6 +18,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # 3.50 deprecates package:flutter/material.dart, and Analyze fails on the notice in every file:
+          # held at 3.47 until the app moves to package:material_ui (docs/developer-mac.md).
+          flutter-version: 3.47.x
           cache: true
       - run: flutter pub get
       - name: Build macOS
