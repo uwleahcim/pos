@@ -16,6 +16,19 @@ import 'printers.dart';
 import 'settings.dart';
 import 'takeout.dart';
 
+/// Worker: the `/menu/items` answer split into one JSON text per dish, under the name [PosApi.item] reads
+/// it back by, with the menu revision the answer carries. Decoding ten megabytes and encoding each dish
+/// again takes long enough to be felt, so it runs off the UI thread (`compute`).
+(int, Map<String, String>) splitItems((String, String) bodyAndLocale) {
+  final (body, locale) = bodyAndLocale;
+  final json = jsonDecode(body) as Map<String, dynamic>;
+  final items = (json['items'] as List).cast<Map<String, dynamic>>();
+  return (
+    json['revision'] as int? ?? 0,
+    {for (final d in items) PosApi._itemName(d['item'] as String, d['entry_id'] as String?, locale): jsonEncode(d)},
+  );
+}
+
 /// One line of an order, exactly as the backend reports it.
 class Line {
   const Line({
@@ -513,7 +526,7 @@ class PosApi {
   /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
   /// no backend works a new check's tax from. Null until a check has been read on this device.
   Check? get savedTaxes {
-    final json = cache?.get('taxes');
+    final json = cache?.peek('taxes');
     if (json == null) return null;
     return Check(
       lines: const [],
@@ -550,22 +563,40 @@ class PosApi {
     } on ApiException catch (err) {
       if (err.status != null || cache == null) rethrow;
       final any = cache!.names('item:$itemId|').firstOrNull;
-      if (any == null) rethrow;
-      return ItemDetail.fromJson(cache!.get(any)!);
+      final saved = any == null ? null : await cache!.get(any);
+      if (saved == null) rethrow;
+      return ItemDetail.fromJson(saved);
     }
   }
 
-  /// Saves every dish's sizes and choices with the menu, in one read, so a dish can still be configured
-  /// when no backend answers. Returns how many were saved; nothing without a cache.
-  Future<int> prefetchItems({String channel = 'pos', String locale = 'en'}) async {
-    if (cache == null) return 0;
-    final json = await _get(
+  /// Saves every dish's sizes and choices, in one read, so a dish can still be configured when no backend
+  /// answers: once per menu [revision] per device, since the cache keeps the revision whose dishes it has,
+  /// however many screens ask (one read at a time; a second screen asking meanwhile gets the same read).
+  /// With this menu that is 559 dishes and over ten megabytes, so the answer is split and encoded off the
+  /// UI thread, and nothing is downloaded at all when the dishes of this revision are already here. Returns
+  /// how many were saved; nothing without a cache.
+  Future<int> prefetchItems({required int revision, String channel = 'pos', String locale = 'en'}) {
+    final cache = this.cache;
+    if (cache == null || cache.itemsRevision(channel: channel, locale: locale) == revision) return Future.value(0);
+    return _prefetching ??= _prefetchItems(cache, channel, locale).whenComplete(() => _prefetching = null);
+  }
+
+  Future<int>? _prefetching;
+
+  Future<int> _prefetchItems(ReadCache cache, String channel, String locale) async {
+    final body = await _getText(
       '/menu/items',
       query: {'channel': channel, 'locale': locale},
       timeout: const Duration(seconds: 15),
     );
-    final items = (json['items'] as List).cast<Map<String, dynamic>>();
-    await cache!.putAll({for (final d in items) _itemName(d['item'] as String, d['entry_id'] as String?, locale): d});
+    final (int, Map<String, String>) split;
+    try {
+      split = await compute(splitItems, (body, locale));
+    } on FormatException catch (err) {
+      throw ApiException('unreadable answer: $err');
+    }
+    final (revision, items) = split;
+    await cache.saveItems(items, revision: revision, channel: channel, locale: locale);
     return items.length;
   }
 
@@ -580,7 +611,7 @@ class PosApi {
       return json;
     } on ApiException catch (err) {
       if (err.status != null) rethrow;
-      final saved = cache?.get(name);
+      final saved = await cache?.get(name);
       if (saved == null) rethrow;
       return saved;
     }
@@ -767,6 +798,17 @@ class PosApi {
     timeout: timeout,
   );
 
+  /// A read whose body is handed over as it came, undecoded, for an answer too big to decode on the UI
+  /// thread (every dish's choices at once).
+  Future<String> _getText(String path, {Map<String, String>? query, Duration? timeout}) async {
+    final response = await _send(
+      (base) => _client.get(Uri.parse('$base$path').replace(queryParameters: query)),
+      timeout: timeout,
+    );
+    if (response.statusCode >= 400) throw _refused(response);
+    return response.body;
+  }
+
   Future<Map<String, dynamic>> _post(String path, Object body, {Map<String, String>? headers, Duration? timeout}) =>
       _withFailover(
         (base) => _client.post(
@@ -795,6 +837,19 @@ class PosApi {
     Future<http.Response> Function(String base) send, {
     Duration? timeout,
   }) async {
+    final response = await _send(send, timeout: timeout);
+    if (response.statusCode >= 400) throw _refused(response);
+    if (response.body.isEmpty) return <String, dynamic>{};
+    try {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on FormatException catch (err) {
+      throw ApiException('unreadable answer: $err');
+    }
+  }
+
+  /// The answer of the first backend that answers at all (a refusal is an answer): the one that answered
+  /// last first, then the others in the configured order.
+  Future<http.Response> _send(Future<http.Response> Function(String base) send, {Duration? timeout}) async {
     Object? lastError;
     for (final base in _candidates()) {
       try {
@@ -804,18 +859,7 @@ class PosApi {
           continue;
         }
         if (connection.value.endpoint != base) _become(Connection(endpoint: base));
-        final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
-        if (response.statusCode >= 400) {
-          final detail = decoded is Map ? decoded['detail'] : null;
-          throw ApiException(
-            _detail(decoded),
-            status: response.statusCode,
-            detail: detail is Map ? detail.cast<String, dynamic>() : null,
-          );
-        }
-        return decoded as Map<String, dynamic>;
-      } on ApiException {
-        rethrow;
+        return response;
       } catch (err) {
         lastError = err;
       }
@@ -823,6 +867,22 @@ class PosApi {
     final message = settings.endpoints.isEmpty ? 'no backend address configured' : 'no backend answers: $lastError';
     _become(Connection(error: message, capturing: cache?.hasMenu ?? false));
     throw ApiException(message);
+  }
+
+  /// What a backend that read a request and refused it (4xx) said.
+  static ApiException _refused(http.Response response) {
+    Object? decoded;
+    try {
+      decoded = response.body.isEmpty ? null : jsonDecode(response.body);
+    } on FormatException {
+      decoded = null;
+    }
+    final detail = decoded is Map ? decoded['detail'] : null;
+    return ApiException(
+      _detail(decoded),
+      status: response.statusCode,
+      detail: detail is Map ? detail.cast<String, dynamic>() : null,
+    );
   }
 
   /// Moves to `next`, keeping `since` while the state is the same one (another failed poll, say).

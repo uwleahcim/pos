@@ -44,6 +44,18 @@ def test_append_read_and_pull():
     assert client.get("/orders", params={"status": "weird"}).status_code == 422
 
 
+def test_big_reads_come_compressed_for_a_client_that_accepts_it():
+    """The app saves every dish's choices in one read (over ten megabytes for the restaurant's menu): a few
+    hundred kilobytes over the wire when the client accepts gzip, and the same bytes as ever when it does not."""
+    client = TestClient(create_app(OpStore(physical=lambda: T0)))
+    compressed = client.get("/menu/items", headers={"accept-encoding": "gzip"})
+    assert compressed.status_code == 200 and compressed.headers["content-encoding"] == "gzip"
+    plain = client.get("/menu/items", headers={"accept-encoding": "identity"})
+    assert plain.status_code == 200 and "content-encoding" not in plain.headers
+    assert compressed.json() == plain.json()
+    assert client.get("/health", headers={"accept-encoding": "gzip"}).headers.get("content-encoding") is None
+
+
 def test_bad_ops_are_refused():
     client = TestClient(create_app(OpStore(physical=lambda: T0)))
     nameless = {**payload("n", "create", 0), "device": "", "hlc": str(HLC(T0, 0, ""))}
