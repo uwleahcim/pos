@@ -157,6 +157,121 @@ void main() {
     expect(find.byKey(const ValueKey('fallback:wok:sushi')), findsOneWidget);
   });
 
+  testWidgets('a fallback that would go round in a loop cannot be picked, and says why', (tester) async {
+    final t = await pumpPrinters(tester, (hub) {
+      hub.printers = {
+        'printers': [
+          {
+            'id': 'wok',
+            'station': 'wok1',
+            'address': '10.0.0.1',
+            'dialect': 'escpos',
+            'fallbacks': ['bar'],
+          },
+          {'id': 'bar', 'station': 'bar', 'address': '10.0.0.2', 'dialect': 'star', 'fallbacks': []},
+          {'id': 'sushi', 'station': 'sushi', 'address': '10.0.0.3', 'dialect': 'escpos', 'fallbacks': []},
+        ],
+        'takeout_station': null,
+        'source': 'settings',
+      };
+      hub.stations = {
+        'stations': [
+          station('wok1', 'Wok 1', dishes: 1, printer: 'wok'),
+          station('bar', 'Bar', dishes: 1, printer: 'bar'),
+          station('sushi', 'Sushi bar', dishes: 1, printer: 'sushi'),
+        ],
+        'missing': [],
+        'takeout_station': null,
+      };
+    });
+    // the wok falls back to the bar, so the bar cannot fall back to the wok: it is listed, greyed, with why
+    await tester.tap(find.byKey(const ValueKey('fallback-add:bar')));
+    await tester.pumpAndSettle();
+    expect(find.text('would loop back here'), findsOneWidget);
+    await tester.tap(find.text('Wok 1').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fallback:bar:wok')), findsNothing); // not picked: the list is still open
+    await tester.tap(find.text('Sushi bar').last); // the sushi bar falls back to nobody: no loop
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fallback:bar:sushi')), findsOneWidget);
+
+    // now the wok reaches the sushi bar through the bar, so the sushi bar can take neither of them
+    await tester.tap(find.byKey(const ValueKey('fallback-add:sushi')));
+    await tester.pumpAndSettle();
+    expect(find.text('would loop back here'), findsOneWidget); // the bar
+    expect(find.text('would loop back here through Bar'), findsOneWidget); // the wok
+    await tester.tap(find.text('Wok 1').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fallback:sushi:wok')), findsNothing);
+    await tester.tapAt(const Offset(5, 5)); // the list is put away
+    await tester.pumpAndSettle();
+    // the wok may still take the sushi bar as a second fallback: that is a chain, not a loop
+    await tester.tap(find.byKey(const ValueKey('fallback-add:wok')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('would loop'), findsNothing);
+    await tester.tap(find.text('Sushi bar').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('printers-save')));
+    await tester.pumpAndSettle();
+    final saved = PrinterSettings.fromJson(t.hub.printers);
+    expect(saved.printers.map((p) => (p.id, p.fallbacks.join('+'))), [
+      ('wok', 'bar+sushi'),
+      ('bar', 'sushi'),
+      ('sushi', ''),
+    ]);
+  });
+
+  testWidgets('a loop saved before is marked on its cards and is not saved again', (tester) async {
+    final t = await pumpPrinters(tester, (hub) {
+      hub.printers = {
+        'printers': [
+          {
+            'id': 'wok',
+            'station': 'wok1',
+            'address': '10.0.0.1',
+            'dialect': 'escpos',
+            'fallbacks': ['bar'],
+          },
+          {
+            'id': 'bar',
+            'station': 'bar',
+            'address': '10.0.0.2',
+            'dialect': 'star',
+            'fallbacks': ['wok'],
+          },
+        ],
+        'takeout_station': null,
+        'source': 'settings',
+      };
+      hub.stations = {
+        'stations': [
+          station('wok1', 'Wok 1', dishes: 1, printer: 'wok'),
+          station('bar', 'Bar', dishes: 1, printer: 'bar'),
+        ],
+        'missing': [],
+        'takeout_station': null,
+      };
+    });
+    expect(find.text('Bar printer · 10.0.0.2 · loops back here'), findsOneWidget);
+    expect(find.text('Wok 1 printer · 10.0.0.1 · loops back here'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('printers-save')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'The fallbacks go round in a loop: the Wok 1 printer falls back to the Bar printer, which falls back to '
+        'the Wok 1 printer. Take one of them out.',
+      ),
+      findsOneWidget,
+    );
+    expect(t.hub.printersAuth, isNull); // the hub was not asked to keep it
+    await tester.tap(find.byKey(const ValueKey('fallback-delete:bar:wok')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('loops back here'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('printers-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Printers saved'), findsOneWidget);
+  });
+
   testWidgets('a scan lists the printers on the network, and Add takes the address and the language', (tester) async {
     final t = await pumpPrinters(tester, (hub) {
       hub.found = [
