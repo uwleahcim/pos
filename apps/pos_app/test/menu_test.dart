@@ -16,6 +16,7 @@ Map<String, dynamic> fixture(String name) =>
     jsonDecode(File('test/fixtures/$name.json').readAsStringSync()) as Map<String, dynamic>;
 
 void main() {
+  _platterTests();
   test('the menu parses with sections, two languages and one-tap entries', () {
     final menus = (fixture('menu')['menus'] as List).map((m) => Menu.fromJson(m as Map<String, dynamic>)).toList();
     final entries = {
@@ -1063,4 +1064,52 @@ PosApi makiApi({bool quantity = false}) {
       return http.Response('{}', 404);
     }),
   );
+}
+
+/// The appetizer platter's group as the hub sends it: six of eight come with the dish, six it must be.
+GroupDetail _platter() => GroupDetail(
+  groupId: 'platter',
+  name: 'Platter',
+  minSelect: 6,
+  maxSelect: 6,
+  allowQuantity: true,
+  options: [
+    for (final (code, comesWith) in [
+      ('veg_spring_roll', false),
+      ('spring_roll', true),
+      ('chicken_wings', true),
+      ('chicken_fingers', true),
+      ('spare_ribs', false),
+      ('boneless_ribs', true),
+      ('beef_teriyaki', true),
+      ('crab_rangoon', true),
+    ])
+      OptionDetail(optionId: 'platter:$code', name: code, price: '0.00', isDefault: comesWith, status: 'available'),
+  ],
+);
+
+void _platterTests() {
+  test('the platter comes with its six chosen, and a "no" leaves a place for one more of another', () {
+    final platter = _platter();
+    final fingers = platter.options[3];
+    final choices = defaultChoices([platter]);
+    expect(choices.selections['platter'], hasLength(6));
+    expect(choices.units('platter'), 6);
+    expect(choicesComplete([platter], choices), isTrue);
+    expect(choices.room(platter), isFalse);
+    expect(choices.addOne(platter, fingers), isFalse); // six is six
+
+    choices.prefixes['platter:crab_rangoon'] = 'no';
+    expect(choices.taken('platter'), 5);
+    expect(choices.addOne(platter, fingers), isTrue);
+    expect(choices.taken('platter'), 6);
+    expect(choices.room(platter), isFalse);
+    expect(choicesComplete([platter], choices), isTrue);
+
+    // taken off outright instead: one short until something takes its place
+    final swapped = defaultChoices([platter])..removeOne(platter, 'platter:crab_rangoon');
+    expect(choicesComplete([platter], swapped), isFalse);
+    expect(swapped.addOne(platter, fingers), isTrue);
+    expect(choicesComplete([platter], swapped), isTrue);
+  });
 }

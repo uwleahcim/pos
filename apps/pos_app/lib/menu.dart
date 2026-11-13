@@ -282,8 +282,13 @@ class Choices {
   /// What a group's picks count for toward its least and most: each choice times how many of it.
   int units(String groupId) => (selections[groupId] ?? const <String>[]).fold(0, (n, id) => n + qty(id));
 
+  /// How many of a group's most its picks take up: a choice marked "no" takes no place, so the platter's crab
+  /// rangoon marked "no" leaves room for a second chicken finger.
+  int taken(String groupId) =>
+      (selections[groupId] ?? const <String>[]).fold(0, (n, id) => n + (prefixes[id] == 'no' ? 0 : qty(id)));
+
   /// Whether [group] has room for one more pick.
-  bool room(GroupDetail group) => group.maxSelect == null || units(group.groupId) < group.maxSelect!;
+  bool room(GroupDetail group) => group.maxSelect == null || taken(group.groupId) < group.maxSelect!;
 
   /// Whether one more of [option], already on the line, can go on it: the group takes quantities, has room,
   /// the option is under its own limit, and it is not marked "no" (none of it, however many).

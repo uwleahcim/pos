@@ -41,6 +41,13 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
   the tray a tap on a chosen button adds one more while the group has room. Each one counts toward the
   group's least and most and is charged. "No" still means none of it: tap No, then the choice ("NO Crab
   rangoon"). The kitchen reads the count in front: "NO RANGOON · 2x CHKN FINGR".
+- **A dish that comes with several things.** A group can need a number of picks and mark the ones the dish
+  comes with as defaults: the appetizer platters' Platter group needs six and comes with spring roll, chicken
+  wings, chicken fingers, boneless ribs, beef teriyaki and crab rangoon. The dish goes on the check with all
+  six chosen, the sheet shows them chosen with the count in the heading ("Platter (6/6)"), and the hub
+  refuses fewer or more. To swap, mark one "No" or take it off and tap another: a choice marked "No" takes
+  no place, so "NO Crab rangoon" leaves room for a second chicken finger. The kitchen and the check read
+  only the changes, and a default that was taken off reads as "NO" even when nobody tapped the word.
 - **The check.** The dish line is the full price, choices included. Each choice is its own line under the
   dish with what it changes ("+1.00"); a choice that is a dish shows what the slot charges for it; the
   choices on that dish follow one step further in, and so does a note made on it ("no sesame"). A default

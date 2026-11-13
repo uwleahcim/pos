@@ -189,29 +189,48 @@ def test_the_file_refuses_what_it_cannot_place():
         add_legacy(defs)
 
 
-def test_an_appetizer_platter_takes_none_of_one_thing_and_several_of_another():
-    """No crab rangoon, two chicken fingers and two spare ribs on the platter for two: the ticket and the check
-    read the count in front, the ribs are charged twice, and the sheet is told the group takes quantities."""
+def test_an_appetizer_platter_comes_with_its_six_and_swaps_one_for_another():
+    """The platter for two comes with six things, all chosen before anyone touches it. No crab rangoon, two
+    chicken fingers and spare ribs for the boneless: six again, the ticket and the check read only the changes
+    (the count in front, what was left off as NO), and the spare ribs are charged."""
     defs, _ = load_restaurant_menu()
     service = MenuService(defs)
     platter = next(g for g in service.item("A19")["groups"] if g["group_id"] == "platter")
     assert platter["allow_quantity"] is True and platter["options"][0]["max_qty"] is None
+    assert (platter["min_select"], platter["max_select"]) == (6, 6)
+    six = [o["option_id"].split(":")[1] for o in platter["options"] if o["is_default"]]
+    assert six == ["spring_roll", "chicken_wings", "chicken_fingers", "boneless_ribs", "beef_teriyaki", "crab_rangoon"]
+
+    def pick(*codes, **more):
+        return [{"group_id": "platter", "option_id": f"platter:{c}", **more} for c in codes]
+
     plain = service.priced({"variant_id": "A19:regular"})
+    assert plain["problems"] == [] and " · " not in plain["kitchen"][0]["text"]
+    sent = service.priced({"variant_id": "A19:regular", "selections": pick(*six)})  # as a screen sends it
+    assert sent["problems"] == [] and sent["kitchen"][0]["text"] == plain["kitchen"][0]["text"]
+
+    # the word No on the rangoon leaves its place free for a second chicken finger; spare ribs for boneless
     priced = service.priced(
         {
             "variant_id": "A19:regular",
-            "selections": [
-                {"group_id": "platter", "option_id": "platter:crab_rangoon", "prefix": "no"},
-                {"group_id": "platter", "option_id": "platter:chicken_fingers", "qty": 2},
-                {"group_id": "platter", "option_id": "platter:spare_ribs", "qty": 2},
-            ],
+            "selections": pick("spring_roll", "chicken_wings", "beef_teriyaki", "spare_ribs")
+            + pick("chicken_fingers", qty=2)
+            + pick("crab_rangoon", prefix="no"),
         }
     )
     assert priced["problems"] == []
-    assert D(priced["unit_price"]) - D(plain["unit_price"]) == D("4.00")
-    assert [(m["label"], m["kitchen_label"], m["price"], m["qty"]) for m in priced["modifiers"]] == [
-        ("NO Crab rangoon", "NO RANGOON", "0.00", 1),
-        ("2x Chicken fingers", "2x CHKN FINGR", "0.00", 2),
-        ("2x Spare ribs", "2x SPARE RIBS", "4.00", 2),
+    assert D(priced["unit_price"]) - D(plain["unit_price"]) == D("2.00")
+    changed = [(m["label"], m["kitchen_label"], m["price"]) for m in priced["modifiers"] if not m["defaulted"]]
+    assert changed == [
+        ("Spare ribs", "SPARE RIBS", "2.00"),
+        ("2x Chicken fingers", "2x CHKN FINGR", "0.00"),
+        ("NO Crab rangoon", "NO RANGOON", "0.00"),
+        ("NO Boneless ribs", "NO BONLES RIB", "0.00"),
     ]
-    assert priced["kitchen"][0]["text"].endswith("· NO RANGOON · 2x CHKN FINGR · 2x SPARE RIBS")
+    assert priced["kitchen"][0]["text"].endswith("· SPARE RIBS · 2x CHKN FINGR · NO RANGOON · NO BONLES RIB")
+
+    # six it is: five is one short, seven one too many
+    short = service.priced({"variant_id": "A19:regular", "selections": pick(*six[:5])})
+    assert [p["code"] for p in short["problems"]] == ["too_few"]
+    over = service.priced({"variant_id": "A19:regular", "selections": pick(*six, "veg_spring_roll")})
+    assert [p["code"] for p in over["problems"]] == ["too_many"]

@@ -138,6 +138,23 @@ def fill(merged: Definitions, bundled: Definitions) -> list[str]:
             continue
         merged.options[key] = replace(held_option, routes_to=wanted.routes_to)
         filled.append(f"option {key} also prints the dish at {wanted.routes_to}")
+    # A group the files now give a number of picks and the choices a dish comes with (the appetizer platter's
+    # six) takes them while the hub's group still has neither; one the editor set stays as it is.
+    for code, wanted_group in bundled.groups.items():
+        held_group = merged.groups.get(code)
+        if held_group is None or held_group.min_select or held_group.max_select is not None:
+            continue
+        comes_with = [o for o in bundled.options_of(code) if o.is_default and o.id in merged.options]
+        if not wanted_group.min_select or not comes_with or any(o.is_default for o in merged.options_of(code)):
+            continue
+        merged.groups[code] = replace(
+            held_group, min_select=wanted_group.min_select, max_select=wanted_group.max_select
+        )
+        for option in comes_with:
+            merged.options[option.id] = replace(merged.options[option.id], is_default=True)
+        filled.append(
+            f"group {code} takes {wanted_group.min_select}, comes with {', '.join(o.code for o in comes_with)}"
+        )
     return filled
 
 
