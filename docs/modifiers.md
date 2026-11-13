@@ -27,14 +27,17 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
   defaults are filled in, and only what they leave open is asked right under it, so a roll with a sauce to
   pick opens that one question under the roll (a block titled with the dish in the sheet, a tray button
   named "Kappa Maki · Sauce" in the tray), and a roll that needs nothing is simply chosen. A hold on the
-  chip or the tray button opens the dish's own sheet: every choice on it, as its tile would show them, and a
+  button or the tray button opens the dish's own sheet: every choice on it, as its tile would show them, and a
   note to the kitchen ("no sesame"), even when the dish has no choices at all; Done chooses the dish as made
-  there, and the chip shows a tune mark once the dish differs from how it comes. The line goes on the check
+  there, and the button shows a tune mark once the dish differs from how it comes. The line goes on the check
   only when every question down the levels is answered. Nesting goes as deep as the menu does (the hub stops
   at eight levels, and refuses a menu where a dish offers itself).
+- **Layout.** The item sheet shows a dish's sizes and choices as the menu shows categories and dishes: a
+  grid of buttons of the same shape, as many across as the screen takes, with the price in a badge. The tray
+  under the tiles uses the same buttons.
 - **Several of the same choice.** A group with "Several of the same option" switched on (the Platter group of
-  the appetizer platters, the add-ons) takes a count per choice. In the sheet a tap on a chosen chip adds one
-  more ("2x Chicken fingers") and the minus on the chip takes one off, the last one taking the choice off; in
+  the appetizer platters, the add-ons) takes a count per choice. In the sheet a tap on a chosen button adds one
+  more ("2x Chicken fingers") and the minus on the button takes one off, the last one taking the choice off; in
   the tray a tap on a chosen button adds one more while the group has room. Each one counts toward the
   group's least and most and is charged. "No" still means none of it: tap No, then the choice ("NO Crab
   rangoon"). The kitchen reads the count in front: "NO RANGOON · 2x CHKN FINGR".

@@ -138,8 +138,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
 
-    Finder chip(String label) => find.ancestor(of: find.textContaining(label), matching: find.byType(FilterChip));
-    bool selected(String label) => tester.widget<FilterChip>(chip(label)).selected;
+    Finder chip(String label) => find.ancestor(of: find.textContaining(label), matching: find.byType(ChoiceTile));
+    bool selected(String label) => tester.widget<ChoiceTile>(chip(label)).selected;
     expect(selected('Brown rice'), isTrue);
     expect(selected('White rice'), isFalse); // the line's choice, not the menu default
     expect(selected('Medium'), isFalse);
