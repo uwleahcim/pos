@@ -399,6 +399,7 @@ class MenuService:
                     "text": k.text,
                     "label": k.text.split(" ", 1)[-1].split(" · ")[0],  # without the count and modifiers
                     "labels": list(k.labels),
+                    "depths": list(k.depths),
                     "header": k.header,
                     "note": k.note,
                 }

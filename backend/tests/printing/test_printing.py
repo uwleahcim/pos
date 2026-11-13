@@ -182,3 +182,25 @@ def test_a_choice_that_is_a_dish_prints_under_the_dish_it_came_with():
     text = decode(render(ticket, beep=False)).text
     assert "    with L01 Sweet & Sour Chicken" in text
     assert text.index("1 x Miso Soup") < text.index("    with L01 Sweet & Sour Chicken") < text.index("2 x Wonton Soup")
+
+
+def test_a_choice_s_own_choices_print_on_the_lines_under_it_one_step_further_in():
+    """The spicy mayo on a roll of a combination stands under that roll, not in brackets after it."""
+    line = TicketLine(
+        1,
+        "Maki Combo",
+        modifiers=("Kappa Maki", "Tekka Maki", "Spicy mayo", "No wasabi", "Miso Soup"),
+        depths=(0, 0, 1, 1, 0),
+    )
+    old = TicketLine(1, "Lo Mein", modifiers=("Add shrimp", "Wings (Extra spicy)"))  # a line sold before this
+    text = decode(render(replace(DEMO, lines=(line, old)), beep=False)).text
+    rows = [row for row in text if "+ " in row]
+    assert rows == [
+        "    + Kappa Maki",
+        "    + Tekka Maki",
+        "        + Spicy mayo",
+        "        + No wasabi",
+        "    + Miso Soup",
+        "    + Add shrimp",
+        "    + Wings (Extra spicy)",
+    ]

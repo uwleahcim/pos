@@ -46,9 +46,10 @@ def test_dishes_price_and_route_to_their_stations():
         assert line.ok, line.problems
         return line
 
-    chicken = sell("C02:regular")  # the category's rice group defaults to white rice
+    chicken = sell("C02:regular")  # the category's rice group defaults to white rice, which the wok knows
     assert (chicken.line_total, chicken.kitchen_lines[0].station) == (D("17.95"), "wok1")
-    assert "White Rice" in chicken.kitchen_lines[0].text
+    assert chicken.modifiers[0].kitchen_label == "White Rice" and chicken.modifiers[0].defaulted
+    assert chicken.kitchen_lines[0].text == "1 腰果雞 DIC CHKN CSHW r"
     assert sell("K01:regular").kitchen_lines[0].station == "sushi"
     assert sell("I42:regular").kitchen_lines[0].station == "broiler"
     assert sell("E09:regular").kitchen_lines[0].station == "bar"
@@ -149,8 +150,8 @@ def test_the_soup_choice_is_the_soup_and_the_maki_combination_offers_the_rolls()
     line = engine.resolve(LineRequest("L01:regular", 1, "lunch:L01", (Selection(soup.code, "soup_929530:4904287"),)))
     assert line.ok and line.line_total == D("14.95")
     assert [(k.station, k.text, k.header) for k in line.kitchen_lines] == [
-        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · White Rice · 日本湯 MISO SOUP", None),
-        ("soup", "1 日本湯 MISO SOUP", "L01 L甜酸雞 LUN:SWEET & SOUR CHKN"),
+        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN", None),  # the rice and the soup it comes with go unsaid
+        ("soup", "1 日本湯 MISO SOUP", "L01 L甜酸雞 LUN:SWEET & SOUR CHKN"),  # the soup station still makes it
     ]
     roll = defs.groups["roll_934419"]
     assert roll.source_category == "roll_maki" and (roll.min_select, roll.max_select) == (3, 3)

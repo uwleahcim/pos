@@ -72,7 +72,13 @@ def test_a_note_on_a_chosen_dish_prints_under_that_dish_s_line_with_the_order_li
         "header": "L01 Sweet & Sour Chicken",
         "note": "extra hot",
     }
-    wok = {"station": "wok1", "qty": 1, "label": "Sweet & Sour Chicken", "labels": ["Miso Soup (extra hot)"]}
+    wok = {
+        "station": "wok1",
+        "qty": 1,
+        "label": "Sweet & Sour Chicken",
+        "labels": ["Miso Soup", "extra hot"],
+        "depths": [0, 1],
+    }
     state = replay(
         [
             op("a", "create", 0, table=3, server="Amy"),
@@ -97,6 +103,8 @@ def test_a_note_on_a_chosen_dish_prints_under_that_dish_s_line_with_the_order_li
         ("Sweet & Sour Chicken", None, "allergy: peanut"),
         ("Miso Soup", "L01 Sweet & Sour Chicken", "extra hot · allergy: peanut"),
     ]
+    # at the wok the soup is a choice on the dish, and what was asked of the soup stands one step in under it
+    assert (ticket.lines[0].modifiers, ticket.lines[0].depths) == (("Miso Soup", "extra hot"), (0, 1))
 
 
 def wait_for(predicate, seconds: float = 3.0) -> None:

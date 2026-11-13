@@ -22,6 +22,7 @@ class TicketLine:
     qty: int
     label: str  # the kitchen label in the station's language, e.g. "左宗鸡 (Qt)"
     modifiers: tuple[str, ...] = ()  # e.g. ("加辣", "糙米", "加虾")
+    depths: tuple[int, ...] = ()  # how far in each of `modifiers` prints: 1 is a choice on the choice above it
     note: str = ""
     seat: int | None = None
     void: bool = False
@@ -104,8 +105,10 @@ def render(
         b.line(f"{prefix}{line.qty} x {line.label}{seat}", big=True, bold=line.void or line.changed, invert=inv)
         if line.header:
             b.line(f"    with {line.header}", invert=inv)
-        for mod in line.modifiers:
-            b.line(f"    + {mod}", invert=inv)
+        for i, mod in enumerate(line.modifiers):
+            # a choice on a choice (the sauce on a roll of a combination) stands under it, one step further in
+            depth = line.depths[i] if i < len(line.depths) else 0
+            b.line(f"{'    ' * (depth + 1)}+ {mod}", invert=inv)
         if line.note:
             b.line(f"    ** {line.note} **", bold=True, invert=inv)
     b.rule()
