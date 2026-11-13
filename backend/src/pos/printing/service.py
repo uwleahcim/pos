@@ -222,7 +222,8 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
                 continue
             # A dish sent to a second station (a "take out" choice, a to-go order) is the same words again
             # there; a printer that takes both stations says it once.
-            words = (k.get("qty", 1), k.get("label"), tuple(k.get("labels", ())), k.get("header"), k.get("note"))
+            labels, depths = tuple(k.get("labels", ())), tuple(int(d) for d in k.get("depths") or ())
+            words = (k.get("qty", 1), k.get("label"), labels, depths, k.get("header"), k.get("note"))
             if words in said:
                 continue
             said.add(words)
@@ -230,7 +231,8 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
                 TicketLine(
                     qty=line.qty * int(k.get("qty", 1)),
                     label=str(k.get("label") or line.item),
-                    modifiers=tuple(k.get("labels", ())),
+                    modifiers=labels,
+                    depths=depths,
                     # the dish's own note (a slot dish's, from its choice) and the order line's, under every line
                     note=" · ".join(n for n in (k.get("note"), line.note) if n),
                     seat=line.seat,

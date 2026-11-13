@@ -90,6 +90,41 @@ def test_the_dish_behind_a_choice_is_sold_as_a_child_line_with_its_own_station_a
     assert line.line_total == D("24.95")
 
 
+def test_a_ticket_leaves_out_what_the_dish_comes_with_and_lists_a_choice_s_own_choices_under_it():
+    """A lunch special comes with white rice and miso soup. The wok is told neither while nobody changes them,
+    whether the hub filled them in or the screen sent them; a change is listed, and a change on the soup
+    brings the soup back onto the line with the change one step in under it."""
+    defs, _ = load_restaurant_menu()
+    engine = MenuEngine(defs)
+    rice, soup = "lunch_rice_929539", "soup_929530"
+    white, brown, miso = f"{rice}:4904329", f"{rice}:4904330", f"{soup}:4904287"
+
+    def wok(*selections):
+        line = engine.resolve(LineRequest("L01:regular", 1, "lunch:L01", selections))
+        assert line.ok, list(line.problems) + [p for c in line.children for p in c.problems]
+        at_wok = line.kitchen_lines[0]
+        assert at_wok.station == "wok1" and [k.station for k in line.kitchen_lines[1:]] == ["soup"]
+        return at_wok.text, at_wok.labels, at_wok.depths
+
+    plain = ("1 L甜酸雞 LUN:SWEET & SOUR CHKN", (), ())
+    assert wok() == plain  # the hub fills in the defaults
+    assert wok(Selection(rice, white), Selection(soup, miso)) == plain  # a screen sends the ones it filled in
+    assert wok(Selection(rice, brown)) == ("1 L甜酸雞 LUN:SWEET & SOUR CHKN · Brown Rice", ("Brown Rice",), (0,))
+    # a word on the default is a change
+    assert wok(Selection(rice, white, prefix="no"))[1:] == (("NO White Rice",), (0,))
+    hot = Selection(soup, miso, children=(Selection("spice", "spice:extra_hot"),), notes="no tofu")
+    assert wok(hot) == (
+        "1 L甜酸雞 LUN:SWEET & SOUR CHKN · 日本湯 MISO SOUP (XXXhot · no tofu)",
+        ("日本湯 MISO SOUP", "XXXhot", "no tofu"),
+        (0, 1, 1),
+    )
+    # a choice on the dish and the choices on a chosen dish, in the order a ticket prints them
+    assert wok(Selection(rice, brown), hot)[1:] == (
+        ("Brown Rice", "日本湯 MISO SOUP", "XXXhot", "no tofu"),
+        (0, 0, 1, 1),
+    )
+
+
 def test_a_choice_cooked_at_the_dish_s_own_station_folds_into_its_line():
     """Two rolls of a maki combination, both at the sushi bar: one line names them both, not three lines."""
     defs, _ = load_restaurant_menu()
@@ -169,7 +204,7 @@ def test_the_check_lists_a_slot_dish_with_its_price_and_its_choices_one_level_de
     assert priced["unit_price"] == "19.50" and priced["problems"] == []
     rows = [(m["label"], m["price"], m["depth"], m["defaulted"]) for m in priced["modifiers"]]
     assert rows == [
-        ("General Tso's Chicken", "0.00", 0, False),
+        ("General Tso's Chicken", "0.00", 0, True),  # the entree the combination comes with, picked by hand
         ("Extra spicy", "0.00", 1, False),
         ("White rice", "0.00", 1, True),
         ("Add shrimp", "4.00", 1, False),
@@ -188,9 +223,11 @@ def test_a_note_on_a_chosen_dish_travels_with_it_to_the_kitchen_and_the_check():
     assert line.ok, list(line.problems) + [p for c in line.children for p in c.problems]
     assert line.children[0].notes == "extra hot"
     assert [(k.station, k.text, k.header, k.note) for k in line.kitchen_lines] == [
-        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · White Rice · 日本湯 MISO SOUP (extra hot)", None, None),
+        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · 日本湯 MISO SOUP (extra hot)", None, None),
         ("soup", "1 日本湯 MISO SOUP", "L01 L甜酸雞 LUN:SWEET & SOUR CHKN", "extra hot"),
     ]
+    # on paper the note stands under the soup, one step in; the rice nobody changed is not listed
+    assert (line.kitchen_lines[0].labels, line.kitchen_lines[0].depths) == (("日本湯 MISO SOUP", "extra hot"), (0, 1))
     priced = MenuService(defs).priced(
         {
             "variant_id": "L01:regular",

@@ -38,6 +38,9 @@ class ResolvedModifier:
     station: str | None = None
     prefix: str | None = None  # no | extra | side | light, already written into kitchen_label
     routes_to: str | None = None  # a station the whole dish prints at as well, for this choice
+    under: tuple[tuple[int, str], ...] = ()
+    """What a ticket prints under this choice when it is a dish: the choices changed on that dish and the
+    note on it, each with how many steps further in it stands (0 is straight under the choice)."""
 
 
 @dataclass(frozen=True)
@@ -45,11 +48,14 @@ class KitchenLine:
     station: str
     qty: int
     text: str
-    labels: tuple[str, ...] = ()
+    labels: tuple[str, ...] = ()  # the choices a ticket lists under the dish, top to bottom
     header: str | None = None  # the combo's number and name for child lines
     origin: str = "line"  # line | slot | component | modifier | route (a copy sent to a second station)
     allergy_note: str | None = None
     note: str | None = None  # the kitchen note on this dish itself (a slot dish's, from its selection)
+    depths: tuple[int, ...] = ()
+    """How far in each of `labels` prints: 0 is a choice on the dish, 1 a choice on that choice (the sauce on
+    a roll in a combination), which a ticket indents on the line under it."""
 
 
 @dataclass(frozen=True)

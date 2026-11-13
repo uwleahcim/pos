@@ -13,6 +13,25 @@ modifier option may print its own line at a station of its own ("Add fried rice"
 **whole dish** to a second station as well (`routes_to`): the old POS's **Take out** under Preparation
 sends the dish to the takeout counter, where it is bagged, while its own station still cooks it.
 
+**What a ticket lists under a dish.** Only what was asked for. A choice the dish comes with (the group's
+default: white rice with an entree, miso soup with a lunch special) is left off while nobody changes it,
+whether the hub filled it in or the screen sent it; the station knows the dish. A word on it (NO White Rice)
+or more than one of it is a change and prints. A default that is a dish of another station (the miso soup,
+at the soup station) still prints its own line there, so that station hears of it. A choice's own choices
+(the ginger on one roll of a maki combination, a note on the soup) print on the lines under that choice, one
+step further in, and bring a default choice back onto the ticket so the change reads under it:
+
+```
+1 x sr:MAKI COMBO s
+    + sr:KAPPA MAKI
+        + GINGER
+        + cut in 8
+    + sr:KANIYU
+```
+
+An order line keeps the ticket words it was sold with (`priced.kitchen`: `labels` and, beside them,
+`depths`), so a dish sold before this prints as it did.
+
 In the menu editor, each dish has a **Prints at** section: its station (the category's unless set), with
 a line saying whether a printer serves that station, and **A new station…** to add one (Dessert, say) from
 the dish itself. In an option group, the printer button on each option says where else the dish prints
