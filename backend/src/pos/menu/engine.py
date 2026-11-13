@@ -183,6 +183,34 @@ def flatten_modifiers(mods: Iterable[ResolvedModifier]) -> Iterable[ResolvedModi
         yield from flatten_modifiers(mod.children)
 
 
+def ticket_labels(mods: Iterable[ResolvedModifier], depth: int = 0) -> Iterable[tuple[int, str]]:
+    """The choices a ticket lists under a dish, each with how far in it prints. A choice the dish comes with
+    and nobody changed (`defaulted`) is left off: the station knows the dish. It is listed after all when
+    something under it changed, so the change reads under the choice it is on, one step further in."""
+    for mod in mods:
+        named = bool(mod.kitchen_label)
+        inner_depth = depth + 1 if named else depth
+        inner = [(inner_depth + d, text) for d, text in mod.under]
+        inner.extend(ticket_labels(mod.children, inner_depth))
+        if named and (inner or not mod.defaulted):
+            yield depth, mod.kitchen_label
+        yield from inner
+
+
+def one_line(labels: Sequence[tuple[int, str]]) -> str:
+    """`ticket_labels` on one line, a choice's own choices in brackets after it: `White Rice · Miso (No tofu)`."""
+    out: list[str] = []
+    i = 0
+    while i < len(labels):
+        depth, text = labels[i]
+        j = i + 1
+        while j < len(labels) and labels[j][0] > depth:
+            j += 1
+        out.append(f"{text} ({one_line(labels[i + 1 : j])})" if j > i + 1 else text)
+        i = j
+    return " · ".join(out)
+
+
 PREFIXES: dict[str, str] = {"no": "NO", "extra": "EXTRA", "side": "SIDE", "light": "LIGHT"}
 """The one-tap instructions a selection may carry (`Selection.prefix`), printed in front of the option's
 kitchen label: NO 加虾, SIDE 糙米. "no" also makes the option free and skips its recipe effects; the other
@@ -495,8 +523,9 @@ class MenuEngine:
         min_select = overrides.get("min", group.min_select)
         max_select = overrides.get("max", group.max_select)
         defaulted = False
+        named = ctx.preset_defaults.get(group.code) or overrides.get("default")
         if not chosen:
-            default = ctx.preset_defaults.get(group.code) or overrides.get("default")
+            default = named
             if default is None:
                 default = next(
                     (o.code for o in options.values() if o.is_default and o.active and o.code not in hidden), None
@@ -561,8 +590,12 @@ class MenuEngine:
             label = prefixed_label(
                 prefix, defs.option_kitchen_label(opt), defs.localizer.text(defs.option_names(opt), "en")
             )
+            # The dish's default picked by hand (a screen sends the defaults it filled in) is the default all
+            # the same; with a word on it or more than one of it, it is a change.
+            standing = (opt.code == named) if named else opt.is_default
+            as_default = defaulted or (standing and prefix is None and sq == 1)
             if opt.linked_variant:
-                results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, defaulted, own_header, label))
+                results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, as_default, own_header, label))
                 continue
             if opt.price_mode == "free" or prefix == "no":
                 delta = ZERO
@@ -610,7 +643,7 @@ class MenuEngine:
                     delta,
                     effects,
                     tuple(children),
-                    defaulted,
+                    as_default,
                     opt.station,
                     prefix,
                     opt.routes_to,
@@ -669,12 +702,10 @@ class MenuEngine:
         ctx.children.append(child)
         if not label:
             label = self.defs.localizer.kitchen(child.names) or self.defs.localizer.text(child.names, "en")
-        inside = [m.kitchen_label for m in flatten_modifiers(child.modifiers) if m.kitchen_label]
+        under = list(ticket_labels(child.modifiers))
         if child.notes:
-            inside.append(child.notes)  # the note on the dish reads with it, on whichever line names it
-        if inside:
-            label = f"{label} ({' · '.join(inside)})"
-        return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None)
+            under.append((0, child.notes))  # the note on the dish reads with it, on whichever line names it
+        return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None, under=tuple(under))
 
     def _apply_effect(self, ctx: _Ctx, effect: Any, opt: Option, sq: int) -> EffectResult:
         defs = self.defs
@@ -895,16 +926,20 @@ class MenuEngine:
         loc = self.defs.localizer
         lines: list[KitchenLine] = []
         station = self.defs.inherited(item, "station")
-        labels = tuple(m.kitchen_label for m in flatten_modifiers(modifiers) if m.kitchen_label)
+        listed = tuple(ticket_labels(modifiers))
+        labels = tuple(text for _, text in listed)
+        depths = tuple(depth for depth, _ in listed)
         own = not (item.kind == "combo" and children)
         if own and station:
             text = f"{qty} {kitchen_name}"
             if len(self.defs.variants_of(item.code)) > 1:
                 text += f" ({loc.kitchen(variant.names)})"
-            if labels:
-                text += " · " + " · ".join(labels)
+            if listed:
+                text += " · " + one_line(listed)
             lines.append(
-                KitchenLine(station, qty, text, labels, header if origin != "line" else None, origin, note=notes)
+                KitchenLine(
+                    station, qty, text, labels, header if origin != "line" else None, origin, note=notes, depths=depths
+                )
             )
         for mod in flatten_modifiers(modifiers):
             if mod.station and mod.station != station:
@@ -929,8 +964,8 @@ class MenuEngine:
                 if kl.origin in ("line", "slot", "component") and kl.station != station_code:
                     lines.append(replace(kl, station=station_code, origin="route"))
             if not any(kl.station == station_code for kl in lines):
-                text = f"{qty} {kitchen_name}" + (" · " + " · ".join(labels) if labels else "")
-                lines.append(KitchenLine(station_code, qty, text, labels, header, "route", note=notes))
+                text = f"{qty} {kitchen_name}" + (" · " + one_line(listed) if listed else "")
+                lines.append(KitchenLine(station_code, qty, text, labels, header, "route", note=notes, depths=depths))
         return tuple(lines)
 
     # --- inventory and reporting --------------------------------------------------------------

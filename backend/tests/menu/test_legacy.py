@@ -84,7 +84,7 @@ def test_dishes_print_in_chinese_with_the_old_label_and_cook_where_the_original_
     assert defs.categories["soup"].names == {"en": "Soup", "zh": "湯"}
     lunch = sell(engine, "L01:regular", entry="lunch:L01")  # the lunch special and its soup, both in Chinese
     assert [(k.station, k.text) for k in lunch.kitchen_lines] == [
-        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN · White Rice · 日本湯 MISO SOUP"),
+        ("wok1", "1 L甜酸雞 LUN:SWEET & SOUR CHKN"),
         ("soup", "1 日本湯 MISO SOUP"),
     ]
     assert sell(engine, "A15:regular").kitchen_lines[0].station == "wok1"  # the soongs left the fryer
@@ -145,7 +145,8 @@ def test_the_original_pos_s_groups_are_offered_with_its_labels_and_take_the_inst
         ("allergy", "allergy:nut"),
     )
     assert line.line_total == D("19.95")  # 17.95 + 2.00 for the cashews; NO is free
-    assert line.kitchen_lines[0].labels == ("White Rice", "XXXhot", "*NUT ALRGY", "NO BROCOL", "EXTRA CASHEW")
+    # the white rice the dish comes with is not said; what was asked for is
+    assert line.kitchen_lines[0].labels == ("XXXhot", "*NUT ALRGY", "NO BROCOL", "EXTRA CASHEW")
     spice = defs.groups["spice"]
     assert (spice.min_select, spice.max_select) == (0, 1)
     assert defs.groups["ingredients"].max_select is None and defs.groups["platter"].allow_quantity
