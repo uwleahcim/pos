@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../live.dart';
 import '../outbox.dart';
 import '../phone.dart';
 import 'theme.dart';
@@ -144,6 +145,17 @@ class CaptureBanner extends StatelessWidget {
   }
 }
 
+/// How this screen learns that something changed elsewhere: told by the hub, or by asking.
+String liveTitle(LiveState state) =>
+    state == LiveState.live ? 'Changes arrive as they happen' : 'Asking for changes every 2 seconds';
+
+String? liveNote(LiveState state) => switch (state) {
+  LiveState.live => null,
+  LiveState.connecting => 'Connecting to live updates',
+  LiveState.unsupported => 'This backend has no live updates yet: update the hub',
+  LiveState.off => null,
+};
+
 String statusTitle(ConnectionLevel level) => switch (level) {
   ConnectionLevel.usual => 'Connected',
   ConnectionLevel.backup => 'On a backup',
@@ -163,7 +175,7 @@ Future<void> showStatusDetails(
   showDragHandle: true,
   isScrollControlled: true,
   builder: (context) => ListenableBuilder(
-    listenable: Listenable.merge([api.connection, outbox, ?phone]),
+    listenable: Listenable.merge([api.connection, api.live, outbox, ?phone]),
     builder: (context, _) {
       final theme = Theme.of(context);
       final scheme = theme.colorScheme;
@@ -206,6 +218,18 @@ Future<void> showStatusDetails(
                       ),
                       subtitle: subtitle == null ? null : Text(subtitle),
                     ),
+                    if (conn.isOnline) ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        key: const ValueKey('live-updates'),
+                        leading: Icon(api.live.isLive ? Icons.bolt : Icons.sync),
+                        title: Text(liveTitle(api.live.state)),
+                        subtitle: switch (liveNote(api.live.state)) {
+                          final note? => Text(note),
+                          null => null,
+                        },
+                      ),
+                    ],
                     const Divider(height: 1),
                     ListTile(
                       leading: const Icon(Icons.outbox_outlined),

@@ -9,6 +9,7 @@ import 'coursing.dart';
 import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
+import 'live.dart';
 import 'menu.dart';
 import 'phone.dart';
 import 'pricing.dart';
@@ -323,7 +324,35 @@ class PosApi {
   final ReadCache? cache;
   final ValueNotifier<Connection> connection = ValueNotifier(const Connection());
 
+  /// The hub's change feed: what tells the screens that an order, the menu or a setting changed, so they
+  /// need not ask every two seconds. Not live until `start`ed (the app does, a test need not), and a screen
+  /// under a feed that is not live polls as it always did.
+  LiveFeed get live => _live ??= LiveFeed(this);
+  LiveFeed? _live;
+
   Future<Map<String, dynamic>> health() => _get('/health');
+
+  /// Opens the change feed of the backend at [base] (`GET /live`, server-sent events) and hands back the
+  /// answer with its body still arriving; [LiveFeed] reads it. Not a call with failover: the feed follows
+  /// the backend the other calls found. Asked for uncompressed, since a compressed stream holds a line back
+  /// until the next ones fill its block.
+  Future<http.StreamedResponse> openLive(String base) {
+    final request = http.Request('GET', Uri.parse('$base/live').replace(queryParameters: {'device': settings.device}))
+      ..headers['accept'] = 'text/event-stream'
+      ..headers['accept-encoding'] = 'identity'
+      ..headers['cache-control'] = 'no-store';
+    final sent = _client.send(request);
+    return sent.timeout(
+      timeout,
+      onTimeout: () {
+        // Whatever still answers later is closed, not left open with nobody reading it.
+        unawaited(
+          sent.then((late) => late.stream.listen(null, onError: (Object _) {}).cancel(), onError: (Object _) {}),
+        );
+        throw TimeoutException('no answer from $base');
+      },
+    );
+  }
 
   /// The orders for a list, newest activity first: those at [status], or all of them. With [within], only
   /// the ones that changed that recently and the ones still open, so a list of every order is a day long,
@@ -966,6 +995,7 @@ class PosApi {
   }
 
   void dispose() {
+    _live?.dispose();
     _client.close();
     connection.dispose();
   }

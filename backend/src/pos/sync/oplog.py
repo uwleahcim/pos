@@ -564,6 +564,11 @@ class OpStore:
         end = None if limit is None else cursor + limit
         return self._ops[cursor:end]
 
+    def arrivals(self, cursor: int, limit: int = 2000) -> list[tuple[int, str]]:
+        """Where each operation after `cursor` landed and whose it is, oldest first: `(cursor, order id)`.
+        What the change feed tells the screens, without reading the operations themselves."""
+        return [(at, op.order_id) for at, op in enumerate(self._ops[cursor : cursor + limit], start=cursor + 1)]
+
     def for_order(self, order_id: str) -> list[Op]:
         return list(self._by_order.get(order_id, ()))
 

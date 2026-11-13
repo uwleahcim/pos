@@ -6,6 +6,7 @@ import '../api.dart';
 import '../check_order.dart';
 import '../coursing.dart';
 import '../line_ops.dart';
+import '../live.dart';
 import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
@@ -67,15 +68,24 @@ class _OrderScreenState extends State<OrderScreen> {
   /// Who is at the screen now.
   String? get _staffName => widget.session?.staff?.name ?? widget.staffName;
   String? get _staffId => widget.session?.staff?.staffId;
-  bool _reading = false;
   Timer? _timer;
+  // The hub tells this screen when its order changed (another terminal added to the table, the kitchen
+  // was fired from the floor); the timer only asks while it cannot, and now and then.
+  late final _poll = SafetyPoll(widget.api.live);
+  late final _reader = Paced(const Duration(milliseconds: 250), _fetch);
+  StreamSubscription<LiveChange>? _live;
   int? _seat; // null: for the table, shared
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_poll.due()) _refresh();
+    });
+    _live = widget.api.live.changes.listen((change) {
+      if (change.touches(widget.orderId)) _reader();
+    });
     widget.outbox.addListener(_onOutbox);
     _refresh();
   }
@@ -83,6 +93,8 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    unawaited(_live?.cancel());
+    _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
     super.dispose();
   }
@@ -95,9 +107,12 @@ class _OrderScreenState extends State<OrderScreen> {
     if (!waiting && widget.outbox.localOps(widget.orderId).isNotEmpty) _refresh();
   }
 
-  Future<void> _refresh() async {
-    if (_reading) return;
-    _reading = true;
+  /// Reads the order unless a read is already under way (that one will do: what this screen sent is read
+  /// back once the outbox settles, and what others changed the hub tells).
+  Future<void> _refresh() => _reader.now(must: false);
+
+  Future<void> _fetch() async {
+    _poll.asked();
     final mark = widget.outbox.readMark;
     try {
       final order = await widget.api.order(widget.orderId);
@@ -114,8 +129,6 @@ class _OrderScreenState extends State<OrderScreen> {
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
-    } finally {
-      _reading = false;
     }
   }
 

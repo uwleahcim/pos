@@ -192,9 +192,11 @@ def add_face_signin(app: FastAPI) -> None:
         except ValueError as err:
             raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
         try:
-            return app.state.settings.put("faces", cleaned)
+            saved = app.state.settings.put("faces", cleaned)
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("settings")
+        return saved
 
     @app.get("/settings/presence")
     def read_presence_setting() -> dict[str, Any]:
@@ -211,6 +213,8 @@ def add_face_signin(app: FastAPI) -> None:
         except ValueError as err:
             raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
         try:
-            return app.state.settings.put("presence", cleaned)
+            saved = app.state.settings.put("presence", cleaned)
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("settings")
+        return saved

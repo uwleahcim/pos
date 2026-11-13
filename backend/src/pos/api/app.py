@@ -22,6 +22,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
@@ -63,6 +64,7 @@ from ..tax import TaxProfile, load_profile
 from .auth import manager_from
 from .conditional import ConditionalGet
 from .faces import add_face_signin
+from .feed import ChangeFeed, end_on_stop
 from .menu_admin import add_menu_admin
 
 if TYPE_CHECKING:
@@ -508,20 +510,23 @@ def create_app(
     push_devices: PushDevices | None = None,
     pusher: ApnsSender | None = None,
     relay: PushRelay | None = None,
+    feed: ChangeFeed | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """The PBX watcher runs for as long as the API does, when a PBX is configured; the face models load
         on a thread meanwhile, when the hub has them (POS_FACE_MODELS); the push relay's connection to Apple
-        closes with the API."""
+        closes with the API; the screens' streams end when the server is told to stop, so it can."""
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
         if faces is None:
             app.state.faces.start(FaceEngine.from_env)
+        unhook = end_on_stop(app.state.feed)
         try:
             yield
         finally:
+            unhook()
             if pbx is not None:
                 await pbx.stop()
             await app.state.relay.close()
@@ -537,6 +542,11 @@ def create_app(
     app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.tokens = tokens if tokens is not None else Tokens()
     app.state.settings = settings if settings is not None else default_settings()
+    # The change feed: what the screens hold open instead of polling (see `feed`). It tells what arrives in
+    # the log, whoever wrote it, and what the menu says changed: a save, one made on another hub, the 86 board.
+    app.state.feed = feed if feed is not None else ChangeFeed()
+    app.state.feed.follow(app.state.store, also=lambda: app.state.menu.refresh())
+    app.state.menu.on_change = lambda: app.state.feed.changed("menu")
 
     def printers_now() -> list[Printer]:
         """The manager's printers; a hub whose setting is still empty prints as POS_PRINTERS says."""
@@ -610,10 +620,41 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        """`role` is primary (takes orders), replica (reads only, a standby hub) or memory (no database)."""
+        """`role` is primary (takes orders), replica (reads only, a standby hub) or memory (no database);
+        `screens` counts the terminals holding the change feed open (`/live`) on this process."""
         store = app.state.store
         role = getattr(store, "role", "memory")
-        return {"status": "ok", "cursor": store.cursor, "role": role, "node": os.environ.get("POS_NODE", "")}
+        return {
+            "status": "ok",
+            "cursor": store.cursor,
+            "role": role,
+            "node": os.environ.get("POS_NODE", ""),
+            "screens": app.state.feed.screens,
+        }
+
+    @app.get("/live")
+    def live(device: str = Query("", max_length=120)) -> StreamingResponse:
+        """The change feed: a stream of server-sent events a screen holds open instead of polling. `hello`
+        first, with the log's cursor, the menu's revision and how often the hub writes when there is no news
+        (`heartbeat`, seconds); then a `changed` naming the orders that changed and the `topics` (`menu`,
+        `settings`) whenever something does, and a comment line every `heartbeat` seconds otherwise. The
+        screen reads what changed with the calls it always used, and reads everything once on `hello` (and
+        on a `changed` with `everything`). See `pos.api.feed`."""
+        if device:
+            app.state.devices.heard(device)
+        store = app.state.store
+        hello = {
+            "cursor": store.cursor,
+            "menu": app.state.menu.revision,
+            "role": getattr(store, "role", "memory"),
+            "node": os.environ.get("POS_NODE", ""),
+        }
+        return StreamingResponse(
+            app.state.feed.stream(hello),
+            media_type="text/event-stream",
+            # Not kept by anything on the way, and not held back by a proxy that buffers (nginx reads the last).
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/orders/{order_id}/ops", status_code=202)
     def append_ops(order_id: str, ops: list[OpIn]) -> dict[str, Any]:
@@ -638,6 +679,8 @@ def create_app(
         except ReadOnlyError as err:
             # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
             raise HTTPException(503, {"error": "read_only"}) from err
+        if accepted:
+            app.state.feed.poke()  # the other screens hear of it now, before the tickets print
         printing: PrintService = app.state.printing
         jobs = printing.on_ops(store.for_order, list(accepted))
         texts = app.state.notifier.on_ops(store.for_order, list(accepted))
@@ -726,9 +769,11 @@ def create_app(
             raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
         settings: SettingStore = app.state.settings
         try:
-            return settings.put(key, cleaned)
+            saved = settings.put(key, cleaned)
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("settings")  # the floor carries the courses, the order screen the quotes
+        return saved
 
     @app.get("/settings/quotes")
     def read_quotes() -> dict[str, Any]:
@@ -983,11 +1028,13 @@ def create_app(
 
     # Menu: the apps show it and send choices back; prices and tax come from here --------------------------
     @app.get("/menu")
-    def read_menu(channel: str = "pos", locale: str = "en") -> dict[str, Any]:
-        """The menus open now for a channel. `revision` moves whenever the menu is edited."""
+    def read_menu(channel: str = "pos", locale: str = "en") -> Response:
+        """The menus open now for a channel. `revision` moves whenever the menu is edited. Every screen with
+        a menu open reads this at once when the feed says the menu changed (a save, an 86), so it is written
+        straight to JSON like the reads the screens poll."""
         menu: MenuService = app.state.menu
         menu.refresh()
-        return {"menus": menu.menus(channel, locale), "revision": menu.revision}
+        return polled({"menus": menu.menus(channel, locale), "revision": menu.revision})
 
     @app.get("/menu/revision")
     def menu_revision() -> dict[str, Any]:

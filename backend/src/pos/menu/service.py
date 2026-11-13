@@ -8,8 +8,9 @@ kitchen text it was sold at, whatever the menu says later.
 from __future__ import annotations
 
 import os
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
@@ -113,6 +114,12 @@ class MenuService:
         self._now = now or local_now
         self.revision = 0
         self._checked = 0.0
+        # Called when what the menu sells changed here: a save, a save picked up from elsewhere, the 86
+        # board. The API tells the screens through it (`pos.api.feed`).
+        self.on_change: Callable[[], object] | None = None
+        self._changes = 0  # counts them: an answer kept from before a change is not given again
+        self._kept: dict[tuple[str, str], tuple[MenuEngine, int, datetime, list[dict[str, Any]]]] = {}
+        self._keeping = threading.Lock()
         if store is not None:
             if store.role == "primary" and store.is_empty():
                 store.save(defs if defs is not None else load_definitions(), actor="import")
@@ -136,7 +143,13 @@ class MenuService:
         engine = MenuEngine(self.store.load(self.defs.localizer), now=self._now)
         engine.availability = self.store.availability()
         self.engine, self.revision = engine, revision
+        self._changed()
         return True
+
+    def _changed(self) -> None:
+        self._changes += 1
+        if self.on_change is not None:
+            self.on_change()
 
     def set_availability(
         self, target_id: str, status: str, *, reason: str | None = None, by: str | None = None
@@ -145,6 +158,7 @@ class MenuService:
         self.engine.set_availability(target_id, status, reason=reason, by=by)
         if self.store is not None:
             self.store.set_availability(self.engine.availability.get(target_id), target_id)
+        self._changed()
 
     def save(self, defs: Definitions, *, actor: str, expect: int | None = None) -> dict[str, int]:
         """Sell from `defs` from now on: stored (with the audit log) when there is a store, so every hub
@@ -157,6 +171,7 @@ class MenuService:
                 k: v for k, v in self.engine.availability.items() if k in defs.variants or k in defs.options
             }
             self.engine, self.revision = engine, self.revision + 1
+            self._changed()
             return {"revision": self.revision}
         result = self.store.save(defs, actor=actor, expect=expect)
         self.refresh(force=True)
@@ -174,6 +189,24 @@ class MenuService:
     # --- views ---------------------------------------------------------------------------------
 
     def menus(self, channel: str = "pos", locale: str = "en", at: datetime | None = None) -> list[dict[str, Any]]:
+        """The menus open on a channel, as the apps show them. Asked for the present (no `at`), the answer is
+        kept for the rest of the clock's second: told that the menu changed, every screen reads it in the
+        same instant, and working it out takes a tenth of a second for this restaurant's menu, so twenty
+        screens get the one answer worked out once (and the callers that come while it is being worked out
+        wait for it rather than each starting their own). Shared: read it, never change it."""
+        if at is not None:
+            return self._menus(channel, locale, at)
+        with self._keeping:
+            now = self._now().replace(microsecond=0)
+            kept = self._kept.get((channel, locale))
+            if kept is not None and kept[0] is self.engine and kept[1] == self._changes and kept[2] == now:
+                return kept[3]
+            engine, changes = self.engine, self._changes
+            answer = self._menus(channel, locale, None)
+            self._kept[(channel, locale)] = (engine, changes, now, answer)
+            return answer
+
+    def _menus(self, channel: str, locale: str, at: datetime | None) -> list[dict[str, Any]]:
         return [
             {
                 "menu": m.menu,

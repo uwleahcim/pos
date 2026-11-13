@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../floor.dart';
+import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
 import 'theme.dart';
@@ -28,13 +29,20 @@ class FloorViewState extends State<FloorView> {
   String? _room; // null = the whole floor
   Timer? _timer;
   bool _inFront = true; // no check, screen or dialog is open over the map
+  // The hub tells the map when a table's check changed; the timer only asks while it cannot, and now and then.
+  late final _poll = SafetyPoll(widget.api.live);
+  late final _reader = Paced(const Duration(seconds: 1), _read);
+  StreamSubscription<LiveChange>? _live;
 
   @override
   void initState() {
     super.initState();
     // Under an open check nobody sees the map: it stops asking, and reads again the moment it is back.
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_inFront) refresh();
+      if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
+    });
+    _live = widget.api.live.changes.listen((change) {
+      if (_inFront && change.anyOrder) _reader();
     });
     widget.outbox?.addListener(_onOutbox);
     refresh();
@@ -51,6 +59,8 @@ class FloorViewState extends State<FloorView> {
   @override
   void dispose() {
     _timer?.cancel();
+    unawaited(_live?.cancel());
+    _reader.cancel();
     widget.outbox?.removeListener(_onOutbox);
     super.dispose();
   }
@@ -59,7 +69,10 @@ class FloorViewState extends State<FloorView> {
     if (mounted) setState(() {});
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh() => _reader.now();
+
+  Future<void> _read() async {
+    _poll.asked();
     try {
       final plan = await widget.api.floor();
       // A backend with nothing new hands back the plan it gave last time: nothing to redraw then.

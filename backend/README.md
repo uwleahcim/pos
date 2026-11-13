@@ -20,8 +20,24 @@ Merge rules proven by the tests:
 - A line changed after its course was fired is flagged, so the kitchen gets a modify ticket.
 - An operation stamped more than five minutes in the future is rejected: the device must resync its clock.
 
-Reads that the screens poll (the open orders, the floor, an open check, every two seconds from every
-terminal) must cost the same on the hub's thousandth day as on its first:
+The screens do not ask whether something changed; the hub tells them (ADR 7, `pos/api/feed.py`). A screen
+holds `GET /live` open, a stream of server-sent events, and gets a line naming the orders that changed, or
+`menu` or `settings`, the moment they do, and a heartbeat every second otherwise. It then reads what changed
+with the calls below. What to keep in mind when changing the API:
+
+- The feed tells orders from the log itself (`store.arrivals`), so anything appended is told whoever
+  appended it. Anything else a screen shows that can change needs its own word: `feed.changed("menu")` is
+  wired to `MenuService.on_change` (a save, a save made on another hub, the 86 board), `feed.changed("settings")`
+  to the settings writes. A new kind of thing the screens show needs the same, or they see it only at
+  their safety poll, half a minute later.
+- The stream says that something changed, never what it is now. There is one way to read an order.
+- A screen that has no feed (an older build, a feed that dropped) polls as before, so every read below
+  still has to be cheap when asked every two seconds.
+- `GET /health` counts the screens attached (`screens`). The server ends the streams itself when it is
+  told to stop (`end_on_stop`); without that it would wait on them until it is killed.
+
+Reads that the screens repeat (the open orders, the floor, an open check: when told, and every two seconds
+from a terminal without the feed) must cost the same on the hub's thousandth day as on its first:
 
 - The store keeps an index of its orders (`orders` in PostgreSQL, written in the same transaction as the
   operations): status, when opened, when last changed, and how far the order's history goes. A read picks
