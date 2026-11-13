@@ -184,26 +184,41 @@ def flatten_modifiers(mods: Iterable[ResolvedModifier]) -> Iterable[ResolvedModi
         yield from flatten_modifiers(mod.children)
 
 
-def ticket_labels(mods: Iterable[ResolvedModifier], depth: int = 0) -> Iterable[tuple[int, str]]:
-    """The choices a ticket lists under a dish, each with how far in it prints. A choice the dish comes with
-    and nobody changed (`defaulted`) is left off: the station knows the dish. It is listed after all when
-    something under it changed, so the change reads under the choice it is on, one step further in."""
+TicketLabel = tuple[int, str, tuple[str, ...]]
+"""One choice as a ticket lists it under a dish: how far in it prints, its words, and the stations whose
+tickets leave it off."""
+
+
+def _all_of(*stations: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted({code for some in stations for code in some}))
+
+
+def ticket_labels(mods: Iterable[ResolvedModifier], depth: int = 0, off: tuple[str, ...] = ()) -> Iterable[TicketLabel]:
+    """The choices a ticket lists under a dish, each with how far in it prints and where it does not. A
+    choice the dish comes with and nobody changed (`defaulted`) is left off: the station knows the dish. It
+    is listed after all when something under it changed, so the change reads under the choice it is on, one
+    step further in. A station that does not read a choice (`Group.hidden_at`; `off` is what the choices
+    above already hide) reads nothing under it either, and one that reads none of the changes under a
+    defaulted choice has no use for the choice."""
     for mod in mods:
+        hidden = _all_of(off, mod.hidden_at)
         named = bool(mod.kitchen_label)
         inner_depth = depth + 1 if named else depth
-        inner = [(inner_depth + d, text) for d, text in mod.under]
-        inner.extend(ticket_labels(mod.children, inner_depth))
+        inner = [(inner_depth + d, text, _all_of(hidden, h)) for d, text, h in mod.under]
+        inner.extend(ticket_labels(mod.children, inner_depth, hidden))
         if named and (inner or not mod.defaulted):
-            yield depth, mod.kitchen_label
+            if mod.defaulted:
+                hidden = _all_of(hidden, set.intersection(*(set(h) for _, _, h in inner)))
+            yield depth, mod.kitchen_label, hidden
         yield from inner
 
 
-def one_line(labels: Sequence[tuple[int, str]]) -> str:
+def one_line(labels: Sequence[tuple[Any, ...]]) -> str:
     """`ticket_labels` on one line, a choice's own choices in brackets after it: `White Rice · Miso (No tofu)`."""
     out: list[str] = []
     i = 0
     while i < len(labels):
-        depth, text = labels[i]
+        depth, text = labels[i][0], labels[i][1]
         j = i + 1
         while j < len(labels) and labels[j][0] > depth:
             j += 1
@@ -515,9 +530,19 @@ class MenuEngine:
             ctx.stations.add(nested_station)
 
     def _apply_group(
-        self, ctx: _Ctx, group: Group, overrides: Mapping[str, Any], chosen: list[Selection], own_header: str
+        self,
+        ctx: _Ctx,
+        group: Group,
+        overrides: Mapping[str, Any],
+        chosen: list[Selection],
+        own_header: str,
+        off: frozenset[str] = frozenset(),
     ) -> list[ResolvedModifier]:
+        """`off` is the stations that already read nothing of this group: those hiding a choice it is asked
+        under."""
         defs = self.defs
+        hidden_at = group.hidden_at or ()
+        off = off | frozenset(hidden_at)
         options = {o.code: o for o in defs.options_of(group.code)}
         hidden = set(overrides.get("hidden", ()))
         prices = overrides.get("prices", {})
@@ -603,7 +628,9 @@ class MenuEngine:
             standing = (opt.code == named) if named else opt.is_default
             as_default = defaulted or (standing and prefix is None and sq == 1)
             if opt.linked_variant:
-                results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, as_default, own_header, label))
+                results.append(
+                    self._slot(ctx, group, overrides, opt, sel, sq, price, as_default, own_header, label, off)
+                )
                 continue
             if sq > 1:
                 # two of the same choice read as a count in front: "2x CHKN FINGR", "2x EXTRA SPARE RIBS"
@@ -644,7 +671,7 @@ class MenuEngine:
                 if child_group is None:
                     ctx.problems.append(Problem("unknown_group", f"{opt.id} asks unknown group {code}", group_id=code))
                     continue
-                children.extend(self._apply_group(ctx, child_group, {}, child_by_group.get(code, []), own_header))
+                children.extend(self._apply_group(ctx, child_group, {}, child_by_group.get(code, []), own_header, off))
             results.append(
                 ResolvedModifier(
                     group.code,
@@ -658,6 +685,7 @@ class MenuEngine:
                     opt.station,
                     prefix,
                     opt.routes_to,
+                    hidden_at=hidden_at,
                 )
             )
         if not defaulted and max_select != 1:
@@ -671,7 +699,9 @@ class MenuEngine:
                 name = defs.localizer.text(defs.option_names(opt), "en")
                 label = prefixed_label("no", defs.option_kitchen_label(opt), name)
                 results.append(
-                    ResolvedModifier(group.code, opt.id, 1, label, ZERO, (), (), False, opt.station, "no", None)
+                    ResolvedModifier(
+                        group.code, opt.id, 1, label, ZERO, (), (), False, opt.station, "no", None, hidden_at=hidden_at
+                    )
                 )
         if max_select is not None and units - nothing > max_select:
             ctx.problems.append(Problem("too_many", f"{group.code} takes at most {max_select}", group_id=group.code))
@@ -691,8 +721,10 @@ class MenuEngine:
         defaulted: bool,
         own_header: str,
         label: str,
+        off: frozenset[str] = frozenset(),
     ) -> ResolvedModifier:
-        """A slot option: the linked variant becomes a child line priced by the slot's mode."""
+        """A slot option: the linked variant becomes a child line priced by the slot's mode. `off` is the
+        stations that do not read this choice (the group's `hidden_at` and that of the choices above it)."""
         linked = self.defs.variants.get(opt.linked_variant or "")
         if opt.price_mode == "linked":
             child_price = money(linked.base_price) if linked else ZERO
@@ -703,8 +735,11 @@ class MenuEngine:
         expose = overrides.get("expose_linked_groups", "all")
         # A dish that prints its own line (not a combo) names the slot's dish among its choices, so the dish's
         # own line at the same station would say it twice: it folds into the parent's. At another station
-        # (the soup with a lunch special) it prints there, under the parent's header.
+        # (the soup with a lunch special) it prints there, under the parent's header. A station told not to
+        # read this choice would lose the dish with it, so there the dish keeps its own line.
         parent_station = self.defs.inherited(ctx.item, "station") if ctx.item.kind != "combo" else None
+        if parent_station in off:
+            parent_station = None
         child = self._resolve(
             variant_id=opt.linked_variant or "",
             qty=sq,
@@ -728,10 +763,22 @@ class MenuEngine:
             label = self.defs.localizer.kitchen(child.names) or self.defs.localizer.text(child.names, "en")
         under = list(ticket_labels(child.modifiers))
         if child.notes:
-            under.append((0, child.notes))  # the note on the dish reads with it, on whichever line names it
+            under.append((0, child.notes, ()))  # the note on the dish reads with it, on whichever line names it
         if sq > 1:
             label = f"{sq}x {label}"
-        return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None, under=tuple(under))
+        return ResolvedModifier(
+            group.code,
+            opt.id,
+            sq,
+            label,
+            ZERO,
+            (),
+            (),
+            defaulted,
+            None,
+            under=tuple(under),
+            hidden_at=group.hidden_at or (),
+        )
 
     def _apply_effect(self, ctx: _Ctx, effect: Any, opt: Option, sq: int) -> EffectResult:
         defs = self.defs
@@ -953,8 +1000,10 @@ class MenuEngine:
         lines: list[KitchenLine] = []
         station = self.defs.inherited(item, "station")
         listed = tuple(ticket_labels(modifiers))
-        labels = tuple(text for _, text in listed)
-        depths = tuple(depth for depth, _ in listed)
+        labels = tuple(text for _, text, _ in listed)
+        depths = tuple(depth for depth, _, _ in listed)
+        # where each choice is left off the ticket; nothing at all for a dish with nothing hidden anywhere
+        hidden = tuple(off for _, _, off in listed) if any(off for _, _, off in listed) else ()
         own = not (item.kind == "combo" and children)
         if own and station:
             text = f"{qty} {kitchen_name}"
@@ -964,7 +1013,15 @@ class MenuEngine:
                 text += " · " + one_line(listed)
             lines.append(
                 KitchenLine(
-                    station, qty, text, labels, header if origin != "line" else None, origin, note=notes, depths=depths
+                    station,
+                    qty,
+                    text,
+                    labels,
+                    header if origin != "line" else None,
+                    origin,
+                    note=notes,
+                    depths=depths,
+                    hidden=hidden,
                 )
             )
         for mod in flatten_modifiers(modifiers):
@@ -991,7 +1048,11 @@ class MenuEngine:
                     lines.append(replace(kl, station=station_code, origin="route"))
             if not any(kl.station == station_code for kl in lines):
                 text = f"{qty} {kitchen_name}" + (" · " + one_line(listed) if listed else "")
-                lines.append(KitchenLine(station_code, qty, text, labels, header, "route", note=notes, depths=depths))
+                lines.append(
+                    KitchenLine(
+                        station_code, qty, text, labels, header, "route", note=notes, depths=depths, hidden=hidden
+                    )
+                )
         return tuple(lines)
 
     # --- inventory and reporting --------------------------------------------------------------

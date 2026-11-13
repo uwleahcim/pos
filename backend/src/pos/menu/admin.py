@@ -280,6 +280,8 @@ def _references(defs: Definitions) -> list[Problem]:
             out.append(Problem("bad_id", f"size {v.id}: the id must be {v.item}:{v.code}"))
     for g in defs.groups.values():
         need(f"group {g.code}", "category", g.source_category, defs.categories)
+        for station in g.hidden_at or ():
+            need(f"group {g.code}", "station", station, defs.stations)
     for o in defs.options.values():
         need(f"option {o.id}", "group", o.group, defs.groups)
         need(f"option {o.id}", "station", o.station, defs.stations)

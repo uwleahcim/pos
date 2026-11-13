@@ -10,7 +10,10 @@ it fails, in order. `POS_PRINTERS` (name=host[:port][/dialect], e.g.
 Routing: a line prints at the printer serving its station; a printer serving several stations prints their
 lines on one ticket, headed with every station's name; the first printer also takes every station that has
 no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone, online, delivery,
-catering) prints whole at the takeout station's printer too, for the bag to be packed and checked.
+catering) prints whole at the takeout station's printer too, for the bag to be packed and checked. A
+station's ticket leaves off the choices the menu hides from it (`Group.hidden_at`: the cooks do not read the
+rice or the soup a dish comes with); the dish prints there all the same, and the bag's ticket reads what the
+takeout station reads.
 
 A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
 LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
@@ -210,29 +213,72 @@ def ticket_for(
     )
 
 
+@dataclass(frozen=True)
+class Takes:
+    """What one printer prints: called with the station a kitchen line is cooked at, it says whether the line
+    belongs on this printer's ticket. `own` is the stations it serves, `first` whether it also stands in for
+    every station with no printer (`served` is the stations that have one), and `whole` the takeout station
+    when it takes this order whole for the bag."""
+
+    own: frozenset[str] = frozenset()
+    first: bool = False
+    served: frozenset[str] = frozenset()
+    whole: str | None = None
+
+    def _cooks(self, station: str | None) -> bool:
+        return station in self.own or (self.first and station not in self.served)
+
+    def __call__(self, station: str | None) -> bool:
+        return self.whole is not None or self._cooks(station)
+
+    def readers(self, station: str | None) -> frozenset[str | None]:
+        """The stations a line cooked at `station` is printed for here: its own, when this printer prints
+        that station's tickets, and the takeout station when the order prints whole for the bag. A choice
+        hidden from all of them is left off; one any of them reads prints."""
+        cook = {station} if self._cooks(station) else set()
+        return frozenset(cook | ({self.whole} if self.whole is not None else set()))
+
+
+def _read_here(k: Mapping[str, Any], routes: Callable[[str | None], bool] | None) -> set[int]:
+    """Which of a kitchen line's choices this ticket lists, by their place in `labels`: all of them, less the
+    ones every station the ticket is printed for leaves off (`Group.hidden_at`, kept on the line as `hidden`)."""
+    count = len(k.get("labels") or ())
+    hidden = k.get("hidden") or ()
+    if not hidden:
+        return set(range(count))
+    station = k.get("station")
+    readers = routes.readers(station) if isinstance(routes, Takes) else frozenset({station})
+    return {i for i in range(count) if i >= len(hidden) or not readers <= set(hidden[i])}
+
+
 def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None, *, void: bool) -> list[TicketLine]:
     out = []
     for line in lines:
         kitchen = (line.priced or {}).get("kitchen")
         if not kitchen:  # a line typed on the phase 0 demo screen
             kitchen = [{"qty": 1, "label": line.item, "labels": []}]
-        said: set[tuple[Any, ...]] = set()
+        # A dish sent to a second station (a "take out" choice, a to-go order) is the same words again
+        # there; a printer that takes both stations says it once, with every choice either of them reads.
+        # The cooks do not read every choice (the rice, the soup): a station's ticket leaves off what the
+        # menu hides from it.
+        said: dict[tuple[Any, ...], tuple[Mapping[str, Any], set[int]]] = {}
         for k in kitchen:
             if routes is not None and not routes(k.get("station")):
                 continue
-            # A dish sent to a second station (a "take out" choice, a to-go order) is the same words again
-            # there; a printer that takes both stations says it once.
             labels, depths = tuple(k.get("labels", ())), tuple(int(d) for d in k.get("depths") or ())
             words = (k.get("qty", 1), k.get("label"), labels, depths, k.get("header"), k.get("note"))
+            read = _read_here(k, routes)
             if words in said:
-                continue
-            said.add(words)
+                said[words][1].update(read)
+            else:
+                said[words] = (k, read)
+        for (_, _, labels, depths, _, _), (k, read) in said.items():
             out.append(
                 TicketLine(
                     qty=line.qty * int(k.get("qty", 1)),
                     label=str(k.get("label") or line.item),
-                    modifiers=labels,
-                    depths=depths,
+                    modifiers=tuple(text for i, text in enumerate(labels) if i in read),
+                    depths=tuple(depth for i, depth in enumerate(depths) if i in read),
                     # the dish's own note (a slot dish's, from its choice) and the order line's, under every line
                     note=" · ".join(n for n in (k.get("note"), line.note) if n),
                     seat=line.seat,
@@ -389,11 +435,12 @@ class PrintService:
             jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
         return jobs
 
-    def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Callable[[str | None], bool]]]:
+    def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Takes]]:
         """Which lines each printer takes, by station: a printer takes its own stations (the first printer on
         a station, when two list one); the first printer in the list also takes every station without a
         printer and lines with none, so nothing fired is left unprinted; and the takeout station's printer
-        takes every line of a to-go order, whole, for the bag."""
+        takes every line of a to-go order, whole, for the bag. Each `Takes` also says for which stations a
+        line prints there, which decides the choices it lists (`Group.hidden_at`)."""
         served: dict[str, Printer] = {}
         for printer in printers:
             for station in printer.stations:
@@ -401,18 +448,10 @@ class PrintService:
         takeout = self.takeout_station() if to_go else None
         out = []
         for i, printer in enumerate(printers):
-            own = {station for station in printer.stations if served[station] is printer}
-            first = i == 0
-            everything = takeout is not None and printer is served.get(takeout)
-            out.append((printer, self._takes(own, first=first, served=set(served), everything=everything)))
+            own = frozenset(station for station in printer.stations if served[station] is printer)
+            whole = takeout if takeout is not None and printer is served.get(takeout) else None
+            out.append((printer, Takes(own, first=i == 0, served=frozenset(served), whole=whole)))
         return out
-
-    @staticmethod
-    def _takes(own: set[str], *, first: bool, served: set[str], everything: bool) -> Callable[[str | None], bool]:
-        def takes(station: str | None) -> bool:
-            return everything or station in own or (first and station not in served)
-
-        return takes
 
     def queue(
         self,

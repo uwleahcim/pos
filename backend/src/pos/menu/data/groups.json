@@ -4,5 +4,12 @@
     "Soup": {"items_from": "Soup"},
     "Sushi Soup": {"items_from": "Soup"},
     "Roll": {"category": "Roll (Maki)"}
+  },
+  "_about_hidden_at": "Which stations' tickets leave a group's choices off, by the group's name in the export: the cooks do not read the rice or the soup a dish comes with. The dish prints there all the same, the takeout counter, the check and every station not listed still read the choice, and a soup that is a dish prints at the soup station as before. A manager changes this in the menu editor (an option group's \"On the tickets at\"); `hubctl menu import --apply` fills it only on a group nobody has set.",
+  "hidden_at": {
+    "Rice": ["wok1", "wok2", "wok3", "broiler", "range", "fryer", "sushi"],
+    "Lunch Rice": ["wok1", "wok2", "wok3", "broiler", "range", "fryer", "sushi"],
+    "Soup": ["wok1", "wok2", "wok3", "broiler", "range", "fryer", "sushi"],
+    "Sushi Soup": ["wok1", "wok2", "wok3", "broiler", "range", "fryer", "sushi"]
   }
 }

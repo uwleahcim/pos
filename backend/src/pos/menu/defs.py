@@ -156,6 +156,12 @@ class Group:
     """The options come from this category: every dish on sale in it (and in the categories under it) is an
     option linked to the dish, one per size when it has several, kept in step on every save (`linked.sync`).
     Options added by hand stay beside them."""
+    hidden_at: tuple[str, ...] | None = None
+    """The stations whose tickets leave this group's choices off: the wok cook has no use for the rice or the
+    soup that comes with a dish. The dish itself prints there all the same, the check and every other station
+    list the choice, and a choice that is a dish (the soup) still prints at its own station. None while nobody
+    has said: every station lists the choices, and the bundled files may still name stations (`seed.fill`);
+    an empty list is a manager saying every station reads them."""
 
 
 @dataclass(frozen=True)

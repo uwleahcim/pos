@@ -32,10 +32,42 @@ step further in, and bring a default choice back onto the ticket so the change r
 An order line keeps the ticket words it was sold with (`priced.kitchen`: `labels` and, beside them,
 `depths`), so a dish sold before this prints as it did.
 
+**What a station does not read.** An option group names the stations whose tickets leave its picks off
+(`Group.hidden_at`): the cooks have no use for the rice or the soup a dish comes with. The dish prints at
+that station all the same, only without those lines, and with everything under them (the note on a soup
+goes with the soup). Everyone else still reads the pick: the check, every station not named, and the
+takeout counter, which bags a to-go order whole and scoops the rice. A pick that is a dish (the soup with a
+lunch special) keeps printing at its own station, under the dish it goes with, and a dish cooked at a
+station that does not read its group prints there as a line of its own instead of as a pick, so a station
+never loses a dish it cooks.
+
+```
+Wok 1, before                         Wok 1, with Lunch Rice and Soup left off
+1 x L甜酸雞 LUN:SWEET & SOUR CHKN      1 x L甜酸雞 LUN:SWEET & SOUR CHKN
+    + Brown Rice
+    + 酸辣湯 HOT & SOUR SOUP           Soup (unchanged)
+                                      with L01 L甜酸雞 LUN:SWEET & SOUR CHKN
+                                      1 x 酸辣湯 HOT & SOUR SOUP
+```
+
+The order line keeps every pick and, beside `labels`, where each is left off (`priced.kitchen[].hidden`,
+one list of station codes per label, there only when something is hidden). The hub decides at print time,
+per printer, for which stations a line prints there (`Takes.readers`): the line's own station on the
+printer that prints that station's tickets (the first printer too, when it stands in for a station with no
+printer), and the takeout station on the printer that takes a to-go order whole. A pick prints unless every
+one of them leaves it off, and a printer that has the same dish for two stations says it once, with what
+either reads. A line sold before this carries no `hidden` and prints as it did.
+
+The bundled menu leaves **Rice**, **Lunch Rice**, **Soup** and **Sushi Soup** off the tickets of wok 1, wok 2,
+wok 3, the broiler, the range, the fryer and the sushi bar (`backend/src/pos/menu/data/groups.json`,
+`hidden_at`). `hubctl menu import --apply` gives a running hub the same on each of those groups nobody has
+set; a group a manager has set in the editor, to anything, is left alone.
+
 In the menu editor, each dish has a **Prints at** section: its station (the category's unless set), with
 a line saying whether a printer serves that station, and **A new station…** to add one (Dessert, say) from
 the dish itself. In an option group, the printer button on each option says where else the dish prints
-when that option is chosen.
+when that option is chosen, and **On the tickets at** has one button per station: ticked, that station's
+ticket lists what is picked in the group; tap it off and the dish prints there without it.
 
 ## Printers
 

@@ -38,9 +38,11 @@ class ResolvedModifier:
     station: str | None = None
     prefix: str | None = None  # no | extra | side | light, already written into kitchen_label
     routes_to: str | None = None  # a station the whole dish prints at as well, for this choice
-    under: tuple[tuple[int, str], ...] = ()
+    under: tuple[tuple[int, str, tuple[str, ...]], ...] = ()
     """What a ticket prints under this choice when it is a dish: the choices changed on that dish and the
-    note on it, each with how many steps further in it stands (0 is straight under the choice)."""
+    note on it, each with how many steps further in it stands (0 is straight under the choice) and the
+    stations that leave it off."""
+    hidden_at: tuple[str, ...] = ()  # the stations whose tickets leave this choice off (its group's)
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,11 @@ class KitchenLine:
     depths: tuple[int, ...] = ()
     """How far in each of `labels` prints: 0 is a choice on the dish, 1 a choice on that choice (the sauce on
     a roll in a combination), which a ticket indents on the line under it."""
+    hidden: tuple[tuple[str, ...], ...] = ()
+    """For each of `labels`, the stations whose tickets leave it off (`Group.hidden_at`, a choice's own and
+    that of every choice it stands under). `labels` and `text` carry every choice: this line may print for
+    another station as well (the takeout counter bags a to-go order whole), which reads what its own station
+    does not. Empty when nothing is hidden anywhere."""
 
 
 @dataclass(frozen=True)

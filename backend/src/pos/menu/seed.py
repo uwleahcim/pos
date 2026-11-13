@@ -16,7 +16,9 @@ the dishes come, and an option the editor added stays. When the files name a dis
 language the stored one has no name in (the Chinese names and kitchen labels from the restaurant's original
 POS, `legacy_pos.json`), or send a dish to a station where the stored dish inherits its category's, the
 stored row takes the name or the station (`fill`); a name the editor typed, in any language, and a station
-the editor set stay. On a hub: `hubctl menu import [--apply]`.
+the editor set stay. When the files leave a group's choices off some stations' tickets (the cooks do not
+read the rice or the soup a dish comes with), a stored group nobody has set takes those stations; one a
+manager set in the editor, to anything, stays. On a hub: `hubctl menu import [--apply]`.
 """
 
 from __future__ import annotations
@@ -155,6 +157,17 @@ def fill(merged: Definitions, bundled: Definitions) -> list[str]:
         filled.append(
             f"group {code} takes {wanted_group.min_select}, comes with {', '.join(o.code for o in comes_with)}"
         )
+    # A group the files leave off some stations' tickets (the rice and the soup, off the cooks') is left off
+    # them on the hub too, while nobody has said where it prints; what a manager set in the editor stays,
+    # an empty list included.
+    for code, wanted_group in bundled.groups.items():
+        held_group = merged.groups.get(code)
+        if held_group is None or held_group.hidden_at is not None or not wanted_group.hidden_at:
+            continue
+        stations = tuple(station for station in wanted_group.hidden_at if station in merged.stations)
+        if stations:
+            merged.groups[code] = replace(held_group, hidden_at=stations)
+            filled.append(f"group {code} is left off the tickets at {', '.join(stations)}")
     return filled
 
 

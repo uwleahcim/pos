@@ -317,6 +317,94 @@ void main() {
     expect(changes, greaterThan(0));
   });
 
+  testWidgets('a group says which stations\' tickets list its picks, and a tap takes a station off or puts it back', (
+    tester,
+  ) async {
+    Future<void> show(MenuCatalog catalog, VoidCallback onChanged) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 1000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: StatefulBuilder(
+                builder: (context, setState) =>
+                    GroupEditor(catalog: catalog, groupKey: 'rice', onChanged: () => setState(onChanged)),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    String line() => tester.widget<Text>(find.byKey(const ValueKey('rice/tickets-line'))).data!;
+    bool ticked(String station) => tester.widget<FilterChip>(find.byKey(ValueKey('rice/ticket:$station'))).selected;
+
+    // a hub from before the change does not send the field and would refuse it: nothing is offered
+    await show(MenuCatalog.fromJson(catalogJson()), () {});
+    expect(find.text('On the tickets at'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+
+    final json = catalogJson();
+    ((json['catalog'] as Map)['group'] as List).first['hidden_at'] = null; // nobody has said
+    final catalog = MenuCatalog.fromJson(json)
+      ..put('station', {
+        'code': 'takeout',
+        'names': {'en': 'Takeout'},
+        'printers': <String>[],
+        'cross_contact': <String>[],
+      });
+    var changes = 0;
+    await show(catalog, () => changes++);
+    expect(find.text('On the tickets at'), findsOneWidget);
+    expect([ticked('wok1'), ticked('wok2'), ticked('takeout')], [true, true, true]);
+    expect(line(), 'Every station\'s ticket lists what is picked here, under the dish.');
+    expect(catalog.isChanged('group', 'rice'), isFalse);
+
+    // the wok cooks do not read the rice: one tap each
+    await tester.tap(find.byKey(const ValueKey('rice/ticket:wok2')));
+    await tester.pumpAndSettle();
+    expect(catalog.get('group', 'rice')!['hidden_at'], ['wok2']);
+    expect([ticked('wok1'), ticked('wok2'), ticked('takeout')], [true, false, true]);
+    expect(
+      line(),
+      'Left off the tickets at Wok 2: the dish prints there without what is picked here. '
+      'The check and the other stations still show it.',
+    );
+    await tester.tap(find.byKey(const ValueKey('rice/ticket:wok1')));
+    await tester.pumpAndSettle();
+    expect(catalog.get('group', 'rice')!['hidden_at'], ['wok1', 'wok2']); // in the stations' own order
+    expect(
+      line(),
+      'Only the tickets at Takeout list what is picked here: the dish prints at the other stations without it. '
+      'The check still shows it.',
+    );
+    final put = catalog.changes().singleWhere((c) => c['kind'] == 'group');
+    expect((put['op'], put['data']['code']), ('put', 'rice'));
+    expect(put['data']['hidden_at'], ['wok1', 'wok2']);
+    expect(changes, 2);
+
+    // a pick that is a dish (the soup) has a station of its own, and the line says it still prints there
+    catalog.get('option', 'rice:white')!['linked_variant'] = 'GTC:quart';
+    await tester.tap(find.byKey(const ValueKey('rice/ticket:takeout')));
+    await tester.pumpAndSettle();
+    expect(
+      line(),
+      'No station\'s ticket lists what is picked here: the dish prints without it. '
+      'The check still shows it. A pick that is a dish still prints at its own station.',
+    );
+
+    // back on every ticket: an empty list, which is a manager's answer and still a change to save
+    for (final station in ['wok1', 'wok2', 'takeout']) {
+      await tester.tap(find.byKey(ValueKey('rice/ticket:$station')));
+      await tester.pumpAndSettle();
+    }
+    expect(catalog.get('group', 'rice')!['hidden_at'], isEmpty);
+    expect(line(), 'Every station\'s ticket lists what is picked here, under the dish.');
+    expect(catalog.isChanged('group', 'rice'), isTrue);
+  });
+
   testWidgets('a dish says where it prints and whether a printer serves it; a choice can send it elsewhere too', (
     tester,
   ) async {
