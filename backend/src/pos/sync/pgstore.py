@@ -180,6 +180,14 @@ class PgOpStore:
         with self._pool.connection() as conn:
             return [_row_to_op(row) for row in conn.execute(sql, params)]
 
+    def arrivals(self, cursor: int, limit: int = 2000) -> list[tuple[int, str]]:
+        """Where each operation after `cursor` landed and whose it is, oldest first: `(cursor, order id)`.
+        What the change feed tells the screens: one read of the primary key's tail, whoever wrote it (this
+        process, another worker, or the primary this standby follows)."""
+        sql = "SELECT seq, order_id FROM ops WHERE seq > %s ORDER BY seq LIMIT %s"
+        with self._pool.connection() as conn:
+            return [(int(seq), order_id) for seq, order_id in conn.execute(sql, (cursor, limit))]
+
     def for_order(self, order_id: str) -> list[Op]:
         with self._pool.connection() as conn:
             rows = conn.execute(f"SELECT {_COLUMNS} FROM ops WHERE order_id = %s ORDER BY seq", (order_id,))
