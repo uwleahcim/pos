@@ -2637,6 +2637,8 @@
         "en": "Platter"
       },
       "sort": 10,
+      "min": 6,
+      "max": 6,
       "allow_quantity": true,
       "options": [
         {
@@ -2647,17 +2649,20 @@
         {
           "code": "spring_roll",
           "name": "Spring roll",
-          "kitchen_label": "SPRING ROL"
+          "kitchen_label": "SPRING ROL",
+          "default": true
         },
         {
           "code": "chicken_wings",
           "name": "Chicken wings",
-          "kitchen_label": "CHKN WING"
+          "kitchen_label": "CHKN WING",
+          "default": true
         },
         {
           "code": "chicken_fingers",
           "name": "Chicken fingers",
-          "kitchen_label": "CHKN FINGR"
+          "kitchen_label": "CHKN FINGR",
+          "default": true
         },
         {
           "code": "spare_ribs",
@@ -2668,17 +2673,20 @@
         {
           "code": "boneless_ribs",
           "name": "Boneless ribs",
-          "kitchen_label": "BONLES RIB"
+          "kitchen_label": "BONLES RIB",
+          "default": true
         },
         {
           "code": "beef_teriyaki",
           "name": "Beef teriyaki",
-          "kitchen_label": "BEEF TERIY"
+          "kitchen_label": "BEEF TERIY",
+          "default": true
         },
         {
           "code": "crab_rangoon",
           "name": "Crab rangoon",
-          "kitchen_label": "RANGOON"
+          "kitchen_label": "RANGOON",
+          "default": true
         }
       ]
     },

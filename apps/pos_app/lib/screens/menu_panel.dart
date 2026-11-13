@@ -449,7 +449,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       if (!mounted) return;
       fillDefaults(detail.groups, choices);
       for (final g in detail.groups) {
-        if (g.required && (choices.selections[g.groupId]?.length ?? 0) < g.minSelect) requiredGroups.add(g);
+        if (g.required && choices.units(g.groupId) < g.minSelect) requiredGroups.add(g);
       }
     }
 
@@ -2048,7 +2048,8 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
       if (armed != null) {
         // "No peanuts": the word goes on this choice, which has to be on the line for it to mean anything.
         // The same word again takes it off and leaves the plain choice.
-        final full = !chosen && !group.single && !choices.room(group);
+        // a full group takes no new choice, and a "no" in it cannot turn back into one more
+        final full = !group.single && !choices.room(group) && (!chosen || choices.prefixes[option.optionId] == 'no');
         if (!full) {
           if (choices.prefixes[option.optionId] == armed) {
             choices.prefixes.remove(option.optionId);
@@ -2131,7 +2132,10 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
   ) => [
     for (final g in groups) ...[
       Text(
-        g.required ? '${g.name} (required)' : g.name,
+        // a group that needs several shows how many it has, as the tray does: "Platter (6/6)"
+        g.minSelect > 1
+            ? '${g.name} (${choices.taken(g.groupId)}/${g.minSelect})'
+            : (g.required ? '${g.name} (required)' : g.name),
         style: theme.textTheme.titleSmall?.copyWith(color: g.required ? scheme.primary : scheme.onSurface),
       ),
       if (g.allowQuantity)

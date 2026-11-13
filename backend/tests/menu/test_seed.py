@@ -169,6 +169,24 @@ def test_fill_sends_the_take_out_choice_to_the_takeout_station_unless_the_editor
     assert fill(merged, bundled) == []
 
 
+def test_fill_gives_the_platter_its_six_unless_the_editor_set_the_group():
+    """A hub whose Platter group was any number of anything takes "six, and these six" from the files; a
+    group the editor already gave a number of picks keeps what it has."""
+    bundled, _ = load_restaurant_menu()
+    six = sorted(o.id for o in bundled.options_of("platter") if o.is_default)
+    merged, _added = missing(before_the_bar(), bundled)
+    merged.groups["platter"] = replace(merged.groups["platter"], min_select=0, max_select=None)
+    for option in merged.options_of("platter"):
+        merged.options[option.id] = replace(option, is_default=False)
+    filled = fill(merged, bundled)
+    assert any(line.startswith("group platter takes 6, comes with spring_roll") for line in filled)
+    assert (merged.groups["platter"].min_select, merged.groups["platter"].max_select) == (6, 6)
+    assert sorted(o.id for o in merged.options_of("platter") if o.is_default) == six and len(six) == 6
+    assert fill(merged, bundled) == []
+    merged.groups["platter"] = replace(merged.groups["platter"], min_select=0, max_select=4)
+    assert fill(merged, bundled) == [] and merged.groups["platter"].max_select == 4
+
+
 def test_restructure_leaves_a_menu_the_editor_renamed_alone():
     stored = before_the_drinks_menu()
     stored.menus["dinner"] = replace(stored.menus["dinner"], names={"en": "Dinner", "zh": "晚餐"})

@@ -533,17 +533,24 @@ class MenuEngine:
                 )
             if default is not None and default in options:
                 chosen = [Selection(group.code, options[default].id, 1)]
+                if named is None and max_select != 1:
+                    # a dish that comes with several things (the platter's six) comes with all of them
+                    all_of = [o for o in options.values() if o.is_default and o.active and o.code not in hidden]
+                    chosen = [Selection(group.code, o.id, 1) for o in all_of[:max_select]]
                 defaulted = True
             elif min_select > 0:
                 ctx.problems.append(Problem("too_few", f"{group.code} needs a choice", group_id=group.code))
                 return []
         results: list[ResolvedModifier] = []
         units = 0
+        nothing = 0
         free_left = group.free_count
         seen: set[str] = set()
         for sel in chosen:
             opt = defs.options.get(sel.option_id)
             units += max(sel.qty, 1)  # a rejected choice still counts: the rejection is the problem, not too_few
+            if sel.prefix == "no":
+                nothing += 1  # "no crab rangoon" answers the question and leaves its place for something else
             if opt is None or opt.group != group.code:
                 ctx.problems.append(
                     Problem(
@@ -653,7 +660,20 @@ class MenuEngine:
                     opt.routes_to,
                 )
             )
-        if max_select is not None and units > max_select:
+        if not defaulted and max_select != 1:
+            # What a dish comes with and was taken off (the platter's crab rangoon, swapped for more chicken
+            # fingers) is told to the kitchen as "no", or nobody would know what to leave out.
+            for opt in options.values():
+                if not opt.is_default or opt.code in seen or opt.code in hidden or not opt.active or named:
+                    continue
+                if self.status_of(opt.id, ctx.at) != "available":
+                    continue  # sold out: it is off every plate already
+                name = defs.localizer.text(defs.option_names(opt), "en")
+                label = prefixed_label("no", defs.option_kitchen_label(opt), name)
+                results.append(
+                    ResolvedModifier(group.code, opt.id, 1, label, ZERO, (), (), False, opt.station, "no", None)
+                )
+        if max_select is not None and units - nothing > max_select:
             ctx.problems.append(Problem("too_many", f"{group.code} takes at most {max_select}", group_id=group.code))
         if units < min_select:
             ctx.problems.append(Problem("too_few", f"{group.code} needs at least {min_select}", group_id=group.code))
