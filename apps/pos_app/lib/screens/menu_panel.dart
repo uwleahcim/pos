@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../live.dart';
 import '../local_order.dart' show localPrice;
 import '../menu.dart';
 import 'drill_down.dart';
@@ -94,6 +95,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
+  // The hub tells the panel when the menu was saved or a dish 86'd; the timer only asks for the revision
+  // while it cannot, and once a minute.
+  late final _poll = SafetyPoll(widget.api.live, every: 12);
+  StreamSubscription<LiveChange>? _live;
   final _search = TextEditingController();
   final _categoriesScroll = _CategoryScrollController();
   final _searchScroll = _CategoryScrollController();
@@ -121,6 +126,18 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     super.initState();
     _load();
     _watch = Timer.periodic(MenuPanelCheck.every, (_) => _check());
+    _live = widget.api.live.changes.listen(_onLive);
+  }
+
+  /// The hub says the menu changed: a save moves the revision, an 86 does not, so the menu is read either
+  /// way (the hub answers "the one you have" when it is). A feed that just connected says nothing about
+  /// the menu, so the revision is asked for once.
+  void _onLive(LiveChange change) {
+    if (change.menu) {
+      unawaited(_load());
+    } else if (change.everything) {
+      unawaited(_check(told: true));
+    }
   }
 
   /// The screen above drew again: the order may have changed, and with it the counts on the tiles.
@@ -133,6 +150,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   @override
   void dispose() {
     _watch?.cancel();
+    unawaited(_live?.cancel());
     _transition.dispose();
     _search.dispose();
     _categoriesScroll.dispose();
@@ -192,9 +210,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   }
 
   /// A manager saved the menu (or the hour changed the menus open): read it again, keeping the open category.
-  Future<void> _check() async {
+  Future<void> _check({bool told = false}) async {
     if (_menus == null) return _load();
     if (DateTime.now().difference(_loadedAt) >= MenuPanelCheck.reload) return _load();
+    if (!told && !_poll.due()) return; // the hub would have said
+    _poll.asked();
     try {
       if (await widget.api.menuRevision() != _revision) await _load();
     } on ApiException {

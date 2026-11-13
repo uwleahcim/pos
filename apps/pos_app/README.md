@@ -41,7 +41,8 @@ every dish by category: names in English and Chinese, the kitchen ticket name, t
 its sizes and prices, where it sits on the menus and its option groups. Option groups and categories edit
 the same way; a category's page puts it on or off each menu with every dish in it. Save sends only what
 changed; the backend checks the whole menu and either saves it or says what is wrong. Screens showing the
-menu ask every five seconds whether it changed and reload when it has.
+menu are told by the hub when it was saved (or a dish 86'd) and reload then; against a hub without the
+change feed they ask every five seconds whether it changed.
 
 ## Staying smooth
 
@@ -54,6 +55,14 @@ what a change to a screen must not undo:
 - A read a screen repeats goes through the repeated reads of `PosApi`: the hub answers `304` while nothing
   changed and the call returns the very same object, so the screen compares with `identical` and does not
   redraw. A list that is under another screen does not poll.
+- The screens do not ask whether something changed: the hub tells them (`lib/live.dart`, ADR 7). `LiveFeed`
+  holds the hub's change feed open and says which orders changed, or that the menu or a setting did; a
+  screen listens to `api.live.changes` and reads through a `Paced` reader, which never has two reads out at
+  a time and turns a burst of changes into one read now and one after. The old two-second timer stays, as
+  the fallback: `SafetyPoll.due()` is true on every tick while the feed is not live (an older hub, a feed
+  that dropped, a test that never started it) and on every fifteenth while it is. A new screen that shows
+  something another terminal can change does the same three things; the status sheet says which way the
+  screen is being updated.
 - A widget that moves by `setState` on every frame (the menu's trays) hands its children the same widget
   objects from frame to frame (`_tilesOf` in `screens/menu_panel.dart`), so only what moves is built again.
   `test/menu_frames_test.dart` counts the rebuilds.

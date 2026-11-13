@@ -58,6 +58,9 @@ Future<void> main() async {
   // which the store rewrote whole on every write: they are taken out, slowly, once the app is up.
   unawaited(ReadCache.forgetLegacy(prefs));
   final relay = PrintRelay(api, settings)..bind();
+  // The hub tells this screen what changed, the moment it does, over one connection held open: the screens
+  // stop asking every two seconds while it is up, and go back to asking whenever it is not.
+  api.live.start();
   // Who is at this screen, for as long as the app runs: the camera signs people in and switches between them
   // hands-free (docs/face-signin.md), and a badge reader on the keyboard does the same by tag.
   final faces = FaceSignIn(api, settings, camera, session);
@@ -104,6 +107,9 @@ Future<void> main() async {
       phone.resumed();
       deskPhones.wakeUp();
     },
+    // Back from the background (not a Mac window regaining focus): the connection the feed slept on is not
+    // trusted, it is opened afresh.
+    onRestart: api.live.wake,
   );
   runApp(
     PosApp(

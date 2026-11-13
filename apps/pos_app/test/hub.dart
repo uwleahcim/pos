@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -72,6 +73,10 @@ class Hub {
   List<Map<String, dynamic>> extensions = [];
   bool extensionsConnected = false;
   List<String> devices = [];
+
+  /// The menu it serves when a test changed it (the fixture otherwise), and the revision it is at.
+  Map<String, dynamic>? menu;
+  int revision = 0;
 
   /// The check it serves for every order (it prices nothing itself), and its pricing rules.
   Map<String, dynamic>? check;
@@ -368,7 +373,9 @@ class Hub {
       case '/floor':
         return json(fixture('floor'));
       case '/menu':
-        return json(fixture('menu'));
+        return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
+      case '/menu/revision':
+        return json({'revision': revision});
       case '/menu/price':
         return json({'name': "General Tso's Chicken (Quart)", 'unit_price': '26.95'});
       case '/pricing/rules':
@@ -490,3 +497,84 @@ Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orde
 }
 
 Future<void> stop(WidgetTester tester) => tester.pumpWidget(const SizedBox()); // stops the refresh timers
+
+/// A pretend hub that also has the change feed (`GET /live`): the other calls go to [hub], and the test
+/// says what the feed tells with [hello], [changed], [beat] and [drop]. With [beats], it writes its
+/// heartbeat by itself for as long as the test pumps time.
+class LiveHub {
+  LiveHub(this.hub, {this.base = 'http://hub:8000'});
+
+  final Hub hub;
+  final String base;
+
+  /// The streams terminals hold open now, and how many were ever opened and closed by the terminal.
+  final open = <StreamController<List<int>>>[];
+  int opened = 0;
+  int hungUp = 0;
+
+  /// What the feed call carried last, and what an older hub answers it with (404), or null for a hub that has it.
+  http.BaseRequest? asked;
+  int? refuse;
+
+  /// Unreachable: every call fails, the feed's included.
+  bool down = false;
+  Timer? _beats;
+
+  http.Client get client => MockClient.streaming(handle);
+
+  Future<http.StreamedResponse> handle(http.BaseRequest request, http.ByteStream body) async {
+    if (down) throw const SocketException('down');
+    if (request.url.path == '/live') {
+      asked = request;
+      hub.requests.add('GET /live');
+      if (refuse != null) return http.StreamedResponse(Stream.value(utf8.encode('{"detail":"Not Found"}')), refuse!);
+      opened += 1;
+      late final StreamController<List<int>> stream;
+      stream = StreamController<List<int>>(
+        onCancel: () {
+          hungUp += 1;
+          open.remove(stream);
+        },
+      );
+      open.add(stream);
+      return http.StreamedResponse(stream.stream, 200, headers: {'content-type': 'text/event-stream; charset=utf-8'});
+    }
+    final copy = http.Request(request.method, request.url)
+      ..headers.addAll(request.headers)
+      ..bodyBytes = await body.toBytes();
+    final response = await hub.handle(copy);
+    return http.StreamedResponse(Stream.value(response.bodyBytes), response.statusCode, headers: response.headers);
+  }
+
+  void _write(String text) {
+    for (final stream in [...open]) {
+      stream.add(utf8.encode(text));
+    }
+  }
+
+  void say(String event, Map<String, dynamic> data) => _write('event: $event\ndata: ${jsonEncode(data)}\n\n');
+
+  void hello({double heartbeat = 1.0}) => say('hello', {'cursor': 0, 'menu': 1, 'heartbeat': heartbeat});
+
+  void changed({List<String> orders = const [], List<String> topics = const [], bool everything = false}) =>
+      say('changed', {'orders': orders, 'topics': topics, if (everything) 'everything': true});
+
+  void beat() => _write(':\n\n');
+
+  /// Writes the heartbeat every second from now on (a timer of the test's own clock).
+  void beats() => _beats ??= Timer.periodic(const Duration(seconds: 1), (_) => beat());
+
+  /// The hub ends every stream, as it does when it restarts.
+  void drop() {
+    for (final stream in [...open]) {
+      open.remove(stream);
+      unawaited(stream.close());
+    }
+  }
+
+  void close() {
+    _beats?.cancel();
+    _beats = null;
+    drop();
+  }
+}

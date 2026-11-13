@@ -7,6 +7,7 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone_watcher.dart';
 import '../floor.dart';
+import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
 import '../phone.dart';
@@ -72,6 +73,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _floor = true;
   final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
+  // The hub tells this screen when an order changed; the timer only asks while it cannot, and now and then.
+  late final _poll = SafetyPoll(widget.api.live);
+  late final _reader = Paced(const Duration(seconds: 1), _read);
+  StreamSubscription<LiveChange>? _live;
   // The counts as they stood when this screen came up, so only what happens from now on opens anything (set
   // here, not lazily: the first notification may be the one that moves a count).
   int _orderRequests = 0;
@@ -88,7 +93,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _deskCalls = widget.deskPhones?.calls ?? 0;
     // Under an open check nobody sees the list: it stops asking, and reads again the moment it is back.
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_inFront) _refresh();
+      if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
+    });
+    _live = widget.api.live.changes.listen((change) {
+      if (_inFront && change.anyOrder) _reader();
     });
     widget.outbox.addListener(_onOutbox);
     widget.phone?.addListener(_onPhone);
@@ -109,6 +117,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    unawaited(_live?.cancel());
+    _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
     widget.phone?.removeListener(_onPhone);
     widget.deskPhones?.removeListener(_onDeskPhone);
@@ -176,7 +186,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// How far back "Show closed" lists: a day of checks, not every check the restaurant ever took.
   static const _closedWithin = Duration(hours: 24);
 
-  Future<void> _refresh() async {
+  Future<void> _refresh() => _reader.now();
+
+  Future<void> _read() async {
+    _poll.asked();
     try {
       final orders = await widget.api.listOrders(
         status: _showClosed ? null : 'open',
