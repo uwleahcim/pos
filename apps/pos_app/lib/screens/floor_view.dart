@@ -16,14 +16,14 @@ import 'theme.dart';
 /// and a tap that opens the table's check (or seats a new party). With an [outbox], the checks this device
 /// opened that no backend knows yet are on their tables too (ADR 6).
 ///
-/// Each busy table's edge is a countdown: a ring that starts whole and drains as the table waits on its
-/// stage (seated with no order, dishes not sent, a course held, everything sent), amber when it is running
-/// out, whole again and flashing red once time is up, with a badge that says what and how long. The hub says
-/// what each table waits on and since when, and what each stage is given (`/settings/table_timers`); the
-/// map only runs the clock. The clock costs the map nothing it can avoid: the rings are one painted layer,
-/// repainted only when one of them would look different, and the few words that follow the clock (minutes,
-/// badges, the count of tables that need a look) are rebuilt one by one as theirs change. The tables are
-/// rebuilt when the hub has news, as before.
+/// Each busy table's edge is a countdown: a ring that starts whole and unwinds counter-clockwise to twelve
+/// o'clock as the table waits on its stage (seated with no order, dishes not sent, a course held, everything
+/// sent), amber when it is running out, whole again and flashing red once time is up, with a badge that says
+/// what and how long. The hub says what each table waits on and since when, and what each stage is given
+/// (`/settings/table_timers`); the map only runs the clock. The clock costs the map nothing it can avoid: the
+/// rings are one painted layer, repainted only when one of them would look different, and the few words that
+/// follow the clock (minutes, badges, the count of tables that need a look) are rebuilt one by one as theirs
+/// change. The tables are rebuilt when the hub has news, as before.
 class FloorView extends StatefulWidget {
   const FloorView({super.key, required this.api, required this.onTable, this.outbox, this.now});
 
@@ -434,10 +434,12 @@ class _TickingState<T> extends State<_Ticking<T>> {
   Widget build(BuildContext context) => widget.builder(context, _value);
 }
 
-/// One table's ring: the line round its edge, starting at the top and going clockwise.
+/// One table's ring: the line round its edge, clockwise.
 class _Ring {
   _Ring({required this.tableId, required this.center, required this.top, required Path path, required this.calm})
-    : metric = path.computeMetrics().first;
+    : metric = path.computeMetrics().first {
+    twelve = _twelve();
+  }
 
   /// How far inside the table's edge the middle of the ring's line runs, and how wide the line is while the
   /// countdown runs, is running out, and is over (plan units, like the table's own size).
@@ -451,8 +453,48 @@ class _Ring {
   final double top;
   final PathMetric metric;
 
+  /// How far along the line twelve o'clock is: the point straight above the table's middle on the screen,
+  /// however the table is turned. Every countdown is read from there.
+  late final double twelve;
+
   /// The ring's colour while nothing is pressing: the table's own border colour.
   final Color calm;
+
+  /// The whole line.
+  Path get whole => metric.extractPath(0, metric.length);
+
+  /// What is left of a countdown: from twelve o'clock, clockwise, [left] of the way round. As the time goes
+  /// its far end draws back counter-clockwise to twelve, like the hand of a kitchen timer going to zero.
+  Path remaining(double left) {
+    final length = metric.length, end = twelve + length * left;
+    if (left >= 1) return whole;
+    if (end <= length) return metric.extractPath(twelve, end);
+    return metric.extractPath(twelve, length)..extendWithPath(metric.extractPath(0, end - length), Offset.zero);
+  }
+
+  double _twelve() {
+    // How far round from straight up the point [at] along the line is, clockwise: 0 up to a full turn.
+    double turn(double at) {
+      final to = metric.getTangentForOffset(at)!.position - center;
+      final angle = math.atan2(to.dx, -to.dy);
+      return angle < 0 ? angle + 2 * math.pi : angle;
+    }
+
+    final first = turn(0);
+    if (first < 1e-6) return 0; // a table that is not turned: its line starts at twelve
+    // The line goes clockwise round the middle, so the turn grows along it until it passes twelve and starts
+    // over below where it began: halve the stretch that holds that point.
+    var before = 0.0, after = metric.length;
+    for (var i = 0; i < 24; i++) {
+      final mid = (before + after) / 2;
+      if (turn(mid) >= first) {
+        before = mid;
+      } else {
+        after = mid;
+      }
+    }
+    return after;
+  }
 
   static _Ring of(TableSpot table, Offset center, double w, double h, Color calm) {
     final box = Rect.fromCenter(center: Offset.zero, width: w, height: h).deflate(inset);
@@ -551,18 +593,17 @@ class _RingsPainter extends CustomPainter {
     for (final ring in rings.all) {
       final at = rings.plan.countdownAt(ring.tableId, now);
       if (at == null) continue;
-      final length = ring.metric.length;
       paint.strokeWidth = _Ring.widths[at.level]!;
       switch (at.level) {
         case TimerLevel.late:
           // Time is up: the whole ring again, in red, flashing.
           paint.color = colors.timerLate.withValues(alpha: _Rings.flashOn(now) ? 1 : 0.35);
-          canvas.drawPath(ring.metric.extractPath(0, length), paint);
+          canvas.drawPath(ring.whole, paint);
         case TimerLevel.warn || TimerLevel.ok:
           paint.color = at.level == TimerLevel.warn ? colors.timerWarn : ring.calm;
-          // What is left of the ring: it drains clockwise from the top, like the hand of a timer, and a
-          // stage that only nudges stands whole in amber once its time is up.
-          canvas.drawPath(ring.metric.extractPath(at.isUp ? 0 : length * (1 - at.left), length), paint);
+          // What is left of the ring, unwinding counter-clockwise to twelve o'clock; a stage that only
+          // nudges stands whole in amber once its time is up.
+          canvas.drawPath(at.isUp ? ring.whole : ring.remaining(at.left), paint);
       }
     }
   }

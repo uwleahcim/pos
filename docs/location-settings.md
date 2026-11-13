@@ -52,9 +52,11 @@ check and on the ticket, and still fire. Turning coursing off keeps the courses 
 
 ## Table timers
 
-Every busy table on the floor map wears a countdown on its edge: a ring that starts whole and drains as the
-table waits, like a kitchen timer. It is the table's own colour while there is time, turns amber when it is
-running out, and when time is up it stands whole again in red and flashes. An amber or red table carries a
+Every busy table on the floor map wears a countdown on its edge: a ring that starts whole and unwinds as the
+table waits, like the dial of a kitchen timer going back to zero. What is left runs clockwise from twelve
+o'clock (the top of the table on the screen, however the table is turned), and its far end draws back
+counter-clockwise until nothing is left. It is the table's own colour while there is time, turns amber when
+it is running out, and when time is up it stands whole again in red and flashes. An amber or red table carries a
 badge with a mark for what it is waiting on and the minutes left ("7m") or over ("+2m"). The number inside
 the table is still the minutes since it was sat. Beside the count of open tables, a pill counts the tables
 out of time (red) and running out (amber) on the whole floor, whichever room is shown; a tap lists them in

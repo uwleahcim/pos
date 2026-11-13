@@ -39,6 +39,27 @@ List<(double, Color, double)> ringsPainted(WidgetTester tester) {
   return drawn;
 }
 
+/// The one line the rings layer paints: where it starts, where it ends, and the box it fills.
+(Offset, Offset, Rect) ringLine(WidgetTester tester) {
+  final lines = <(Offset, Offset, Rect)>[];
+  expect(
+    find.byKey(const ValueKey('timer-rings')),
+    paints..everything((Symbol method, List<dynamic> arguments) {
+      if (method == #drawPath) {
+        final path = arguments[0] as Path;
+        final parts = path.computeMetrics().toList();
+        lines.add((
+          parts.first.getTangentForOffset(0)!.position,
+          parts.last.getTangentForOffset(parts.last.length)!.position,
+          path.getBounds(),
+        ));
+      }
+      return true;
+    }),
+  );
+  return lines.single;
+}
+
 void main() {
   const timers = TableTimers();
 
@@ -192,6 +213,7 @@ void main() {
 
     // The wait has just begun: the whole ring, in the table's own colour, and nothing asking for a look.
     final (whole, calm, thin) = ringsPainted(tester).single;
+    final middle = ringLine(tester).$3.center; // of A7, a square table that stands on its corner
     expect(calm, isSameColorAs(colors.waitingBorder));
     expect(thin, 4.0);
     expect(find.byKey(const ValueKey('timer-badge:A7')), findsNothing);
@@ -209,6 +231,12 @@ void main() {
     final (left, still, _) = ringsPainted(tester).single;
     expect(left / whole, closeTo(0.6, 0.01));
     expect(still, isSameColorAs(colors.waitingBorder));
+    // What is left starts at twelve o'clock, straight above the table's middle though the table is turned,
+    // and runs clockwise: three fifths of the way round ends low on the left.
+    var (from, to, _) = ringLine(tester);
+    expect(from.dx, closeTo(middle.dx, 0.01));
+    expect(from.dy, lessThan(middle.dy));
+    expect((to.dx < middle.dx, to.dy > middle.dy), (true, true));
     expect(find.text('4p 10m'), findsOneWidget); // the minutes since the table was sat follow the clock too
     expect(find.byKey(const ValueKey('timer-badge:A7')), findsNothing);
 
@@ -217,6 +245,11 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     final (short, amber, thicker) = ringsPainted(tester).single;
     expect(short / whole, closeTo(7 / 25, 0.01));
+    // Its far end has drawn back counter-clockwise, past six o'clock to the right side; twelve has not moved.
+    (from, to, _) = ringLine(tester);
+    expect(from.dx, closeTo(middle.dx, 0.01));
+    expect(from.dy, lessThan(middle.dy));
+    expect((to.dx > middle.dx, to.dy > middle.dy), (true, true));
     expect(amber, isSameColorAs(colors.timerWarn));
     expect(thicker, 5.0);
     final badge = find.byKey(const ValueKey('timer-badge:A7'));

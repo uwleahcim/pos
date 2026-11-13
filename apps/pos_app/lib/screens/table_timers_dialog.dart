@@ -126,8 +126,8 @@ class _TableTimersDialogState extends State<TableTimersDialog> {
                 title: const Text('Countdown ring on each table'),
               ),
               Text(
-                'The ring starts whole and drains. It turns amber after the first number of minutes and runs out, '
-                'flashing red, after the second. 0 is never.',
+                'The ring starts whole and unwinds counter-clockwise, like a timer. It turns amber after the first '
+                'number of minutes and runs out, flashing red, after the second. 0 is never.',
                 style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 10),
