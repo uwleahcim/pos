@@ -54,7 +54,7 @@ def test_demo_directory_from_environment(monkeypatch):
     d = demo_directory()
     assert len(d) == 2 and d.by_pin("5678", device="x").name == "Bo"
     monkeypatch.delenv("POS_STAFF")
-    assert len(demo_directory()) == 3
+    assert len(demo_directory()) == 4
 
 
 def test_photo_store_dedupes_caps_and_limits_size():

@@ -75,6 +75,15 @@ class Hub {
   String? tableTimersAuth;
   String? refuseTableTimers;
 
+  /// The staff by name and role (`GET /staff`): who a table can be given to and who gives tables out. Null
+  /// for a hub older than the list.
+  List<Map<String, dynamic>>? roster = [
+    {'staff_id': 's1', 'name': 'Amy', 'role': 'server', 'takes_tables': true, 'assigns_tables': false},
+    {'staff_id': 's2', 'name': 'Ben', 'role': 'bartender', 'takes_tables': true, 'assigns_tables': false},
+    {'staff_id': 's3', 'name': 'Mike', 'role': 'manager', 'takes_tables': true, 'assigns_tables': true},
+    {'staff_id': 's4', 'name': 'Holly', 'role': 'host', 'takes_tables': false, 'assigns_tables': true},
+  ];
+
   /// Desk phones: the links it keeps, the token the last save carried, a reason to refuse the next save with,
   /// and how it stands with the PBX (`GET /phones/status`).
   Map<String, dynamic> deskPhones = {'links': []};
@@ -371,6 +380,9 @@ class Hub {
           handsFree = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(handsFree);
+      case '/staff':
+        if (roster == null) return json({'detail': 'Not Found'}, 404);
+        return json({'staff': roster});
       case '/admin/staff':
         faceAuth = request.headers['authorization'];
         if (faceAuth == null) {

@@ -620,6 +620,7 @@
     "order_id": "o1",
     "guests": 4,
     "server": "Amy",
+    "server_id": "s1",
     "opened_ms": 1800000000000,
     "items": 2,
     "fired": [

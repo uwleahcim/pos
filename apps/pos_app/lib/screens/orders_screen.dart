@@ -13,6 +13,7 @@ import '../outbox.dart';
 import '../phone.dart';
 import '../photos.dart';
 import '../print_relay.dart';
+import '../roster.dart';
 import '../session.dart';
 import '../switching.dart';
 import '../tags.dart';
@@ -24,6 +25,7 @@ import 'floor_view.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
+import 'server_picker.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'theme.dart';
@@ -84,10 +86,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
   int _deskCalls = 0;
   bool _ordering = false; // the to-go form is open
   bool _inFront = true; // no check, screen or dialog is open over this one
+  // The staff as the hub last listed them: who a table can be given to, and who gives tables out.
+  Roster _roster = Roster.none;
+  late Future<void> _rosterRead;
 
   @override
   void initState() {
     super.initState();
+    _rosterRead = _readRoster();
     _orderRequests = widget.phone?.orderRequests ?? 0;
     _answers = widget.phone?.answers ?? 0;
     _deskCalls = widget.deskPhones?.calls ?? 0;
@@ -284,18 +290,101 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
-  /// Opens a new check with these fields, stamped with the signed-in server, and shows it.
-  Future<void> _create(Map<String, dynamic> fields) async {
+  /// Opens a new check with these fields, stamped with its server, and shows it. The server is whoever is
+  /// signed in, unless a host or manager sat the party [for_] someone else: then the check is that person's,
+  /// the log keeps who sat it, and the screen stays on the floor for the next party.
+  Future<void> _create(Map<String, dynamic> fields, {StaffMember? for_, String? label}) async {
     final staff = widget.session.staff;
+    final given = for_ != null && for_.staffId != staff?.staffId;
     final orderId = widget.outbox.newId();
     final opId = await widget.outbox.add(orderId, 'create', {
       ...fields,
-      if (staff != null) 'server': staff.name,
-      if (staff != null) 'server_id': staff.staffId,
+      if (given) ...{
+        'server': for_.name,
+        'server_id': for_.staffId,
+        if (staff != null) 'by': staff.name,
+        if (staff != null) 'by_id': staff.staffId,
+      } else if (staff != null) ...{
+        'server': staff.name,
+        'server_id': staff.staffId,
+      },
     });
     unawaited(widget.photos.capture('create', opId: opId));
     if (!mounted) return;
-    await _open(orderId);
+    if (!given) return _open(orderId);
+    _floorKey.currentState?.refresh();
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('${label ?? fields['table'] ?? 'The table'} is ${for_.name}\'s')));
+  }
+
+  /// The staff as the hub lists them now, or as this device last read them. A hub older than the list has
+  /// none: everyone seats their own tables there.
+  Future<void> _readRoster() async {
+    try {
+      final roster = await widget.api.staff();
+      if (mounted) _roster = roster;
+    } on ApiException {
+      // keeps what it has
+    }
+  }
+
+  /// The staff list for seating a party: read at start; asked for again when that came to nothing and a hub
+  /// answers now, and each time the person signed in gives tables out (the list may have changed).
+  Future<Roster> _rosterNow() async {
+    await _rosterRead;
+    final asks = _roster.assigns(widget.session.staff?.staffId);
+    if (asks || (_roster.staff.isEmpty && widget.api.connection.value.isOnline)) {
+      _rosterRead = _readRoster();
+      await _rosterRead;
+    }
+    return _roster;
+  }
+
+  /// A host or manager held a seated table down: they hand it to another server. Every check on the table
+  /// goes, since the table is the server's; the log keeps who handed it over.
+  Future<void> _onTableHeld(FloorPlan plan, TableSpot table) async {
+    final staff = widget.session.staff;
+    final checks = plan.checksAt(table.id);
+    if (checks.isEmpty) return;
+    final roster = await _rosterNow();
+    if (!mounted || !roster.assigns(staff?.staffId)) return;
+    final current = roster.servers.where(checks.first.isServedBy).firstOrNull;
+    final picked = await showModalBottomSheet<StaffMember>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Who serves ${table.label}?', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 10),
+              ServerPicker(
+                servers: roster.servers,
+                plan: plan,
+                picked: current,
+                onPicked: (server) => Navigator.of(context).pop(server),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || picked.staffId == current?.staffId || !mounted) return;
+    for (final check in checks) {
+      await widget.outbox.add(check.orderId, 'set_field', {
+        'server': picked.name,
+        'server_id': picked.staffId,
+        if (staff != null) 'by': staff.name,
+        if (staff != null) 'by_id': staff.staffId,
+      });
+    }
+    if (!mounted) return;
+    _floorKey.currentState?.refresh();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${table.label} is ${picked.name}\'s now')));
   }
 
   Future<void> _open(String orderId) async {
@@ -364,13 +453,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (picked == null || !mounted) return;
       if (picked.isNotEmpty) return _open(picked);
     }
+    // A server takes a table by opening it. A host or manager says whose it is as they seat the party.
+    final roster = await _rosterNow();
     if (!mounted) return;
-    final guests = await showDialog<int>(
+    final me = widget.session.staff;
+    final assigns = roster.assigns(me?.staffId);
+    final seating = await showDialog<Seating>(
       context: context,
-      builder: (_) => _GuestsDialog(table: table),
+      builder: (_) => _GuestsDialog(
+        table: table,
+        plan: plan,
+        servers: assigns ? roster.servers : const [],
+        me: roster.byId(me?.staffId),
+      ),
     );
-    if (guests == null || !mounted) return;
-    await _create({'table': table.id, 'guests': guests, 'order_type': 'dine_in'});
+    if (seating == null || !mounted) return;
+    await _create(
+      {'table': table.id, 'guests': seating.guests, 'order_type': 'dine_in'},
+      for_: seating.server,
+      label: table.label,
+    );
   }
 
   @override
@@ -480,7 +582,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
               switchInCurve: Curves.easeOutCubic,
               switchOutCurve: Curves.easeInCubic,
               child: _floor
-                  ? FloorView(key: _floorKey, api: widget.api, outbox: widget.outbox, onTable: _onTable)
+                  ? FloorView(
+                      key: _floorKey,
+                      api: widget.api,
+                      outbox: widget.outbox,
+                      onTable: _onTable,
+                      onTableHeld: _onTableHeld,
+                    )
                   : listed.isEmpty
                   ? Center(
                       key: const ValueKey('empty-orders'),
@@ -744,9 +852,18 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   }
 }
 
+/// Seats a party: how many guests and, for a host or manager, whose table it is. A server sees only the
+/// guests: the table is theirs by opening it.
 class _GuestsDialog extends StatefulWidget {
-  const _GuestsDialog({required this.table});
+  const _GuestsDialog({required this.table, required this.plan, this.servers = const [], this.me});
   final TableSpot table;
+  final FloorPlan plan;
+
+  /// The people the table can be given to; none when whoever seats it takes it.
+  final List<StaffMember> servers;
+
+  /// Who is seating the party, as the staff list has them.
+  final StaffMember? me;
 
   @override
   State<_GuestsDialog> createState() => _GuestsDialogState();
@@ -754,6 +871,8 @@ class _GuestsDialog extends StatefulWidget {
 
 class _GuestsDialogState extends State<_GuestsDialog> {
   late int _guests = widget.table.kind == 'counter' ? 1 : widget.table.seats;
+  // A manager who serves starts on their own name; a host has to say whose table it is.
+  late StaffMember? _server = widget.servers.where((s) => s.staffId == widget.me?.staffId).firstOrNull;
 
   @override
   Widget build(BuildContext context) {
@@ -761,52 +880,78 @@ class _GuestsDialogState extends State<_GuestsDialog> {
     final scheme = theme.colorScheme;
     return AlertDialog(
       title: Text('Seat ${widget.table.label}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLow,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: scheme.outlineVariant),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  onPressed: _guests > 1 ? () => setState(() => _guests--) : null,
-                  icon: const Icon(Icons.remove),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Text(
-                    '$_guests guests',
-                    style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: _guests > 1 ? () => setState(() => _guests--) : null,
+                    icon: const Icon(Icons.remove),
                   ),
-                ),
-                IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      '$_guests guests',
+                      style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                    ),
+                  ),
+                  IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final preset in const [1, 2, 4, 6, 8])
+                  ActionChip(
+                    label: Text('$preset'),
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: _guests == preset ? scheme.primaryContainer : null,
+                    onPressed: () => setState(() => _guests = preset),
+                  ),
               ],
             ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 6,
-            children: [
-              for (final preset in const [1, 2, 4, 6, 8])
-                ActionChip(
-                  label: Text('$preset'),
-                  visualDensity: VisualDensity.compact,
-                  backgroundColor: _guests == preset ? scheme.primaryContainer : null,
-                  onPressed: () => setState(() => _guests = preset),
+            if (widget.servers.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Server', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: ServerPicker(
+                  servers: widget.servers,
+                  plan: widget.plan,
+                  picked: _server,
+                  onPicked: (server) => setState(() => _server = server),
                 ),
+              ),
             ],
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.of(context).pop(_guests), child: const Text('Seat')),
+        FilledButton(
+          key: const ValueKey('seat'),
+          // a host has to say whose table it is before the party is sat
+          onPressed: widget.servers.isNotEmpty && _server == null
+              ? null
+              : () => Navigator.of(context).pop(Seating(_guests, widget.servers.isEmpty ? null : _server)),
+          child: const Text('Seat'),
+        ),
       ],
     );
   }
