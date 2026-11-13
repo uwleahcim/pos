@@ -141,9 +141,11 @@ class OptionDetail {
     required this.status,
     this.linkedItem,
     this.groups = const [],
+    this.maxQty,
   });
 
   factory OptionDetail.fromJson(Map<String, dynamic> json) => OptionDetail(
+    maxQty: json['max_qty'] as int?,
     optionId: json['option_id'] as String,
     name: json['name'] as String? ?? '',
     price: json['price'] as String? ?? '0.00',
@@ -167,6 +169,9 @@ class OptionDetail {
   /// That dish's own choices, asked one level down once the option is chosen.
   final List<GroupDetail> groups;
 
+  /// How many of it one dish takes, in a group that takes several of the same choice; null for no limit.
+  final int? maxQty;
+
   bool get available => status == 'available';
   bool get free => double.tryParse(price) == 0;
   bool get isDish => linkedItem != null;
@@ -179,9 +184,11 @@ class GroupDetail {
     required this.minSelect,
     required this.options,
     this.maxSelect,
+    this.allowQuantity = false,
   });
 
   factory GroupDetail.fromJson(Map<String, dynamic> json) => GroupDetail(
+    allowQuantity: json['allow_quantity'] as bool? ?? false,
     groupId: json['group_id'] as String,
     name: json['name'] as String? ?? '',
     minSelect: json['min_select'] as int? ?? 0,
@@ -196,6 +203,10 @@ class GroupDetail {
   final int minSelect;
   final int? maxSelect;
   final List<OptionDetail> options;
+
+  /// The same choice can go on a dish several times (two chicken fingers on an appetizer platter); each one
+  /// counts toward [minSelect] and [maxSelect].
+  final bool allowQuantity;
 
   bool get single => maxSelect == 1;
   bool get required => minSelect > 0;
@@ -238,10 +249,12 @@ class Choices {
     Map<String, List<String>>? selections,
     Map<String, String>? prefixes,
     Map<String, Choices>? nested,
+    Map<String, int>? quantities,
     this.notes,
   }) : selections = selections ?? {},
        prefixes = prefixes ?? {},
-       nested = nested ?? {};
+       nested = nested ?? {},
+       quantities = quantities ?? {};
 
   final Map<String, List<String>> selections; // group id -> option ids
 
@@ -257,7 +270,62 @@ class Choices {
   /// kitchen prints it with that dish and the check shows it under it.
   String? notes;
 
+  /// How many of a chosen option, where it is more than one (option id -> count): two chicken fingers on an
+  /// appetizer platter. Sent as the selection's `qty`; only a group that takes quantities fills it.
+  final Map<String, int> quantities;
+
   bool picked(String groupId, String optionId) => selections[groupId]?.contains(optionId) ?? false;
+
+  /// How many of [optionId] are on the line once it is picked.
+  int qty(String optionId) => quantities[optionId] ?? 1;
+
+  /// What a group's picks count for toward its least and most: each choice times how many of it.
+  int units(String groupId) => (selections[groupId] ?? const <String>[]).fold(0, (n, id) => n + qty(id));
+
+  /// Whether [group] has room for one more pick.
+  bool room(GroupDetail group) => group.maxSelect == null || units(group.groupId) < group.maxSelect!;
+
+  /// Whether one more of [option], already on the line, can go on it: the group takes quantities, has room,
+  /// the option is under its own limit, and it is not marked "no" (none of it, however many).
+  bool canAddOne(GroupDetail group, OptionDetail option) =>
+      group.allowQuantity &&
+      picked(group.groupId, option.optionId) &&
+      prefixes[option.optionId] != 'no' &&
+      (option.maxQty == null || qty(option.optionId) < option.maxQty!) &&
+      room(group);
+
+  /// One more of a choice already on the line; false when it cannot take another.
+  bool addOne(GroupDetail group, OptionDetail option) {
+    if (!canAddOne(group, option)) return false;
+    quantities[option.optionId] = qty(option.optionId) + 1;
+    return true;
+  }
+
+  /// One fewer of a choice on the line; the last one takes the choice, and its word, off.
+  void removeOne(GroupDetail group, String optionId) {
+    final n = qty(optionId);
+    if (n > 2) {
+      quantities[optionId] = n - 1;
+    } else if (n == 2) {
+      quantities.remove(optionId);
+    } else {
+      selections[group.groupId] = [...?selections[group.groupId]]..remove(optionId);
+      prefixes.remove(optionId);
+    }
+  }
+
+  /// Forgets the counts and words of the choices no longer on the line in [group].
+  void settle(GroupDetail group) {
+    final kept = selections[group.groupId] ?? const <String>[];
+    for (final o in group.options) {
+      if (!kept.contains(o.optionId)) {
+        prefixes.remove(o.optionId);
+        quantities.remove(o.optionId);
+      } else if (prefixes[o.optionId] == 'no') {
+        quantities.remove(o.optionId);
+      }
+    }
+  }
 
   /// Puts [optionId] on the line in [group] as a tap does: a single-pick group takes it alone, a multi-pick
   /// group adds it while there is room. A word on a choice that leaves the line goes with it.
@@ -265,13 +333,10 @@ class Choices {
     final current = selections[group.groupId] ?? const <String>[];
     if (group.single) {
       selections[group.groupId] = [optionId];
-    } else if (!current.contains(optionId) && (group.maxSelect == null || current.length < group.maxSelect!)) {
+    } else if (!current.contains(optionId) && room(group)) {
       selections[group.groupId] = [...current, optionId];
     }
-    final kept = selections[group.groupId] ?? const <String>[];
-    for (final o in group.options) {
-      if (!kept.contains(o.optionId)) prefixes.remove(o.optionId);
-    }
+    settle(group);
   }
 
   /// The choices on the dish behind [optionId], started empty when there are none yet.
@@ -284,6 +349,7 @@ class Choices {
         {
           'group_id': e.key,
           'option_id': option,
+          if (qty(option) > 1) 'qty': qty(option),
           if (prefixes[option] != null) 'prefix': prefixes[option],
           if (nested[option] case final inside? when inside.selections.isNotEmpty) 'children': inside.selectionsJson(),
           if (nested[option]?.notes case final notes? when notes.isNotEmpty) 'notes': notes,
@@ -297,6 +363,7 @@ class Choices {
       final option = m['option_id'] as String;
       selections.putIfAbsent(m['group_id'] as String, () => []).add(option);
       if (m['prefix'] != null) prefixes[option] = m['prefix'] as String;
+      if (m['qty'] case final int n when n > 1) quantities[option] = n;
       final children = m['children'] as List?;
       if (children != null && children.isNotEmpty) inside(option).readSelections(children);
       if (m['notes'] case final String notes when notes.isNotEmpty) inside(option).notes = notes;
@@ -310,13 +377,22 @@ class Choices {
     },
     prefixes: {...prefixes},
     nested: {for (final e in nested.entries) e.key: e.value.copyChoices()},
+    quantities: {...quantities},
     notes: notes,
   );
 }
 
 /// What the customer chose for one line; the backend's `request` on `add_line`.
 class LineRequest extends Choices {
-  LineRequest({required this.variantId, this.entryId, super.selections, super.prefixes, super.nested, super.notes});
+  LineRequest({
+    required this.variantId,
+    this.entryId,
+    super.selections,
+    super.prefixes,
+    super.nested,
+    super.quantities,
+    super.notes,
+  });
 
   factory LineRequest.fromJson(Map<String, dynamic> json) => LineRequest(
     variantId: json['variant_id'] as String,
@@ -333,6 +409,7 @@ class LineRequest extends Choices {
       selections: copy.selections,
       prefixes: copy.prefixes,
       nested: copy.nested,
+      quantities: copy.quantities,
       notes: copy.notes,
     );
   }
@@ -369,7 +446,7 @@ List<GroupDetail> openGroups(OptionDetail option) => [
 bool choicesComplete(List<GroupDetail> groups, Choices choices) {
   for (final g in groups) {
     final picked = choices.selections[g.groupId] ?? const <String>[];
-    if (picked.length < g.minSelect) return false;
+    if (choices.units(g.groupId) < g.minSelect) return false;
     for (final o in g.options) {
       if (o.groups.isEmpty || !picked.contains(o.optionId)) continue;
       if (!choicesComplete(o.groups, choices.nested[o.optionId] ?? defaultChoices(o.groups))) return false;
@@ -412,11 +489,13 @@ List<CheckModifier> pickedModifiers(List<GroupDetail> groups, Choices choices, {
         if (o.groups.isNotEmpty) ...pickedModifiers(o.groups, dish ?? Choices(), depth: depth + 1),
         if (dish?.notes case final String notes when notes.isNotEmpty) CheckModifier(notes, depth: depth + 1),
       ];
-      if (word == null && o.isDefault && inside.isEmpty) continue;
+      final n = choices.qty(o.optionId);
+      if (word == null && o.isDefault && inside.isEmpty && n == 1) continue;
+      final name = word == null ? o.name : '${instructions[word]} ${o.name}';
       rows.add(
         CheckModifier(
-          word == null ? o.name : '${instructions[word]} ${o.name}',
-          price: o.free || word == 'no' ? '0.00' : o.price,
+          n > 1 ? '${n}x $name' : name, // two of the same choice, as the hub lists them
+          price: o.free || word == 'no' ? '0.00' : (double.parse(o.price) * n).toStringAsFixed(2),
           depth: depth,
         ),
       );

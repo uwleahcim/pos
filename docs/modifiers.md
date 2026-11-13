@@ -32,6 +32,12 @@ a slot: "a combo is an item whose modifier groups offer other items as choices" 
   there, and the chip shows a tune mark once the dish differs from how it comes. The line goes on the check
   only when every question down the levels is answered. Nesting goes as deep as the menu does (the hub stops
   at eight levels, and refuses a menu where a dish offers itself).
+- **Several of the same choice.** A group with "Several of the same option" switched on (the Platter group of
+  the appetizer platters, the add-ons) takes a count per choice. In the sheet a tap on a chosen chip adds one
+  more ("2x Chicken fingers") and the minus on the chip takes one off, the last one taking the choice off; in
+  the tray a tap on a chosen button adds one more while the group has room. Each one counts toward the
+  group's least and most and is charged. "No" still means none of it: tap No, then the choice ("NO Crab
+  rangoon"). The kitchen reads the count in front: "NO RANGOON · 2x CHKN FINGR".
 - **The check.** The dish line is the full price, choices included. Each choice is its own line under the
   dish with what it changes ("+1.00"); a choice that is a dish shows what the slot charges for it; the
   choices on that dish follow one step further in, and so does a note made on it ("no sesame"). A default
@@ -58,6 +64,8 @@ the printers and the stations.
 
 ## In the menu editor
 
+- **Option groups › a group › Several of the same option.** Lets a choice go on a dish more than once, each
+  one counted and charged.
 - **Option groups › a group › Options come from.** Pick a category and the group offers its dishes; the
   dish rows show the dish's name read-only (it is the dish's), with the price it adds, Default and On sale
   editable. They cannot be removed, since the category puts them back; options typed by hand can.

@@ -1264,7 +1264,7 @@ class _PendingItemSelection {
     if (inside.selections.isEmpty) fillDefaults(option.groups, inside);
     _nestedAsks[key] = [
       for (final g in option.groups)
-        if (g.required && (inside.selections[g.groupId]?.length ?? 0) < g.minSelect) g,
+        if (g.required && inside.units(g.groupId) < g.minSelect) g,
     ];
   }
 
@@ -1277,10 +1277,14 @@ class _PendingItemSelection {
     if (group.single) {
       choices.selections[group.groupId] = [option.optionId];
     } else if (current.contains(option.optionId)) {
-      choices.selections[group.groupId] = [...current]..remove(option.optionId);
-    } else if (group.maxSelect == null || current.length < group.maxSelect!) {
+      // where the group takes several of one choice, a tap on a chosen one adds another while there is room
+      if (!choices.addOne(group, option)) {
+        choices.selections[group.groupId] = [...current]..remove(option.optionId);
+      }
+    } else if (choices.room(group)) {
       choices.selections[group.groupId] = [...current, option.optionId];
     }
+    choices.settle(group);
     _followPicks(ask, group);
   }
 
@@ -1343,7 +1347,7 @@ class _Ask {
   final String? under;
 
   String get label => under == null ? group.name : '$under · ${group.name}';
-  int get count => choices.selections[group.groupId]?.length ?? 0;
+  int get count => choices.units(group.groupId);
   bool get answered => count >= group.minSelect;
 }
 
@@ -1407,7 +1411,9 @@ class _RequiredSelectionsSection extends StatelessWidget {
                   groupLabel: ask.group.minSelect > 1
                       ? '${ask.label} (${ask.count}/${ask.group.minSelect})'
                       : ask.label,
-                  name: o.name,
+                  name: ask.choices.picked(ask.group.groupId, o.optionId) && ask.choices.qty(o.optionId) > 1
+                      ? '${ask.choices.qty(o.optionId)}x ${o.name}'
+                      : o.name,
                   priceLabel: o.free ? null : '+${o.price}',
                   available: o.available,
                   selected: ask.choices.picked(ask.group.groupId, o.optionId),
@@ -1986,7 +1992,7 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
       if (armed != null) {
         // "No peanuts": the word goes on this choice, which has to be on the line for it to mean anything.
         // The same word again takes it off and leaves the plain choice.
-        final full = !chosen && !group.single && group.maxSelect != null && current.length >= group.maxSelect!;
+        final full = !chosen && !group.single && !choices.room(group);
         if (!full) {
           if (choices.prefixes[option.optionId] == armed) {
             choices.prefixes.remove(option.optionId);
@@ -1999,16 +2005,17 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
         }
       } else if (group.single) {
         choices.selections[group.groupId] = chosen && !group.required ? [] : [option.optionId];
+      } else if (chosen && group.allowQuantity) {
+        // several of the same choice: a tap on a chosen one adds another; its minus takes one off
+        choices.addOne(group, option);
       } else if (chosen) {
         choices.selections[group.groupId] = [...current]..remove(option.optionId);
-      } else if (group.maxSelect == null || current.length < group.maxSelect!) {
+      } else if (choices.room(group)) {
         choices.selections[group.groupId] = [...current, option.optionId];
       }
-      // a word only means something on a choice that is on the line
+      // a word or a count only means something on a choice that is on the line
+      choices.settle(group);
       final kept = choices.selections[group.groupId] ?? const <String>[];
-      for (final o in group.options) {
-        if (!kept.contains(o.optionId)) choices.prefixes.remove(o.optionId);
-      }
       // a dish chosen as a choice comes with its own defaults; what they leave open is asked right under it
       if (option.groups.isNotEmpty && kept.contains(option.optionId) && !choices.nested.containsKey(option.optionId)) {
         fillDefaults(option.groups, choices.inside(option.optionId));
@@ -2035,8 +2042,19 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
   /// nothing for a choice left off).
   String _optionLabel(Choices choices, OptionDetail o) {
     final mark = choices.prefixes[o.optionId];
-    final name = mark == null ? o.name : '${instructions[mark]} ${o.name}';
+    final n = choices.qty(o.optionId);
+    final word = mark == null ? o.name : '${instructions[mark]} ${o.name}';
+    final name = n > 1 ? '${n}x $word' : word;
     return o.free || mark == 'no' ? name : '$name +${o.price}';
+  }
+
+  /// One fewer of a choice in a group that takes several: the minus on its chip.
+  void _removeOne(Choices choices, GroupDetail group, OptionDetail option) {
+    setState(() {
+      choices.removeOne(group, option.optionId);
+      choices.settle(group);
+    });
+    widget.onChanged();
   }
 
   /// The dish behind a choice was changed: a choice on it differs from its defaults, or it carries a note.
@@ -2061,6 +2079,11 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
         g.required ? '${g.name} (required)' : g.name,
         style: theme.textTheme.titleSmall?.copyWith(color: g.required ? scheme.primary : scheme.onSurface),
       ),
+      if (g.allowQuantity)
+        Text(
+          'Tap again for one more, the minus for one fewer.',
+          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
       const SizedBox(height: 6),
       Wrap(
         spacing: 8,
@@ -2075,6 +2098,11 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
                 label: Text(_optionLabel(choices, o)),
                 selected: choices.picked(g.groupId, o.optionId),
                 onSelected: o.available ? (_) => _toggle(choices, g, o) : null,
+                deleteIcon: const Icon(Icons.remove_circle_outline, size: 18),
+                deleteButtonTooltipMessage: 'One fewer',
+                onDeleted: g.allowQuantity && o.available && choices.picked(g.groupId, o.optionId)
+                    ? () => _removeOne(choices, g, o)
+                    : null,
               ),
             ),
         ],

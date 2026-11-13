@@ -140,6 +140,7 @@ class OptionDetail:
     kitchen_label: str | None
     linked_item: str | None = None
     groups: tuple[GroupDetail, ...] = ()
+    max_qty: int | None = None  # how many of it one dish takes, in a group that takes quantities
     """A linked dish's own groups, as this slot exposes them: the questions to ask once the option is chosen,
     answered in the selection's `children`. The screen reveals one level at a time."""
 
@@ -564,6 +565,9 @@ class MenuEngine:
             if opt.linked_variant:
                 results.append(self._slot(ctx, group, overrides, opt, sel, sq, price, defaulted, own_header, label))
                 continue
+            if sq > 1:
+                # two of the same choice read as a count in front: "2x CHKN FINGR", "2x EXTRA SPARE RIBS"
+                label = f"{sq}x {label or defs.localizer.text(defs.option_names(opt), 'en')}"
             if opt.price_mode == "free" or prefix == "no":
                 delta = ZERO
             elif opt.price_mode == "delta":
@@ -674,6 +678,8 @@ class MenuEngine:
             inside.append(child.notes)  # the note on the dish reads with it, on whichever line names it
         if inside:
             label = f"{label} ({' · '.join(inside)})"
+        if sq > 1:
+            label = f"{sq}x {label}"
         return ResolvedModifier(group.code, opt.id, sq, label, ZERO, (), (), defaulted, None)
 
     def _apply_effect(self, ctx: _Ctx, effect: Any, opt: Option, sq: int) -> EffectResult:
@@ -1197,6 +1203,7 @@ class MenuEngine:
                         defs.option_kitchen_label(o),
                         linked.code if linked is not None else None,
                         nested,
+                        o.max_qty,
                     )
                 )
             groups.append(

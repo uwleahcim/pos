@@ -17,6 +17,7 @@ from pos.menu.engine import MenuEngine
 from pos.menu.gloriafood import BUNDLED, STATIONS, load_gloriafood, load_restaurant_menu, settings_from
 from pos.menu.legacy import LEGACY, add_legacy, import_legacy, kitchen_label
 from pos.menu.request import LineRequest, Selection
+from pos.menu.service import MenuService
 
 
 def legacy() -> dict:
@@ -185,3 +186,31 @@ def test_the_file_refuses_what_it_cannot_place():
     assert report.items == 89 and MenuEngine(defs).check() == []
     with pytest.raises(ValueError, match="already exists"):
         add_legacy(defs)
+
+
+def test_an_appetizer_platter_takes_none_of_one_thing_and_several_of_another():
+    """No crab rangoon, two chicken fingers and two spare ribs on the platter for two: the ticket and the check
+    read the count in front, the ribs are charged twice, and the sheet is told the group takes quantities."""
+    defs, _ = load_restaurant_menu()
+    service = MenuService(defs)
+    platter = next(g for g in service.item("A19")["groups"] if g["group_id"] == "platter")
+    assert platter["allow_quantity"] is True and platter["options"][0]["max_qty"] is None
+    plain = service.priced({"variant_id": "A19:regular"})
+    priced = service.priced(
+        {
+            "variant_id": "A19:regular",
+            "selections": [
+                {"group_id": "platter", "option_id": "platter:crab_rangoon", "prefix": "no"},
+                {"group_id": "platter", "option_id": "platter:chicken_fingers", "qty": 2},
+                {"group_id": "platter", "option_id": "platter:spare_ribs", "qty": 2},
+            ],
+        }
+    )
+    assert priced["problems"] == []
+    assert D(priced["unit_price"]) - D(plain["unit_price"]) == D("4.00")
+    assert [(m["label"], m["kitchen_label"], m["price"], m["qty"]) for m in priced["modifiers"]] == [
+        ("NO Crab rangoon", "NO RANGOON", "0.00", 1),
+        ("2x Chicken fingers", "2x CHKN FINGR", "0.00", 2),
+        ("2x Spare ribs", "2x SPARE RIBS", "4.00", 2),
+    ]
+    assert priced["kitchen"][0]["text"].endswith("· NO RANGOON · 2x CHKN FINGR · 2x SPARE RIBS")

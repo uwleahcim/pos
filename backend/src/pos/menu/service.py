@@ -327,7 +327,8 @@ class MenuService:
         if option is None:
             return m.kitchen_label
         name = self.defs.localizer.text(self.defs.option_names(option), "en")
-        return f"{PREFIXES[m.prefix]} {name}" if m.prefix else name
+        name = f"{PREFIXES[m.prefix]} {name}" if m.prefix else name
+        return f"{m.qty}x {name}" if m.qty > 1 else name  # two of the same choice: "2x Chicken fingers"
 
     def _check_rows(self, line: ResolvedLine, depth: int = 0) -> list[dict[str, Any]]:
         """The choices on a line as the check lists them, each with what it adds for one of the dish. A choice
@@ -347,7 +348,7 @@ class MenuService:
                     "kitchen_label": m.kitchen_label,
                     "prefix": m.prefix,
                     # a slot's price is on its dish (the child line); a plain choice carries its own delta
-                    "price": str(money(child.unit_price * child.qty) if child is not None else m.price_delta),
+                    "price": str(money(child.unit_price * child.qty if child is not None else m.price_delta)),
                     "defaulted": m.defaulted,
                     "depth": depth,
                 }
