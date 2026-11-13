@@ -14,6 +14,8 @@ screen holds:
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
 - **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
+- **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
+  a table can be waiting on is given (see "Table timers" below).
 - **Printers**: its own screen: each printer with the station it prints for, its address and language, its
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
@@ -48,6 +50,42 @@ counts the dishes still to send.
 A course taken off the list keeps its id on the lines that already carry it: they show under that id on the
 check and on the ticket, and still fire. Turning coursing off keeps the courses for when it comes back.
 
+## Table timers
+
+Every busy table on the floor map wears a countdown on its edge: a ring that starts whole and drains as the
+table waits, like a kitchen timer. It is the table's own colour while there is time, turns amber when it is
+running out, and when time is up it stands whole again in red and flashes. An amber or red table carries a
+badge with a mark for what it is waiting on and the minutes left ("7m") or over ("+2m"). The number inside
+the table is still the minutes since it was sat. Beside the count of open tables, a pill counts the tables
+out of time (red) and running out (amber) on the whole floor, whichever room is shown; a tap lists them in
+words ("A7 · Course held · Held 18 min · 7 min left") and a tap on one opens the table.
+
+What a table waits on is read by the hub from the check's own history, so every screen shows the same:
+
+| The table is | Counted from | Amber | Red |
+| --- | --- | --- | --- |
+| Seated, nothing ordered (a seat) | the check being opened | 5 min | 10 min |
+| Dishes not sent (an arrow) | the first dish on the check nobody sent | 5 min | 10 min |
+| Course held (a pause) | the course before it going to the kitchen | 15 min | 25 min |
+| Everything sent (a bell) | the last dish sent | 25 min | never |
+
+- "Dishes not sent" is the forgotten Fire: nothing has gone to the kitchen at all, or a dish was added to a
+  course that had already gone. It shows before a held course, since it wants a hand sooner.
+- A held course counts from when the course before it (in the kitchen's order of courses) went, not from
+  when it was put on the check, so dessert entered with the starters starts counting when the mains go. A
+  drink sent in between does not start it over. A course ordered later than that counts from when it was
+  ordered.
+- Everything sent only nudges: the hub does not hear when food reaches the table, so this is how long the
+  table has been left to itself. It turns amber as a reminder to look in, and never red.
+
+A manager sets the minutes under Location › **Table timers**: two numbers per row, amber and red, 0 for
+never (both 0 and that row is not timed), and one switch for the rings altogether. Red must come after
+amber. Every floor map follows the moment it is saved.
+
+The times are measured on the hub's clock: a terminal reads the time off the hub's answers and, when its own
+clock is more than two seconds away, corrects by the difference, so two screens draw the same ring. A check
+taken while no hub answers is timed by the terminal from its own operations until a hub has it.
+
 ## Arranging the check
 
 Every line has a place on the check: the order it was added, until someone moves it. Hold a dish by its
@@ -81,6 +119,14 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   `*`, which a `fire` uses for every course); names are at most 40 characters. A bad body is 422 with
   `message` saying why; a standby hub is 503 `read_only`.
 - `GET /floor` carries `courses`: the list while coursing is on, empty while it is off.
+- `GET /settings/table_timers` and `PUT /settings/table_timers` (the manager Bearer token): `{"enabled":
+  true, "stages": {"sat": {"warn": 5, "late": 10}, "unsent": {"warn": 5, "late": 10}, "held": {"warn": 15,
+  "late": 25}, "fired": {"warn": 25, "late": 0}}}`, whole minutes, 0 for never, at most 1440, `late` after
+  `warn`; a stage left out keeps its default. `GET /floor` carries the same as `timers`, and each open
+  check there carries `timer`: `{"stage": "held", "since_ms": 1800000000003}`, the stage it waits on and
+  the wall-clock ms it began (from the stamps in the order log). Nothing in the floor's answer moves with
+  the clock, so it is still answered `304` until an order or a setting changes; the terminal runs the
+  countdown.
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
 - `GET /settings/quotes` and `PUT /settings/quotes` as before.

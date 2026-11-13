@@ -593,6 +593,27 @@
    "name": "Dessert"
   }
  ],
+ "timers": {
+  "enabled": true,
+  "stages": {
+   "sat": {
+    "warn": 5,
+    "late": 10
+   },
+   "unsent": {
+    "warn": 5,
+    "late": 10
+   },
+   "held": {
+    "warn": 15,
+    "late": 25
+   },
+   "fired": {
+    "warn": 25,
+    "late": 0
+   }
+  }
+ },
  "status": {
   "A7": [
    {
@@ -607,7 +628,11 @@
     "held": [
      "2"
     ],
-    "total": "36.86"
+    "total": "36.86",
+    "timer": {
+     "stage": "held",
+     "since_ms": 1800000000003
+    }
    }
   ]
  },

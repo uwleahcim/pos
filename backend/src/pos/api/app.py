@@ -56,6 +56,7 @@ from ..settings import (
     clean_desk_phones,
     clean_printers,
     clean_quotes,
+    clean_table_timers,
     default_settings,
 )
 from ..sync.hlc import HLC
@@ -239,6 +240,19 @@ class CoursingIn(BaseModel):
     enabled: bool = True
     default: str | None = Field(None, description="the course a new dish goes to; the first one when left out")
     courses: list[CourseIn] = Field(default_factory=list)
+
+
+class StageTimesIn(BaseModel):
+    warn: int = Field(0, description="minutes until the ring warns; 0 for never")
+    late: int = Field(0, description="minutes until it is overdue; 0 for never")
+
+
+class TableTimersIn(BaseModel):
+    """The timer ring around each table on the floor map: whether it is drawn, and when each stage a table can
+    be waiting on (sat, unsent, held, fired) warns and is overdue. A stage left out keeps the default."""
+
+    enabled: bool = True
+    stages: dict[str, StageTimesIn] = Field(default_factory=dict)
 
 
 class DeskPhoneLinkIn(BaseModel):
@@ -746,7 +760,10 @@ def create_app(
 
     @app.get("/floor")
     def read_floor() -> Response:
-        """The floor plan with the open checks on each table, for the floor map."""
+        """The floor plan with the open checks on each table, for the floor map. Each check says what its table
+        is waiting on and since when (`timer`: a stage and `since_ms`, from the order log), and `timers` holds
+        the location's warning times for each stage, so the map can draw a ring that fills as the time runs.
+        Nothing here moves with the clock: an answer stays the same until an order or a setting changes."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
@@ -756,7 +773,8 @@ def create_app(
             {
                 **plan.as_json(),
                 "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
-                "status": table_status(open_states, totals),
+                "timers": app.state.settings.get("table_timers"),
+                "status": table_status(open_states, totals, [c["id"] for c in coursing["courses"]]),
                 "cursor": store.cursor,
             }
         )
@@ -800,6 +818,20 @@ def create_app(
         them. Every terminal follows on its next order."""
         manager_from(app.state.tokens, authorization)
         return write_setting("coursing", body.model_dump(), clean_coursing)
+
+    @app.get("/settings/table_timers")
+    def read_table_timers() -> dict[str, Any]:
+        """The timer rings on the floor map: `enabled`, and per stage (`sat`, `unsent`, `held`, `fired`) the
+        minutes until the ring warns and until it is overdue (0 for never). `GET /floor` carries the same."""
+        settings: SettingStore = app.state.settings
+        return settings.get("table_timers")
+
+    @app.put("/settings/table_timers")
+    def write_table_timers(body: TableTimersIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager sets when a table's ring warns and when it is overdue, or turns the rings off. Every
+        floor map follows at once (the change feed tells them a setting changed)."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("table_timers", body.model_dump(exclude_unset=True), clean_table_timers)
 
     @app.get("/settings/desk_phones")
     def read_desk_phones() -> dict[str, Any]:

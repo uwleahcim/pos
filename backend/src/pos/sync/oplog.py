@@ -108,6 +108,7 @@ class Line:
     replaces: str | None = None  # the line this one took the place of: an edit voids a line and adds the changed one
     by: str = ""  # who added it (name) and their staff id: several people can work one check, hands-free
     by_id: str | None = None
+    added_at: HLC | None = None  # when it came onto the check: what a floor map times an unsent dish from
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
 
@@ -271,6 +272,11 @@ class OrderState:
     def _fired_before(self, course: str | None) -> bool:
         return "*" in self.fired or (course is not None and course in self.fired)
 
+    def course_gone(self, course: str | None) -> bool:
+        """Whether this course has already been sent to the kitchen: a dish under it that has not been is a
+        late addition, not a dish being held for its turn."""
+        return self._fired_before(course)
+
 
 def apply(state: OrderState, op: Op) -> None:
     """Apply one operation. Callers apply operations in sort order; `replay` does that."""
@@ -307,6 +313,7 @@ def apply(state: OrderState, op: Op) -> None:
             rank = max((other.rank for other in state.lines.values()), default=0.0) + 1
         line.rank = rank
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
+        line.added_at = op.hlc
         line.modified_after_fire = state._fired_before(line.course)
         state.lines[line_id] = line
 

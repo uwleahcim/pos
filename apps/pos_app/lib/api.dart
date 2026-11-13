@@ -377,6 +377,40 @@ class PosApi {
   /// The floor plan with every table's open checks; the last one read when nothing answers.
   Future<FloorPlan> floor() => _repeated('/floor', FloorPlan.fromJson, remember: 'floor');
 
+  /// The location's table timers: whether the floor map draws a countdown ring on each table, and the
+  /// minutes each stage is given.
+  Future<TableTimers> tableTimers() async => TableTimers.fromJson(await _get('/settings/table_timers'));
+
+  /// A manager (token from [adminSession]) sets the table timers for every floor map.
+  Future<TableTimers> saveTableTimers(String token, TableTimers timers) async => TableTimers.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/table_timers'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(timers.toJson()),
+      ),
+    ),
+  );
+
+  /// The time now, in wall-clock ms, by the hub's clock as near as its answers tell it: what the countdowns
+  /// on the floor map are measured with, so two screens whose own clocks disagree draw the same ring. Every
+  /// answer says when the backend sent it, to the second; a device within two seconds of that is taken to be
+  /// right, and one further off is corrected by the difference.
+  int nowMs() => DateTime.now().millisecondsSinceEpoch + _hubAheadMs;
+  int _hubAheadMs = 0;
+
+  void _hearClock(String? date) {
+    final hub = httpDateMs(date);
+    if (hub == null) return;
+    // The header drops the fraction of the second: half a second on average.
+    final ahead = hub + 500 - DateTime.now().millisecondsSinceEpoch;
+    if (ahead.abs() < 2000) {
+      _hubAheadMs = 0;
+    } else if ((ahead - _hubAheadMs).abs() > 1500) {
+      _hubAheadMs = ahead; // not moved by the second the header rounds to, so a countdown does not jitter
+    }
+  }
+
   /// 86 a size or option (`sold_out`), or bring it back (`available`).
   Future<void> set86(String targetId, {required bool soldOut, String? by}) =>
       _post('/menu/86', {'target_id': targetId, 'status': soldOut ? 'sold_out' : 'available', 'by': ?by});
@@ -951,6 +985,7 @@ class PosApi {
           continue;
         }
         if (connection.value.endpoint != base) _become(Connection(endpoint: base));
+        _hearClock(response.headers['date']);
         return response;
       } catch (err) {
         lastError = err;
@@ -999,4 +1034,17 @@ class PosApi {
     _client.close();
     connection.dispose();
   }
+}
+
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+final _httpDate = RegExp(r'^\w{3}, (\d{2}) (\w{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$');
+
+/// An HTTP `Date` header ("Fri, 13 Nov 2026 11:32:36 GMT") as wall-clock ms, or null when it is not one.
+int? httpDateMs(String? header) {
+  final found = header == null ? null : _httpDate.firstMatch(header.trim());
+  if (found == null) return null;
+  final month = _months.indexOf(found[2]!) + 1;
+  if (month == 0) return null;
+  int part(int i) => int.parse(found[i]!);
+  return DateTime.utc(part(3), month, part(1), part(4), part(5), part(6)).millisecondsSinceEpoch;
 }

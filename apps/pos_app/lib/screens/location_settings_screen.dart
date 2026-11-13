@@ -6,17 +6,19 @@ import '../coursing.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
 import '../printers.dart';
+import '../table_timers.dart';
 import '../tags.dart';
 import '../takeout.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
+import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
-/// the kitchen printers (on their own screen), which screen each desk phone is linked to, face sign-in with
+/// the countdown on each table of the floor map, the kitchen printers (on their own screen), which screen each desk phone is linked to, face sign-in with
 /// each staff member's enrollment and tag, and the hands-free switching between people. The hub keeps them;
 /// a terminal reads them when it opens an order. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
@@ -105,6 +107,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   bool _handsFreeBusy = false;
   String? _handsFreeMessage;
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
+  TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
 
   @override
@@ -156,6 +159,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _devices = devices);
     } on ApiException {
       // an older hub: the list holds this device and Other
+    }
+    try {
+      final timers = await widget.api.tableTimers();
+      if (mounted) setState(() => _timers = timers);
+    } on ApiException {
+      // an older hub without table timers: the card says so
     }
     await _loadFaces();
     await _loadPrinters();
@@ -480,6 +489,26 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote times saved')));
   }
 
+  Future<void> _tableTimers() async {
+    final saved = await showDialog<TableTimers>(
+      context: context,
+      builder: (_) => TableTimersDialog(api: widget.api, token: widget.token, timers: _timers!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _timers = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Table timers saved')));
+  }
+
+  /// One line on the timers: each stage's minutes to amber and to red, a dash for never.
+  String get _timersSummary {
+    final timers = _timers;
+    if (timers == null) return 'The hub has not answered about table timers (an older hub: update it)';
+    if (!timers.enabled) return 'Off: the tables show no countdown';
+    String minutes(int n) => n == 0 ? '–' : '$n';
+    const short = {'sat': 'Seated', 'unsent': 'Not sent', 'held': 'Held', 'fired': 'All sent'};
+    return '${[for (final stage in timerStages) '${short[stage]} ${minutes(timers.timesFor(stage).warn)}/${minutes(timers.timesFor(stage).late)}'].join(' · ')} min';
+  }
+
   String get _quotesSummary {
     final quotes = _quotes;
     if (quotes == null) return 'Loading…';
@@ -587,6 +616,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               subtitle: Text(_quotesSummary),
               trailing: const Icon(Icons.chevron_right),
               onTap: _quoteTimes,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              key: const ValueKey('table-timers'),
+              leading: const Icon(Icons.timelapse_outlined),
+              title: const Text('Table timers'),
+              subtitle: Text(_timersSummary),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _timers == null ? null : _tableTimers,
             ),
           ),
           const SizedBox(height: 12),

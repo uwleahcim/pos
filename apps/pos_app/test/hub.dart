@@ -61,6 +61,20 @@ class Hub {
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
 
+  /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
+  /// the token the last save carried and a reason to refuse the next save with.
+  Map<String, dynamic>? tableTimers = {
+    'enabled': true,
+    'stages': {
+      'sat': {'warn': 5, 'late': 10},
+      'unsent': {'warn': 5, 'late': 10},
+      'held': {'warn': 15, 'late': 25},
+      'fired': {'warn': 25, 'late': 0},
+    },
+  };
+  String? tableTimersAuth;
+  String? refuseTableTimers;
+
   /// Desk phones: the links it keeps, the token the last save carried, a reason to refuse the next save with,
   /// and how it stands with the PBX (`GET /phones/status`).
   Map<String, dynamic> deskPhones = {'links': []};
@@ -277,6 +291,18 @@ class Hub {
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotes);
+      case '/settings/table_timers':
+        if (tableTimers == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          tableTimersAuth = request.headers['authorization'];
+          if (refuseTableTimers != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseTableTimers},
+            }, 422);
+          }
+          tableTimers = jsonDecode(request.body) as Map<String, dynamic>;
+        }
+        return json(tableTimers!);
       case '/settings/desk_phones':
         if (request.method == 'PUT') {
           deskPhonesAuth = request.headers['authorization'];
@@ -478,6 +504,12 @@ Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async 
 Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orders, {String role = 'manager'}) async {
   final t = await terminal(tester, role: role);
   t.hub.orders.addAll(orders);
+  await pumpOrdersOn(tester, t);
+  return t;
+}
+
+/// The list of orders on a terminal whose hub a test has already set up.
+Future<void> pumpOrdersOn(WidgetTester tester, Terminal t) async {
   await tester.pumpWidget(
     MaterialApp(
       home: OrdersScreen(
@@ -493,7 +525,6 @@ Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orde
   await tester.pumpAndSettle();
   await tester.tap(find.byTooltip('List of checks'));
   await tester.pumpAndSettle();
-  return t;
 }
 
 Future<void> stop(WidgetTester tester) => tester.pumpWidget(const SizedBox()); // stops the refresh timers
