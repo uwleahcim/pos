@@ -1395,7 +1395,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
           children: [
             if (pending.needsVariant)
               for (final v in pending.availableVariants)
-                _ModifierButton(
+                ChoiceTile(
                   key: ValueKey('req-variant:${v.variantId}'),
                   groupLabel: 'Size',
                   name: v.name,
@@ -1406,7 +1406,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
                 ),
             for (final ask in pending.asks)
               for (final o in ask.group.options)
-                _ModifierButton(
+                ChoiceTile(
                   key: ValueKey('req-option:${ask.path}${ask.group.groupId}:${o.optionId}'),
                   groupLabel: ask.group.minSelect > 1
                       ? '${ask.label} (${ask.count}/${ask.group.minSelect})'
@@ -1428,8 +1428,10 @@ class _RequiredSelectionsSection extends StatelessWidget {
   }
 }
 
-class _ModifierButton extends StatelessWidget {
-  const _ModifierButton({
+/// A choice as a button of the menu's grid: the tray under the tiles and the item sheet show a dish's sizes
+/// and choices with it, so a choice looks and taps like a category or a dish.
+class ChoiceTile extends StatelessWidget {
+  const ChoiceTile({
     super.key,
     required this.groupLabel,
     required this.name,
@@ -1437,9 +1439,18 @@ class _ModifierButton extends StatelessWidget {
     required this.available,
     required this.selected,
     this.dish = false,
+    this.changed = false,
     required this.onTap,
     this.onLongPress,
+    this.onRemove,
   });
+
+  /// The menu's own tile grid for a width: how many tiles across and how tall each is.
+  static ({int columns, double height}) grid(double width) {
+    final columns = (width / (_MenuPanelState._maxCrossAxisExtent + _MenuPanelState._gridSpacing)).ceil().clamp(1, 99);
+    final tileWidth = (width - _MenuPanelState._gridSpacing * (columns - 1)) / columns;
+    return (columns: columns, height: tileWidth / _MenuPanelState._childAspectRatio);
+  }
 
   final String groupLabel;
   final String name;
@@ -1449,8 +1460,14 @@ class _ModifierButton extends StatelessWidget {
 
   /// The choice is a dish of the menu: marked, since a hold opens it.
   final bool dish;
+
+  /// That dish differs from how it comes (a choice on it changed, or it carries a note).
+  final bool changed;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+
+  /// One fewer of it, where the group takes several of the same choice: a minus in the corner.
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -1519,7 +1536,7 @@ class _ModifierButton extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(right: 4, top: 1),
                           child: Icon(
-                            Icons.restaurant_menu,
+                            changed ? Icons.tune : Icons.restaurant_menu,
                             size: 14,
                             color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
                           ),
@@ -1539,6 +1556,18 @@ class _ModifierButton extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (onRemove != null)
+                        Align(
+                          alignment: Alignment.bottomRight,
+                          child: IconButton(
+                            tooltip: 'One fewer',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            icon: Icon(Icons.remove_circle_outline, size: 22, color: scheme.onPrimaryContainer),
+                            onPressed: onRemove,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -1549,6 +1578,33 @@ class _ModifierButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Buttons laid out as the menu lays out its tiles: as many across as the width takes, each the tiles' shape.
+/// It sizes itself, so it sits in a scrolling sheet.
+class ChoiceGrid extends StatelessWidget {
+  const ChoiceGrid({super.key, required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final grid = ChoiceTile.grid(constraints.maxWidth);
+      return GridView(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: grid.columns,
+          mainAxisSpacing: _MenuPanelState._gridSpacing,
+          crossAxisSpacing: _MenuPanelState._gridSpacing,
+          mainAxisExtent: grid.height,
+        ),
+        children: children,
+      );
+    },
+  );
 }
 
 class _EntryButton extends StatelessWidget {
@@ -1826,20 +1882,20 @@ class _ItemSheetState extends State<ItemSheet> {
                     if (widget.entry.variants.length > 1) ...[
                       Text('Size', style: theme.textTheme.titleSmall),
                       const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 6,
+                      ChoiceGrid(
                         children: [
                           for (final v in widget.entry.variants)
-                            ChoiceChip(
-                              label: Text('${v.name} ${v.price}'),
+                            ChoiceTile(
+                              key: ValueKey('size:${v.variantId}'),
+                              groupLabel: 'Size',
+                              name: v.name,
+                              priceLabel: v.price,
+                              available: v.available,
                               selected: _request.variantId == v.variantId,
-                              onSelected: v.available
-                                  ? (_) {
-                                      setState(() => _request.variantId = v.variantId);
-                                      _reprice();
-                                    }
-                                  : null,
+                              onTap: () {
+                                setState(() => _request.variantId = v.variantId);
+                                _reprice();
+                              },
                             ),
                         ],
                       ),
@@ -2038,14 +2094,13 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
     widget.onChanged();
   }
 
-  /// A choice's chip: its word when it has one, and its price unless the word is "no" (the backend charges
-  /// nothing for a choice left off).
+  /// What a choice's button reads: how many of it and its word in front of its name. Its price is the
+  /// button's badge, left off when the word is "no" (the backend charges nothing for a choice left off).
   String _optionLabel(Choices choices, OptionDetail o) {
     final mark = choices.prefixes[o.optionId];
     final n = choices.qty(o.optionId);
     final word = mark == null ? o.name : '${instructions[mark]} ${o.name}';
-    final name = n > 1 ? '${n}x $word' : word;
-    return o.free || mark == 'no' ? name : '$name +${o.price}';
+    return n > 1 ? '${n}x $word' : word;
   }
 
   /// One fewer of a choice in a group that takes several: the minus on its chip.
@@ -2085,25 +2140,23 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
           style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
       const SizedBox(height: 6),
-      Wrap(
-        spacing: 8,
-        runSpacing: 6,
+      ChoiceGrid(
         children: [
           for (final o in g.options)
-            GestureDetector(
+            ChoiceTile(
               key: ValueKey('choice:${o.optionId}@$depth'),
-              onLongPress: o.isDish && o.available ? () => _openDish(choices, g, o) : null,
-              child: FilterChip(
-                avatar: o.isDish ? Icon(_changed(choices, o) ? Icons.tune : Icons.restaurant_menu, size: 16) : null,
-                label: Text(_optionLabel(choices, o)),
-                selected: choices.picked(g.groupId, o.optionId),
-                onSelected: o.available ? (_) => _toggle(choices, g, o) : null,
-                deleteIcon: const Icon(Icons.remove_circle_outline, size: 18),
-                deleteButtonTooltipMessage: 'One fewer',
-                onDeleted: g.allowQuantity && o.available && choices.picked(g.groupId, o.optionId)
-                    ? () => _removeOne(choices, g, o)
-                    : null,
-              ),
+              groupLabel: g.name,
+              name: _optionLabel(choices, o),
+              priceLabel: o.free || choices.prefixes[o.optionId] == 'no' ? null : '+${o.price}',
+              available: o.available,
+              selected: choices.picked(g.groupId, o.optionId),
+              dish: o.isDish,
+              changed: o.isDish && _changed(choices, o),
+              onTap: () => _toggle(choices, g, o),
+              onLongPress: o.isDish ? () => _openDish(choices, g, o) : null,
+              onRemove: g.allowQuantity && o.available && choices.picked(g.groupId, o.optionId)
+                  ? () => _removeOne(choices, g, o)
+                  : null,
             ),
         ],
       ),

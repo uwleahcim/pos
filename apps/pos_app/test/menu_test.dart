@@ -406,19 +406,29 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
-    Finder chip(String label) => find.ancestor(of: find.text(label), matching: find.byType(FilterChip));
-    bool selected(String label) => tester.widget<FilterChip>(chip(label)).selected;
+    Finder chip(String label) => find.ancestor(of: find.text(label), matching: find.byType(ChoiceTile));
+    bool selected(String label) => tester.widget<ChoiceTile>(chip(label)).selected;
     Future<void> tapAndPrice(Finder what) async {
       await tester.tap(what);
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pumpAndSettle();
     }
 
+    // sizes and choices are buttons of the menu's grid, all one size, several to a row; no chips
+    expect(find.byType(FilterChip), findsNothing);
+    final tiles = tester.widgetList<ChoiceTile>(find.byType(ChoiceTile)).length;
+    expect(tiles, 12); // two sizes, three spice levels, three rices, four add-ons
+    expect(tester.getSize(find.byType(ChoiceTile).first), tester.getSize(find.byType(ChoiceTile).last));
+    final sizes = find.byWidgetPredicate((w) => w is ChoiceTile && w.groupLabel == 'Size');
+    expect(tester.getTopLeft(sizes.first).dy, tester.getTopLeft(sizes.last).dy); // side by side
+    expect(chip('Add shrimp'), findsOneWidget);
+    expect(find.descendant(of: chip('Add shrimp'), matching: find.text('+4.00')), findsOneWidget); // price badge
+
     // "No" and then the choice: it goes on the line with its word, and costs nothing
     await tester.tap(find.byKey(const ValueKey('instruction:no')));
     await tester.pump();
     expect(find.text('Now tap the choice to mark “No”.'), findsOneWidget);
-    await tapAndPrice(chip('Add shrimp +4.00'));
+    await tapAndPrice(chip('Add shrimp'));
     expect(selected('No Add shrimp'), isTrue);
     expect(find.text('Now tap the choice to mark “No”.'), findsNothing); // one choice per word
     expect(
@@ -429,24 +439,24 @@ void main() {
     // "On the side" keeps the price; the same word again leaves the plain choice
     await tester.tap(find.byKey(const ValueKey('instruction:side')));
     await tester.pump();
-    await tapAndPrice(chip('Extra sauce +0.50'));
-    expect(selected('On the side Extra sauce +0.50'), isTrue);
+    await tapAndPrice(chip('Extra sauce'));
+    expect(selected('On the side Extra sauce'), isTrue);
     await tester.tap(find.byKey(const ValueKey('instruction:side')));
     await tester.pump();
-    await tapAndPrice(chip('On the side Extra sauce +0.50'));
-    expect(selected('Extra sauce +0.50'), isTrue);
+    await tapAndPrice(chip('On the side Extra sauce'));
+    expect(selected('Extra sauce'), isTrue);
 
     // the add-ons take several of the same choice: a plain tap on a chosen one adds another, the minus on
     // its chip takes one off, and the last one off takes the choice off the line
     expect(find.text('Tap again for one more, the minus for one fewer.'), findsOneWidget);
-    await tapAndPrice(chip('Extra sauce +0.50'));
-    expect(selected('2x Extra sauce +0.50'), isTrue);
-    await tapAndPrice(chip('2x Extra sauce +0.50'));
-    expect(selected('3x Extra sauce +0.50'), isTrue);
+    await tapAndPrice(chip('Extra sauce'));
+    expect(selected('2x Extra sauce'), isTrue);
+    await tapAndPrice(chip('2x Extra sauce'));
+    expect(selected('3x Extra sauce'), isTrue);
     expect(priced.last['selections'], contains(equals({'group_id': 'addons', 'option_id': 'addons:sauce', 'qty': 3})));
     Finder minus(String label) => find.descendant(of: chip(label), matching: find.byIcon(Icons.remove_circle_outline));
-    await tapAndPrice(minus('3x Extra sauce +0.50'));
-    expect(selected('2x Extra sauce +0.50'), isTrue);
+    await tapAndPrice(minus('3x Extra sauce'));
+    expect(selected('2x Extra sauce'), isTrue);
     // "No" means none of it, however many there were; a choice left off has no count
     expect(minus('No Add shrimp'), findsOneWidget);
     expect(find.descendant(of: chip('No MSG'), matching: find.byIcon(Icons.remove_circle_outline)), findsNothing);
@@ -712,7 +722,7 @@ void main() {
     final dish = find.byType(DishChoicesSheet);
     expect(dish, findsOneWidget);
     for (final group in ['Spice level', 'Choice of rice (required)', 'Add-ons']) {
-      expect(find.descendant(of: dish, matching: find.text(group)), findsOneWidget);
+      expect(find.descendant(of: dish, matching: find.text(group)), findsWidgets); // the heading, and each button
     }
     await tester.tap(find.byKey(const ValueKey('choice:spice:extra@0')));
     await tester.pumpAndSettle();
@@ -915,7 +925,7 @@ void main() {
     await tester.longPress(find.text('Tekka Maki'));
     await tester.pumpAndSettle();
     expect(find.byType(DishChoicesSheet), findsOneWidget);
-    expect(find.byType(FilterChip), findsNothing);
+    expect(find.descendant(of: find.byType(DishChoicesSheet), matching: find.byType(ChoiceTile)), findsNothing);
     await tester.enterText(find.byKey(const ValueKey('dish-note')), 'no sesame');
     await tester.tap(find.widgetWithText(FilledButton, 'Done'));
     await tester.pumpAndSettle();

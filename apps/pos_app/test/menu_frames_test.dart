@@ -120,7 +120,7 @@ void main() {
     expect(builds.tilesFresh, (0, 0));
     expect(builds.again('MenuPanel'), greaterThan(10));
     // the two sizes it asks are buttons made once, not once a frame while their tray opens
-    expect((builds.fresh('_ModifierButton'), builds.again('_ModifierButton')), (2, 0));
+    expect((builds.fresh('ChoiceTile'), builds.again('ChoiceTile')), (2, 0));
 
     // Closing it all: the category's tile is no longer the open one, and the search row comes back above
     // the categories without a single tile being thrown away and made from nothing.
