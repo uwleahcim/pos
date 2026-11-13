@@ -932,6 +932,20 @@ class GroupEditor extends StatelessWidget {
             ),
           ],
         ),
+        SwitchListTile(
+          key: ValueKey('$groupKey/quantity'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Several of the same option'),
+          subtitle: const Text(
+            'An option can go on a dish more than once (2x Chicken fingers on a platter). '
+            'Each one counts toward the picks and is charged.',
+          ),
+          value: group['allow_quantity'] == true,
+          onChanged: (v) {
+            group['allow_quantity'] = v;
+            onChanged();
+          },
+        ),
         const SizedBox(height: 12),
         _dropdown<String?>(
           label: 'Options come from',

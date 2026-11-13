@@ -426,7 +426,7 @@ void main() {
       contains(equals({'group_id': 'addons', 'option_id': 'addons:shrimp', 'prefix': 'no'})),
     );
 
-    // "On the side" keeps the price; the same word again leaves the plain choice; a plain tap takes it off
+    // "On the side" keeps the price; the same word again leaves the plain choice
     await tester.tap(find.byKey(const ValueKey('instruction:side')));
     await tester.pump();
     await tapAndPrice(chip('Extra sauce +0.50'));
@@ -435,15 +435,40 @@ void main() {
     await tester.pump();
     await tapAndPrice(chip('On the side Extra sauce +0.50'));
     expect(selected('Extra sauce +0.50'), isTrue);
+
+    // the add-ons take several of the same choice: a plain tap on a chosen one adds another, the minus on
+    // its chip takes one off, and the last one off takes the choice off the line
+    expect(find.text('Tap again for one more, the minus for one fewer.'), findsOneWidget);
     await tapAndPrice(chip('Extra sauce +0.50'));
-    expect(selected('Extra sauce +0.50'), isFalse);
-    expect((priced.last['selections'] as List).any((s) => s['option_id'] == 'addons:sauce'), isFalse);
+    expect(selected('2x Extra sauce +0.50'), isTrue);
+    await tapAndPrice(chip('2x Extra sauce +0.50'));
+    expect(selected('3x Extra sauce +0.50'), isTrue);
+    expect(priced.last['selections'], contains(equals({'group_id': 'addons', 'option_id': 'addons:sauce', 'qty': 3})));
+    Finder minus(String label) => find.descendant(of: chip(label), matching: find.byIcon(Icons.remove_circle_outline));
+    await tapAndPrice(minus('3x Extra sauce +0.50'));
+    expect(selected('2x Extra sauce +0.50'), isTrue);
+    // "No" means none of it, however many there were; a choice left off has no count
+    expect(minus('No Add shrimp'), findsOneWidget);
+    expect(find.descendant(of: chip('No MSG'), matching: find.byIcon(Icons.remove_circle_outline)), findsNothing);
 
     await tester.tap(find.text('Add'));
     await tester.pumpAndSettle();
     expect(result!.request.prefixes, {'addons:shrimp': 'no'});
-    expect(result!.request.selections['addons'], ['addons:shrimp']);
-    expect(result!.modifiers.map((m) => (m.label, m.price)), [('No Add shrimp', '0.00')]); // left off: free
+    expect(result!.request.selections['addons'], ['addons:shrimp', 'addons:sauce']);
+    expect(result!.request.quantities, {'addons:sauce': 2});
+    expect(result!.modifiers.map((m) => (m.label, m.price)), [
+      ('No Add shrimp', '0.00'), // left off: free
+      ('2x Extra sauce', '1.00'),
+    ]);
+    // the request goes to the hub and comes back with its counts; a copy keeps them, a last minus forgets them
+    final back = LineRequest.fromJson(result!.request.toJson()).copy();
+    expect(back.quantities, {'addons:sauce': 2});
+    final addons = ItemDetail.fromJson(fixture('item_gtc')).groups.firstWhere((g) => g.groupId == 'addons');
+    expect((addons.allowQuantity, back.units('addons')), (true, 3));
+    back.removeOne(addons, 'addons:sauce');
+    back.removeOne(addons, 'addons:sauce');
+    expect(back.selections['addons'], ['addons:shrimp']);
+    expect(back.quantities, isEmpty);
   });
 
   testWidgets('a saved menu reaches the screen without reopening it', (tester) async {
@@ -915,6 +940,37 @@ void main() {
     ]);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('the tray takes two of the same choice where the group allows it', (tester) async {
+    final api = makiApi(quantity: true);
+    final chosen = <ChosenLine>[];
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MenuPanel(api: api, onChosen: chosen.add),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'C5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Combination Plate'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tekka Maki'));
+    await tester.pumpAndSettle();
+    expect(find.text('Roll (1/2)'), findsNWidgets(2));
+    expect(chosen, isEmpty);
+    await tester.tap(find.text('Tekka Maki')); // the same roll again: two of it fill the combination
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('required-selections')), findsNothing);
+    expect(chosen.single.request.toJson()['selections'], [
+      {'group_id': 'roll', 'option_id': 'roll:K02', 'qty': 2},
+    ]);
+    expect(chosen.single.modifiers.map((m) => m.label), ['2x Tekka Maki']);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
 
 /// The combination plate of the sample menu and a hub that serves its choices from [c5] and prices it at 19.50,
@@ -966,7 +1022,8 @@ Map<String, dynamic> roll(String code, String name, {bool sauce = false}) => {
 };
 
 /// A hub whose combination plate is a maki combination of two rolls, the first with a sauce to pick.
-PosApi makiApi() {
+/// With [quantity] the same roll can be picked twice.
+PosApi makiApi({bool quantity = false}) {
   final maki = {
     'item': 'C5',
     'name': 'Combination Plate',
@@ -979,6 +1036,7 @@ PosApi makiApi() {
         'name': 'Roll',
         'min_select': 2,
         'max_select': 2,
+        'allow_quantity': quantity,
         'options': [roll('K01', 'Kappa Maki', sauce: true), roll('K02', 'Tekka Maki')],
       },
     ],

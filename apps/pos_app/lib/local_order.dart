@@ -242,12 +242,12 @@ int choicesPrice(List<GroupDetail> groups, Choices choices, List<String> problem
   var total = 0;
   for (final g in groups) {
     final picked = choices.selections[g.groupId] ?? const <String>[];
-    if (g.required && picked.length < g.minSelect) {
+    if (g.required && choices.units(g.groupId) < g.minSelect) {
       problems.add(on == null ? 'Choose ${g.name.toLowerCase()}' : 'Choose ${g.name.toLowerCase()} for $on');
     }
     for (final o in g.options) {
       if (!picked.contains(o.optionId)) continue;
-      if (!o.free && choices.prefixes[o.optionId] != 'no') total += cents(o.price);
+      if (!o.free && choices.prefixes[o.optionId] != 'no') total += cents(o.price) * choices.qty(o.optionId);
       if (o.groups.isNotEmpty) {
         total += choicesPrice(o.groups, choices.nested[o.optionId] ?? Choices(), problems, on: o.name);
       }
