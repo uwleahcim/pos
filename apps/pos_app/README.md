@@ -66,6 +66,11 @@ what a change to a screen must not undo:
 - A widget that moves by `setState` on every frame (the menu's trays) hands its children the same widget
   objects from frame to frame (`_tilesOf` in `screens/menu_panel.dart`), so only what moves is built again.
   `test/menu_frames_test.dart` counts the rebuilds.
+- What follows the clock is not a reason to rebuild a screen. The floor map's countdown rings
+  (`screens/floor_view.dart`) are one painted layer of their own, repainted by a number that moves only when
+  a ring would look different (`_Rings.look`), and the few words that show the time (a table's minutes, a
+  badge, the count of tables to look at) are each a `_Ticking` that hears every second and is rebuilt only
+  when what it shows changed. `test/table_timers_test.dart` checks that a second redraws no table.
 - Work on megabytes (every dish's choices at once) runs in a worker isolate.
 
 Settings shows, under Smoothness, how many frames this device drew late since the app started and the

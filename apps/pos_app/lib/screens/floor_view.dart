@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show PathMetric;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -13,12 +15,24 @@ import 'theme.dart';
 /// The restaurant's floor as drawn on its plan: tables coloured by what is happening at them, a room picker,
 /// and a tap that opens the table's check (or seats a new party). With an [outbox], the checks this device
 /// opened that no backend knows yet are on their tables too (ADR 6).
+///
+/// Each busy table's edge is a countdown: a ring that starts whole and unwinds counter-clockwise to twelve
+/// o'clock as the table waits on its stage (seated with no order, dishes not sent, a course held, everything
+/// sent), amber when it is running out, whole again and flashing red once time is up, with a badge that says
+/// what and how long. The hub says what each table waits on and since when, and what each stage is given
+/// (`/settings/table_timers`); the map only runs the clock. The clock costs the map nothing it can avoid: the
+/// rings are one painted layer, repainted only when one of them would look different, and the few words that
+/// follow the clock (minutes, badges, the count of tables that need a look) are rebuilt one by one as theirs
+/// change. The tables are rebuilt when the hub has news, as before.
 class FloorView extends StatefulWidget {
-  const FloorView({super.key, required this.api, required this.onTable, this.outbox});
+  const FloorView({super.key, required this.api, required this.onTable, this.outbox, this.now});
 
   final PosApi api;
   final void Function(FloorPlan plan, TableSpot table) onTable;
   final Outbox? outbox;
+
+  /// The time now in wall-clock ms: the hub's clock as [api] knows it, unless a test brings its own.
+  final int Function()? now;
 
   @override
   State<FloorView> createState() => FloorViewState();
@@ -28,7 +42,13 @@ class FloorViewState extends State<FloorView> {
   FloorPlan? _plan;
   String? _room; // null = the whole floor
   Timer? _timer;
+  Timer? _second;
   bool _inFront = true; // no check, screen or dialog is open over the map
+  // The countdowns: the time as of the last second, for the parts that show it, and a number that moves only
+  // when the rings would be painted differently, which is all that repaints them.
+  late final _clock = ValueNotifier<int>(_nowMs());
+  final _ringsLook = ValueNotifier<int>(0);
+  _Rings? _rings;
   // The hub tells the map when a table's check changed; the timer only asks while it cannot, and now and then.
   late final _poll = SafetyPoll(widget.api.live);
   late final _reader = Paced(const Duration(seconds: 1), _read);
@@ -44,24 +64,44 @@ class FloorViewState extends State<FloorView> {
     _live = widget.api.live.changes.listen((change) {
       if (_inFront && change.anyOrder) _reader();
     });
+    _second = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_inFront) _tick();
+    });
     widget.outbox?.addListener(_onOutbox);
     refresh();
+  }
+
+  int _nowMs() => (widget.now ?? widget.api.nowMs)();
+
+  /// The clock moved on: the words that show it hear of it, and the rings are repainted if they changed.
+  void _tick() {
+    _clock.value = _nowMs();
+    _ringsLook.value = _rings?.look(_clock.value) ?? 0;
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final inFront = ModalRoute.isCurrentOf(context) ?? true;
-    if (inFront && !_inFront) refresh();
+    if (inFront && !_inFront) {
+      refresh();
+      // After the frame: the clock's listeners rebuild, which they cannot be told to do during a build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _inFront) _tick();
+      });
+    }
     _inFront = inFront;
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _second?.cancel();
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox?.removeListener(_onOutbox);
+    _clock.dispose();
+    _ringsLook.dispose();
     super.dispose();
   }
 
@@ -76,10 +116,52 @@ class FloorViewState extends State<FloorView> {
     try {
       final plan = await widget.api.floor();
       // A backend with nothing new hands back the plan it gave last time: nothing to redraw then.
-      if (mounted && !identical(plan, _plan)) setState(() => _plan = plan);
+      if (mounted && !identical(plan, _plan)) {
+        _clock.value = _nowMs(); // a table that just changed counts from now, not from the last second
+        setState(() => _plan = plan);
+      }
     } on ApiException {
       // The status bar shows the outage; the map keeps its last picture.
     }
+  }
+
+  /// The tables that need a look, the most pressing first, each with what it waits on in words; a tap opens
+  /// the table.
+  Future<void> _showAttention(FloorPlan plan) async {
+    final now = _nowMs();
+    final rows = [
+      for (final table in plan.tables)
+        if (plan.countdownAt(table.id, now) case final at? when at.level != TimerLevel.ok) (table, at),
+    ]..sort((a, b) => b.$2.moreUrgentThan(a.$2) ? 1 : (a.$2.moreUrgentThan(b.$2) ? -1 : 0));
+    final picked = await showModalBottomSheet<TableSpot>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final posColors = PosColors.of(context);
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              if (rows.isEmpty) const ListTile(title: Text('No table needs a look right now')),
+              for (final (table, at) in rows)
+                ListTile(
+                  key: ValueKey('attention:${table.id}'),
+                  leading: CircleAvatar(
+                    backgroundColor: at.level == TimerLevel.late ? posColors.timerLate : posColors.timerWarn,
+                    foregroundColor: at.level == TimerLevel.late ? posColors.timerLateText : posColors.timerWarnText,
+                    child: Icon(stageIcon(at.stage), size: 20),
+                  ),
+                  title: Text('${table.label} · ${timerStageLabel(at.stage)}'),
+                  subtitle: Text(countdownInWords(at)),
+                  trailing: Text(plan.checksAt(table.id).firstOrNull?.server ?? ''),
+                  onTap: () => Navigator.of(context).pop(table),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked != null && mounted) widget.onTable(plan, picked);
   }
 
   @override
@@ -99,6 +181,7 @@ class FloorViewState extends State<FloorView> {
     final right = room == null ? rooms.map((r) => r.x + r.w).fold<double>(0, math.max) : room.x + room.w;
     final bottom = room == null ? rooms.map((r) => r.y + r.h).fold<double>(0, math.max) : room.y + room.h;
     final busy = plan.status.length;
+    final rings = _rings = _Rings.of(plan, shown, left: left, top: top, colors: posColors);
     return Column(
       children: [
         Container(
@@ -107,53 +190,68 @@ class FloorViewState extends State<FloorView> {
             color: scheme.surfaceContainerLowest,
             border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
           ),
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
             children: [
-              for (final r in [null, ...rooms])
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  child: ChoiceChip(
-                    label: Text(r?.name ?? 'Whole floor'),
-                    selected: _room == r?.id,
-                    onSelected: (_) => setState(() => _room = r?.id),
-                  ),
-                ),
-              Center(
-                child: Padding(
+              Expanded(
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerLow,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: scheme.outlineVariant),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
+                  children: [
+                    for (final r in [null, ...rooms])
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                        child: ChoiceChip(
+                          label: Text(r?.name ?? 'Whole floor'),
+                          selected: _room == r?.id,
+                          onSelected: (_) => setState(() => _room = r?.id),
+                        ),
+                      ),
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: busy > 0 ? posColors.firedBorder : scheme.outline,
-                            shape: BoxShape.circle,
+                            color: scheme.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: scheme.outlineVariant),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: busy > 0 ? posColors.firedBorder : scheme.outline,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '$busy of ${plan.tables.length} tables open',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontFeatures: PosTheme.tabular,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '$busy of ${plan.tables.length} tables open',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            fontFeatures: PosTheme.tabular,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
+              // How many tables need a look, pinned at the end of the bar: seen whichever room is shown and
+              // however far the rooms are scrolled; it takes no room while every table is fine.
+              if (plan.timers.enabled)
+                _Ticking<(int, int)>(
+                  clock: _clock,
+                  read: (now) => _needingALook(plan, now),
+                  builder: (context, counts) =>
+                      _AttentionPill(late: counts.$1, soon: counts.$2, onTap: () => _showAttention(plan)),
+                ),
             ],
           ),
         ),
@@ -189,7 +287,48 @@ class FloorViewState extends State<FloorView> {
                               left: left,
                               top: top,
                               checks: plan.checksAt(t.id),
+                              clock: _clock,
+                              ringed: rings.has(t.id),
                               onTap: () => widget.onTable(plan, t),
+                            ),
+                          // Every table's countdown ring, in one layer of its own: a second going by repaints
+                          // this and nothing else, and only when a ring moved.
+                          if (rings.all.isNotEmpty)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: RepaintBoundary(
+                                  child: CustomPaint(
+                                    key: const ValueKey('timer-rings'),
+                                    painter: _RingsPainter(rings: rings, clock: _clock, look: _ringsLook),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          for (final ring in rings.all)
+                            Positioned(
+                              left: ring.center.dx - _TimerBadge.width / 2,
+                              top: ring.top - _TimerBadge.height / 2,
+                              width: _TimerBadge.width,
+                              height: _TimerBadge.height,
+                              child: IgnorePointer(
+                                child: _Ticking<(TimerLevel, String, String)?>(
+                                  clock: _clock,
+                                  read: (now) {
+                                    final at = plan.countdownAt(ring.tableId, now);
+                                    return at == null || at.level == TimerLevel.ok
+                                        ? null
+                                        : (at.level, at.stage, at.short);
+                                  },
+                                  builder: (context, shown) => shown == null
+                                      ? const SizedBox.shrink()
+                                      : _TimerBadge(
+                                          key: ValueKey('timer-badge:${ring.tableId}'),
+                                          level: shown.$1,
+                                          stage: shown.$2,
+                                          text: shown.$3,
+                                        ),
+                                ),
+                              ),
                             ),
                         ],
                       ),
@@ -202,6 +341,377 @@ class FloorViewState extends State<FloorView> {
         ),
         const _Legend(),
       ],
+    );
+  }
+}
+
+/// How many tables are out of time and how many are running out, on the whole floor.
+(int, int) _needingALook(FloorPlan plan, int nowMs) {
+  var late = 0, soon = 0;
+  for (final table in plan.status.keys) {
+    switch (plan.countdownAt(table, nowMs)?.level) {
+      case TimerLevel.late:
+        late++;
+      case TimerLevel.warn:
+        soon++;
+      case TimerLevel.ok || null:
+    }
+  }
+  return (late, soon);
+}
+
+/// A countdown as a sentence: "Held 18 min · 7 min left", "Seated 12 min with no order · 2 min over".
+String countdownInWords(Countdown at) {
+  final waited = switch (at.stage) {
+    'sat' => 'Seated ${at.elapsedMinutes} min with no order',
+    'unsent' => 'Dishes waiting ${at.elapsedMinutes} min to be sent',
+    'held' => 'Held ${at.elapsedMinutes} min',
+    'fired' => '${at.elapsedMinutes} min since the last dish was sent',
+    _ => '${at.elapsedMinutes} min',
+  };
+  final left = !at.isUp
+      ? '${at.minutes} min left'
+      : at.minutes == 0
+      ? 'time is up'
+      : '${at.minutes} min over';
+  return '$waited · $left';
+}
+
+/// The mark for what a table waits on: a seat (nothing ordered), an arrow (not sent), a pause (held), a
+/// service bell (everything sent: look in on the table).
+IconData stageIcon(String stage) => switch (stage) {
+  'sat' => Icons.event_seat_rounded,
+  'unsent' => Icons.send_rounded,
+  'held' => Icons.pause_rounded,
+  'fired' => Icons.room_service_rounded,
+  _ => Icons.timer_outlined,
+};
+
+/// A part of the map that shows the clock. It hears every second and is rebuilt only when what it reads off
+/// the clock ([read]) is something else than last time: a minute, a badge, a count.
+class _Ticking<T> extends StatefulWidget {
+  const _Ticking({super.key, required this.clock, required this.read, required this.builder});
+
+  final ValueListenable<int> clock;
+  final T Function(int nowMs) read;
+  final Widget Function(BuildContext context, T value) builder;
+
+  @override
+  State<_Ticking<T>> createState() => _TickingState<T>();
+}
+
+class _TickingState<T> extends State<_Ticking<T>> {
+  late T _value = widget.read(widget.clock.value);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.clock.addListener(_tick);
+  }
+
+  @override
+  void didUpdateWidget(_Ticking<T> old) {
+    super.didUpdateWidget(old);
+    if (old.clock != widget.clock) {
+      old.clock.removeListener(_tick);
+      widget.clock.addListener(_tick);
+    }
+    _value = widget.read(widget.clock.value); // the table it reads for may have changed
+  }
+
+  @override
+  void dispose() {
+    widget.clock.removeListener(_tick);
+    super.dispose();
+  }
+
+  void _tick() {
+    final next = widget.read(widget.clock.value);
+    if (next != _value) setState(() => _value = next);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _value);
+}
+
+/// One table's ring: the line round its edge, clockwise.
+class _Ring {
+  _Ring({required this.tableId, required this.center, required this.top, required Path path, required this.calm})
+    : metric = path.computeMetrics().first {
+    twelve = _twelve();
+  }
+
+  /// How far inside the table's edge the middle of the ring's line runs, and how wide the line is while the
+  /// countdown runs, is running out, and is over (plan units, like the table's own size).
+  static const inset = 2.5;
+  static const widths = {TimerLevel.ok: 4.0, TimerLevel.warn: 5.0, TimerLevel.late: 5.5};
+
+  final String tableId;
+  final Offset center;
+
+  /// The top of the table as it stands unturned: where the badge sits.
+  final double top;
+  final PathMetric metric;
+
+  /// How far along the line twelve o'clock is: the point straight above the table's middle on the screen,
+  /// however the table is turned. Every countdown is read from there.
+  late final double twelve;
+
+  /// The ring's colour while nothing is pressing: the table's own border colour.
+  final Color calm;
+
+  /// The whole line.
+  Path get whole => metric.extractPath(0, metric.length);
+
+  /// What is left of a countdown: from twelve o'clock, clockwise, [left] of the way round. As the time goes
+  /// its far end draws back counter-clockwise to twelve, like the hand of a kitchen timer going to zero.
+  Path remaining(double left) {
+    final length = metric.length, end = twelve + length * left;
+    if (left >= 1) return whole;
+    if (end <= length) return metric.extractPath(twelve, end);
+    return metric.extractPath(twelve, length)..extendWithPath(metric.extractPath(0, end - length), Offset.zero);
+  }
+
+  double _twelve() {
+    // How far round from straight up the point [at] along the line is, clockwise: 0 up to a full turn.
+    double turn(double at) {
+      final to = metric.getTangentForOffset(at)!.position - center;
+      final angle = math.atan2(to.dx, -to.dy);
+      return angle < 0 ? angle + 2 * math.pi : angle;
+    }
+
+    final first = turn(0);
+    if (first < 1e-6) return 0; // a table that is not turned: its line starts at twelve
+    // The line goes clockwise round the middle, so the turn grows along it until it passes twelve and starts
+    // over below where it began: halve the stretch that holds that point.
+    var before = 0.0, after = metric.length;
+    for (var i = 0; i < 24; i++) {
+      final mid = (before + after) / 2;
+      if (turn(mid) >= first) {
+        before = mid;
+      } else {
+        after = mid;
+      }
+    }
+    return after;
+  }
+
+  static _Ring of(TableSpot table, Offset center, double w, double h, Color calm) {
+    final box = Rect.fromCenter(center: Offset.zero, width: w, height: h).deflate(inset);
+    final path = Path();
+    if (table.round) {
+      // Two halves, so the line starts at the top whatever a full turn in one piece would start at.
+      final circle = Rect.fromCircle(center: Offset.zero, radius: box.shortestSide / 2);
+      path
+        ..arcTo(circle, -math.pi / 2, math.pi, true)
+        ..arcTo(circle, math.pi / 2, math.pi, false);
+    } else {
+      final r = Radius.circular(math.max((table.kind == 'booth' ? 12.0 : 8.0) - inset, 0));
+      path
+        ..moveTo(0, box.top)
+        ..lineTo(box.right - r.x, box.top)
+        ..arcToPoint(Offset(box.right, box.top + r.y), radius: r)
+        ..lineTo(box.right, box.bottom - r.y)
+        ..arcToPoint(Offset(box.right - r.x, box.bottom), radius: r)
+        ..lineTo(box.left + r.x, box.bottom)
+        ..arcToPoint(Offset(box.left, box.bottom - r.y), radius: r)
+        ..lineTo(box.left, box.top + r.y)
+        ..arcToPoint(Offset(box.left + r.x, box.top), radius: r)
+        ..close();
+    }
+    final placed = Matrix4.translationValues(center.dx, center.dy, 0)..rotateZ(table.rotation * math.pi / 180);
+    return _Ring(
+      tableId: table.id,
+      center: center,
+      top: center.dy - h / 2,
+      path: path.transform(placed.storage),
+      calm: calm,
+    );
+  }
+}
+
+/// The rings of the tables on the map, with the plan their countdowns are read from.
+class _Rings {
+  const _Rings(this.plan, this.all, this.colors);
+
+  /// A ring for each shown table that has a check waiting on a stage the location times.
+  factory _Rings.of(
+    FloorPlan plan,
+    List<TableSpot> shown, {
+    required double left,
+    required double top,
+    required PosColors colors,
+  }) => _Rings(plan, [
+    for (final table in shown)
+      // Whether a table has a countdown does not depend on the time, only where it stands does.
+      if (plan.countdownAt(table.id, 0) != null)
+        _Ring.of(
+          table,
+          Offset(table.x - left, table.y - top),
+          math.max(table.w, _TablePositioned._minSide),
+          math.max(table.h, _TablePositioned._minSide),
+          _stageStyle(colors, plan.checksAt(table.id).firstOrNull?.stage).$2,
+        ),
+  ], colors);
+
+  final FloorPlan plan;
+  final List<_Ring> all;
+  final PosColors colors;
+
+  bool has(String tableId) => all.any((ring) => ring.tableId == tableId);
+
+  /// A number that is the same for as long as the rings would be painted the same: each ring's level, how
+  /// much of it is left to the nearest unit of its length, and for one that is out of time which half of
+  /// the flash it is in. The layer is repainted when this moves, so a floor of calm tables with long
+  /// countdowns repaints every few seconds, and one with a table out of time once a second.
+  int look(int nowMs) {
+    var look = 17;
+    for (final ring in all) {
+      final at = plan.countdownAt(ring.tableId, nowMs);
+      if (at == null) continue;
+      final step = at.isUp ? -1 : (at.left * ring.metric.length).round();
+      look = Object.hash(look, at.level, step, at.level == TimerLevel.late && flashOn(nowMs));
+    }
+    return look;
+  }
+
+  /// A ring out of time flashes: bright one second, dim the next.
+  static bool flashOn(int nowMs) => (nowMs ~/ 1000).isEven;
+}
+
+class _RingsPainter extends CustomPainter {
+  _RingsPainter({required this.rings, required this.clock, required Listenable look}) : super(repaint: look);
+
+  final _Rings rings;
+  final ValueListenable<int> clock;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final now = clock.value;
+    final colors = rings.colors;
+    final paint = Paint()..style = PaintingStyle.stroke;
+    for (final ring in rings.all) {
+      final at = rings.plan.countdownAt(ring.tableId, now);
+      if (at == null) continue;
+      paint.strokeWidth = _Ring.widths[at.level]!;
+      switch (at.level) {
+        case TimerLevel.late:
+          // Time is up: the whole ring again, in red, flashing.
+          paint.color = colors.timerLate.withValues(alpha: _Rings.flashOn(now) ? 1 : 0.35);
+          canvas.drawPath(ring.whole, paint);
+        case TimerLevel.warn || TimerLevel.ok:
+          paint.color = at.level == TimerLevel.warn ? colors.timerWarn : ring.calm;
+          // What is left of the ring, unwinding counter-clockwise to twelve o'clock; a stage that only
+          // nudges stands whole in amber once its time is up.
+          canvas.drawPath(at.isUp ? ring.whole : ring.remaining(at.left), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RingsPainter old) => old.rings != rings || old.clock != clock;
+}
+
+/// The badge on a table whose countdown is running out or over: what it waits on, and the minutes left
+/// ("3m") or over ("+2m").
+class _TimerBadge extends StatelessWidget {
+  const _TimerBadge({super.key, required this.level, required this.stage, required this.text});
+
+  final TimerLevel level;
+  final String stage;
+  final String text;
+
+  /// The room a badge is given on the plan, centred on the top of its table (plan units).
+  static const width = 44.0, height = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = PosColors.of(context);
+    final late = level == TimerLevel.late;
+    final ink = late ? colors.timerLateText : colors.timerWarnText;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 3.5, vertical: 1),
+        decoration: BoxDecoration(
+          color: late ? colors.timerLate : colors.timerWarn,
+          borderRadius: BorderRadius.circular(7),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 2, offset: const Offset(0, 1)),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(stageIcon(stage), size: 8.5, color: ink),
+            const SizedBox(width: 1.5),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 8.5,
+                height: 1.1,
+                fontWeight: FontWeight.w800,
+                color: ink,
+                fontFeatures: PosTheme.tabular,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// How many tables need a look, beside the count of open tables: red for tables out of time, amber for
+/// ones running out. Nothing while every table is fine. A tap lists them.
+class _AttentionPill extends StatelessWidget {
+  const _AttentionPill({required this.late, required this.soon, required this.onTap});
+
+  final int late, soon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (late + soon == 0) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final colors = PosColors.of(context);
+    Widget count(int n, Color fill, Color ink) => Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(10)),
+      child: Text(
+        '$n',
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: ink,
+          fontWeight: FontWeight.w800,
+          fontFeatures: PosTheme.tabular,
+        ),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, right: 12),
+      child: Tooltip(
+        message: 'Tables that need a look',
+        child: Material(
+          color: theme.colorScheme.surfaceContainerLow,
+          shape: StadiumBorder(side: BorderSide(color: late > 0 ? colors.timerLate : colors.timerWarn)),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: const ValueKey('attention'),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.timer_outlined, size: 16, color: theme.colorScheme.onSurfaceVariant),
+                  if (late > 0) count(late, colors.timerLate, colors.timerLateText),
+                  if (soon > 0) count(soon, colors.timerWarn, colors.timerWarnText),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -290,12 +800,20 @@ class _TablePositioned extends StatelessWidget {
     required this.left,
     required this.top,
     required this.checks,
+    required this.clock,
+    required this.ringed,
     required this.onTap,
   });
 
   final TableSpot table;
   final double left, top;
   final List<TableCheck> checks;
+
+  /// The time as of the last second, which the minutes on the table follow.
+  final ValueListenable<int> clock;
+
+  /// The table has a countdown ring: its own border steps back to a faint track for the ring to drain over.
+  final bool ringed;
   final VoidCallback onTap;
 
   static const _minSide = 34.0; // keeps counter stools big enough to tap
@@ -305,17 +823,10 @@ class _TablePositioned extends StatelessWidget {
     final posColors = PosColors.of(context);
     final w = math.max(table.w, _minSide), h = math.max(table.h, _minSide);
     final check = checks.firstOrNull;
-    final minutes = check?.minutesOpen(DateTime.now());
     final (fill, border, textColor) = _stageStyle(posColors, check?.stage);
     final radius = BorderRadius.circular(table.kind == 'booth' ? 12 : 8);
-    final shape = table.round
-        ? CircleBorder(
-            side: BorderSide(color: border, width: check == null ? 1.5 : 2.2),
-          )
-        : RoundedRectangleBorder(
-            borderRadius: radius,
-            side: BorderSide(color: border, width: check == null ? 1.5 : 2.2),
-          );
+    final side = BorderSide(color: ringed ? border.withValues(alpha: 0.28) : border, width: check == null ? 1.5 : 2.2);
+    final shape = table.round ? CircleBorder(side: side) : RoundedRectangleBorder(borderRadius: radius, side: side);
 
     return Positioned(
       left: table.x - w / 2 - left,
@@ -373,13 +884,18 @@ class _TablePositioned extends StatelessWidget {
                                 ),
                                 child: Column(
                                   children: [
-                                    Text(
-                                      '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
-                                      style: TextStyle(
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: textColor,
-                                        fontFeatures: PosTheme.tabular,
+                                    // minutes since the table was sat: the one word here that follows the clock
+                                    _Ticking<int>(
+                                      clock: clock,
+                                      read: check.minutesOpen,
+                                      builder: (context, minutes) => Text(
+                                        '${check.guests ?? '?'}p ${minutes}m${checks.length > 1 ? ' +${checks.length - 1}' : ''}',
+                                        style: TextStyle(
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: textColor,
+                                          fontFeatures: PosTheme.tabular,
+                                        ),
                                       ),
                                     ),
                                     // what the table has run up and whose it is, as a manager reads the room

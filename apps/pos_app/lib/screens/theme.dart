@@ -23,6 +23,10 @@ class PosColors extends ThemeExtension<PosColors> {
     required this.fired,
     required this.firedBorder,
     required this.firedText,
+    required this.timerWarn,
+    required this.timerWarnText,
+    required this.timerLate,
+    required this.timerLateText,
     required this.highlightFlash,
   });
 
@@ -45,6 +49,13 @@ class PosColors extends ThemeExtension<PosColors> {
   final Color fired;
   final Color firedBorder;
   final Color firedText;
+
+  /// A table's countdown ring and badge: running out (amber), and time up (red). Neither is a table colour,
+  /// so a ring that turned is never mistaken for a stage.
+  final Color timerWarn;
+  final Color timerWarnText;
+  final Color timerLate;
+  final Color timerLateText;
   final Color highlightFlash;
 
   static const light = PosColors(
@@ -67,6 +78,10 @@ class PosColors extends ThemeExtension<PosColors> {
     fired: Color(0xFFDCFCE7),
     firedBorder: Color(0xFF16A34A),
     firedText: Color(0xFF14532D),
+    timerWarn: Color(0xFFF59E0B),
+    timerWarnText: Color(0xFF451A03),
+    timerLate: Color(0xFFDC2626),
+    timerLateText: Color(0xFFFFFFFF),
     highlightFlash: Color(0x33B8332A),
   );
 
@@ -90,6 +105,10 @@ class PosColors extends ThemeExtension<PosColors> {
     fired: Color(0xFF143D27),
     firedBorder: Color(0xFF4ADE80),
     firedText: Color(0xFFDCFCE7),
+    timerWarn: Color(0xFFFBBF24),
+    timerWarnText: Color(0xFF451A03),
+    timerLate: Color(0xFFF87171),
+    timerLateText: Color(0xFF450A0A),
     highlightFlash: Color(0x44FF8A7A),
   );
 
@@ -117,6 +136,10 @@ class PosColors extends ThemeExtension<PosColors> {
     Color? fired,
     Color? firedBorder,
     Color? firedText,
+    Color? timerWarn,
+    Color? timerWarnText,
+    Color? timerLate,
+    Color? timerLateText,
     Color? highlightFlash,
   }) => PosColors(
     checkPaper: checkPaper ?? this.checkPaper,
@@ -138,6 +161,10 @@ class PosColors extends ThemeExtension<PosColors> {
     fired: fired ?? this.fired,
     firedBorder: firedBorder ?? this.firedBorder,
     firedText: firedText ?? this.firedText,
+    timerWarn: timerWarn ?? this.timerWarn,
+    timerWarnText: timerWarnText ?? this.timerWarnText,
+    timerLate: timerLate ?? this.timerLate,
+    timerLateText: timerLateText ?? this.timerLateText,
     highlightFlash: highlightFlash ?? this.highlightFlash,
   );
 
@@ -164,6 +191,10 @@ class PosColors extends ThemeExtension<PosColors> {
       fired: Color.lerp(fired, other.fired, t)!,
       firedBorder: Color.lerp(firedBorder, other.firedBorder, t)!,
       firedText: Color.lerp(firedText, other.firedText, t)!,
+      timerWarn: Color.lerp(timerWarn, other.timerWarn, t)!,
+      timerWarnText: Color.lerp(timerWarnText, other.timerWarnText, t)!,
+      timerLate: Color.lerp(timerLate, other.timerLate, t)!,
+      timerLateText: Color.lerp(timerLateText, other.timerLateText, t)!,
       highlightFlash: Color.lerp(highlightFlash, other.highlightFlash, t)!,
     );
   }

@@ -269,32 +269,47 @@ List<Order> queuedOrders(Outbox outbox) {
   ];
 }
 
-/// The same orders as checks on their tables, for the floor map.
+/// The same orders as checks on their tables, for the floor map. Each carries a timer worked out here the
+/// way the hub does once it hears of the check, near enough for a countdown ring while it has not: sat since
+/// the check was opened, dishes unsent since the first was added, a course held or everything sent since
+/// the last fire.
 Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
   final out = <String, List<TableCheck>>{};
   final opened = <String, int>{}; // order id -> when its create was stamped
+  final firstLine = <String, int>{}; // -> when its first dish was added
+  final lastFire = <String, int>{}; // -> when it was last fired
   final firedCourses = <String, Set<String>>{};
   for (final op in outbox.pendingOps) {
     final id = op['order_id'] as String;
     final wall = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
     if (op['kind'] == 'create' && wall != null) opened[id] = wall;
+    if (op['kind'] == 'add_line' && wall != null) firstLine.putIfAbsent(id, () => wall);
     if (op['kind'] == 'fire') {
       firedCourses.putIfAbsent(id, () => {}).add((op['data'] as Map?)?['course'] as String? ?? '*');
+      if (wall != null) lastFire[id] = wall;
     }
   }
   for (final order in queuedOrders(outbox)) {
     if (order.table.isEmpty || !order.isOpen) continue;
+    final id = order.orderId;
+    final held = order.heldCourses.toList();
+    final (stage, since) = order.activeLines.isEmpty
+        ? ('sat', opened[id])
+        : !firedCourses.containsKey(id)
+        ? ('unsent', firstLine[id])
+        : (held.isEmpty ? 'fired' : 'held', lastFire[id]);
     out
         .putIfAbsent(order.table, () => [])
         .add(
           TableCheck(
-            orderId: order.orderId,
+            orderId: id,
             guests: order.fields['guests'] as int?,
             server: order.fields['server'] as String?,
-            openedMs: opened[order.orderId],
+            openedMs: opened[id],
             items: order.activeLines.fold(0, (n, l) => n + l.qty),
-            fired: [...?firedCourses[order.orderId]],
-            held: order.heldCourses.toList(),
+            fired: [...?firedCourses[id]],
+            held: held,
+            timer: since == null ? null : TableTimer(stage: stage, sinceMs: since),
           ),
         );
   }

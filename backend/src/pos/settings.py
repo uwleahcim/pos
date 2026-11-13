@@ -1,4 +1,4 @@
-"""Per-location settings a manager changes from the app and every terminal reads. Phase 1 holds two sets:
+"""Per-location settings a manager changes from the app and every terminal reads. Phase 1 holds these sets:
 
 - `quotes`: how many minutes each channel promises a takeout order (architecture section 12, "Quote times":
   set by hand until kitchen pacing quotes them in phase 2) and which channels may pay at pickup instead of
@@ -19,6 +19,9 @@
   take its tickets when it fails, in order;
   and `takeout_station`, the station a to-go order prints whole at (null for none). An empty list leaves the
   hub on `POS_PRINTERS`.
+- `table_timers`: the timer ring around each table on the floor map (`pos/floor/plan.py`, `check_timer`):
+  whether it is drawn, and for each thing a table can be waiting on (`sat`, `unsent`, `held`, `fired`) after
+  how many minutes the ring warns and after how many it is overdue; 0 for never.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -37,6 +40,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from .floor.plan import STAGES
 from .printing.ticket import AUTO, DIALECTS
 from .sync.pgstore import ReadOnlyError
 
@@ -57,8 +61,22 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "faces": {"enabled": False},
     "presence": {"switch": True, "away_seconds": 60},
     "printers": {"printers": [], "takeout_station": "takeout"},
+    # Minutes. Seated with no order, or dishes not sent: five to notice, ten is a guest left waiting. A held
+    # course: the one before it has had a quarter of an hour. Everything sent: a nudge to look in on the
+    # table, never overdue, since the hub does not hear when food reaches it.
+    "table_timers": {
+        "enabled": True,
+        "stages": {
+            "sat": {"warn": 5, "late": 10},
+            "unsent": {"warn": 5, "late": 10},
+            "held": {"warn": 15, "late": 25},
+            "fired": {"warn": 25, "late": 0},
+        },
+    },
 }
 AWAY_MAX = 3600
+TIMER_MAX = 24 * 60
+"""The longest a table timer can be set to, in minutes."""
 STATION = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 """A kitchen station's code as the menu names it (`wok1`, `takeout`)."""
 PRINTER_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -184,6 +202,35 @@ def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
     if not 0 <= away <= AWAY_MAX:
         raise ValueError(f"away_seconds is 0 (never) to {AWAY_MAX}")
     return {"switch": switch, "away_seconds": int(away)}
+
+
+def clean_table_timers(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The table timers as the app may set them, checked: `enabled`, and `stages`, for each of `sat`, `unsent`,
+    `held` and `fired` the whole minutes after which the ring warns (`warn`) and is overdue (`late`); 0 turns
+    that one off, and with both off the stage is not timed. A warning comes before overdue. A stage left out
+    keeps the default. Raises ValueError on a bad value."""
+    enabled = data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be true or false")
+    raw = data.get("stages") or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("stages must map a stage to its warn and late minutes")
+    stages = copy.deepcopy(DEFAULTS["table_timers"]["stages"])
+    for stage, times in raw.items():
+        if stage not in STAGES:
+            raise ValueError(f"unknown stage {stage!r}; one of {', '.join(STAGES)}")
+        if not isinstance(times, Mapping):
+            raise ValueError(f"the times for {stage} are its warn and late minutes")
+        for name in ("warn", "late"):
+            value = times.get(name, 0)
+            if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+                raise ValueError(f"the {name} time for {stage} must be a whole number of minutes")
+            if not 0 <= value <= TIMER_MAX:
+                raise ValueError(f"the {name} time for {stage} is 0 (never) to {TIMER_MAX} minutes")
+            stages[stage][name] = int(value)
+        if 0 < stages[stage]["late"] <= stages[stage]["warn"]:
+            raise ValueError(f"the late time for {stage} must come after its warning")
+    return {"enabled": enabled, "stages": stages}
 
 
 def fallback_loop(fallbacks: Mapping[str, list[str]]) -> list[str] | None:

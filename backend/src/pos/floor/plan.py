@@ -4,18 +4,22 @@ The plan is data (`data/floor.json`, or `POS_FLOOR`): rooms, and tables with a l
 position in the plan's own frame, so the app can draw it at any size. Which tables are busy is never stored:
 it is read from the open orders, whose `table` field holds the table id. The courses a line can belong to
 are a location setting (`pos.settings`, key `coursing`), not part of the plan.
+
+Each open check also says what its table is waiting on and since when (`check_timer`), read from the order
+log's own stamps, so every screen draws the same timer ring around the table whatever its own clock says.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from ..sync.hlc import HLC
 from ..sync.oplog import OrderState
 
 DEFAULT = Path(__file__).with_name("data") / "floor.json"
@@ -78,8 +82,57 @@ def load_floor(path: str | None = None) -> FloorPlan:
     return FloorPlan.from_json(json.loads(Path(path or DEFAULT).read_text(encoding="utf-8")))
 
 
-def table_status(orders: Iterable[OrderState], totals: dict[str, Decimal] | None = None) -> dict[str, list[dict]]:
-    """Open checks by table id, oldest first: what the floor map colours and what a tap opens."""
+STAGES = ("sat", "unsent", "held", "fired")
+"""What a table can be waiting on, as the floor map times it (`check_timer`); the warning times for each are
+a location setting (`pos.settings`, key `table_timers`)."""
+
+
+def check_timer(state: OrderState, courses: Sequence[str] = ()) -> dict[str, Any] | None:
+    """What an open check is waiting on, and since when (wall-clock ms, from the stamps in its log):
+
+    - `sat`: nothing is on the check. Since it was opened (or since the last dish was sent, when every dish
+      that went has been voided since).
+    - `unsent`: dishes are on the check that the kitchen has not been sent and that are not being held for
+      their turn: nothing has been sent at all, or their course has already gone. Since the first of them
+      came onto the check. This is the forgotten Fire, so it goes before a held course.
+    - `held`: something was sent and a later course waits its turn. Since the course before it went (the
+      nearest earlier one in `courses`, the ids in the order the kitchen serves them; the last course to go
+      when that cannot be told), or since the waiting course's first dish came onto the check when that was
+      later: a main ordered after the starters were eaten has not been held all that while.
+    - `fired`: everything on the check was sent. Since the last dish went: with no word from the kitchen on
+      when food reached the table, this is how long the table has been left to itself.
+
+    None for a check with no stamps at all (it has no operations, so it is not listed either)."""
+    active = [line for line in state.lines.values() if line.active]
+    waiting = [line for line in active if line.fired_at is None]
+
+    def timer(stage: str, since: HLC | None) -> dict[str, Any] | None:
+        since = since or state.first
+        return None if since is None else {"stage": stage, "since_ms": since.wall_ms}
+
+    def added(lines: Iterable[Any]) -> HLC | None:
+        return min((line.added_at for line in lines if line.added_at is not None), default=None)
+
+    if not active:
+        return timer("sat", max([*state.fired.values(), *([state.first] if state.first else [])], default=None))
+    if not waiting:
+        return timer("fired", max(line.fired_at for line in active if line.fired_at is not None))
+    late = [line for line in waiting if not state.fired or state.course_gone(line.course)]
+    if late:
+        return timer("unsent", added(late))
+    rank = {course: at for at, course in enumerate(courses)}
+    up_next = min((line.course for line in waiting), key=lambda course: rank.get(course, len(rank)))
+    before = [(rank[c], stamp) for c, stamp in state.fired.items() if c in rank and rank[c] < rank.get(up_next, -1)]
+    went = max(before)[1] if before else max(state.fired.values())
+    came = added(line for line in waiting if line.course == up_next)
+    return timer("held", went if came is None else max(went, came))
+
+
+def table_status(
+    orders: Iterable[OrderState], totals: dict[str, Decimal] | None = None, courses: Sequence[str] = ()
+) -> dict[str, list[dict]]:
+    """Open checks by table id, oldest first: what the floor map colours and what a tap opens. `courses` are
+    the course ids in the order the kitchen serves them, for the timer on a held course."""
     out: dict[str, list[dict]] = {}
     for state in orders:
         if state.status != "open":
@@ -100,6 +153,7 @@ def table_status(orders: Iterable[OrderState], totals: dict[str, Decimal] | None
                 "fired": sorted(fired),
                 "held": held,
                 "total": str(totals.get(state.order_id)) if totals and state.order_id in totals else None,
+                "timer": check_timer(state, courses),
             }
         )
     for checks in out.values():

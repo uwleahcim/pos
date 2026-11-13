@@ -2,8 +2,10 @@
 library;
 
 import 'coursing.dart';
+import 'table_timers.dart';
 
 export 'coursing.dart' show Course;
+export 'table_timers.dart';
 
 class Room {
   const Room({
@@ -77,6 +79,7 @@ class TableCheck {
     this.fired = const [],
     this.held = const [],
     this.total,
+    this.timer,
   });
   factory TableCheck.fromJson(Map<String, dynamic> json) => TableCheck(
     orderId: json['order_id'] as String,
@@ -87,6 +90,7 @@ class TableCheck {
     fired: List<String>.from(json['fired'] as List? ?? const []),
     held: List<String>.from(json['held'] as List? ?? const []),
     total: json['total'] as String?,
+    timer: TableTimer.fromJson(json['timer']),
   );
   final String orderId;
   final int? guests;
@@ -97,13 +101,17 @@ class TableCheck {
   final List<String> held;
   final String? total;
 
+  /// What the table is waiting on and since when, for its countdown ring; null from a hub that sends none.
+  final TableTimer? timer;
+
   /// seated (nothing sent yet), waiting (some courses held after one was fired) or fired (everything sent).
   String get stage {
     if (fired.isEmpty) return 'seated';
     return held.isEmpty ? 'fired' : 'waiting';
   }
 
-  int minutesOpen(DateTime now) => openedMs == null ? 0 : (now.millisecondsSinceEpoch - openedMs!) ~/ 60000;
+  /// Whole minutes since the check was opened, at [nowMs] (wall-clock ms, the hub's as near as it is known).
+  int minutesOpen(int nowMs) => openedMs == null || nowMs < openedMs! ? 0 : (nowMs - openedMs!) ~/ 60000;
 }
 
 class FloorPlan {
@@ -114,6 +122,7 @@ class FloorPlan {
     required this.tables,
     required this.status,
     this.courses = Course.defaults,
+    this.timers = TableTimers.off,
   });
   factory FloorPlan.fromJson(Map<String, dynamic> json) => FloorPlan(
     width: (json['width'] as num).toDouble(),
@@ -122,6 +131,7 @@ class FloorPlan {
     tables: (json['tables'] as List? ?? const []).map((t) => TableSpot.fromJson(t as Map<String, dynamic>)).toList(),
     courses:
         (json['courses'] as List?)?.map((c) => Course.fromJson(c as Map<String, dynamic>)).toList() ?? Course.defaults,
+    timers: json['timers'] is Map ? TableTimers.fromJson((json['timers'] as Map).cast()) : TableTimers.off,
     status: {
       for (final e in (json['status'] as Map<String, dynamic>? ?? const {}).entries)
         e.key: (e.value as List).map((c) => TableCheck.fromJson(c as Map<String, dynamic>)).toList(),
@@ -134,7 +144,15 @@ class FloorPlan {
   /// The courses a line can be coursed by now (`/settings/coursing`, as the backend applies it): empty
   /// while coursing is off. The order screen reads the setting itself; this is what the floor was told.
   final List<Course> courses;
+
+  /// The location's table timers (`/settings/table_timers`, as the backend applies it): whether each table
+  /// gets a countdown ring and the times of each stage. Off from a hub older than the timers.
+  final TableTimers timers;
   final Map<String, List<TableCheck>> status;
+
+  /// Where the table's countdown stands at [nowMs]: the most pressing of its checks', or null with no ring.
+  Countdown? countdownAt(String tableId, int nowMs) =>
+      timers.mostUrgent(checksAt(tableId).map((check) => check.timer), nowMs);
 
   List<TableCheck> checksAt(String tableId) => status[tableId] ?? const [];
 
@@ -148,6 +166,14 @@ class FloorPlan {
       final here = merged.putIfAbsent(table, () => []);
       here.addAll(checks.where((c) => !here.any((h) => h.orderId == c.orderId)));
     }
-    return FloorPlan(width: width, height: height, rooms: rooms, tables: tables, status: merged, courses: courses);
+    return FloorPlan(
+      width: width,
+      height: height,
+      rooms: rooms,
+      tables: tables,
+      status: merged,
+      courses: courses,
+      timers: timers,
+    );
   }
 }
