@@ -14,6 +14,7 @@ import 'menu.dart';
 import 'phone.dart';
 import 'pricing.dart';
 import 'printers.dart';
+import 'roster.dart';
 import 'settings.dart';
 import 'takeout.dart';
 
@@ -376,6 +377,10 @@ class PosApi {
 
   /// The floor plan with every table's open checks; the last one read when nothing answers.
   Future<FloorPlan> floor() => _repeated('/floor', FloorPlan.fromJson, remember: 'floor');
+
+  /// The staff by name and role: who a table can be given to and who may give one. The last answer read
+  /// when nothing answers, so a host can still seat a party for a server (ADR 6).
+  Future<Roster> staff() => _repeated('/staff', Roster.fromJson, remember: 'staff');
 
   /// The location's table timers: whether the floor map draws a countdown ring on each table, and the
   /// minutes each stage is given.

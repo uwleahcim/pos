@@ -21,7 +21,7 @@ void main() {
     expect(plan.rooms.map((r) => r.id), ['D', 'AB', 'JK']);
     expect(plan.courses.map((c) => c.id), ['drinks', '1', '2', '3']);
     final a7 = plan.checksAt('A7').single;
-    expect((a7.guests, a7.server, a7.stage), (4, 'Amy', 'waiting'));
+    expect((a7.guests, a7.server, a7.serverId, a7.stage), (4, 'Amy', 's1', 'waiting'));
     expect(plan.checksAt('A8'), isEmpty);
   });
 
@@ -44,7 +44,10 @@ void main() {
     expect(find.text('1 of 42 tables open'), findsOneWidget);
     expect(find.text('B5'), findsOneWidget);
     expect(find.textContaining('4p'), findsOneWidget); // A7's party of four
-    expect(find.text('\$36.86 A'), findsOneWidget); // what they have run up, and Amy's initial
+    expect(find.text('\$36.86'), findsOneWidget); // what they have run up
+    // whose table it is, by name, on the table itself
+    expect(find.descendant(of: find.byKey(const ValueKey('table-server:A7')), matching: find.text('Amy')), findsOne);
+    expect(find.byKey(const ValueKey('table-server:A8')), findsNothing); // a free table is nobody's
     await tester.tap(find.text('A7'));
     expect(tapped, ['A7']);
 

@@ -10,6 +10,7 @@ import '../floor.dart';
 import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
+import '../roster.dart';
 import 'theme.dart';
 
 /// The restaurant's floor as drawn on its plan: tables coloured by what is happening at them, a room picker,
@@ -25,10 +26,14 @@ import 'theme.dart';
 /// follow the clock (minutes, badges, the count of tables that need a look) are rebuilt one by one as theirs
 /// change. The tables are rebuilt when the hub has news, as before.
 class FloorView extends StatefulWidget {
-  const FloorView({super.key, required this.api, required this.onTable, this.outbox, this.now});
+  const FloorView({super.key, required this.api, required this.onTable, this.onTableHeld, this.outbox, this.now});
 
   final PosApi api;
   final void Function(FloorPlan plan, TableSpot table) onTable;
+
+  /// A table was held down: where a host or manager hands a seated table to another server. Null on a map
+  /// that offers none.
+  final void Function(FloorPlan plan, TableSpot table)? onTableHeld;
   final Outbox? outbox;
 
   /// The time now in wall-clock ms: the hub's clock as [api] knows it, unless a test brings its own.
@@ -167,7 +172,7 @@ class FloorViewState extends State<FloorView> {
   @override
   Widget build(BuildContext context) {
     final outbox = widget.outbox;
-    final plan = outbox == null ? _plan : _plan?.withChecks(queuedChecks(outbox));
+    final plan = outbox == null ? _plan : _plan?.withChecks(queuedChecks(outbox)).withServers(queuedServers(outbox));
     if (plan == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -290,6 +295,7 @@ class FloorViewState extends State<FloorView> {
                               clock: _clock,
                               ringed: rings.has(t.id),
                               onTap: () => widget.onTable(plan, t),
+                              onHeld: widget.onTableHeld == null ? null : () => widget.onTableHeld!(plan, t),
                             ),
                           // Every table's countdown ring, in one layer of its own: a second going by repaints
                           // this and nothing else, and only when a ring moved.
@@ -803,6 +809,7 @@ class _TablePositioned extends StatelessWidget {
     required this.clock,
     required this.ringed,
     required this.onTap,
+    this.onHeld,
   });
 
   final TableSpot table;
@@ -816,13 +823,18 @@ class _TablePositioned extends StatelessWidget {
   final bool ringed;
   final VoidCallback onTap;
 
+  /// The table was held down; null where holding does nothing.
+  final VoidCallback? onHeld;
+
   static const _minSide = 34.0; // keeps counter stools big enough to tap
+  static const _busyLine = 1.12; // the height of a line of text on a busy table, in font sizes
 
   @override
   Widget build(BuildContext context) {
     final posColors = PosColors.of(context);
     final w = math.max(table.w, _minSide), h = math.max(table.h, _minSide);
     final check = checks.firstOrNull;
+    final server = shortName(check?.server);
     final (fill, border, textColor) = _stageStyle(posColors, check?.stage);
     final radius = BorderRadius.circular(table.kind == 'booth' ? 12 : 8);
     final side = BorderSide(color: ringed ? border.withValues(alpha: 0.28) : border, width: check == null ? 1.5 : 2.2);
@@ -856,6 +868,7 @@ class _TablePositioned extends StatelessWidget {
               child: InkWell(
                 customBorder: table.round ? const CircleBorder() : RoundedRectangleBorder(borderRadius: radius),
                 onTap: onTap,
+                onLongPress: onHeld,
                 child: Transform.rotate(
                   angle: -table.rotation * math.pi / 180,
                   child: Center(
@@ -872,8 +885,27 @@ class _TablePositioned extends StatelessWidget {
                                 fontSize: 14,
                                 color: textColor,
                                 letterSpacing: -0.2,
+                                // a busy table holds four lines: they stand closer so they stay as large
+                                height: check == null ? null : _busyLine,
                               ),
                             ),
+                            // whose table it is: the server who opened it, or the one it was given to
+                            if (server.isNotEmpty)
+                              Container(
+                                key: ValueKey('table-server:${table.id}'),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0.5),
+                                decoration: BoxDecoration(color: border, borderRadius: BorderRadius.circular(4)),
+                                child: Text(
+                                  server,
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: fill,
+                                    letterSpacing: 0.1,
+                                    height: _busyLine,
+                                  ),
+                                ),
+                              ),
                             if (check != null)
                               Container(
                                 margin: const EdgeInsets.only(top: 1),
@@ -895,21 +927,20 @@ class _TablePositioned extends StatelessWidget {
                                           fontWeight: FontWeight.w700,
                                           color: textColor,
                                           fontFeatures: PosTheme.tabular,
+                                          height: _busyLine,
                                         ),
                                       ),
                                     ),
-                                    // what the table has run up and whose it is, as a manager reads the room
-                                    if (check.total != null || check.server != null)
+                                    // what the table has run up, as a manager reads the room
+                                    if (check.total != null)
                                       Text(
-                                        [
-                                          if (check.total != null) '\$${check.total}',
-                                          _initials(check.server),
-                                        ].where((s) => s.isNotEmpty).join(' '),
+                                        '\$${check.total}',
                                         style: TextStyle(
                                           fontSize: 8.5,
                                           fontWeight: FontWeight.w600,
                                           color: textColor,
                                           fontFeatures: PosTheme.tabular,
+                                          height: _busyLine,
                                         ),
                                       ),
                                   ],
@@ -929,15 +960,6 @@ class _TablePositioned extends StatelessWidget {
     );
   }
 }
-
-/// "Amy" -> "A", "Mike Wu" -> "MW": the server on a table, in the room a tile has.
-String _initials(String? name) => (name ?? '')
-    .trim()
-    .split(RegExp(r'\s+'))
-    .where((word) => word.isNotEmpty)
-    .take(2)
-    .map((word) => word.substring(0, 1).toUpperCase())
-    .join();
 
 class _Legend extends StatelessWidget {
   const _Legend();

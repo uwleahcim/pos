@@ -17,12 +17,18 @@ from dataclasses import dataclass
 LOCK_AFTER = 5
 LOCK_SECONDS = 60.0
 
+TAKES_TABLES = frozenset({"server", "bartender", "manager", "owner"})
+"""The roles a table can be given to: the people who serve one."""
+ASSIGNS_TABLES = frozenset({"host", "manager", "owner"})
+"""The roles that seat a party for someone else, or hand a seated table to another server. Everyone who
+takes tables gets a table by opening it themselves."""
+
 
 @dataclass(frozen=True)
 class Staff:
     staff_id: str
     name: str
-    role: str  # server | bartender | manager | kitchen | cashier
+    role: str  # server | bartender | host | manager | owner | kitchen | cashier
     pin_salt: str
     pin_hash: str
     tag_uid: str | None = None  # NTAG 424 DNA uid, when enrolled
@@ -120,5 +126,21 @@ def demo_directory() -> Directory:
             Staff.with_pin("s1", "Amy", "server", "1111"),
             Staff.with_pin("s2", "Ben", "bartender", "2222"),
             Staff.with_pin("s3", "Mike", "manager", "9999"),
+            Staff.with_pin("s4", "Holly", "host", "3333"),
         ]
     )
+
+
+def roster(directory: Directory) -> list[dict[str, object]]:
+    """The staff by name and role, for the screens that put a name to a table: who a table can be given to
+    and who may give one. Nothing a sign-in is checked against (PIN, tag, face) is in it."""
+    return [
+        {
+            "staff_id": s.staff_id,
+            "name": s.name,
+            "role": s.role,
+            "takes_tables": s.role in TAKES_TABLES,
+            "assigns_tables": s.role in ASSIGNS_TABLES,
+        }
+        for s in directory.all()
+    ]

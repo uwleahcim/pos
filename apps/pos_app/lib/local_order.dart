@@ -305,6 +305,7 @@ Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
             orderId: id,
             guests: order.fields['guests'] as int?,
             server: order.fields['server'] as String?,
+            serverId: order.fields['server_id'] as String?,
             openedMs: opened[id],
             items: order.activeLines.fold(0, (n, l) => n + l.qty),
             fired: [...?firedCourses[id]],
@@ -315,6 +316,15 @@ Map<String, List<TableCheck>> queuedChecks(Outbox outbox) {
   }
   return out;
 }
+
+/// The checks handed to another server on this device that no backend has heard of yet: order id -> the
+/// server's name and id, the last hand-over winning.
+Map<String, (String?, String?)> queuedServers(Outbox outbox) => {
+  for (final op in outbox.pendingOps)
+    if (op['kind'] == 'set_field')
+      if (op['data'] case {'server': final String? name, 'server_id': final String? id})
+        op['order_id'] as String: (name, id),
+};
 
 /// What a choice changes on a line, with its sign: "+0.50"; a choice that takes something off reads the
 /// accounting way, "(2.00)"; one that changes nothing reads as nothing.

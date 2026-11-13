@@ -31,7 +31,7 @@ from ..floor import FloorPlan, load_floor, table_status
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.preferences import PreferenceStore
-from ..identity.staff import Directory, Locked, demo_directory
+from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
@@ -762,7 +762,8 @@ def create_app(
     def read_floor() -> Response:
         """The floor plan with the open checks on each table, for the floor map. Each check says what its table
         is waiting on and since when (`timer`: a stage and `since_ms`, from the order log), and `timers` holds
-        the location's warning times for each stage, so the map can draw a ring that fills as the time runs.
+        the location's warning times for each stage, so the map can draw a ring that drains as the time runs.
+        Each check names its server (`server`, `server_id`): whoever opened the table, or whoever it was given to.
         Nothing here moves with the clock: an answer stays the same until an order or a setting changes."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
@@ -1151,6 +1152,13 @@ def create_app(
             "method": found.method,
             "preferences": app.state.preferences.get(found.staff_id),
         }
+
+    @app.get("/staff")
+    def read_staff() -> Response:
+        """The staff by name and role: who a table can be given to (`takes_tables`: the servers, bartenders and
+        managers) and who may seat a party for someone else or hand a table over (`assigns_tables`: the hosts
+        and managers). A server is given a table by opening it; a host picks the server as the party is sat."""
+        return polled({"staff": roster(app.state.staff)})
 
     @app.get("/staff/{staff_id}/preferences")
     def read_preferences(staff_id: str) -> dict[str, Any]:

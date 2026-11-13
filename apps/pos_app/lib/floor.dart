@@ -74,6 +74,7 @@ class TableCheck {
     required this.orderId,
     this.guests,
     this.server,
+    this.serverId,
     this.openedMs,
     this.items = 0,
     this.fired = const [],
@@ -85,6 +86,7 @@ class TableCheck {
     orderId: json['order_id'] as String,
     guests: json['guests'] as int?,
     server: json['server'] as String?,
+    serverId: json['server_id'] as String?,
     openedMs: json['opened_ms'] as int?,
     items: json['items'] as int? ?? 0,
     fired: List<String>.from(json['fired'] as List? ?? const []),
@@ -94,7 +96,10 @@ class TableCheck {
   );
   final String orderId;
   final int? guests;
+
+  /// Whose table it is, by name and by id: whoever opened it, or whoever a host or manager gave it to.
   final String? server;
+  final String? serverId;
   final int? openedMs;
   final int items;
   final List<String> fired;
@@ -112,6 +117,20 @@ class TableCheck {
 
   /// Whole minutes since the check was opened, at [nowMs] (wall-clock ms, the hub's as near as it is known).
   int minutesOpen(int nowMs) => openedMs == null || nowMs < openedMs! ? 0 : (nowMs - openedMs!) ~/ 60000;
+
+  /// The same check in another server's hands.
+  TableCheck servedBy(String? name, String? id) => TableCheck(
+    orderId: orderId,
+    guests: guests,
+    server: name,
+    serverId: id,
+    openedMs: openedMs,
+    items: items,
+    fired: fired,
+    held: held,
+    total: total,
+    timer: timer,
+  );
 }
 
 class FloorPlan {
@@ -166,14 +185,29 @@ class FloorPlan {
       final here = merged.putIfAbsent(table, () => []);
       here.addAll(checks.where((c) => !here.any((h) => h.orderId == c.orderId)));
     }
-    return FloorPlan(
-      width: width,
-      height: height,
-      rooms: rooms,
-      tables: tables,
-      status: merged,
-      courses: courses,
-      timers: timers,
-    );
+    return _with(merged);
   }
+
+  /// The plan with the checks in [given] (order id -> the server's name and id) in those servers' hands: a
+  /// table handed over on this device shows its new server before a hub has heard of it.
+  FloorPlan withServers(Map<String, (String?, String?)> given) {
+    if (given.isEmpty) return this;
+    return _with({
+      for (final MapEntry(key: table, value: checks) in status.entries)
+        table: [
+          for (final check in checks)
+            if (given[check.orderId] case (final name, final id)) check.servedBy(name, id) else check,
+        ],
+    });
+  }
+
+  FloorPlan _with(Map<String, List<TableCheck>> status) => FloorPlan(
+    width: width,
+    height: height,
+    rooms: rooms,
+    tables: tables,
+    status: status,
+    courses: courses,
+    timers: timers,
+  );
 }

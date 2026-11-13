@@ -148,6 +148,7 @@ def table_status(
                 "order_id": state.order_id,
                 "guests": state.fields.get("guests"),
                 "server": state.fields.get("server"),
+                "server_id": state.fields.get("server_id"),
                 "opened_ms": state.first.wall_ms if state.first else None,
                 "items": sum(line.qty for line in active),
                 "fired": sorted(fired),
