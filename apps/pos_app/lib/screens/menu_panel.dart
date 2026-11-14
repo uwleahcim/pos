@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../live.dart';
@@ -54,8 +55,16 @@ abstract final class MenuPanelCheck {
 ///
 /// The same on every screen: a Mac or a tablet only fits more tiles per row. The categories never collapse to
 /// a strip of chips (Mike, 2026-11-01).
+///
+/// With a keyboard (Mike, 2026-11-14): Down from the search field goes to the first tile under it and the
+/// arrows move from tile to tile. Enter on a tile that opens something takes the focus into what opened: a
+/// category's first dish, the first choice a dish asks for. Once the choices are made and the dish is on the
+/// order, the focus is back on the dish. Escape backs out of the level the focus is on, to the tile that
+/// opened it, and closes whatever is open under that level: from the choices to the dish, from the dishes to
+/// their category (the choices close too), from the categories to the search field. Delete or Backspace on a
+/// dish takes one of it off the order ([onRemove]); in the search field they edit the text.
 class MenuPanel extends StatefulWidget {
-  const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf});
+  const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf, this.onRemove});
 
   /// How long the trays take to open, close or change size.
   static const transition = Duration(milliseconds: 280);
@@ -63,6 +72,9 @@ class MenuPanel extends StatefulWidget {
   final PosApi api;
   final ValueChanged<ChosenLine> onChosen;
   final int Function(MenuEntry entry)? qtyOf;
+
+  /// Delete or Backspace pressed on a dish's tile: one of that dish comes off the order, if it is on it.
+  final ValueChanged<MenuEntry>? onRemove;
 
   @override
   State<MenuPanel> createState() => _MenuPanelState();
@@ -116,8 +128,30 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   double _fromRequiredHeight = 0.0;
   double _currentRequiredHeight = 0.0;
 
+  // The keyboard. Every tile has a focus node of its own, named by the grid it is in and its key, so that the
+  // focus can be sent to a tile that is only just coming on screen (the first dish of a category that opens)
+  // and the panel knows which dish a key was pressed on. The three levels (the top grid, an open category's
+  // dishes, a dish's choices) each sit in a node that says whether the focus is somewhere inside it.
+  final _focus = <String, FocusNode>{};
+  final _dishOf = <FocusNode, MenuEntry>{}; // the dish on each dish tile's node
+  final _searchFocus = FocusNode(debugLabel: 'menu search');
+  final _topLevel = FocusNode(debugLabel: 'menu top', canRequestFocus: false, skipTraversal: true);
+  final _dishLevel = FocusNode(debugLabel: 'menu dishes', canRequestFocus: false, skipTraversal: true);
+  final _choiceLevel = FocusNode(debugLabel: 'menu choices', canRequestFocus: false, skipTraversal: true);
+  final _trayScroll = ScrollController();
+  _Wanted? _wanted; // the tile the focus goes to as soon as it is on screen
+  FocusNode? _toShow; // the tile that took the focus while the trays moved: brought into view once they rest
+  var _columns = 1; // the grids as last laid out: how many tiles across, how tall each
+  var _tileHeight = 0.0;
+
   _CategoryScrollController _itemsScrollFor(String sectionId) =>
       _itemsScrolls.putIfAbsent(sectionId, _CategoryScrollController.new);
+
+  FocusNode _focusOf(String grid, String tile) =>
+      _focus.putIfAbsent('$grid|$tile', () => FocusNode(debugLabel: '$grid|$tile'));
+
+  static String _sectionKey(MenuSection s) => 's:${s.sectionId}';
+  static String _entryKey(MenuEntry e) => 'e:${e.entryId}:${e.item}';
 
   static bool _sameEntry(MenuEntry a, MenuEntry b) => a.entryId == b.entryId && a.item == b.item;
 
@@ -158,6 +192,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     for (final c in _itemsScrolls.values) {
       c.dispose();
     }
+    _trayScroll.dispose();
+    for (final node in [..._focus.values, _searchFocus, _topLevel, _dishLevel, _choiceLevel]) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -175,7 +213,63 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       for (final scroll in [_categoriesScroll, _searchScroll, ..._itemsScrolls.values]) {
         scroll.endSync();
       }
+      _show();
     });
+  }
+
+  /// Sends the keyboard's focus to a tile. One that is not on screen yet takes it as soon as it is: a tray
+  /// has no height in its first frame, and a grid only builds the tiles near what it shows, so a tile too far
+  /// down ([index] is its place in the grid [scroll] moves) has its row scrolled to first.
+  void _want(FocusNode node, {ScrollController? scroll, int index = 0}) {
+    _wanted = _Wanted(node, scroll, index);
+    _nextFrame();
+  }
+
+  void _nextFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _giveFocus());
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  void _giveFocus() {
+    final wanted = _wanted;
+    if (!mounted || wanted == null) return;
+    // (a tile that was built and then scrolled away keeps its old context, so only a mounted one counts)
+    if (wanted.node.context?.mounted ?? false) {
+      _wanted = null;
+      wanted.node.requestFocus();
+      _toShow = wanted.node;
+      if (!_transition.isAnimating) _show();
+      return;
+    }
+    // Not built. While the trays move it may only need its tray to open; once they rest, its row is scrolled
+    // to, and a tile that still is not there after a few frames is not coming (the menu changed under it).
+    if (!_transition.isAnimating) {
+      if (++wanted.tries > 4) {
+        _wanted = null;
+        return;
+      }
+      final scroll = wanted.scroll;
+      if (scroll != null && scroll.hasClients && scroll.position.haveDimensions) {
+        final position = scroll.position;
+        final row = wanted.index ~/ _columns;
+        position.jumpTo((row * (_tileHeight + _gridSpacing)).clamp(position.minScrollExtent, position.maxScrollExtent));
+      }
+    }
+    _nextFrame();
+  }
+
+  /// Scrolls the tile that took the focus into view, if its grid shows only part of it.
+  void _show() {
+    final node = _toShow;
+    _toShow = null;
+    final context = node?.context;
+    if (node == null || context == null || !context.mounted || !node.hasPrimaryFocus) return;
+    for (final policy in const [
+      ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+    ]) {
+      unawaited(Scrollable.ensureVisible(context, alignmentPolicy: policy));
+    }
   }
 
   Future<void> _load() async {
@@ -314,7 +408,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   /// Opens `section` at `depth`. The categories stay the same size in their grid above, smoothly
   /// collapsing or expanding to match the rows needed by `section`'s items.
-  void _openAt(int depth, MenuSection section) {
+  ///
+  /// Opened with the keyboard ([from] is the tile it was opened from, and has the focus), the focus goes to
+  /// the first of what opened.
+  void _openAt(int depth, MenuSection section, {FocusNode? from}) {
+    final keyed = from?.hasPrimaryFocus ?? false;
     final currentDepth = _open.isEmpty ? 0 : _open.length - 1;
     _startTransition(resetScroll: depth != currentDepth, resetItemsSectionId: section.sectionId);
     setState(() {
@@ -322,15 +420,44 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       _pending = null;
       _search.clear();
     });
+    if (!keyed) return;
+    final first = section.sections.isNotEmpty
+        ? _sectionKey(section.sections.first)
+        : section.entries.isNotEmpty
+        ? _entryKey(section.entries.first)
+        : null;
+    if (first != null) {
+      _want(_focusOf('items-${section.sectionId}', first), scroll: _itemsScrollFor(section.sectionId));
+    }
   }
 
-  void _close() {
-    final closingSubcategory = _open.length > 1;
-    _startTransition(resetScroll: closingSubcategory);
+  /// Closes the open category (the innermost one). Closed with the keyboard, from its own tile, the focus
+  /// stays with that tile where it shows now.
+  void _close({FocusNode? from}) => _closeTo(_open.length - 1, focus: from?.hasPrimaryFocus ?? false);
+
+  /// Backs out to the first [keep] open categories: the ones under them close, and a dish's choices with
+  /// them. With [focus], the keyboard's focus goes to the tile of the category that closed, where it shows now:
+  /// among the top categories, or among the dishes of the category it is in.
+  void _closeTo(int keep, {bool focus = false}) {
+    final open = _open;
+    if (keep < 0 || keep >= open.length) return;
+    _startTransition(resetScroll: math.max(0, keep - 1) != open.length - 1);
     setState(() {
-      _path = _path.take(_open.length - 1).toList();
+      _path = [for (final s in open.take(keep)) s.sectionId];
       _pending = null;
     });
+    if (!focus) return;
+    final closed = open[keep];
+    if (keep == 0) {
+      _want(_focusOf('categories-0', _sectionKey(closed)), scroll: _categoriesScroll, index: _top.indexOf(closed));
+    } else {
+      final parent = open[keep - 1];
+      _want(
+        _focusOf('items-${parent.sectionId}', _sectionKey(closed)),
+        scroll: _itemsScrollFor(parent.sectionId),
+        index: parent.sections.indexOf(closed),
+      );
+    }
   }
 
   void _openPending(_PendingItemSelection pending) {
@@ -372,7 +499,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     final pending = _pending;
     if (pending == null || !option.available) return;
     pending.toggle(ask, option);
-    _settlePending(pending);
+    _settlePending(pending, answered: ask.answered);
   }
 
   /// A hold on a choice that is a dish: that dish's own sheet, every choice on it and a note to the kitchen,
@@ -390,14 +517,130 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   }
 
   /// The tray closes and the dish goes on the order once nothing is left to ask; otherwise it shows the rest.
-  void _settlePending(_PendingItemSelection pending) {
+  ///
+  /// With the keyboard (the focus is in the tray): once the dish is on the order the focus is back on its
+  /// tile, for one more of it or the next dish; while questions are left, it moves on to the first of them as
+  /// soon as the one just picked in has its answer ([answered]), and stays put while that one wants more.
+  void _settlePending(_PendingItemSelection pending, {bool answered = true}) {
+    final keyed = _choiceLevel.hasFocus;
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
       _choose(chosen);
+      final tile = pending.tile;
+      if (keyed && tile != null) _want(tile);
     } else {
       setState(() => _answered++);
+      if (keyed && answered) _focusOpenChoice(pending);
     }
+  }
+
+  /// The focus goes to the first choice of the first question the tray still asks.
+  void _focusOpenChoice(_PendingItemSelection pending) {
+    final next = pending.firstOpen;
+    if (next != null) _want(_focusOf('tray', next.$1), scroll: _trayScroll, index: next.$2);
+  }
+
+  /// The focus goes to the first tile under the search field: what it found, or the first category. False
+  /// when there is none.
+  bool _focusFirstOfTop() {
+    final open = _open;
+    if (open.isEmpty && _search.text.trim().isNotEmpty) {
+      final found = _found;
+      if (found.isNotEmpty) _want(_focusOf('search', _entryKey(found.first)), scroll: _searchScroll);
+      return found.isNotEmpty;
+    }
+    final depth = open.isEmpty ? 0 : open.length - 1;
+    final siblings = depth == 0 ? _top : open[depth - 1].sections;
+    final first = siblings.isNotEmpty
+        ? _sectionKey(siblings.first)
+        : depth == 0 && _topEntries.isNotEmpty
+        ? _entryKey(_topEntries.first)
+        : null;
+    if (first != null) _want(_focusOf('categories-$depth', first), scroll: _categoriesScroll);
+    return first != null;
+  }
+
+  /// Enter (or the on-screen keyboard's Done) in the search field goes to what was found, like Down. With
+  /// nothing found it only lets go of the field, as it always did.
+  void _submitSearch() {
+    if (!_focusFirstOfTop()) _searchFocus.unfocus();
+  }
+
+  void _clearSearch() => setState(() {
+    _search.clear();
+    _pending = null;
+  });
+
+  /// Keys pressed with the focus anywhere in the menu: see [MenuPanel]. What is not for the menu goes on to
+  /// whoever has it next (the search field edits its text with Backspace and Delete as it always did).
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    final key = event.logicalKey;
+    final down = event is KeyDownEvent;
+    if (key == LogicalKeyboardKey.escape) {
+      return down && _backOut() ? KeyEventResult.handled : KeyEventResult.ignored;
+    }
+    if (key == LogicalKeyboardKey.backspace || key == LogicalKeyboardKey.delete) {
+      final dish = _dishOf[FocusManager.instance.primaryFocus];
+      if (dish == null || widget.onRemove == null) return KeyEventResult.ignored;
+      // one press, one dish: a key held down does not empty the order
+      if (down) widget.onRemove!(dish);
+      return KeyEventResult.handled;
+    }
+    // In the search field (one line: up and down have nowhere to move in it) the arrows leave it. Not while
+    // an input method is composing: there they pick among its candidates.
+    if (_searchFocus.hasPrimaryFocus && !_search.value.composing.isValid && event is! KeyUpEvent) {
+      if (key == LogicalKeyboardKey.arrowDown) {
+        _focusFirstOfTop();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp) {
+        _searchFocus.focusInDirection(TraversalDirection.up);
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Escape: out of the level the focus is on, onto the tile that opened it, and whatever is open under that
+  /// level closes too. From a dish's choices to the dish; from a category's dishes to the category (the
+  /// choices close with them); from sub-categories to the category they are in; from the top of the menu to
+  /// the search field, where it clears what was typed. False when there is nothing to back out of.
+  bool _backOut() {
+    final open = _open;
+    if (_choiceLevel.hasFocus) {
+      final tile = (_pending ?? _lastPending)?.tile;
+      _closePending();
+      if (tile != null) _want(tile);
+      return true;
+    }
+    if (_dishLevel.hasFocus && open.isNotEmpty) {
+      _closeTo(open.length - 1, focus: true);
+      return true;
+    }
+    if (_topLevel.hasFocus) {
+      if (open.length > 1) {
+        _closeTo(open.length - 2, focus: true);
+        return true;
+      }
+      if (open.isNotEmpty) {
+        _closeTo(0);
+      } else {
+        _closePending();
+      }
+      _want(_searchFocus);
+      return true;
+    }
+    if (_searchFocus.hasPrimaryFocus && !_search.value.composing.isValid) {
+      if (open.isNotEmpty) {
+        _closeTo(0);
+        return true;
+      }
+      if (_pending == null && _search.text.isEmpty) return false;
+      _clearSearch();
+      return true;
+    }
+    return false;
   }
 
   /// The 86 board from the order screen: mark a size sold out or back.
@@ -413,8 +656,12 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// (or when it has only one size and no options). When required selections are still needed
   /// (such as choosing a size or a required modifier group with no defaults), it expands the
   /// inline required-selections section below.
-  Future<void> _tap(MenuEntry entry) async {
+  ///
+  /// [from] is the tile tapped. When it has the keyboard's focus (Enter was pressed on it), the focus goes
+  /// into the choices that open, and comes back to it once they are made ([_settlePending]).
+  Future<void> _tap(MenuEntry entry, {FocusNode? from}) async {
     if (!entry.available) return;
+    final keyed = from?.hasPrimaryFocus ?? false;
     if (_pending != null && _pending!.entry == entry) {
       _closePending();
       return;
@@ -462,6 +709,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       selectedVariantId: needsVariant ? null : availableVariants.first.variantId,
       requiredGroups: requiredGroups,
       choices: choices,
+      tile: from,
     );
 
     if (pending.isComplete) {
@@ -471,6 +719,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     }
 
     _openPending(pending);
+    if (keyed) _focusOpenChoice(pending);
   }
 
   /// Long-pressing an item opens the popup [ItemSheet] to customize modifiers, size, quantity, or note.
@@ -497,8 +746,12 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// frames went on a slow tablet. So the tiles are kept, and a tile is built again only when what it shows
   /// changes: the dish itself (a new menu, an 86), whether it is the open one, its count from the check. A
   /// dish added to the check builds one tile, not the category.
+  ///
+  /// [focus] names the grid for the tiles' focus nodes: the same dish in the search and in its category is
+  /// two tiles, each with its own.
   List<Widget> _tilesOf(
     String grid, {
+    required String focus,
     required List<MenuSection> sections,
     required List<MenuEntry> entries,
     required int depth,
@@ -508,7 +761,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     final asking = pending == null ? -1 : entries.indexWhere((e) => _sameEntry(pending.entry, e));
     final last = _tiles[grid];
     final sameTiles =
-        last != null && listEquals(last.sections, sections) && listEquals(last.entries, entries) && last.depth == depth;
+        last != null &&
+        last.focus == focus &&
+        listEquals(last.sections, sections) &&
+        listEquals(last.entries, entries) &&
+        last.depth == depth;
     final sameState = sameTiles && last.selected == selected && last.asking == asking;
     if (sameState && last.counted == _counted) return last.widgets;
     // The counts are read from the check only when the check may have changed, not on every frame.
@@ -522,27 +779,15 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         if (sameTiles && (s == selected) == (s == last.selected))
           last.widgets[i]
         else
-          _SectionButton(
-            key: ValueKey('s:${s.sectionId}'),
-            section: s,
-            index: i,
-            selected: s == selected,
-            onTap: s == selected ? _close : () => _openAt(depth, s),
-          ),
+          _sectionTile(focus, depth, s, i, selected: s == selected),
       for (final (i, e) in entries.indexed)
         if (sameTiles && qty[i] == last.qty[i] && (i == asking) == (i == last.asking))
           last.widgets[sections.length + i]
         else
-          _EntryButton(
-            key: ValueKey('e:${e.entryId}:${e.item}'),
-            entry: e,
-            qty: qty[i],
-            selected: i == asking,
-            onTap: () => _tap(e),
-            onLongPress: () => _longPress(e),
-          ),
+          _entryTile(focus, e, qty: qty[i], selected: i == asking),
     ];
     _tiles[grid] = _Tiles(
+      focus: focus,
       sections: sections,
       entries: entries,
       depth: depth,
@@ -555,27 +800,48 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     return widgets;
   }
 
+  Widget _sectionTile(String grid, int depth, MenuSection s, int index, {required bool selected}) {
+    final node = _focusOf(grid, _sectionKey(s));
+    return _SectionButton(
+      key: ValueKey(_sectionKey(s)),
+      section: s,
+      index: index,
+      selected: selected,
+      focusNode: node,
+      onTap: selected ? () => _close(from: node) : () => _openAt(depth, s, from: node),
+    );
+  }
+
+  Widget _entryTile(String grid, MenuEntry e, {required int qty, required bool selected}) {
+    final node = _focusOf(grid, _entryKey(e));
+    _dishOf[node] = e;
+    return _EntryButton(
+      key: ValueKey(_entryKey(e)),
+      entry: e,
+      qty: qty,
+      selected: selected,
+      focusNode: node,
+      onTap: () => _tap(e, from: node),
+      onLongPress: () => _longPress(e),
+    );
+  }
+
   Widget _searchField(bool searching) {
     final last = _searchBuilt;
     if (last != null && last.$1 == searching) return last.$2;
     final field = Center(
       child: TextField(
         controller: _search,
+        focusNode: _searchFocus,
         decoration: InputDecoration(
           prefixIcon: const Icon(Icons.search),
           suffixIcon: searching
-              ? IconButton(
-                  tooltip: 'Clear',
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() {
-                    _search.clear();
-                    _pending = null;
-                  }),
-                )
+              ? IconButton(tooltip: 'Clear', icon: const Icon(Icons.close), onPressed: _clearSearch)
               : null,
           hintText: 'Number or name',
           isDense: true,
         ),
+        onEditingComplete: _submitSearch,
         onChanged: (_) => setState(() => _pending = null),
       ),
     );
@@ -602,6 +868,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       onToggleOption: _togglePendingOption,
       onLongPressOption: _longPressPendingOption,
       onClose: _closePending,
+      scroll: _trayScroll,
+      focusOf: (tile) => _focusOf('tray', tile),
     );
     _trayBuilt = (pending, _answered, crossAxisCount, tileHeight, tray);
     return tray;
@@ -617,6 +885,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   Widget _grid({
     required String tiles,
+    required String focus,
     Key? key,
     ScrollController? controller,
     double extraBottomPadding = 0.0,
@@ -637,7 +906,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       crossAxisSpacing: _gridSpacing,
       mainAxisExtent: tileHeight,
     ),
-    children: _tilesOf(tiles, sections: sections, entries: entries, depth: depth, selected: selected),
+    children: _tilesOf(tiles, focus: focus, sections: sections, entries: entries, depth: depth, selected: selected),
   );
 
   @override
@@ -662,6 +931,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final crossAxisCount = (usableWidth / (_maxCrossAxisExtent + _gridSpacing)).ceil().clamp(1, 99);
         final tileWidth = (usableWidth - _gridSpacing * (crossAxisCount - 1)) / crossAxisCount;
         final tileHeight = tileWidth / _childAspectRatio;
+        _columns = crossAxisCount;
+        _tileHeight = tileHeight;
         double gridHeightForRows(int rows) =>
             rows <= 0 ? 0.0 : _gridPadding * 2 + rows * tileHeight + (rows - 1) * _gridSpacing;
 
@@ -814,14 +1085,18 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
         // The field and the tabs are the same widgets from frame to frame, like the tiles ([_tilesOf]): only
         // the fade and the heights around them move.
+        // Faded out (a category is open), the field takes no taps, and the arrows do not stop on it either.
         final searchField = Opacity(
           opacity: currentSearchFactor,
-          child: IgnorePointer(ignoring: currentSearchFactor < 0.5, child: _searchField(searching)),
+          child: ExcludeFocusTraversal(
+            excluding: currentSearchFactor < 0.5,
+            child: IgnorePointer(ignoring: currentSearchFactor < 0.5, child: _searchField(searching)),
+          ),
         );
 
         // Each part has a key of its own: the top row and the trays come and go, and without keys the grids
         // after them would be taken for other widgets and built from nothing, every tile, in a single frame.
-        return Column(
+        final column = Column(
           children: [
             if (showTop)
               SizedBox(
@@ -850,30 +1125,35 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
             SizedBox(
               key: const ValueKey('menu-categories'),
               height: currentCategoriesHeight,
-              child: searching
-                  ? _grid(
-                      tiles: 'search',
-                      key: const ValueKey('search-grid'),
-                      controller: _searchScroll,
-                      extraBottomPadding: searchExtraBottomSpace,
-                      sections: const [],
-                      entries: found,
-                      depth: 0,
-                      crossAxisCount: crossAxisCount,
-                      tileHeight: tileHeight,
-                    )
-                  : _grid(
-                      tiles: 'categories',
-                      key: ValueKey('categories-$depth'),
-                      controller: _categoriesScroll,
-                      extraBottomPadding: extraBottomSpace,
-                      sections: siblings,
-                      entries: topEntries,
-                      depth: depth,
-                      selected: here,
-                      crossAxisCount: crossAxisCount,
-                      tileHeight: tileHeight,
-                    ),
+              child: _level(
+                _topLevel,
+                searching
+                    ? _grid(
+                        tiles: 'search',
+                        focus: 'search',
+                        key: const ValueKey('search-grid'),
+                        controller: _searchScroll,
+                        extraBottomPadding: searchExtraBottomSpace,
+                        sections: const [],
+                        entries: found,
+                        depth: 0,
+                        crossAxisCount: crossAxisCount,
+                        tileHeight: tileHeight,
+                      )
+                    : _grid(
+                        tiles: 'categories',
+                        focus: 'categories-$depth',
+                        key: ValueKey('categories-$depth'),
+                        controller: _categoriesScroll,
+                        extraBottomPadding: extraBottomSpace,
+                        sections: siblings,
+                        entries: topEntries,
+                        depth: depth,
+                        selected: here,
+                        crossAxisCount: crossAxisCount,
+                        tileHeight: tileHeight,
+                      ),
+              ),
             ),
             if (currentItemsHeight > 0.5 && displayHere != null)
               SizedBox(
@@ -886,23 +1166,27 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                     maxHeight: math.max(currentItemsHeight, _itemsDividerHeight + 1.0),
                     child: ColoredBox(
                       color: Theme.of(context).colorScheme.surfaceContainerLow,
-                      child: DrillDown(
-                        onClose: _close,
-                        header: const Divider(height: _itemsDividerHeight, thickness: _itemsDividerHeight),
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          switchInCurve: Curves.easeOutCubic,
-                          switchOutCurve: Curves.easeInCubic,
-                          child: _grid(
-                            tiles: 'items',
-                            key: ValueKey('items-${displayHere.sectionId}'),
-                            controller: itemsScroll,
-                            extraBottomPadding: itemsExtraBottomSpace,
-                            sections: displayHere.sections,
-                            entries: displayHere.entries,
-                            depth: displayOpen.length,
-                            crossAxisCount: crossAxisCount,
-                            tileHeight: tileHeight,
+                      child: _level(
+                        _dishLevel,
+                        DrillDown(
+                          onClose: _close,
+                          header: const Divider(height: _itemsDividerHeight, thickness: _itemsDividerHeight),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 200),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            child: _grid(
+                              tiles: 'items',
+                              focus: 'items-${displayHere.sectionId}',
+                              key: ValueKey('items-${displayHere.sectionId}'),
+                              controller: itemsScroll,
+                              extraBottomPadding: itemsExtraBottomSpace,
+                              sections: displayHere.sections,
+                              entries: displayHere.entries,
+                              depth: displayOpen.length,
+                              crossAxisCount: crossAxisCount,
+                              tileHeight: tileHeight,
+                            ),
                           ),
                         ),
                       ),
@@ -919,15 +1203,37 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                     alignment: Alignment.topCenter,
                     minHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
                     maxHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
-                    child: _trayFor(displayPending, crossAxisCount, tileHeight),
+                    child: _level(_choiceLevel, _trayFor(displayPending, crossAxisCount, tileHeight)),
                   ),
                 ),
               ),
           ],
         );
+        // every key pressed with the focus in the menu passes here on its way up: [_onKey]
+        return Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          includeSemantics: false,
+          onKeyEvent: _onKey,
+          child: column,
+        );
       },
     );
   }
+
+  /// One level of the menu, in the node that says whether the keyboard's focus is somewhere in it.
+  Widget _level(FocusNode node, Widget child) =>
+      Focus(focusNode: node, canRequestFocus: false, skipTraversal: true, includeSemantics: false, child: child);
+}
+
+/// A tile the keyboard's focus is to go to ([_MenuPanelState._want]).
+class _Wanted {
+  _Wanted(this.node, this.scroll, this.index);
+
+  final FocusNode node;
+  final ScrollController? scroll; // the grid the tile is in, and its place there
+  final int index;
+  var tries = 0; // frames it was looked for since the trays came to rest
 }
 
 class _CategoryScrollController extends ScrollController {
@@ -1072,6 +1378,7 @@ class _CategoryScrollPosition extends ScrollPositionWithSingleContext {
 /// One grid's tiles as they were last built, and what they were built from ([_MenuPanelState._tilesOf]).
 class _Tiles {
   _Tiles({
+    required this.focus,
     required this.sections,
     required this.entries,
     required this.depth,
@@ -1082,6 +1389,7 @@ class _Tiles {
     required this.widgets,
   });
 
+  final String focus; // the grid the tiles' focus nodes are named by
   final List<MenuSection> sections;
   final List<MenuEntry> entries;
   final int depth;
@@ -1130,12 +1438,14 @@ class _SectionButton extends StatelessWidget {
     required this.index,
     required this.onTap,
     this.selected = false,
+    this.focusNode,
   });
 
   final MenuSection section;
   final int index;
   final bool selected;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -1159,6 +1469,7 @@ class _SectionButton extends StatelessWidget {
           type: MaterialType.transparency,
           child: InkWell(
             borderRadius: BorderRadius.circular(14),
+            focusNode: focusNode,
             onTap: onTap,
             child: Padding(
               padding: const EdgeInsets.all(10),
@@ -1214,8 +1525,38 @@ class _PendingItemSelection {
     this.selectedVariantId,
     required this.requiredGroups,
     required this.choices,
+    this.tile,
   }) {
     _askPicked(detail?.groups ?? const [], choices, '');
+  }
+
+  /// The focus node of the tile that was tapped: the keyboard's focus goes back to it from the tray.
+  final FocusNode? tile;
+
+  static String variantKey(VariantOffer v) => 'req-variant:${v.variantId}';
+  static String optionKey(_Ask ask, OptionDetail o) => 'req-option:${ask.path}${ask.group.groupId}:${o.optionId}';
+
+  /// The first choice of the first question still open, by its button's key and its place among the tray's
+  /// buttons (the sizes first, then each question's choices): where the keyboard's focus goes next.
+  (String, int)? get firstOpen {
+    var at = 0;
+    if (needsVariant) {
+      if (selectedVariantId == null) {
+        for (final (i, v) in availableVariants.indexed) {
+          if (v.available) return (variantKey(v), i);
+        }
+      }
+      at = availableVariants.length;
+    }
+    for (final ask in asks) {
+      if (!ask.answered) {
+        for (final (i, o) in ask.group.options.indexed) {
+          if (o.available) return (optionKey(ask, o), at + i);
+        }
+      }
+      at += ask.group.options.length;
+    }
+    return null;
   }
 
   final MenuEntry entry;
@@ -1360,6 +1701,8 @@ class _RequiredSelectionsSection extends StatelessWidget {
     required this.onToggleOption,
     required this.onLongPressOption,
     required this.onClose,
+    required this.scroll,
+    required this.focusOf,
   });
 
   final _PendingItemSelection pending;
@@ -1371,6 +1714,10 @@ class _RequiredSelectionsSection extends StatelessWidget {
   /// A hold on a choice that is a dish: the dish's own sheet.
   final void Function(_Ask ask, OptionDetail option) onLongPressOption;
   final VoidCallback onClose;
+  final ScrollController scroll;
+
+  /// The focus node of a button, by its key: the panel sends the keyboard's focus to the buttons.
+  final FocusNode Function(String tile) focusOf;
 
   @override
   Widget build(BuildContext context) {
@@ -1384,6 +1731,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
           thickness: _MenuPanelState._itemsDividerHeight,
         ),
         child: GridView(
+          controller: scroll,
           padding: const EdgeInsets.all(_MenuPanelState._gridPadding),
           physics: DrillDown.physics,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1396,7 +1744,8 @@ class _RequiredSelectionsSection extends StatelessWidget {
             if (pending.needsVariant)
               for (final v in pending.availableVariants)
                 ChoiceTile(
-                  key: ValueKey('req-variant:${v.variantId}'),
+                  key: ValueKey(_PendingItemSelection.variantKey(v)),
+                  focusNode: focusOf(_PendingItemSelection.variantKey(v)),
                   groupLabel: 'Size',
                   name: v.name,
                   priceLabel: v.price,
@@ -1407,7 +1756,8 @@ class _RequiredSelectionsSection extends StatelessWidget {
             for (final ask in pending.asks)
               for (final o in ask.group.options)
                 ChoiceTile(
-                  key: ValueKey('req-option:${ask.path}${ask.group.groupId}:${o.optionId}'),
+                  key: ValueKey(_PendingItemSelection.optionKey(ask, o)),
+                  focusNode: focusOf(_PendingItemSelection.optionKey(ask, o)),
                   groupLabel: ask.group.minSelect > 1
                       ? '${ask.label} (${ask.count}/${ask.group.minSelect})'
                       : ask.label,
@@ -1443,6 +1793,7 @@ class ChoiceTile extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.onRemove,
+    this.focusNode,
   });
 
   /// The menu's own tile grid for a width: how many tiles across and how tall each is.
@@ -1468,6 +1819,7 @@ class ChoiceTile extends StatelessWidget {
 
   /// One fewer of it, where the group takes several of the same choice: a minus in the corner.
   final VoidCallback? onRemove;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -1489,6 +1841,7 @@ class ChoiceTile extends StatelessWidget {
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
+          focusNode: focusNode,
           onTap: available ? onTap : null,
           onLongPress: available ? onLongPress : null,
           child: Padding(
@@ -1615,6 +1968,7 @@ class _EntryButton extends StatelessWidget {
     required this.onLongPress,
     this.qty = 0,
     this.selected = false,
+    this.focusNode,
   });
 
   final MenuEntry entry;
@@ -1622,6 +1976,7 @@ class _EntryButton extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -1644,6 +1999,7 @@ class _EntryButton extends StatelessWidget {
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
+          focusNode: focusNode,
           onTap: available ? onTap : null,
           onLongPress: onLongPress,
           child: Padding(

@@ -38,6 +38,26 @@ The menu on the order screen has a tab per menu the hub has open: Food and Drink
 single category skips the tile and shows its dishes straight away; the search finds a dish on every menu
 open. With one menu open there are no tabs.
 
+With a keyboard (a Mac, or a tablet with one) an order is taken without the mouse; the highlighted tile is
+the one the keys act on.
+
+| Key | Highlight on | What it does |
+| --- | --- | --- |
+| Down or Enter | the search field | Goes to the first tile under it: the first dish found, or the first category. |
+| Arrows | a tile | Move to the next tile that way. Up from the top row is the search field again. |
+| Enter | a category | Opens it and goes to its first dish. |
+| Enter | a dish | Adds one. A dish that asks its size or a choice opens them and the highlight goes to the first; each answer moves it on to the next question, and once the dish is on the check the highlight is back on the dish. |
+| Escape | a dish's choices | Closes them, back on the dish. |
+| Escape | a category's dishes | Closes the category, and any choices open with it, back on the category. |
+| Escape | sub-categories | Back on the category they are in. |
+| Escape | the top categories, or what the search found | Closes what is open, back in the search field. There it clears what was typed. |
+| Delete or Backspace | a dish | Takes one of it off the check: the one added last that the kitchen has not seen, else it asks to void one the kitchen has. Nothing when the dish is not on the check. |
+| Delete or Backspace | a line of the check | Takes the whole line off (asking first when the kitchen has it) and goes to the next line. |
+| Delete or Backspace | the search field | Edits what was typed, as ever. |
+
+The question before a void opens on "Keep it", so Enter keeps the dish; Tab, then Enter, voids it. A key held
+down counts once.
+
 A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
 every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,
 its sizes and prices, where it sits on the menus and its option groups. Option groups and categories edit

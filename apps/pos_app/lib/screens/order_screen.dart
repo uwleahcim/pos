@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../check_order.dart';
@@ -368,6 +370,22 @@ class _OrderScreenState extends State<OrderScreen> {
     await _send(change, line);
   }
 
+  /// Delete or Backspace on a dish of the menu: one of it comes off the check, the opposite of the Enter that
+  /// adds one. A line the kitchen has not seen goes first, the one added last (one fewer of it, off the check
+  /// at one). Once every one of that dish has been sent, the last is voided, after the operator's word like
+  /// any void. A dish that is not on the check: nothing happens.
+  Future<void> _takeOff(MenuEntry entry) async {
+    final order = _order;
+    if (order == null || !order.isOpen) return;
+    final lines = [
+      for (final line in order.activeLines)
+        if (_lineMatchesEntry(line, entry)) line,
+    ];
+    if (lines.isEmpty) return;
+    final line = lines.lastWhere((l) => !l.fired, orElse: () => lines.last);
+    await _setQty(line, line.qty - 1);
+  }
+
   /// Lines dragged on the check: to another place in a course, or under another course. A dish the kitchen
   /// already has moves like any other and keeps its place on the ticket it went out on: nothing is voided.
   Future<void> _move(Drop drop) async {
@@ -397,7 +415,8 @@ class _OrderScreenState extends State<OrderScreen> {
         title: Text(title),
         content: Text(body),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+          // with a keyboard, Enter keeps the dish: voiding it takes a deliberate step over to Void
+          TextButton(autofocus: true, onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -566,7 +585,12 @@ class _OrderScreenState extends State<OrderScreen> {
                   onCourse: (course) => setState(() => _course = course),
                 ),
               Expanded(
-                child: MenuPanel(api: widget.api, onChosen: _add, qtyOf: (entry) => _entryQty(order, entry)),
+                child: MenuPanel(
+                  api: widget.api,
+                  onChosen: _add,
+                  qtyOf: (entry) => _entryQty(order, entry),
+                  onRemove: _takeOff,
+                ),
               ),
             ],
           )
@@ -668,7 +692,9 @@ class _TicketPanel extends StatefulWidget {
   final Coursing coursing;
   final String? lastAdded;
   final ValueChanged<Line> onEdit;
-  final void Function(Line line, int qty) onQty;
+
+  /// Makes a line hold [qty]; done once the change is on its way (after the operator's word, for a void).
+  final Future<void> Function(Line line, int qty) onQty;
   final ValueChanged<Line> onTypeQty;
 
   /// The price of a line held: the comp menu opens at [anchor], the price's own context.
@@ -685,8 +711,61 @@ class _TicketPanel extends StatefulWidget {
 
 class _TicketPanelState extends State<_TicketPanel> {
   final _keys = <String, GlobalKey>{};
+  final _focus = <String, FocusNode>{}; // each line's own: which line a key was pressed on, and where to next
   List<CheckRow>? _rows; // where lines let go show until their move lands
   List<CheckRow> _built = const []; // the rows as last laid out
+
+  @override
+  void dispose() {
+    for (final node in _focus.values) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Delete or Backspace with the keyboard's focus on a line (the line itself, or its quantity, price or
+  /// bin): the line comes off the check, all of it, as a hold on its bin takes it off. A line the kitchen
+  /// has is voided, after the operator's word.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    final key = event.logicalKey;
+    if (key != LogicalKeyboardKey.backspace && key != LogicalKeyboardKey.delete) return KeyEventResult.ignored;
+    final focused = _focus.entries.where((e) => e.value.hasFocus).firstOrNull?.key;
+    final line = widget.order?.lines.where((l) => l.lineId == focused && l.isActive).firstOrNull;
+    if (line == null || !widget.open) return KeyEventResult.ignored;
+    // one press, one line: a key held down does not empty the check
+    if (event is KeyDownEvent) unawaited(_removeWithKey(line));
+    return KeyEventResult.handled;
+  }
+
+  /// Whether a line's row is built: one that scrolled away keeps its old context, so only a mounted one counts.
+  static bool _onScreen(FocusNode node) => node.context?.mounted ?? false;
+
+  /// Takes [line] off, then hands the focus to the line after it (the one before it, for the last line), so
+  /// the next press takes the next line. A line that stayed (the operator kept it) keeps the focus.
+  Future<void> _removeWithKey(Line line) async {
+    final ids = [
+      for (final row in _built)
+        if (row is LineRow && row.line.isActive) row.line.lineId,
+    ];
+    final at = ids.indexOf(line.lineId);
+    await widget.onQty(line, 0);
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // still there and still a line that takes keys: it was kept. (Whether it has the focus says nothing
+      // yet: a line that just turned void gives the focus up only after this frame.)
+      final own = _focus[line.lineId];
+      if (own != null && _onScreen(own) && own.canRequestFocus) return;
+      for (final id in [...ids.skip(at + 1), ...ids.take(math.max(0, at)).toList().reversed]) {
+        final next = _focus[id];
+        if (next != null && _onScreen(next) && next.canRequestFocus) {
+          next.requestFocus();
+          return;
+        }
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
 
   @override
   void initState() {
@@ -739,6 +818,19 @@ class _TicketPanelState extends State<_TicketPanel> {
     }
     final shown = {for (final l in order.shownLines) l.lineId};
     _keys.removeWhere((id, _) => !shown.contains(id));
+    final gone = [
+      for (final id in _focus.keys)
+        if (!shown.contains(id)) id,
+    ];
+    if (gone.isNotEmpty) {
+      // once their rows have left the screen
+      final nodes = [for (final id in gone) _focus.remove(id)!];
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final node in nodes) {
+          node.dispose();
+        }
+      });
+    }
     final check = widget.check;
     final rows = _built = _rows ?? checkRows(order, widget.coursing);
     return Material(
@@ -749,19 +841,25 @@ class _TicketPanelState extends State<_TicketPanel> {
             // Every row is built (a check is short), so the line added last exists to scroll to. A line is
             // held by its dish and carried to another place, or under another course's header; other lines
             // tapped while it is held stack under it and go along.
-            child: CheckList(
-              key: const ValueKey('check-rows'),
-              rows: rows,
-              paper: posColors.checkPaper,
-              onDrop: _dropped,
-              rowBuilder: (context, i, row, drag) => switch (row) {
-                CourseRow(:final id, :final name, :final state) => _CourseHeader(
-                  key: ValueKey('course-row:$id'),
-                  name: name,
-                  state: state,
-                ),
-                final LineRow row => _lineTile(context, i, row, drag),
-              },
+            child: Focus(
+              canRequestFocus: false,
+              skipTraversal: true,
+              includeSemantics: false,
+              onKeyEvent: _onKey,
+              child: CheckList(
+                key: const ValueKey('check-rows'),
+                rows: rows,
+                paper: posColors.checkPaper,
+                onDrop: _dropped,
+                rowBuilder: (context, i, row, drag) => switch (row) {
+                  CourseRow(:final id, :final name, :final state) => _CourseHeader(
+                    key: ValueKey('course-row:$id'),
+                    name: name,
+                    state: state,
+                  ),
+                  final LineRow row => _lineTile(context, i, row, drag),
+                },
+              ),
             ),
           ),
           if (check != null)
@@ -849,6 +947,7 @@ class _TicketPanelState extends State<_TicketPanel> {
     ];
     final tile = ListTile(
       key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
+      focusNode: _focus.putIfAbsent(line.lineId, () => FocusNode(debugLabel: 'line ${line.lineId}')),
       dense: true,
       onTap: !changeable
           ? null
