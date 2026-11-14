@@ -43,7 +43,8 @@ the one the keys act on.
 
 | Key | Highlight on | What it does |
 | --- | --- | --- |
-| Down or Enter | the search field | Goes to the first tile under it: the first dish found, or the first category. |
+| Enter | the search field | Goes to the first tile under it: the first dish found, or the first category. |
+| Arrows | a text box, the search field too | Move the cursor while they can, and leave the box once they cannot: Right and Down from the end of the text, Left and Up from its start. Down from the search field goes to the first tile under it. |
 | Arrows | a tile | Move to the next tile that way. Up from the top row is the search field again. |
 | Enter | a category | Opens it and goes to its first dish. |
 | Enter | a dish | Adds one. A dish that asks its size or a choice opens them and the highlight goes to the first; each answer moves it on to the next question, and once the dish is on the check the highlight is back on the dish. |
@@ -57,6 +58,11 @@ the one the keys act on.
 
 The question before a void opens on "Keep it", so Enter keeps the dish; Tab, then Enter, voids it. A key held
 down counts once.
+
+The rule for arrows in a text box holds on every screen and dialog, not only on the order screen. An arrow
+held down runs the cursor to the end of the text and stops there; a fresh press leaves. Arrows with Shift,
+Option, Control or Command select or jump inside the text and never leave. On a Mac a text box entered with an
+arrow has its text selected, as on any Mac: the first arrow drops the selection, the next one leaves.
 
 A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
 every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,

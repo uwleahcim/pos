@@ -11,6 +11,7 @@ import '../live.dart';
 import '../local_order.dart' show localPrice;
 import '../menu.dart';
 import 'drill_down.dart';
+import 'text_arrows.dart';
 import 'theme.dart';
 
 /// A line the operator configured: what to send in `add_line`.
@@ -56,8 +57,9 @@ abstract final class MenuPanelCheck {
 /// The same on every screen: a Mac or a tablet only fits more tiles per row. The categories never collapse to
 /// a strip of chips (Mike, 2026-11-01).
 ///
-/// With a keyboard (Mike, 2026-11-14): Down from the search field goes to the first tile under it and the
-/// arrows move from tile to tile. Enter on a tile that opens something takes the focus into what opened: a
+/// With a keyboard (Mike, 2026-11-14): Down from the search field goes to the first tile under it, once the
+/// cursor is at the end of what was typed (an arrow leaves a text box only when it can move the cursor no
+/// further, [ArrowsLeaveTextBoxes]), and the arrows move from tile to tile. Enter on a tile that opens something takes the focus into what opened: a
 /// category's first dish, the first choice a dish asks for. Once the choices are made and the dish is on the
 /// order, the focus is back on the dish. Escape backs out of the level the focus is on, to the tile that
 /// opened it, and closes whatever is open under that level: from the choices to the dish, from the dishes to
@@ -587,17 +589,15 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       if (down) widget.onRemove!(dish);
       return KeyEventResult.handled;
     }
-    // In the search field (one line: up and down have nowhere to move in it) the arrows leave it. Not while
-    // an input method is composing: there they pick among its candidates.
-    if (_searchFocus.hasPrimaryFocus && !_search.value.composing.isValid && event is! KeyUpEvent) {
-      if (key == LogicalKeyboardKey.arrowDown) {
-        _focusFirstOfTop();
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.arrowUp) {
-        _searchFocus.focusInDirection(TraversalDirection.up);
-        return KeyEventResult.handled;
-      }
+    // Down in the search field, once the cursor is at the end of what was typed and has nowhere left to go
+    // (the rule of every text box, see [ArrowsLeaveTextBoxes]): to the first tile under the field, which may
+    // have to be scrolled to. The other arrows leave the field by that rule, to whatever is that way.
+    if (key == LogicalKeyboardKey.arrowDown &&
+        _searchFocus.hasPrimaryFocus &&
+        ArrowsLeaveTextBoxes.isPlainPress(event) &&
+        ArrowsLeaveTextBoxes.cursorAtEdge(_search.value, TraversalDirection.down) &&
+        _focusFirstOfTop()) {
+      return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }

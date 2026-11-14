@@ -9,6 +9,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
+import 'package:pos_app/screens/text_arrows.dart';
 import 'package:pos_app/settings.dart';
 
 import 'hub.dart';
@@ -17,17 +18,18 @@ import 'hub.dart';
 /// Escape backs out of the level the focus is on, Delete or Backspace takes a dish off the check.
 
 /// Where the keyboard's focus is: the grid and the key of the tile it is on ('items-dinner/chefs e:dinner:87:GTC'),
-/// 'search' for the search field, 'line L2' for a line of the check.
+/// 'search' for the search field ('search button' for the Clear button in it), 'line L2' for a line of the check.
 String focused() {
-  final context = FocusManager.instance.primaryFocus?.context;
+  final focus = FocusManager.instance.primaryFocus;
+  final context = focus?.context;
   if (context == null) return 'none';
   String? tile;
   String? grid;
-  var search = false;
+  String? search;
   context.visitAncestorElements((element) {
     final widget = element.widget;
     final key = widget.key;
-    if (widget is TextField) search = true;
+    if (widget is TextField) search = widget.focusNode == focus ? 'search' : 'search button';
     if (widget is ListTile) tile ??= 'line ${widget.focusNode?.debugLabel?.split(' ').last}';
     if (key is ValueKey<String> && tile == null && RegExp(r'^(s|e|req-variant|req-option):').hasMatch(key.value)) {
       tile = key.value;
@@ -36,7 +38,7 @@ String focused() {
     if (key == const ValueKey('required-selections')) grid = 'tray';
     return grid == null;
   });
-  if (search) return 'search';
+  if (search != null) return search!;
   return [?grid, tile ?? 'other'].join(' ');
 }
 
@@ -127,6 +129,8 @@ Future<({List<ChosenLine> chosen, List<MenuEntry> removed})> pumpMenu(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
+      // as the app has it, around every screen
+      builder: (context, child) => ArrowsLeaveTextBoxes(child: child!),
       home: Scaffold(
         body: MenuPanel(api: api, onChosen: chosen.add, onRemove: removed.add),
       ),
@@ -412,6 +416,54 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('an arrow leaves the search field only once it can move the cursor no further', (tester) async {
+    await pumpMenu(tester);
+    int cursor() => tester.widget<TextField>(find.byType(TextField)).controller!.selection.extentOffset;
+    await tester.enterText(find.byType(TextField), '87');
+    await tester.pumpAndSettle();
+    expect((focused(), cursor()), ('search', 2));
+
+    // at the end of what was typed, Down has nowhere to take the cursor: the first dish found
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(), 'search-grid e:dinner:87:GTC');
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(focused(), 'search');
+
+    // with the cursor before the end, the arrows are the text's: Left steps back, Down runs to the end
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    expect((focused(), cursor()), ('search', 1));
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect((focused(), cursor()), ('search', 2), reason: 'the first Down only reaches the end');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(), 'search-grid e:dinner:87:GTC', reason: 'the second leaves');
+    await press(tester, LogicalKeyboardKey.arrowUp);
+
+    // Up runs to the start first; there is nothing above the field here, so the focus stays in it
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect((focused(), cursor()), ('search', 0));
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect((focused(), cursor()), ('search', 0));
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect((focused(), cursor()), ('search', 2), reason: 'from the start, Down is still the cursor’s');
+
+    // a held Down stops at the end of the text: only a fresh press leaves
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect((focused(), cursor()), ('search', 2));
+
+    // Right at the end leaves too, to what is beside the field: its Clear button
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    expect(focused(), 'search button');
+    expect(Focus.of(tester.element(find.byIcon(Icons.close))).hasPrimaryFocus, isTrue);
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    expect(focused(), 'search', reason: 'and Left from it is the field again');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('Backspace edits the search field, and takes a dish off only with the focus on the dish', (tester) async {
     final menu = await pumpMenu(tester);
     await tester.enterText(find.byType(TextField), 'egg');
@@ -451,6 +503,7 @@ void main() {
       t.hub.orders.add(table('o1', lines));
       await tester.pumpWidget(
         MaterialApp(
+          builder: (context, child) => ArrowsLeaveTextBoxes(child: child!),
           home: OrderScreen(api: t.api, outbox: t.outbox, photos: t.photos, orderId: 'o1', staffName: 'Amy'),
         ),
       );
