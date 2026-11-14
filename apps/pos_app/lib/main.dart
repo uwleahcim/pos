@@ -24,6 +24,7 @@ import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
+import 'screens/text_arrows.dart';
 import 'screens/theme.dart';
 import 'session.dart';
 import 'settings.dart';
@@ -246,14 +247,17 @@ class _PosAppState extends State<PosApp> {
           debugShowCheckedModeBanner: false,
           theme: PosTheme.light(highContrast: prefs.highContrast),
           darkTheme: PosTheme.dark(highContrast: prefs.highContrast),
-          // The call banner and strip sit over every screen and dialog.
+          // The call banner and strip sit over every screen and dialog. So does the rule for arrows in a
+          // text box: they leave it once the cursor can go no further.
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            child: PhoneBar(
-              client: phone,
-              onOrder: canOrder ? _orderForCaller : null,
-              child: child ?? const SizedBox.shrink(),
+            child: ArrowsLeaveTextBoxes(
+              child: PhoneBar(
+                client: phone,
+                onOrder: canOrder ? _orderForCaller : null,
+                child: child ?? const SizedBox.shrink(),
+              ),
             ),
           ),
           home: Builder(
