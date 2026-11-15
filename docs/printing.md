@@ -96,6 +96,10 @@ cooks is counted for that station.
 Each line is a switch, on to start: **Location settings**, on the Printers card, **Number the tickets of
 one send** and **Name the other stations on each ticket** (`GET`/`PUT /settings/tickets`).
 
+**Allergies.** An allergy noted on the order prints in a block of its own, white on black, on every
+station's ticket, and again under each dish of the seat it was told for. Told after dishes were sent, each
+station that has some gets an ALLERGY ticket listing them. See `allergies.md`.
+
 In the menu editor, each dish has a **Prints at** section: its station (the category's unless set), with
 a line saying whether a printer serves that station, and **A new station…** to add one (Dessert, say) from
 the dish itself. In an option group, the printer button on each option says where else the dish prints

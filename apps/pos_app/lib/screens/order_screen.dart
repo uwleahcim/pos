@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../allergies.dart';
 import '../api.dart';
 import '../check_order.dart';
 import '../coursing.dart';
@@ -18,6 +19,7 @@ import '../pricing.dart';
 import '../session.dart';
 import '../takeout.dart';
 import '../voids.dart';
+import 'allergy_dialog.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
 import 'compact.dart';
@@ -79,6 +81,9 @@ class _OrderScreenState extends State<OrderScreen> {
   late final _reader = Paced(const Duration(milliseconds: 250), _fetch);
   StreamSubscription<LiveChange>? _live;
   int? _seat; // null: for the table, shared
+  List<Allergen>? _allergens; // what the menu names; null until read, and on a hub older than allergies
+  Map<String, String> _allergenNames = const {};
+  final _warned = <String>{}; // the dishes whose allergy mark this screen has already said
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
@@ -92,6 +97,20 @@ class _OrderScreenState extends State<OrderScreen> {
     });
     widget.outbox.addListener(_onOutbox);
     _refresh();
+    unawaited(_readAllergens());
+  }
+
+  Future<void> _readAllergens() async {
+    try {
+      final allergens = await widget.api.allergens();
+      if (!mounted || allergens == null) return;
+      setState(() {
+        _allergens = allergens;
+        _allergenNames = allergenNames(allergens);
+      });
+    } on ApiException {
+      // nothing answers and no list was saved: no Allergy chip until the screen is opened again
+    }
   }
 
   @override
@@ -122,6 +141,7 @@ class _OrderScreenState extends State<OrderScreen> {
       final order = await widget.api.order(widget.orderId);
       final check = await widget.api.check(widget.orderId);
       final settled = widget.outbox.seen(widget.orderId, mark);
+      final first = _read == null;
       // A backend with nothing new hands back the order and the check it gave last time: nothing to redraw
       // then, unless this read is the one that shows what this screen sent.
       final same = identical(order, _read) && identical(check, _readCheck) && !settled;
@@ -130,6 +150,7 @@ class _OrderScreenState extends State<OrderScreen> {
           _read = order;
           _readCheck = check;
         });
+        _sayAllergic(order, quiet: first);
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
@@ -141,6 +162,58 @@ class _OrderScreenState extends State<OrderScreen> {
     final local = widget.outbox.localOps(widget.orderId);
     final base = _read ?? (local.isEmpty ? null : Order.empty(widget.orderId));
     return base == null ? null : withLocalOps(base, local);
+  }
+
+  /// A dish the hub marks as containing what its seat cannot have is said aloud once, when the mark first
+  /// shows: on a phone the check is behind the menu, and the mark on it would go unseen. What a check
+  /// already carried when it was opened is not said again ([quiet]): the strip and the marks show it.
+  void _sayAllergic(Order order, {required bool quiet}) {
+    final marked = {
+      for (final line in order.activeLines)
+        if (line.allergy.isNotEmpty) line.lineId: line,
+    };
+    _warned.retainAll(marked.keys); // taken off and told again, it is said again
+    final fresh = [
+      for (final line in marked.values)
+        if (_warned.add(line.lineId)) line,
+    ];
+    if (quiet || fresh.isEmpty) return;
+    final scheme = Theme.of(context).colorScheme;
+    final words = fresh.length == 1
+        ? 'ALLERGY: ${fresh.single.item} ${containsWords(fresh.single.allergy, _allergenNames)}.'
+        : 'ALLERGY: ${fresh.length} dishes on this check contain what the guest cannot have. They are marked.';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        key: const ValueKey('allergy-warning'),
+        backgroundColor: scheme.error,
+        duration: const Duration(seconds: 8),
+        content: Text(
+          words,
+          style: TextStyle(color: scheme.onError, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  /// The Allergy chip, or the strip that lists what was told: note what a guest cannot have, for the table
+  /// or for a seat, change it or take it off. Each seat changed is its own operation, so two screens noting
+  /// two seats both count. With dishes already at the kitchen, the hub prints the stations a notice.
+  Future<void> _noteAllergy(Order order) async {
+    final changed = await showDialog<List<Allergy>>(
+      context: context,
+      builder: (_) => AllergyDialog(
+        allergens: _allergens ?? const [],
+        told: order.allergies,
+        seated: !order.isTakeout,
+        seats: _seats(order),
+        seat: _seat,
+      ),
+    );
+    if (changed == null || changed.isEmpty) return;
+    await _appendAll([for (final told in changed) ('allergy', told.toOp(by: _staffName, byId: _staffId))]);
+    if (mounted && order.activeLines.any((l) => l.fired)) {
+      _say('The kitchen gets a ticket about it for the dishes it already has.');
+    }
   }
 
   static const _photographed = {
@@ -555,6 +628,9 @@ class _OrderScreenState extends State<OrderScreen> {
     for (final line in order?.activeLines ?? const <Line>[]) {
       if ((line.seat ?? 0) > seats) seats = line.seat!;
     }
+    for (final told in order?.allergies ?? const <Allergy>[]) {
+      if ((told.seat ?? 0) > seats) seats = told.seat!; // a seat with an allergy never drops out of sight
+    }
     return seats;
   }
 
@@ -598,6 +674,10 @@ class _OrderScreenState extends State<OrderScreen> {
         );
         return;
       }
+      if (order.allergies.any((a) => a.seat == current)) {
+        _say('Seat $current has an allergy noted. Take the allergy off first.');
+        return;
+      }
     }
     setState(() {
       if (seats > current) {
@@ -618,10 +698,16 @@ class _OrderScreenState extends State<OrderScreen> {
     final check = order == null ? null : estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local);
     final open = order?.isOpen ?? true;
     final seats = _seats(order);
+    final told = order?.allergies ?? const <Allergy>[];
+    // offered once the hub has said what the menu names (a hub older than allergies never does)
+    final allergyChip = order == null || _allergens == null
+        ? null
+        : _AllergyChip(noted: told.isNotEmpty, onTap: () => _noteAllergy(order));
     final ticket = _TicketPanel(
       order: order,
       check: check,
       open: open,
+      allergenNames: _allergenNames,
       coursing: widget.coursing,
       lastAdded: _lastAdded,
       onEdit: _edit,
@@ -635,8 +721,12 @@ class _OrderScreenState extends State<OrderScreen> {
     final menu = open
         ? Column(
             children: [
-              if (order?.isTakeout != true) // a table's seats and courses; a to-go order has neither
+              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip alone
+              if (order?.isTakeout != true || allergyChip != null)
                 _SeatCourseBar(
+                  seated: order?.isTakeout != true,
+                  allergy: allergyChip,
+                  allergic: {for (final a in told) a.seat ?? 0},
                   seats: seats,
                   seat: _seat,
                   course: _course,
@@ -692,6 +782,12 @@ class _OrderScreenState extends State<OrderScreen> {
       body: Column(
         children: [
           CaptureBanner(api: widget.api, outbox: widget.outbox),
+          // what the guests cannot have, over the check and the menu alike: on a phone they are two tabs
+          if (order != null && told.isNotEmpty)
+            _AllergyStrip(
+              words: allergySummary(told, _allergenNames, seated: !order.isTakeout),
+              onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
+            ),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -739,6 +835,7 @@ class _TicketPanel extends StatefulWidget {
     required this.open,
     required this.coursing,
     required this.lastAdded,
+    this.allergenNames = const {},
     required this.onEdit,
     required this.onQty,
     required this.onTypeQty,
@@ -753,6 +850,9 @@ class _TicketPanel extends StatefulWidget {
   final bool open;
   final Coursing coursing;
   final String? lastAdded;
+
+  /// The menu's allergens by code, to name what a marked dish contains.
+  final Map<String, String> allergenNames;
   final ValueChanged<Line> onEdit;
 
   /// Makes a line hold [qty]; done once the change is on its way (after the operator's word, for a void).
@@ -1000,6 +1100,13 @@ class _TicketPanelState extends State<_TicketPanel> {
       if (line.by.isNotEmpty && line.byId != widget.order?.fields['server_id']) 'by ${line.by}',
     ];
     final below = <Widget>[
+      // first, in red: the menu says the dish has in it what its seat (or the table) cannot have
+      if (line.isActive && line.allergy.isNotEmpty)
+        _SubLine(
+          'ALLERGY: ${containsWords(line.allergy, widget.allergenNames)}',
+          key: ValueKey('allergy-mark:${line.lineId}'),
+          alert: true,
+        ),
       // each choice on its own line, with what it changes when it changes anything
       for (final m in priced?.modifiers ?? const <CheckModifier>[])
         _SubLine(m.label, amount: m.charged ? priceChange(m.amount) : null, depth: m.depth),
@@ -1214,11 +1321,14 @@ class _Price extends StatelessWidget {
 /// on it and what it took off ("(30.00)"), or its state ("not sent yet", a kitchen note). A choice on a
 /// choice that is a dish (the sauce on a roll of the maki combination) sits one step further in.
 class _SubLine extends StatelessWidget {
-  const _SubLine(this.label, {this.amount, this.depth = 0});
+  const _SubLine(this.label, {super.key, this.amount, this.depth = 0, this.alert = false});
 
   final String label;
   final String? amount;
   final int depth;
+
+  /// A warning (a dish that contains what the guest is allergic to): red and bold.
+  final bool alert;
 
   /// How far each level of choices moves in.
   static const indent = 12.0;
@@ -1226,7 +1336,9 @@ class _SubLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    final style = alert
+        ? theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error, fontWeight: FontWeight.w700)
+        : theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final amount = this.amount;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1386,9 +1498,14 @@ class _CourseHeader extends StatelessWidget {
 }
 
 /// Which seat and course the next dish goes to, and the seats at the table: + adds one, − takes the last
-/// one away once nothing is on it. With coursing off ([courses] empty) the row is the seats alone.
+/// one away once nothing is on it. With coursing off ([courses] empty) the row is the seats alone. The
+/// Allergy chip leads the row, where a phone shows it without scrolling, and a seat with an allergy noted
+/// carries a warning mark. A to-go order has no seats ([seated] false): its bar is the chip alone.
 class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
+    this.seated = true,
+    this.allergy,
+    this.allergic = const {},
     required this.seats,
     required this.seat,
     required this.course,
@@ -1399,6 +1516,13 @@ class _SeatCourseBar extends StatelessWidget {
     required this.onCourse,
   });
 
+  final bool seated;
+
+  /// The Allergy chip, when the hub takes allergies.
+  final Widget? allergy;
+
+  /// The seats with an allergy noted (0: the table).
+  final Set<int> allergic;
   final int seats;
   final int? seat;
   final String? course;
@@ -1411,35 +1535,48 @@ class _SeatCourseBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    Widget chip(String label, bool selected, VoidCallback onTap) => Padding(
+    Widget chip(String label, bool selected, VoidCallback onTap, {bool alert = false}) => Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ChoiceChip(
-        label: Text(label),
+        label: !alert
+            ? Text(label)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label),
+                  const SizedBox(width: 3),
+                  Icon(Icons.warning_amber_rounded, size: 15, color: scheme.error, semanticLabel: 'allergy'),
+                ],
+              ),
         selected: selected,
         onSelected: (_) => onTap(),
         visualDensity: VisualDensity.compact,
       ),
     );
-    final seatChips = [
-      const Text('Seat  '),
-      chip('Table', seat == null, () => onSeat(null)),
-      for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i)),
-      IconButton(
-        tooltip: 'Remove seat $seats',
-        visualDensity: VisualDensity.compact,
-        icon: const Icon(Icons.remove_circle_outline),
-        onPressed: seats > 0 ? onRemoveSeat : null,
-      ),
-      IconButton(
-        tooltip: 'Add a seat',
-        visualDensity: VisualDensity.compact,
-        icon: const Icon(Icons.add_circle_outline),
-        onPressed: onAddSeat,
-      ),
-    ];
+    final seatChips = !seated
+        ? [?allergy]
+        : [
+            if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
+            const Text('Seat  '),
+            chip('Table', seat == null, () => onSeat(null), alert: allergic.contains(0)),
+            for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i), alert: allergic.contains(i)),
+            IconButton(
+              tooltip: 'Remove seat $seats',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.remove_circle_outline),
+              onPressed: seats > 0 ? onRemoveSeat : null,
+            ),
+            IconButton(
+              tooltip: 'Add a seat',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.add_circle_outline),
+              onPressed: onAddSeat,
+            ),
+          ];
     final courseChips = [
-      if (courses.isNotEmpty) const Text('Course  '),
-      for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
+      if (seated && courses.isNotEmpty) const Text('Course  '),
+      if (seated)
+        for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
     ];
     Widget row(List<Widget> children) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -1456,6 +1593,72 @@ class _SeatCourseBar extends StatelessWidget {
           // a phone: both on one line that scrolls, to leave the screen to the menu
           ? row([...seatChips, if (courseChips.isNotEmpty) const SizedBox(width: 8), ...courseChips])
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [row(seatChips), row(courseChips)]),
+    );
+  }
+}
+
+/// "Allergy": opens the allergies told at the table. Red once one is noted.
+class _AllergyChip extends StatelessWidget {
+  const _AllergyChip({required this.noted, required this.onTap});
+
+  final bool noted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ActionChip(
+      key: const ValueKey('allergy-chip'),
+      avatar: Icon(Icons.warning_amber_rounded, size: 18, color: noted ? scheme.onError : scheme.error),
+      label: const Text('Allergy'),
+      labelStyle: noted ? TextStyle(color: scheme.onError, fontWeight: FontWeight.w700) : null,
+      backgroundColor: noted ? scheme.error : null,
+      side: noted ? BorderSide(color: scheme.error) : null,
+      tooltip: noted ? 'Change the allergies noted' : 'Note an allergy for the table or a seat',
+      visualDensity: VisualDensity.compact,
+      onPressed: onTap,
+    );
+  }
+}
+
+/// What the guests cannot have, in a red strip under the app bar for as long as the order carries an
+/// allergy: "Table: Peanuts · Seat 2: Sesame - no oyster sauce". A tap opens them to change.
+class _AllergyStrip extends StatelessWidget {
+  const _AllergyStrip({required this.words, required this.onTap});
+
+  final String words;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      key: const ValueKey('allergy-strip'),
+      color: scheme.errorContainer,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 18, color: scheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'ALLERGY  $words',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onErrorContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

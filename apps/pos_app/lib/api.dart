@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'allergies.dart';
 import 'cache.dart';
 import 'coursing.dart';
 import 'desk_phone.dart';
@@ -52,6 +53,7 @@ class Line {
     this.by = '',
     this.byId,
     this.voidReason = '',
+    this.allergy = const [],
     this.pending = false,
   });
 
@@ -73,6 +75,10 @@ class Line {
     by: json['by'] as String? ?? '',
     byId: json['by_id'] as String?,
     voidReason: (json['voided'] as Map?)?['reason_name'] as String? ?? '',
+    allergy: [
+      for (final code in json['allergy'] as List? ?? const [])
+        if (code is String) code,
+    ],
   );
 
   final String lineId;
@@ -108,6 +114,11 @@ class Line {
   /// Why it was voided, as the location names the reason; empty for a line that is not a void, and for a
   /// void made before reasons were asked.
   final String voidReason;
+
+  /// What the menu says this dish has in it that its seat (or the whole table) told of an allergy to, by
+  /// the menu's allergen codes, as the hub works it out. Empty says only that the menu lists nothing: the
+  /// kitchen is told of the allergy either way.
+  final List<String> allergy;
 
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
@@ -148,6 +159,7 @@ class Line {
     by: by,
     byId: byId,
     voidReason: voidReason,
+    allergy: allergy,
     pending: pending ?? this.pending,
   );
 }
@@ -162,6 +174,7 @@ class Order {
     required this.lines,
     required this.fired,
     this.payments = const [],
+    this.allergies = const [],
   });
 
   /// A check the backend has not heard of yet (its create is still on the way).
@@ -170,7 +183,8 @@ class Order {
       fields = const {},
       lines = const [],
       fired = const {},
-      payments = const [];
+      payments = const [],
+      allergies = const [];
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries
@@ -185,6 +199,10 @@ class Order {
       payments: (json['payments'] as Map<String, dynamic>? ?? const {}).entries
           .map((e) => Payment.fromJson(e.key, e.value as Map<String, dynamic>))
           .toList(),
+      allergies: [
+        for (final told in json['allergies'] as List? ?? const [])
+          if (told is Map<String, dynamic>) Allergy.fromJson(told),
+      ],
     );
   }
 
@@ -194,6 +212,9 @@ class Order {
   final List<Line> lines;
   final Map<String, String> fired;
   final List<Payment> payments;
+
+  /// The allergies told at the table: the whole table's first (its seat is null), then each seat's.
+  final List<Allergy> allergies;
 
   String get table => fields['table']?.toString() ?? '';
 
@@ -634,6 +655,22 @@ class PosApi {
     try {
       final rules = await _repeated('/settings/voids', VoidRules.fromJson, remember: 'voids');
       return rules.reasons.isEmpty ? null : rules;
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// The allergens the menu names, in its order: what a server picks from when a guest tells of an allergy.
+  /// The last list read when nothing answers, so an allergy can still be noted (ADR 6). Null from a hub
+  /// older than allergies on the order, which would refuse the operation: the screen then offers none.
+  Future<List<Allergen>?> allergens() async {
+    try {
+      return await _repeated('/menu/allergens', remember: 'allergens', (json) {
+        final listed = json['allergens'];
+        if (listed is! List) throw ApiException('no allergens in the answer', status: 404);
+        return [for (final a in listed) Allergen.fromJson(a as Map<String, dynamic>)];
+      });
     } on ApiException catch (err) {
       if (err.status == 404) return null;
       rethrow;

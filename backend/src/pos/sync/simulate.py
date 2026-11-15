@@ -22,6 +22,7 @@ from .oplog import Op, OpStore
 
 ITEMS = ["General Tso's Chicken", "Spicy Tuna Roll", "Tsingtao", "Hot and Sour Soup", "Sake carafe"]
 COURSES = ["drinks", "apps", "entrees", "dessert"]
+ALLERGENS = ["peanut", "crustacean", "sesame", "wheat"]
 
 
 class SimTime:
@@ -134,7 +135,7 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
     live = [line_id for line_id, line in state.lines.items() if line.status == "active"]
     kinds = ["add_line"] * 4 + ["set_field"] * 2 + ["fire"]
     if live:
-        kinds += ["set_line"] * 3 + ["void_line"]
+        kinds += ["set_line"] * 3 + ["void_line", "allergy"]
     if state.applied:
         kinds += ["close", "reopen", "void_order"] if rng.random() < 0.08 else ["close"]
     else:
@@ -173,6 +174,9 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
         return replica.emit(order_id, kind, line_id=rng.choice(live), reason="guest changed mind", **flag)
     if kind == "fire":
         return replica.emit(order_id, kind, course=rng.choice(COURSES + ["*"]), **flag)
+    if kind == "allergy":  # told for a seat or the table, changed, or taken off again
+        allergens = rng.sample(ALLERGENS, rng.randint(0, 2))
+        return replica.emit(order_id, kind, seat=rng.choice([None, 1, 2, 3]), allergens=allergens, **flag)
     return replica.emit(order_id, kind, **flag)
 
 

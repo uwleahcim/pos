@@ -8,6 +8,7 @@ library;
 
 import 'dart:math' as math;
 
+import 'allergies.dart';
 import 'api.dart';
 import 'floor.dart';
 import 'menu.dart';
@@ -31,6 +32,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
   final fields = {...order.fields};
   final lines = {for (final l in order.lines) l.lineId: l};
   final payments = [...order.payments];
+  final allergies = [...order.allergies];
   for (final op in ops) {
     final data = (op['data'] as Map?)?.cast<String, dynamic>() ?? const {};
     switch (op['kind']) {
@@ -76,6 +78,11 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         if (line != null && line.isActive) {
           lines[line.lineId] = line.copyWith(status: line.fired ? 'void' : 'removed', pending: true);
         }
+      case 'allergy':
+        // the latest word on a seat stands; one with nothing in it takes the seat's allergy off
+        final told = Allergy.fromJson(data);
+        allergies.removeWhere((a) => a.seat == told.seat);
+        if (!told.isEmpty) allergies.add(told);
       case 'fire':
         final course = data['course'] as String? ?? '*';
         for (final line in lines.values.toList()) {
@@ -113,6 +120,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     lines: lines.values.toList(),
     fired: order.fired,
     payments: payments,
+    allergies: allergies..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
   );
 }
 

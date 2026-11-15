@@ -38,6 +38,7 @@ def ops(draw):
                     "close",
                     "reopen",
                     "void_order",
+                    "allergy",
                 ]
             )
         )
@@ -58,6 +59,11 @@ def ops(draw):
                 data["course"] = draw(st.sampled_from(["apps", "entrees"]))
         elif kind == "void_line":
             data = {"line_id": draw(line_ids)}
+        elif kind == "allergy":  # for a seat or the table; with nothing listed it takes the allergy off
+            data = {
+                "seat": draw(st.sampled_from([None, 1, 2])),
+                "allergens": draw(st.lists(st.sampled_from(["peanut", "sesame"]), max_size=2)),
+            }
         elif kind == "fire":
             data = {"course": draw(courses)}
         result.append(Op(f"op{i}", "o1", stamp, node, kind, data))

@@ -28,12 +28,13 @@ class TicketLine:
     void: bool = False
     changed: bool = False  # modified after the course was fired
     header: str | None = None  # the dish this one is part of, when it is a combo's or a lunch special's choice
+    allergy: str = ""  # the allergy told for this dish's seat ("Peanuts - no MSG"), printed under the dish
 
 
 @dataclass(frozen=True)
 class Ticket:
     station: str  # "Wok"
-    kind: str  # new | modify | void | reprint
+    kind: str  # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent)
     order_id: str
     ticket_no: int
     table: str
@@ -51,6 +52,7 @@ class Ticket:
     promised: datetime | None = None  # a takeout order's promised time
     part: tuple[int, int] | None = None  # (2, 3): the second of the three tickets this send has the cooks working on
     also_at: tuple[str, ...] = ()  # the other stations cooking for the same send, by name ("Wok 2", "Sushi Bar")
+    allergies: tuple[str, ...] = ()  # the allergies told at the table, one a line ("Table: Peanuts", "Seat 2: Sesame")
 
 
 def render(
@@ -59,12 +61,13 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void") or ticket.late else 1)
+        b.beep(3 if ticket.kind in ("modify", "void", "allergy") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
         "void": f"*** VOID *** {ticket.station}",
         "reprint": f"REPRINT {ticket.station}",
+        "allergy": f"*** ALLERGY *** {ticket.station}",
     }
     if ticket.late:
         # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
@@ -104,6 +107,19 @@ def render(
     if ticket.also_at:
         b.line(f"Also at: {', '.join(ticket.also_at)}", bold=True)
     b.rule()
+    # The allergies told at the table stand in a block of their own, white on black, on every station's ticket
+    # (the menu engine design: "in bold on every station's copy"): a wok or a fryer is shared by every dish.
+    if ticket.allergies:
+        b.line("ALLERGY", big=True, bold=True, center=True, invert=True)
+        for told in ticket.allergies:
+            b.line(told, bold=True)
+    elif ticket.kind == "allergy":
+        b.line("NO ALLERGY NOW", big=True, bold=True, center=True, invert=True)
+        b.line("The allergy told before was taken off.", bold=True)
+    if ticket.kind == "allergy":
+        b.line("For the dishes you already have:")
+    if ticket.allergies or ticket.kind == "allergy":
+        b.rule()
     for line in ticket.lines:
         # A void is printed white on black, the dish and its choices, so nobody cooks it by mistake.
         prefix = "VOID " if line.void else ("CHG  " if line.changed else "")
@@ -118,6 +134,8 @@ def render(
             b.line(f"{'    ' * (depth + 1)}+ {mod}", invert=inv)
         if line.note:
             b.line(f"    ** {line.note} **", bold=True, invert=inv)
+        if line.allergy:
+            b.line(f"    ** ALLERGY: {line.allergy} **", bold=True, invert=inv)
     b.rule()
     b.line(f"{ticket.order_id[-8:]}  {ticket.at.strftime('%Y-%m-%d %H:%M:%S')}")
     b.feed(2).cut()
