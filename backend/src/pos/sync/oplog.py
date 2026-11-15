@@ -8,6 +8,7 @@ hub, a terminal or the cloud needs to agree on is in this module, so it can be t
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -522,6 +523,18 @@ def replay(ops: Iterable[Op], order_id: str | None = None) -> OrderState:
     return state
 
 
+_NOT_DIGITS = re.compile(r"\D")
+
+
+def phone_digits(raw: object) -> str:
+    """A number as digits only, without the North American country code: `+1 (781) 555-1234`,
+    `17815551234` and `781 555 1234` are all `7815551234`. Nothing for no number."""
+    digits = _NOT_DIGITS.sub("", str(raw or ""))
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
+
+
 @dataclass(frozen=True)
 class OrderEntry:
     """What the orders index keeps of one order, so a list can pick its orders without replaying the log:
@@ -529,7 +542,8 @@ class OrderEntry:
     goes: `version`, the log's cursor when its newest operation arrived, and `tip`, that operation's id. The
     two move whenever the order changes and never otherwise, so an order replayed at one (version, tip) is
     good until they move. The tip is there for a hub whose database is rewound after a takeover: a cursor
-    alone could come to mean another history."""
+    alone could come to mean another history. `phone` is the customer's number as digits (`phone_digits`),
+    empty for an order without one: what finds a caller's earlier orders, however old."""
 
     order_id: str
     status: str
@@ -537,6 +551,7 @@ class OrderEntry:
     last_ms: int | None
     version: int
     tip: str
+    phone: str = ""
 
     @staticmethod
     def of(state: OrderState, version: int, tip: str) -> OrderEntry:
@@ -547,11 +562,17 @@ class OrderEntry:
             last_ms=state.last.wall_ms if state.last is not None else None,
             version=version,
             tip=tip,
+            phone=phone_digits(state.fields.get("phone")),
         )
 
-    def picked(self, status: str | None, opened_since: int | None, active_since: int | None) -> bool:
-        """Whether a list asking for this status, opened since then and changed since then wants the order."""
+    def picked(
+        self, status: str | None, opened_since: int | None, active_since: int | None, phone: str | None = None
+    ) -> bool:
+        """Whether a list asking for this status, opened since then, changed since then and of this number
+        (digits) wants the order."""
         if status is not None and self.status != status:
+            return False
+        if phone is not None and self.phone != phone:
             return False
         if opened_since is not None and (self.first_ms is None or self.first_ms < opened_since):
             return False
@@ -666,12 +687,18 @@ class OpStore:
         return entry
 
     def index(
-        self, *, status: str | None = None, opened_since: int | None = None, active_since: int | None = None
+        self,
+        *,
+        status: str | None = None,
+        opened_since: int | None = None,
+        active_since: int | None = None,
+        phone: str | None = None,
     ) -> list[OrderEntry]:
-        """The orders that stand at `status`, were opened at or after `opened_since` and last changed at or
-        after `active_since` (wall-clock ms), whichever of the three are given, by order id."""
+        """The orders that stand at `status`, were opened at or after `opened_since`, last changed at or
+        after `active_since` (wall-clock ms) and carry the number `phone` (digits, see `phone_digits`),
+        whichever of the four are given, by order id."""
         entries = (self.entry(order_id) for order_id in sorted(self._by_order))
-        return [e for e in entries if e is not None and e.picked(status, opened_since, active_since)]
+        return [e for e in entries if e is not None and e.picked(status, opened_since, active_since, phone)]
 
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was

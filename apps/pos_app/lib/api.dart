@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'allergies.dart';
 import 'cache.dart';
 import 'coursing.dart';
+import 'customers.dart';
 import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
@@ -403,6 +404,31 @@ class PosApi {
     final order = json['order'];
     return order == null ? null : Order.fromJson(order as Map<String, dynamic>);
   }
+
+  /// What the hub knows of the customer at this number: the name on their orders, how many they placed,
+  /// the note kept about them and their latest orders. Null when nothing answers, from a hub older than
+  /// customers, and for a number too short to be a customer's: a screen then works as it did before.
+  Future<CustomerCard?> customer(String? phone) async {
+    final digits = phoneDigits(phone);
+    if (digits.length < customerDigits) return null;
+    try {
+      final json = await _get('/customers/lookup', query: {'phone': digits});
+      return json['known'] is bool ? CustomerCard.fromJson(json) : null;
+    } on ApiException {
+      return null;
+    }
+  }
+
+  /// Keeps the one line about the customer at this number (an empty one takes it off), with who wrote it.
+  /// Hands back the note as the hub keeps it: on one line, cut to its length.
+  Future<String> saveCustomerNote(String phone, String note, {String? by}) async {
+    final json = await _put('/customers/${phoneDigits(phone)}', {'note': note, 'by': ?by});
+    return json['note'] as String? ?? '';
+  }
+
+  /// "Same again": a past order's dishes as the menu sells them today, and the ones it no longer sells
+  /// that way, each with why. Nothing is added by asking.
+  Future<Again> again(String orderId) async => Again.fromJson(await _get('/orders/$orderId/again'));
 
   /// The floor plan with every table's open checks; the last one read when nothing answers.
   Future<FloorPlan> floor() => _repeated('/floor', FloorPlan.fromJson, remember: 'floor');

@@ -8,6 +8,7 @@ import '../allergies.dart';
 import '../api.dart';
 import '../check_order.dart';
 import '../coursing.dart';
+import '../customers.dart';
 import '../line_ops.dart';
 import '../live.dart';
 import '../local_order.dart';
@@ -84,6 +85,8 @@ class _OrderScreenState extends State<OrderScreen> {
   List<Allergen>? _allergens; // what the menu names; null until read, and on a hub older than allergies
   Map<String, String> _allergenNames = const {};
   final _warned = <String>{}; // the dishes whose allergy mark this screen has already said
+  String _customerNote = ''; // the line kept about the customer at this order's number
+  String? _noteFor; // the number's digits it was read for
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
@@ -151,10 +154,23 @@ class _OrderScreenState extends State<OrderScreen> {
           _readCheck = check;
         });
         _sayAllergic(order, quiet: first);
+        unawaited(_readCustomer(order));
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
     }
+  }
+
+  /// The line kept about the customer at this order's number ("no MSG, side door"), read once for the
+  /// number: whoever rings the dishes in sees it, on a new order and on the one a caller comes back to.
+  Future<void> _readCustomer(Order order) async {
+    final digits = phoneDigits(order.fields['phone']?.toString());
+    if (digits == _noteFor) return;
+    _noteFor = digits;
+    final customer = await widget.api.customer(digits);
+    if (!mounted || _noteFor != digits) return;
+    final note = customer?.note ?? '';
+    if (note != _customerNote) setState(() => _customerNote = note);
   }
 
   /// The order as it stands on this screen: the last read plus this device's operations not yet in it.
@@ -788,6 +804,7 @@ class _OrderScreenState extends State<OrderScreen> {
               words: allergySummary(told, _allergenNames, seated: !order.isTakeout),
               onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
             ),
+          if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -1657,6 +1674,41 @@ class _AllergyStrip extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The line kept about the customer at the order's number, in a slim strip under the app bar: "no MSG,
+/// side door". It is for whoever takes the order; it does not print in the kitchen.
+class _CustomerStrip extends StatelessWidget {
+  const _CustomerStrip({required this.note});
+
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      key: const ValueKey('customer-note-strip'),
+      color: scheme.surfaceContainerHighest, // plain: red is the allergy strip's
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Row(
+          children: [
+            Icon(Icons.sticky_note_2_outlined, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Customer note: $note',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
       ),
     );

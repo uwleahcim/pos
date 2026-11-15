@@ -103,6 +103,29 @@ class Hub {
   final lastOrderAsked = <String>[];
   bool lastOrderDown = false;
 
+  /// Customers: what it knows of each number, by its digits (`GET /customers/lookup`; a number it does not
+  /// know is answered `known: false`), the numbers it was asked about, the notes it was given to keep as
+  /// (digits, note, by) (`PUT /customers/{digits}`), what "same again" answers for a past order
+  /// (`GET /orders/{id}/again`; 404 for one it does not list), whether it refuses to keep a note, and
+  /// [customersOld] for a hub older than customers (404 on all of it).
+  final customers = <String, Map<String, dynamic>>{};
+  final customersAsked = <String>[];
+  final notesKept = <(String, String, String?)>[];
+  final again = <String, Map<String, dynamic>>{};
+  bool notesRefused = false;
+  bool customersOld = false;
+
+  static Map<String, dynamic> _nobody(String digits) => {
+    'phone': digits,
+    'known': false,
+    'name': '',
+    'note': '',
+    'orders': 0,
+    'first_ms': null,
+    'last_ms': null,
+    'recent': <Object>[],
+  };
+
   /// Desk phones (`GET /phones/answered`): whether one is linked to the asking device, the calls it lists
   /// (each with a `seq`; the hub's cursor is the highest), the devices that asked with the `after` and `wait`
   /// they sent, and whether it is down for that call. A request with `wait` is held until [pickUp] lists a
@@ -131,10 +154,38 @@ class Hub {
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
+  static final _again = RegExp(r'^/orders/([^/]+)/again$');
+  static final _customer = RegExp(r'^/customers/(\d+)$');
 
   Future<http.Response> handle(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (customersOld && (path.startsWith('/customers/') || _again.hasMatch(path))) {
+      return json({'detail': 'Not Found'}, 404);
+    }
+    if (path == '/customers/lookup') {
+      final digits = request.url.queryParameters['phone'] ?? '';
+      customersAsked.add(digits);
+      return json(customers[digits] ?? _nobody(digits));
+    }
+    if (_customer.hasMatch(path) && request.method == 'PUT') {
+      if (notesRefused) {
+        return json({
+          'detail': {'error': 'read_only'},
+        }, 503);
+      }
+      final digits = _customer.firstMatch(path)!.group(1)!;
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final note = body['note'] as String;
+      notesKept.add((digits, note, body['by'] as String?));
+      final had = customers[digits] ?? _nobody(digits);
+      customers[digits] = {...had, 'note': note, 'known': note.isNotEmpty || (had['orders'] as int) > 0};
+      return json({'phone': digits, 'note': note, 'max': 120});
+    }
+    if (_again.hasMatch(path)) {
+      final answer = again[_again.firstMatch(path)!.group(1)!];
+      return answer == null ? json({'detail': 'no such order'}, 404) : json(answer);
+    }
     if (path == '/orders/last') {
       lastOrderAsked.add(request.url.queryParameters['phone'] ?? '');
       if (lastOrderDown) return json({'detail': 'down'}, 503);

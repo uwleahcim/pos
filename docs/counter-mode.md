@@ -29,6 +29,9 @@ the restaurant's day (`POS_TIMEZONE`), the last order is the one opened last wha
 others since, a voided order does not count and a closed one does. Whatever screen was open stays
 underneath for afterwards, and **To go** on the call strip still starts a fresh order for the caller.
 
+The form looks the number up as a customer: the name from their orders, how often they ordered, the note
+kept about them and their latest orders, each with **Same again** (`docs/customers.md`).
+
 ## Paying first
 
 **Pay & send** takes the money and sends everything to the kitchen at once; the screen comes back for the

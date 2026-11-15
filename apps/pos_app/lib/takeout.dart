@@ -35,6 +35,8 @@ class TakeoutRequest {
     required this.channel,
     this.locale = 'en',
     this.promisedAt,
+    this.again,
+    this.note,
   });
 
   final String name;
@@ -44,6 +46,13 @@ class TakeoutRequest {
 
   /// A future order's time; null means as soon as the channel's quote allows.
   final DateTime? promisedAt;
+
+  /// "Same again": the past order whose dishes the new one starts with; null starts it empty.
+  final String? again;
+
+  /// The line about the customer as the form leaves it, when it was changed there; null keeps what the hub
+  /// has.
+  final String? note;
 }
 
 /// What the pay-first dialog hands back: cash with what was tendered, paid elsewhere with a note, or
