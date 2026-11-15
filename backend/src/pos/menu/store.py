@@ -214,6 +214,9 @@ CREATE TABLE IF NOT EXISTS availability_state (
   set_by    text,
   set_at    timestamptz NOT NULL DEFAULT now()
 );
+-- A number left on a dish (2026-11): `remaining` goes down as it sells, `total` is the number typed.
+ALTER TABLE availability_state ADD COLUMN IF NOT EXISTS remaining int;
+ALTER TABLE availability_state ADD COLUMN IF NOT EXISTS total int;
 CREATE TABLE IF NOT EXISTS ingredient (
   id                    uuid PRIMARY KEY,
   code                  text UNIQUE NOT NULL,
@@ -405,7 +408,8 @@ class MenuStore:
         return _definitions(rows, localizer)
 
     def availability(self) -> dict[str, Availability]:
-        """The 86 board: sold-out or hidden variants and options, by their in-memory ids."""
+        """The 86 board: sold-out or hidden variants and options, and the dishes with a number left, by their
+        in-memory ids."""
         with self._pool.connection() as conn:
             states = conn.execute("SELECT * FROM availability_state").fetchall()
             ids = _target_codes(conn)
@@ -413,24 +417,44 @@ class MenuStore:
         for s in states:
             target = ids.get(s["target_id"])
             if target is not None:
-                out[target] = Availability(target, s["status"], s["until"], s["reason"], s["set_by"], s["set_at"])
+                out[target] = Availability(
+                    target,
+                    s["status"],
+                    s["until"],
+                    s["reason"],
+                    s["set_by"],
+                    s["set_at"],
+                    s.get("remaining"),  # a standby reads the row before the new columns reach it
+                    s.get("total"),
+                )
         return out
 
     def set_availability(self, state: Availability | None, target: str) -> None:
-        """Store one 86 change (`None` = back to available)."""
+        """Store one 86 change (`None` = back to available). A dish with a number left is kept as an
+        available row that carries the number."""
         with self._pool.connection() as conn, conn.transaction():
             row_id = _target_ids(conn).get(target)
             if row_id is None:
                 raise ValueError(f"no variant or option {target!r}")
-            if state is None or state.status == "available":
+            if state is None or (state.status == "available" and state.remaining is None):
                 conn.execute("DELETE FROM availability_state WHERE target_id = %s", (row_id,))
                 return
             conn.execute(
-                """INSERT INTO availability_state (target_id, status, until, reason, set_by, set_at)
-                   VALUES (%s, %s, %s, %s, %s, %s)
+                """INSERT INTO availability_state (target_id, status, until, reason, set_by, set_at, remaining, total)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (target_id) DO UPDATE SET status = EXCLUDED.status, until = EXCLUDED.until,
-                   reason = EXCLUDED.reason, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at""",
-                (row_id, state.status, state.until, state.reason, state.set_by, state.set_at or datetime.now(UTC)),
+                   reason = EXCLUDED.reason, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at,
+                   remaining = EXCLUDED.remaining, total = EXCLUDED.total""",
+                (
+                    row_id,
+                    state.status,
+                    state.until,
+                    state.reason,
+                    state.set_by,
+                    state.set_at or datetime.now(UTC),
+                    state.remaining,
+                    state.total,
+                ),
             )
 
     # --- writing --------------------------------------------------------------------------------

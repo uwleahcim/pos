@@ -129,6 +129,11 @@ class Hub {
   Map<String, dynamic>? menu;
   int revision = 0;
 
+  /// The 86 board it lists (`GET /menu/86`) and every change a terminal asked for (`POST /menu/86`), which
+  /// also takes the row off the board when it brings the dish back with no number.
+  List<Map<String, dynamic>> board = [];
+  final boardChanges = <Map<String, dynamic>>[];
+
   /// The check it serves for every order (it prices nothing itself), and its pricing rules.
   Map<String, dynamic>? check;
   Map<String, dynamic>? rules;
@@ -486,6 +491,18 @@ class Hub {
         return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
       case '/menu/revision':
         return json({'revision': revision});
+      case '/menu/86':
+        if (request.method == 'POST') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          boardChanges.add(body);
+          if (body['status'] == 'available' && body['remaining'] == null) {
+            board = [
+              for (final row in board)
+                if (row['target_id'] != body['target_id']) row,
+            ];
+          }
+        }
+        return json({'items': board});
       case '/menu/allergens':
         return allergens == null ? json({'detail': 'Not Found'}, 404) : json({'allergens': allergens});
       case '/menu/price':

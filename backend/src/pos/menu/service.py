@@ -11,13 +11,14 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import asdict, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from .. import localtime
-from .defs import Definitions, StaleMenu, money
+from .defs import Availability, Definitions, StaleMenu, money
 from .engine import PREFIXES, MenuEngine, ResolvedEntry, ResolvedSection, all_problems, flatten_modifiers
 from .request import ComponentRequest, LineRequest, Selection
 from .resolved import ResolvedLine, ResolvedModifier
@@ -97,6 +98,16 @@ def load_definitions(source: str | None = None) -> Definitions:
     return defs
 
 
+def _uses(line: ResolvedLine) -> dict[str, int]:
+    """How many of each dish one of this line is: the dish itself and the dishes inside it (the soup with
+    a lunch special, each roll of a maki combination), so a number left on any of them goes down with it."""
+    out = {line.variant_id: 1}
+    for child in line.children:
+        for target, n in _uses(child).items():
+            out[target] = out.get(target, 0) + n * child.qty
+    return out
+
+
 def local_now() -> datetime:
     """The restaurant's wall clock: lunch hours and menu schedules are local times (`POS_TIMEZONE`)."""
     return localtime.now()
@@ -120,6 +131,7 @@ class MenuService:
         self._changes = 0  # counts them: an answer kept from before a change is not given again
         self._kept: dict[tuple[str, str], tuple[MenuEngine, int, datetime, list[dict[str, Any]]]] = {}
         self._keeping = threading.Lock()
+        self._counting = threading.RLock()  # the numbers left: read, checked and taken down by one at a time
         if store is not None:
             if store.role == "primary" and store.is_empty():
                 store.save(defs if defs is not None else load_definitions(), actor="import")
@@ -152,13 +164,71 @@ class MenuService:
             self.on_change()
 
     def set_availability(
-        self, target_id: str, status: str, *, reason: str | None = None, by: str | None = None
+        self,
+        target_id: str,
+        status: str,
+        *,
+        reason: str | None = None,
+        by: str | None = None,
+        remaining: int | None = None,
     ) -> None:
-        """86 a size or an option, or bring it back; stored, so a restart keeps the board."""
-        self.engine.set_availability(target_id, status, reason=reason, by=by)
-        if self.store is not None:
-            self.store.set_availability(self.engine.availability.get(target_id), target_id)
+        """86 a size or an option, or bring it back; stored, so a restart keeps the board. `available` with
+        `remaining` puts a number left on a dish instead: it goes down as the dish sells (`take`), the dish
+        is sold out at zero, and the count is gone when the night is over (`localtime.night_end`), so
+        yesterday's number is never on today's menu."""
+        counted = status == "available" and remaining is not None
+        until = localtime.night_end(self._now()) if counted else None
+        with self._counting:
+            self.engine.set_availability(target_id, status, until=until, reason=reason, by=by, remaining=remaining)
+            if self.store is not None:
+                self.store.set_availability(self.engine.availability.get(target_id), target_id)
         self._changed()
+
+    # --- the numbers left ----------------------------------------------------------------------
+
+    def counts(self) -> dict[str, Availability]:
+        """The dishes with a number left right now, by variant id."""
+        engine = self.engine
+        return {t: state for t in list(engine.availability) if (state := engine.count_of(t)) is not None}
+
+    def counting(self) -> AbstractContextManager[Any]:
+        """Held from checking a batch of operations against the numbers left until what it took is taken
+        off (`pos.orders.counts`), so two screens cannot both sell the last one. Nothing is held while no
+        dish has a number: orders are stored side by side as before."""
+        return self._counting if self.counts() else nullcontext()
+
+    def take(self, taken: Mapping[str, int]) -> None:
+        """Take what a stored batch took of each counted dish off its number left. A negative number gives
+        back (a dish removed or voided), never above the number that was typed. Screens are told once."""
+        moved = False
+        with self._counting:
+            for target, n in taken.items():
+                state = self.engine.count_of(target)
+                if state is None or not n:
+                    continue
+                most = state.total if state.total is not None else state.remaining
+                left = min(most, max(0, state.remaining - n))
+                if left == state.remaining:
+                    continue
+                state = replace(state, remaining=left)
+                self.engine.availability[target] = state
+                if self.store is not None:
+                    self.store.set_availability(state, target)
+                moved = True
+        if moved:
+            self._changed()
+
+    def target_name(self, target: str) -> str:
+        """What an 86'd size or option is called on a screen: the dish, with its size where it has several."""
+        loc = self.defs.localizer
+        variant = self.defs.variants.get(target)
+        if variant is not None:
+            name = loc.text(self.defs.items[variant.item].names, "en")
+            if len(self.defs.variants_of(variant.item)) > 1:
+                name += f" ({loc.text(variant.names, 'en')})"
+            return name
+        option = self.defs.options.get(target)
+        return loc.text(self.defs.option_names(option), "en") if option else target
 
     def save(self, defs: Definitions, *, actor: str, expect: int | None = None) -> dict[str, int]:
         """Sell from `defs` from now on: stored (with the audit log) when there is a store, so every hub
@@ -306,21 +376,22 @@ class MenuService:
         return [asdict(h) for h in self.engine.search(query, channel, locale=locale)]
 
     def eighty_sixed(self) -> list[dict[str, Any]]:
+        """The 86 board: what cannot be sold now, and every dish with a number left (`left` of the `total`
+        typed, and when the count clears), still `available` while any is left. What is out comes first,
+        then the counted dishes, the fewest left first."""
         out = []
-        loc = self.defs.localizer
         for target, state in sorted(self.engine.availability.items()):
-            if self.engine.status_of(target) == "available":
+            status = self.engine.status_of(target)
+            count = self.engine.count_of(target)
+            if status == "available" and count is None:
                 continue
-            variant = self.defs.variants.get(target)
-            option = self.defs.options.get(target)
-            if variant is not None:
-                name = loc.text(self.defs.items[variant.item].names, "en")
-                if len(self.defs.variants_of(variant.item)) > 1:
-                    name += f" ({loc.text(variant.names, 'en')})"
-            else:
-                name = loc.text(self.defs.option_names(option), "en") if option else target
-            out.append({"target_id": target, "name": name, "status": state.status, "by": state.set_by})
-        return out
+            row = {"target_id": target, "name": self.target_name(target), "status": status, "by": state.set_by}
+            if count is not None:
+                row["left"] = count.remaining
+                row["total"] = count.total
+                row["until"] = count.until.isoformat() if count.until is not None else None
+            out.append(row)
+        return sorted(out, key=lambda r: (r["status"] == "available", r.get("left", 0), r["name"], r["target_id"]))
 
     # --- pricing -------------------------------------------------------------------------------
 
@@ -414,6 +485,8 @@ class MenuService:
                 for k in line.kitchen_lines
             ],
             "contains": sorted(line.allergens.contains),
+            # What one of this line takes off the numbers left, when it is more than one of its own dish.
+            **({"uses": uses} if len(uses := _uses(line)) > 1 else {}),
             "problems": problems,
             "snapshot": {
                 "recipe_version": line.snapshot.recipe_version,

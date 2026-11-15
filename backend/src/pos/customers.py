@@ -191,7 +191,7 @@ def _why(problems: Sequence[dict[str, Any]]) -> str:
     menu's own problems name ids (`CALROLL:roll is sold_out`): fine for a log, not for a screen."""
     first = problems[0] if problems else {}
     code = str(first.get("code") or "")
-    if code == "sold_out":
+    if code in ("sold_out", "none_left"):
         if first.get("option_id"):
             return "One of its choices is sold out today."
         hidden = str(first.get("message") or "").endswith("hidden")

@@ -330,7 +330,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('voids')));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('voids')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     expect(find.text("A sent dish is voided with a reason and a manager's PIN · 4 reasons"), findsOneWidget);
 
@@ -389,7 +393,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('voids')));
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('voids')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     expect(find.text('The hub has not answered about voids (an older hub: update it)'), findsOneWidget);
     expect(tester.widget<ListTile>(find.byKey(const ValueKey('voids'))).onTap, isNull);

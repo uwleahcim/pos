@@ -471,9 +471,22 @@ class PosApi {
     }
   }
 
-  /// 86 a size or option (`sold_out`), or bring it back (`available`).
-  Future<void> set86(String targetId, {required bool soldOut, String? by}) =>
-      _post('/menu/86', {'target_id': targetId, 'status': soldOut ? 'sold_out' : 'available', 'by': ?by});
+  /// 86 a size or option (`sold_out`), or bring it back (`available`). With [left], a size that is on sale
+  /// gets that number left instead: every one sold takes it down, one taken off a check gives it back, the
+  /// hub marks it sold out at zero and the number clears overnight. Without it a number already there is
+  /// taken off.
+  Future<void> set86(String targetId, {required bool soldOut, int? left, String? by}) => _post('/menu/86', {
+    'target_id': targetId,
+    'status': soldOut ? 'sold_out' : 'available',
+    'remaining': ?(soldOut ? null : left),
+    'by': ?by,
+  });
+
+  /// The 86 board: what is sold out, then every dish with a number left, the fewest first.
+  Future<List<BoardRow>> board() async => [
+    for (final row in (await _get('/menu/86'))['items'] as List? ?? const [])
+      BoardRow.fromJson(row as Map<String, dynamic>),
+  ];
 
   /// What the table owes. The tax rates on every new answer are kept for [savedTaxes].
   Future<Check> check(String orderId) => _repeated(

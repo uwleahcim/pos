@@ -10,6 +10,9 @@ and edited only with a manager's session token.
 Orders screen › **Location** (managers and owners only, the manager PIN again, like the menu editor). The
 screen holds:
 
+- **Sold out and running low**, first, because it is what a manager looks at during service: how many
+  dishes are sold out and how many have a number left, and the list of them with the fewest left at the top
+  (see `eighty-six.md`). Not a setting: a dish is put on it from the order screen.
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

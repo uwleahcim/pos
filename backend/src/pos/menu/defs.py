@@ -284,6 +284,11 @@ class Availability:
     reason: str | None = None
     set_by: str | None = None
     set_at: datetime | None = None
+    # A dish with a number left: `remaining` goes down as it sells and the dish is sold out at zero; `total`
+    # is the number that was typed, which a dish given back never takes it above. Both None for a plain 86.
+    # A counted dish keeps `status` available: its count says whether it can be sold.
+    remaining: int | None = None
+    total: int | None = None
 
 
 class Localizer:

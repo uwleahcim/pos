@@ -87,6 +87,7 @@ class VariantOffer:
     price: Decimal
     price_source: str
     status: str
+    left: int | None = None  # how many more can be sold, where someone typed a number left; None: not counted
 
 
 @dataclass(frozen=True)
@@ -256,11 +257,26 @@ class MenuEngine:
         until: datetime | None = None,
         reason: str | None = None,
         by: str | None = None,
+        remaining: int | None = None,
     ) -> None:
-        if status == "available":
+        """86 a size or an option, bring it back, or (`available` with `remaining`) put a number left on it."""
+        if status == "available" and remaining is None:
             self.availability.pop(target_id, None)
             return
-        self.availability[target_id] = Availability(target_id, status, until, reason, by, self._now())
+        if status != "available":
+            remaining = None  # sold out by hand: nothing is left to count
+        self.availability[target_id] = Availability(
+            target_id, status, until, reason, by, self._now(), remaining, remaining
+        )
+
+    def count_of(self, target_id: str, at: datetime | None = None) -> Availability | None:
+        """The number left on a dish, or None: it has none, it was 86'd by hand, or its count has cleared."""
+        state = self.availability.get(target_id)
+        if state is None or state.remaining is None or state.status != "available":
+            return None
+        if state.until is not None and (at or self._now()) >= state.until:
+            return None
+        return state
 
     def status_of(self, target_id: str, at: datetime | None = None) -> str:
         state = self.availability.get(target_id)
@@ -268,6 +284,8 @@ class MenuEngine:
             return "available"
         if state.until is not None and (at or self._now()) >= state.until:
             return "available"
+        if state.status == "available" and state.remaining is not None:
+            return "available" if state.remaining > 0 else "sold_out"  # a counted dish 86s itself at zero
         return state.status
 
     # --- ordering ------------------------------------------------------------------------------
@@ -343,7 +361,12 @@ class MenuEngine:
         if not variant.active or not item.active:
             ctx.problems.append(Problem("inactive", f"{variant_id} is not active"))
         status = self.status_of(variant_id, at)
-        if status != "available":
+        if status != "available" and self.count_of(variant_id, at) is not None:
+            # Its number left is at zero. Said under its own code: whether one is left for this line is
+            # settled against what the checks hold (the last one, sent and now being changed, gives its
+            # own back), which the hub does when the line arrives (pos.orders.counts).
+            ctx.problems.append(Problem("none_left", f"{variant_id} has none left"))
+        elif status != "available":
             ctx.problems.append(Problem("sold_out", f"{variant_id} is {status}"))
 
         # --- price of the line itself
@@ -1132,8 +1155,16 @@ class MenuEngine:
                 price, source = money(entry.price_overrides[variant.id]), "entry_override"
             else:
                 price, source = money(variant.base_price), "variant_base"
+            count = self.count_of(variant.id, at)
             offers.append(
-                VariantOffer(variant.id, loc.text(variant.names, locale), price, source, self.status_of(variant.id, at))
+                VariantOffer(
+                    variant.id,
+                    loc.text(variant.names, locale),
+                    price,
+                    source,
+                    self.status_of(variant.id, at),
+                    count.remaining if count is not None else None,
+                )
             )
         return tuple(offers)
 

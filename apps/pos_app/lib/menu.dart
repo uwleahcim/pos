@@ -2,13 +2,22 @@
 library;
 
 class VariantOffer {
-  const VariantOffer({required this.variantId, required this.name, required this.price, required this.status});
+  const VariantOffer({
+    required this.variantId,
+    required this.name,
+    required this.price,
+    required this.status,
+    this.left,
+    this.counts = false,
+  });
 
   factory VariantOffer.fromJson(Map<String, dynamic> json) => VariantOffer(
     variantId: json['variant_id'] as String,
     name: json['name'] as String? ?? '',
     price: json['price'] as String? ?? '0.00',
     status: json['status'] as String? ?? 'available',
+    left: json['left'] as int?,
+    counts: json.containsKey('left'),
   );
 
   final String variantId;
@@ -16,7 +25,50 @@ class VariantOffer {
   final String price;
   final String status;
 
+  /// How many more of it can be sold tonight, where someone typed a number left: every one sold takes it
+  /// down and at zero the hub marks it sold out. Null when nobody is counting it.
+  final int? left;
+
+  /// The hub keeps numbers left at all: it says `left` for every size, null where there is none. An older
+  /// hub says nothing, and the 86 sheet then offers no number to type.
+  final bool counts;
+
   bool get available => status == 'available';
+}
+
+/// A row of the 86 board: a size or a choice that is sold out, or a dish with a number left.
+class BoardRow {
+  const BoardRow({required this.targetId, required this.name, required this.status, this.by, this.left, this.total});
+
+  factory BoardRow.fromJson(Map<String, dynamic> json) => BoardRow(
+    targetId: json['target_id'] as String,
+    name: json['name'] as String? ?? '',
+    status: json['status'] as String? ?? 'sold_out',
+    by: json['by'] as String?,
+    left: json['left'] as int?,
+    total: json['total'] as int?,
+  );
+
+  final String targetId;
+  final String name;
+  final String status;
+
+  /// Who set it, when the screen that did said so.
+  final String? by;
+
+  /// How many are left of the [total] that was typed; both null for a dish that was marked sold out by hand.
+  final int? left;
+  final int? total;
+
+  bool get soldOut => status != 'available';
+  bool get counted => left != null;
+
+  /// What the board says about it: "Sold out", "Sold out · all 12 sold", "3 of 12 left".
+  String get said {
+    if (!counted) return 'Sold out';
+    if (soldOut) return total == null ? 'Sold out' : 'Sold out · all $total sold';
+    return total == null ? '$left left' : '$left of $total left';
+  }
 }
 
 class MenuEntry {
@@ -84,6 +136,24 @@ class MenuEntry {
   /// One tap adds it: a single variant and no questions to ask.
   bool get quickAdd => !hasOptions && variants.length == 1;
   bool get available => variants.any((v) => v.available);
+
+  /// The hub keeps numbers left (see [VariantOffer.counts]).
+  bool get counts => variants.any((v) => v.counts);
+
+  /// The number left the tile shows: the dish's own, or with several sizes the lowest among the ones on
+  /// sale when every one of them is counted (one size counted and another not says nothing about the
+  /// dish; the size buttons say it per size). Null when the tile has no number to show.
+  int? get left {
+    int? least;
+    for (final v in variants) {
+      if (!v.available) continue;
+      final n = v.left;
+      if (n == null) return null;
+      if (least == null || n < least) least = n;
+    }
+    return least;
+  }
+
   String get priceLabel {
     if (variants.isEmpty) return '';
     if (variants.length == 1) return variants.first.price;
