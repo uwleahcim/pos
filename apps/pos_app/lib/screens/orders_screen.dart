@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../camera.dart';
 import '../coursing.dart';
+import '../customers.dart';
 import '../desk_phone_watcher.dart';
 import '../floor.dart';
 import '../live.dart';
@@ -233,7 +234,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final who = caller ?? widget.phone?.callerForOrder;
       final request = await showDialog<TakeoutRequest>(
         context: context,
-        builder: (context) => _TakeoutDialog(quotes: quotes, caller: who),
+        builder: (context) =>
+            _TakeoutDialog(quotes: quotes, api: widget.api, caller: who, by: widget.session.staff?.name),
       );
       if (request == null || !mounted) return;
       await _startOrder(request, quotes);
@@ -242,9 +244,66 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  /// Opens the to-go order the form asked for. A note about the customer changed on the form is kept first,
+  /// so the order's screen reads the new one. For "Same again" the past order's dishes go on as the menu
+  /// sells them today, each to the course a dish rung in by hand would go to; the operator is told which
+  /// prices moved and which dishes were left off, while the customer is still on the call.
   Future<void> _startOrder(TakeoutRequest request, Quotes quotes) async {
     final minutes = quotes.minutesFor(request.channel);
     final promised = request.promisedAt ?? DateTime.now().add(Duration(minutes: minutes));
+    final staff = widget.session.staff;
+    final messenger = ScaffoldMessenger.of(context);
+    final note = request.note;
+    if (note != null) {
+      try {
+        await widget.api.saveCustomerNote(request.phone, note, by: staff?.name);
+      } on ApiException {
+        messenger.showSnackBar(const SnackBar(content: Text('The note about the customer was not saved.')));
+      }
+    }
+    final lines = <(String, Map<String, dynamic>)>[];
+    final past = request.again;
+    if (past != null) {
+      String said;
+      var long = true;
+      try {
+        final again = await widget.api.again(past);
+        Coursing coursing;
+        try {
+          coursing = await widget.api.coursing();
+        } on ApiException {
+          coursing = Coursing.defaults;
+        }
+        final course = coursing.enabled ? coursing.defaultCourse : null;
+        for (final line in again.lines) {
+          lines.add((
+            'add_line',
+            {
+              'line_id': widget.outbox.newId(),
+              'item': line.item,
+              'qty': line.qty,
+              'course': ?course,
+              if (staff != null) 'by': staff.name,
+              if (staff != null) 'by_id': staff.staffId,
+              if (line.note.isNotEmpty) 'note': line.note,
+              'request': line.request,
+            },
+          ));
+        }
+        said = again.said;
+        long = again.needsTelling || again.lines.isEmpty;
+      } on ApiException {
+        said = 'The past order could not be read. Nothing was added.';
+      }
+      messenger.showSnackBar(
+        SnackBar(
+          key: const ValueKey('again-said'),
+          duration: Duration(seconds: long ? 10 : 4),
+          content: Text(said),
+        ),
+      );
+    }
+    if (!mounted) return;
     await _create({
       'order_type': 'takeout',
       'channel': request.channel,
@@ -254,7 +313,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       'quoted_minutes': minutes,
       'promised_at': promised.millisecondsSinceEpoch,
       'stage': 'new',
-    });
+    }, lines: lines);
   }
 
   /// Ready sends the customer their text (the hub does, once); picked up closes the check.
@@ -292,8 +351,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// Opens a new check with these fields, stamped with its server, and shows it. The server is whoever is
   /// signed in, unless a host or manager sat the party [for_] someone else: then the check is that person's,
-  /// the log keeps who sat it, and the screen stays on the floor for the next party.
-  Future<void> _create(Map<String, dynamic> fields, {StaffMember? for_, String? label}) async {
+  /// the log keeps who sat it, and the screen stays on the floor for the next party. [lines] are operations
+  /// the check starts with (the dishes of "Same again"), queued right behind its create.
+  Future<void> _create(
+    Map<String, dynamic> fields, {
+    StaffMember? for_,
+    String? label,
+    List<(String, Map<String, dynamic>)> lines = const [],
+  }) async {
     final staff = widget.session.staff;
     final given = for_ != null && for_.staffId != staff?.staffId;
     final orderId = widget.outbox.newId();
@@ -309,6 +374,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         'server_id': staff.staffId,
       },
     });
+    if (lines.isNotEmpty) await widget.outbox.addAll(orderId, lines);
     unawaited(widget.photos.capture('create', opId: opId));
     if (!mounted) return;
     if (!given) return _open(orderId);
@@ -698,10 +764,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
 /// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is
 /// for now (the channel's quote) or a later time today or tomorrow. For a [caller] the number, the phone
 /// channel and the caller-ID name are filled in; all of it stays editable.
+///
+/// The number in the box is looked up as a customer (as the form opens for a caller, and as a number is
+/// typed): the name from their orders fills the name box unless one was typed, a line says how often they
+/// ordered, the note kept about them can be read and changed, and each of their latest orders has a
+/// **Same again** button that starts the new order with those dishes. With no hub answering, or one older
+/// than customers, none of that shows and the form is what it was.
 class _TakeoutDialog extends StatefulWidget {
-  const _TakeoutDialog({required this.quotes, this.caller});
+  const _TakeoutDialog({required this.quotes, required this.api, this.caller, this.by});
   final Quotes quotes;
+  final PosApi api;
   final Caller? caller;
+
+  /// Who is taking the order: kept with a note they write about the customer.
+  final String? by;
 
   @override
   State<_TakeoutDialog> createState() => _TakeoutDialogState();
@@ -710,17 +786,86 @@ class _TakeoutDialog extends StatefulWidget {
 class _TakeoutDialogState extends State<_TakeoutDialog> {
   late final _name = TextEditingController(text: widget.caller?.displayName ?? '');
   late final _phone = TextEditingController(text: widget.caller?.formatted ?? '');
+  final _note = TextEditingController();
   late String _channel = widget.caller == null ? 'counter' : 'phone';
   String _locale = 'en';
   bool _later = false;
   int _dayOffset = 0; // 0 today, 1 tomorrow
   TimeOfDay? _time;
 
+  CustomerCard? _customer; // who the hub says is at the number in the box; null: not asked, or no answer
+  String _filled = ''; // the name the form itself put in the box: a customer's replaces it, a typed one stays
+  String _noteWas = ''; // the note as the hub keeps it
+  String? _noteProblem;
+  bool _keeping = false;
+  Timer? _typing;
+  int _asked = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _filled = _name.text.trim();
+    unawaited(_lookUp());
+  }
+
   @override
   void dispose() {
+    _typing?.cancel();
     _name.dispose();
     _phone.dispose();
+    _note.dispose();
     super.dispose();
+  }
+
+  /// Asks once the typing pauses, not at every digit.
+  void _phoneChanged(String _) {
+    _typing?.cancel();
+    _typing = Timer(const Duration(milliseconds: 400), () => unawaited(_lookUp()));
+  }
+
+  Future<void> _lookUp() async {
+    final digits = phoneDigits(_phone.text);
+    if (digits == _customer?.phone) return;
+    final asked = ++_asked;
+    final found = await widget.api.customer(digits);
+    if (!mounted || asked != _asked) return; // the number changed while the hub was asked
+    setState(() {
+      final untouched = _noteText == _noteWas;
+      _customer = found;
+      final name = found?.name ?? '';
+      if (name.isNotEmpty && _name.text.trim() == _filled) {
+        _name.text = name;
+        _filled = name;
+      }
+      _noteWas = found?.note ?? '';
+      _noteProblem = null;
+      if (untouched) _note.text = _noteWas;
+    });
+  }
+
+  /// The note as the hub would keep it: on one line.
+  String get _noteText => _note.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  bool get _noteChanged => _customer != null && _noteText != _noteWas;
+
+  /// The tick in the note box: keeps the note now, so it is not lost if no order is started.
+  Future<void> _keepNote() async {
+    final customer = _customer;
+    if (customer == null || _keeping) return;
+    setState(() => _keeping = true);
+    try {
+      final kept = await widget.api.saveCustomerNote(customer.phone, _noteText, by: widget.by);
+      if (!mounted) return;
+      setState(() {
+        _noteWas = kept;
+        _note.text = kept;
+        _noteProblem = null;
+      });
+    } on ApiException {
+      if (mounted) setState(() => _noteProblem = 'Not saved. Try again.');
+    } finally {
+      if (mounted) setState(() => _keeping = false);
+    }
   }
 
   DateTime? get _promised {
@@ -732,13 +877,16 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
 
   bool get _ready => _name.text.trim().isNotEmpty && (!_later || _time != null);
 
-  void _start() => Navigator.of(context).pop(
+  /// Start, or Same again on the past order [again].
+  void _start({String? again}) => Navigator.of(context).pop(
     TakeoutRequest(
       name: _name.text.trim(),
       phone: _phone.text.trim(),
       channel: _channel,
       locale: _locale,
       promisedAt: _promised,
+      again: again,
+      note: _noteChanged ? _noteText : null,
     ),
   );
 
@@ -747,10 +895,88 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     if (picked != null && mounted) setState(() => _time = picked);
   }
 
+  /// What is known of the customer at the number: how often they ordered, the note, their latest orders.
+  Widget _customerCard(ThemeData theme, CustomerCard customer) {
+    final scheme = theme.colorScheme;
+    final now = DateTime.now();
+    final faint = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    return Column(
+      key: const ValueKey('customer-card'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 6),
+        Text(customer.summary(now), key: const ValueKey('customer-summary'), style: faint),
+        const SizedBox(height: 6),
+        TextField(
+          key: const ValueKey('customer-note'),
+          controller: _note,
+          maxLength: customerNoteMax,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            labelText: 'Note about this customer',
+            prefixIcon: const Icon(Icons.sticky_note_2_outlined),
+            counterText: '',
+            errorText: _noteProblem,
+            suffixIcon: _noteChanged
+                ? IconButton(
+                    key: const ValueKey('customer-note-save'),
+                    tooltip: 'Save the note now',
+                    icon: const Icon(Icons.check),
+                    onPressed: _keeping ? null : _keepNote,
+                  )
+                : null,
+          ),
+          onChanged: (_) => setState(() => _noteProblem = null),
+        ),
+        // when and what it came to beside the button, the dishes under them across the whole width: on a
+        // phone the form is narrow, and the dishes are what the customer is asked about
+        for (final past in customer.recent)
+          Padding(
+            key: ValueKey('past:${past.orderId}'),
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        [
+                          if (past.openedMs != null) _capital(dayLabel(past.openedMs!, now)),
+                          if (past.total.isNotEmpty) '\$${past.total}',
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      key: ValueKey('again:${past.orderId}'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: _ready ? () => _start(again: past.orderId) : null,
+                      child: const Text('Same again'),
+                    ),
+                  ],
+                ),
+                Text(past.dishes, maxLines: 2, overflow: TextOverflow.ellipsis, style: faint),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  static String _capital(String word) => word.isEmpty ? word : word[0].toUpperCase() + word.substring(1);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final minutes = widget.quotes.minutesFor(_channel);
+    final customer = _customer;
     return AlertDialog(
       title: const Text('To-go order'),
       content: SizedBox(
@@ -777,7 +1003,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   labelText: 'Phone (for the ready text)',
                   prefixIcon: Icon(Icons.phone_outlined),
                 ),
+                onChanged: _phoneChanged,
               ),
+              if (customer != null) _customerCard(theme, customer),
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,

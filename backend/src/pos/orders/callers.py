@@ -10,29 +10,19 @@ one does, so a call about an order already picked up still lands on it.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from datetime import date
 from typing import Protocol
 
 from .. import localtime
-from ..sync.oplog import OrderEntry, OrderState
+from ..sync.oplog import OrderEntry, OrderState, phone_digits
 
-_NOT_DIGITS = re.compile(r"\D")
+__all__ = ["last_order", "phone_digits"]
 
 
 class _Store(Protocol):
     def index(self, *, opened_since: int | None = None) -> list[OrderEntry]: ...
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]: ...
-
-
-def phone_digits(raw: object) -> str:
-    """A number as digits only, without the North American country code: `+1 (781) 555-1234`,
-    `17815551234` and `781 555 1234` are all `7815551234`. Nothing for no number."""
-    digits = _NOT_DIGITS.sub("", str(raw or ""))
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
-    return digits
 
 
 def last_order(store: _Store, phone: object, *, day: date) -> OrderState | None:

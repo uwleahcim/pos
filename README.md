@@ -19,6 +19,8 @@ merges after any disconnect.
   ticket, the notice when one is told after dishes were sent, what the mark on the check does and does not
   know): `docs/allergies.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
+- Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
+  note line, their past orders with Same again at today's menu): `docs/customers.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`
 - Whose table it is (the server's name on each busy table, a server taking a table by opening it, the host

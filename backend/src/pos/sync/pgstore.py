@@ -50,11 +50,23 @@ CREATE TABLE IF NOT EXISTS orders (
     first_ms BIGINT,
     last_ms  BIGINT,
     version  BIGINT NOT NULL,
-    tip      TEXT NOT NULL
+    tip      TEXT NOT NULL,
+    phone    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS orders_open ON orders (order_id) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS orders_first_ms ON orders (first_ms);
 CREATE INDEX IF NOT EXISTS orders_last_ms ON orders (last_ms);
+"""
+
+# The customer's number on each order, as digits: added 2026-11-15 to find a caller's earlier orders. An
+# index made before then gets the column and every row is worked out again, once (`_ensure_index`).
+_HAS_PHONE = """
+SELECT 1 FROM information_schema.columns
+WHERE table_schema = current_schema() AND table_name = 'orders' AND column_name = 'phone'
+"""
+_ADD_PHONE = """
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS orders_phone ON orders (phone, first_ms) WHERE phone <> '';
 """
 
 _UNINDEXED = """
@@ -66,12 +78,14 @@ ORDER BY o.order_id
 """
 
 _INDEX = """
-INSERT INTO orders (order_id, status, first_ms, last_ms, version, tip) VALUES (%s, %s, %s, %s, %s, %s)
+INSERT INTO orders (order_id, status, first_ms, last_ms, version, tip, phone) VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (order_id) DO UPDATE SET status = EXCLUDED.status, first_ms = EXCLUDED.first_ms,
-    last_ms = EXCLUDED.last_ms, version = EXCLUDED.version, tip = EXCLUDED.tip
+    last_ms = EXCLUDED.last_ms, version = EXCLUDED.version, tip = EXCLUDED.tip, phone = EXCLUDED.phone
 """
 
-_ENTRY = "order_id, status, first_ms, last_ms, version, tip"
+_ENTRY = "order_id, status, first_ms, last_ms, version, tip, phone"
+
+_EVERY_ORDER = "SELECT DISTINCT order_id FROM ops ORDER BY order_id"
 
 _APPEND_LOCK = 7_031  # advisory lock key: one appender at a time on this database
 
@@ -212,23 +226,30 @@ class PgOpStore:
         try:
             with self._pool.connection() as conn:
                 row = conn.execute(f"SELECT {_ENTRY} FROM orders WHERE order_id = %s", (order_id,)).fetchone()
-        except errors.UndefinedTable:
+        except (errors.UndefinedTable, errors.UndefinedColumn):
             if self._ensure_index():
                 return self.entry(order_id)
             return next(iter(self._scan([order_id])), None)
         return None if row is None else OrderEntry(*row)
 
     def index(
-        self, *, status: str | None = None, opened_since: int | None = None, active_since: int | None = None
+        self,
+        *,
+        status: str | None = None,
+        opened_since: int | None = None,
+        active_since: int | None = None,
+        phone: str | None = None,
     ) -> list[OrderEntry]:
-        """The orders that stand at `status`, were opened at or after `opened_since` and last changed at or
-        after `active_since` (wall-clock ms), whichever of the three are given, by order id."""
+        """The orders that stand at `status`, were opened at or after `opened_since`, last changed at or
+        after `active_since` (wall-clock ms) and carry the number `phone` (digits, see `phone_digits`),
+        whichever of the four are given, by order id."""
         where: list[str] = []
         params: list[Any] = []
         for clause, value in (
             ("status = %s", status),
             ("first_ms >= %s", opened_since),
             ("last_ms >= %s", active_since),
+            ("phone = %s", phone),
         ):
             if value is not None:
                 where.append(clause)
@@ -237,10 +258,10 @@ class PgOpStore:
         try:
             with self._pool.connection() as conn:
                 return [OrderEntry(*row) for row in conn.execute(sql, params)]
-        except errors.UndefinedTable:
+        except (errors.UndefinedTable, errors.UndefinedColumn):
             if self._ensure_index():
-                return self.index(status=status, opened_since=opened_since, active_since=active_since)
-            return [e for e in self._scan() if e.picked(status, opened_since, active_since)]
+                return self.index(status=status, opened_since=opened_since, active_since=active_since, phone=phone)
+            return [e for e in self._scan() if e.picked(status, opened_since, active_since, phone)]
 
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
@@ -289,14 +310,22 @@ class PgOpStore:
     def _ensure_index(self) -> bool:
         """Makes the tables and brings the index level with the log, when this database takes writes: a hub
         updated from a build without the index, a database restored from a backup of one, or a standby that
-        was promoted. False on a standby whose primary has no index yet: reads there fall back to the log."""
+        was promoted. False on a standby whose primary has no index yet: reads there fall back to the log.
+
+        An index from a build that did not keep each order's phone number gets the column, and every order
+        is indexed again, once: the number is in the log, not in the old rows."""
         if self.role != "primary":
             return False
         with self._pool.connection() as conn:
             conn.execute(SCHEMA)
             with conn.transaction():
                 conn.execute("SELECT pg_advisory_xact_lock(%s)", (_APPEND_LOCK,))
-                behind = [row[0] for row in conn.execute(_UNINDEXED)]
+                had_phone = conn.execute(_HAS_PHONE).fetchone() is not None
+                conn.execute(_ADD_PHONE)
+                if had_phone:
+                    behind = [row[0] for row in conn.execute(_UNINDEXED)]
+                else:
+                    behind = [row[0] for row in conn.execute(_EVERY_ORDER)]
                 for at in range(0, len(behind), 200):
                     self._index_orders(conn, behind[at : at + 200])
         if behind:
@@ -319,4 +348,4 @@ class PgOpStore:
 
 
 def _entry_row(entry: OrderEntry) -> tuple[Any, ...]:
-    return (entry.order_id, entry.status, entry.first_ms, entry.last_ms, entry.version, entry.tip)
+    return (entry.order_id, entry.status, entry.first_ms, entry.last_ms, entry.version, entry.tip, entry.phone)

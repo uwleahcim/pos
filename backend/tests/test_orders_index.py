@@ -211,3 +211,47 @@ def test_the_day_s_lookups_read_the_day_only(pg, replays):
     assert last_order(pg, "(781) 555-0102", day=today).order_id == "t1"
     assert last_order(pg, "781 555 0199", day=today) is None
     assert replays[0] == 2
+
+
+def test_the_index_keeps_each_order_s_phone_number_by_its_digits(store):
+    """A caller's earlier orders are found from the index, however old and however the number was typed."""
+    store.append(
+        [
+            make_op("create", "a", at=0, order_type="takeout", phone="+1 (781) 555-0101"),
+            make_op("create", "b", at=1_000, order_type="takeout", phone="781 555 0101"),
+            make_op("create", "c", at=2_000, order_type="takeout", phone="781-555-0102"),
+            make_op("create", "d", at=3_000, table="12"),
+        ]
+    )
+    assert [e.order_id for e in store.index(phone="7815550101")] == ["a", "b"]
+    assert store.entry("d").phone == "" and store.index(phone="7815550199") == []
+    # a number given later, and one taken off again
+    store.append(
+        [make_op("set_field", "d", at=4_000, phone="781 555 0102"), make_op("set_field", "a", at=5_000, phone="")]
+    )
+    assert [e.order_id for e in store.index(phone="7815550102")] == ["c", "d"]
+    assert [e.order_id for e in store.index(phone="7815550101")] == ["b"]
+    assert [e.order_id for e in store.index(phone="7815550102", status="open", opened_since=T0 + 2_500)] == ["d"]
+
+
+def test_an_index_made_before_phone_numbers_were_kept_is_worked_out_again_once(pg):
+    import psycopg
+
+    from pos.sync.pgstore import PgOpStore
+
+    day(pg, 3)
+    pg.append([make_op("create", "t1", at=10_000, order_type="takeout", phone="781 555 0101")])
+    want = pg.index()
+    with psycopg.connect(DSN) as conn:  # the index as an older build made it
+        conn.execute("ALTER TABLE orders DROP COLUMN phone")
+    updated = PgOpStore(DSN, physical=lambda: NOW)
+    try:
+        assert updated.index() == want
+        assert [e.order_id for e in updated.index(phone="7815550101")] == ["t1"]
+    finally:
+        updated.close()
+    again = PgOpStore(DSN, physical=lambda: NOW)  # the next start has nothing to do
+    try:
+        assert again.index() == want
+    finally:
+        again.close()

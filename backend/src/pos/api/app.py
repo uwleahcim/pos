@@ -26,6 +26,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
+from ..customers import NOTE_MAX, SHORTEST, CustomerNotes, clean_note, customer_card, default_notes, same_again
+from ..customers import ReadOnlyError as NotesReadOnly
 from ..devices import DevicesSeen
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
@@ -315,6 +317,13 @@ class PrintersIn(BaseModel):
     takeout_station: str | None = "takeout"
 
 
+class CustomerNoteIn(BaseModel):
+    """The line a person keeps about a customer ("no MSG", "side door"); empty takes it off."""
+
+    note: str = Field(max_length=400)
+    by: str | None = Field(None, max_length=80, description="who wrote it, by name")
+
+
 class TicketsIn(BaseModel):
     """What a kitchen ticket says about the other tickets of the same send. One left out stays as it is."""
 
@@ -396,12 +405,8 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
     for op in ops:
         if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
             data = {k: v for k, v in op.data.items() if k != "priced"}
-            try:
-                priced = menu.priced(data["request"])
-                blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
-            except (KeyError, ValueError, TypeError) as err:
-                blocking = [{"code": "bad_request", "message": str(err)}]
-            if blocking:
+            priced, blocking = sellable(menu, data["request"])
+            if priced is None:
                 refused.append({"op_id": op.op_id, "error": "invalid_line", "problems": blocking})
                 continue
             data["priced"] = priced
@@ -413,6 +418,18 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
 
 WARNINGS: frozenset[str] = frozenset()
 """Problem codes a line may still be sold with; none yet, so every problem stops the sale."""
+
+
+def sellable(menu: MenuService, request: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """The line as the menu prices it now, or None with the problems that stop its sale (a required choice
+    missing, an 86'd dish, an id the menu does not know)."""
+    try:
+        priced = menu.priced(request)
+        blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
+    except (KeyError, ValueError, TypeError) as err:
+        return None, [{"code": "bad_request", "message": str(err)}]
+    return (None, blocking) if blocking else (priced, [])
+
 
 ADJUSTMENTS = frozenset({"discount", "remove_discount", "charge", "remove_charge"})
 
@@ -558,6 +575,7 @@ def create_app(
     pusher: ApnsSender | None = None,
     relay: PushRelay | None = None,
     feed: ChangeFeed | None = None,
+    customers: CustomerNotes | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -609,6 +627,8 @@ def create_app(
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
     app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
+    # The one line kept about a customer, by phone number; the rest of a customer is read from the order log.
+    app.state.customers = customers if customers is not None else default_notes()
     # Desk phones: the links are the manager's setting, read when a phone answers; the watcher needs POS_AMI_HOST.
     app.state.answered = (
         answered
@@ -788,6 +808,49 @@ def create_app(
         if state is None:
             raise HTTPException(404, "no such order")
         return polled(state.snapshot())
+
+    @app.get("/orders/{order_id}/again")
+    def read_same_again(order_id: str) -> dict[str, Any]:
+        """A past order's dishes for a new order to start from ("same again"): `lines`, each with its
+        choices as they were (`request`), what one costs today (`unit_price`) and what it cost then
+        (`was`); and `missing`, the dishes the menu no longer sells that way, each with `why`. Nothing is
+        added here: the terminal appends an `add_line` for each line, and the hub prices them again."""
+        store: OpStore | PgOpStore = app.state.store
+        state = store.view(order_id)
+        if state is None:
+            raise HTTPException(404, "no such order")
+        app.state.menu.refresh()
+        return same_again(state, lambda request: sellable(app.state.menu, request))
+
+    @app.get("/customers/lookup")
+    def read_customer(phone: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:
+        """The customer at this number, for the screen that takes their call: `name` (from their latest
+        order), `orders` (how many, voided ones apart), `first_ms` and `last_ms`, the `note` kept about
+        them, and `recent`, their latest orders with dishes, each with its `total` and `items`. Numbers
+        match by their digits. `known` is false for a number that never ordered and has no note."""
+        store: OpStore | PgOpStore = app.state.store
+        return customer_card(
+            store,
+            app.state.customers,
+            phone,
+            total=lambda state: check_for(state, app.state.taxes, app.state.pricing)["total"],
+        )
+
+    @app.put("/customers/{phone}")
+    def save_customer(phone: str, body: CustomerNoteIn) -> dict[str, Any]:
+        """Keeps the one line about the customer at this number (an empty one takes it off). Anyone at a
+        terminal may write it, as anyone may take the order; it records who did."""
+        digits = phone_digits(phone)
+        if len(digits) < SHORTEST:
+            raise HTTPException(422, {"error": "bad_value", "message": "That is not a phone number."})
+        note = clean_note(body.note)
+        store: OpStore | PgOpStore = app.state.store
+        try:
+            kept = app.state.customers.put(digits, note, by=(body.by or "").strip(), at_ms=store.now_ms())
+        except NotesReadOnly as err:
+            # A standby hub: the terminal moves to the next address, as for an order.
+            raise HTTPException(503, {"error": "read_only"}) from err
+        return {"phone": digits, "note": kept["note"], "max": NOTE_MAX}
 
     @app.get("/orders/{order_id}/check")
     def read_check(order_id: str) -> Response:
