@@ -27,6 +27,15 @@ The voided line stays on the check, struck through, with its reason: "void · Ki
 **Fewer of a sent dish** is a void of the difference: three teas down to one asks the same two questions,
 then voids the three and sends one again on the same ticket. The report counts two.
 
+**Several dishes at once.** Hold a dish, tap the others with another finger so they stack behind it, and
+let go over **Void** at the foot of the check (see `location-settings.md`, "Arranging the check"). The box
+asks why once and names the dishes ("Void 2 dishes?", then "1 × Peking Duck, 1 × Hot tea."), the manager
+types their PIN once, and one VOID ticket prints at each station that had any of them. Dishes in the stack
+that were not sent yet just come off, and the box says how many those are. Keep it, or walking away from
+the PIN, leaves every dish where it was. With none of the dishes sent the place reads **Take off** and
+nothing is asked. One dish let go there is voided like a hold on its bin. The report lists each dish as a
+void of its own, all with the same reason and the same manager.
+
 **Changing a sent dish** (its choices, a note) is not a void. It still voids the line and sends the changed
 dish in its place on one ticket, and nothing is asked, as long as the quantity does not go down. A change
 that lowers the price a little (a smaller size, an add-on taken off) is not treated as a void either.
@@ -102,3 +111,8 @@ them and the dish stays on the check, with the refusal in the status bar: rebuil
 
 Not covered: `void_order` (no screen offers it) and a quantity lowered on a sent line by `set_line` (the
 app never sends one; it voids and sends again).
+
+Several dishes voided together are one batch of `void_line` operations with the same `reason` and the same
+`approval` token. Nothing in the hub is special for it: a token is good for every void on its order until
+it runs out, and the print service makes one void ticket for each station out of a batch
+(`backend/tests/orders/test_lot.py`).

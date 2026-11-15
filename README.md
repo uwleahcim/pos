@@ -12,9 +12,11 @@ merges after any disconnect.
   running hub's drinks to their menu): `docs/menus.md`
 - Choices that are dishes (the soup with a lunch special, the rolls of a maki combination; a group that offers a
   whole category; a chosen dish's own choices asked under it; the check and the tickets): `docs/modifiers.md`
-- Discounts, comps and service charges (reasons, who approves, the rules file, the report): `docs/discounts.md`
-- Voids of sent dishes (a reason, a manager's PIN unless the location lets servers void, the report of who
-  voided what and why, and of every dish taken off a check before it was sent): `docs/voids.md`
+- Discounts, comps and service charges (reasons, who approves, a comp for several dishes picked up together,
+  the rules file, the report): `docs/discounts.md`
+- Voids of sent dishes (a reason, a manager's PIN unless the location lets servers void, several dishes
+  voided together with one reason and one PIN, the report of who voided what and why, and of every dish
+  taken off a check before it was sent): `docs/voids.md`
 - Allergies told at the table (the Allergy chip for a seat or the whole table, the block on every station's
   ticket, the notice when one is told after dishes were sent, what the mark on the check does and does not
   know): `docs/allergies.md`

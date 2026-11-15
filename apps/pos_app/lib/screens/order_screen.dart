@@ -25,6 +25,7 @@ import 'check_list.dart';
 import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
+import 'lot_comp_dialog.dart';
 import 'menu_panel.dart';
 import 'pay_dialog.dart';
 import 'status_bar.dart';
@@ -572,7 +573,7 @@ class _OrderScreenState extends State<OrderScreen> {
     if (change.isEmpty) return;
     if (change.voidsFired) {
       final word = await _voidWord(
-        line,
+        what: line.item,
         title: qty == 0 ? 'Void ${line.item}?' : 'Void ${line.item} and send $qty again?',
         body: qty == 0
             ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
@@ -588,9 +589,10 @@ class _OrderScreenState extends State<OrderScreen> {
   /// picked from the location's list, who is voiding and, where the location asks for one, a manager's
   /// approval (the PIN is checked by the hub, so that needs a backend). Null when they keep the dish, or
   /// when the void cannot be made now (a message says why). A hub older than the rule asks for nothing:
-  /// the operator confirms as before ([confirm]; an edit's own sheet has already warned).
-  Future<Map<String, dynamic>?> _voidWord(
-    Line line, {
+  /// the operator confirms as before ([confirm]; an edit's own sheet has already warned). [what] names what
+  /// is voided to the manager: a dish, or "3 dishes" when several go on the one word.
+  Future<Map<String, dynamic>?> _voidWord({
+    required String what,
     required String title,
     required String body,
     bool confirm = true,
@@ -618,10 +620,104 @@ class _OrderScreenState extends State<OrderScreen> {
     if (reason == null || !mounted) return null;
     String? approval;
     if (rules.needsManager) {
-      approval = await _approve('Voiding ${line.item} (${reason.name})', purpose: 'void');
+      approval = await _approve('Voiding $what (${reason.name})', purpose: 'void');
       if (approval == null) return null;
     }
     return {'reason': reason.id, 'by': ?_staffName, 'by_id': ?_staffId, 'approval': ?approval};
+  }
+
+  /// The dishes in hand were let go over Comp or Void at the foot of the check: one reason and, where one
+  /// is needed, one manager's PIN for all of them, sent as one change (so the kitchen gets one VOID ticket).
+  Future<void> _lot(String target, List<Line> picked) async {
+    final lines = [
+      for (final line in picked)
+        if (line.isActive) line,
+    ];
+    if (lines.isEmpty || !(_order?.isOpen ?? false)) return;
+    if (target == 'comp') return _compLot(lines);
+    if (target == 'void') return _voidLot(lines);
+  }
+
+  /// Voids the lot. The dishes the kitchen has take the operator's word, once for all of them; the ones it
+  /// has not seen come off with nothing asked, as from the bin. Walking away from the word keeps every dish.
+  Future<void> _voidLot(List<Line> lines) async {
+    final sent = [
+      for (final line in lines)
+        if (line.fired) line,
+    ];
+    var word = const <String, dynamic>{};
+    if (sent.isNotEmpty) {
+      final what = sent.length == 1 ? sent.single.item : dishes(sent.length);
+      final unsent = lines.length - sent.length;
+      final said = await _voidWord(
+        what: what,
+        title: 'Void $what?',
+        body: [
+          if (sent.length > 1) '${[for (final line in sent) '${line.qty} × ${line.item}'].join(', ')}.',
+          sent.length == 1
+              ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
+              : 'They have gone to the kitchen. A VOID ticket prints so they stop making them.',
+          if (unsent == 1) 'The other dish was not sent and just comes off.',
+          if (unsent > 1) 'The other $unsent were not sent and just come off.',
+        ].join(' '),
+      );
+      if (said == null) return;
+      word = said;
+    }
+    await _appendAll([
+      for (final line in lines)
+        ...(line.fired
+                ? qtyChange(line, 0, newId: widget.outbox.newId).voiding(word)
+                : qtyChange(line, 0, newId: widget.outbox.newId))
+            .ops,
+    ]);
+  }
+
+  /// Comps the lot: the reasons the rules allow on an item, one picked for all of them, then the manager's
+  /// PIN once when that reason needs it. Each dish gets its own discount, as if comped one by one.
+  Future<void> _compLot(List<Line> lines) async {
+    if (!widget.api.connection.value.isOnline) {
+      _say('Comps need a hub or the cloud, and none answers now.');
+      return;
+    }
+    final PricingRules rules;
+    try {
+      rules = await widget.api.pricingRules();
+    } on ApiException catch (err) {
+      _say(err.message);
+      return;
+    }
+    if (!mounted) return;
+    final order = _order;
+    final check = order == null ? _readCheck : estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local);
+    final chosen = await showDialog<LotComp>(
+      context: context,
+      builder: (_) => LotCompDialog(
+        lot: [
+          for (final line in lines)
+            (
+              lineId: line.lineId,
+              qty: line.qty,
+              name: check?.line(line.lineId)?.name ?? line.item,
+              total: check?.line(line.lineId)?.total ?? '',
+            ),
+        ],
+        choices: lotChoices(rules, check?.discounts ?? const [], [for (final line in lines) line.lineId]),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    String? approval;
+    if (chosen.rule.needsManager) {
+      approval = await _approve('${chosen.rule.name} on ${dishes(chosen.lineIds.length)}');
+      if (approval == null) return;
+    }
+    await _appendAll([
+      for (final discount in chosen.discounts)
+        (
+          'discount',
+          {'discount_id': widget.outbox.newId(), ...discount, 'applied_by': ?_staffName, 'approval': ?approval},
+        ),
+    ]);
   }
 
   /// Delete or Backspace on a dish of the menu: one of it comes off the check, the opposite of the Enter that
@@ -738,7 +834,7 @@ class _OrderScreenState extends State<OrderScreen> {
     var word = const <String, dynamic>{};
     if (line.fired && chosen.qty < line.qty) {
       final said = await _voidWord(
-        line,
+        what: line.item,
         title: 'Void ${line.qty - chosen.qty} of the ${line.qty} ${line.item}?',
         body:
             'They have gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for ${chosen.qty}.',
@@ -849,6 +945,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onRemoveDiscount: _removeDiscount,
       onRemoveCharge: _removeCharge,
       onMove: _move,
+      onLot: _lot,
     );
     final menu = open
         ? Column(
@@ -977,6 +1074,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onRemoveDiscount,
     required this.onRemoveCharge,
     required this.onMove,
+    required this.onLot,
   });
 
   final Order? order;
@@ -1000,6 +1098,9 @@ class _TicketPanel extends StatefulWidget {
 
   /// Lines let go at another place or course on the check.
   final Future<void> Function(Drop drop) onMove;
+
+  /// The dishes in hand were let go over a place at the foot of the check: `comp` or `void`.
+  final Future<void> Function(String target, List<Line> lines) onLot;
 
   @override
   State<_TicketPanel> createState() => _TicketPanelState();
@@ -1147,6 +1248,8 @@ class _TicketPanelState extends State<_TicketPanel> {
                 rows: rows,
                 paper: posColors.checkPaper,
                 onDrop: _dropped,
+                targets: open ? _lotTargets : null,
+                onTarget: (target, lines) => unawaited(widget.onLot(target, lines)),
                 rowBuilder: (context, i, row, drag) => switch (row) {
                   CourseRow(:final id, :final name, :final state) => _CourseHeader(
                     key: ValueKey('course-row:$id'),
@@ -1373,6 +1476,22 @@ class _TicketPanelState extends State<_TicketPanel> {
       builder: (context, color, child) => Material(color: color ?? posColors.checkPaper, child: child),
       child: tile,
     );
+  }
+
+  /// Where the dishes in hand can be let go instead of put back down: over Comp, or over Void ("Take off"
+  /// while the kitchen has seen none of them). With several in hand each says how many it takes.
+  static List<LotTarget> _lotTargets(List<Line> inHand) {
+    final count = inHand.length == 1 ? '' : ' ${inHand.length}';
+    final sent = inHand.any((line) => line.fired);
+    return [
+      LotTarget(id: 'comp', label: 'Comp$count', icon: Icons.card_giftcard_outlined),
+      LotTarget(
+        id: 'void',
+        label: '${sent ? 'Void' : 'Take off'}$count',
+        icon: sent ? Icons.block : Icons.delete_outline,
+        danger: true,
+      ),
+    ];
   }
 
   /// The stack has come down: the check shows its lines there while their move is sent.
