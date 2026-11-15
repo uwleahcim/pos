@@ -21,7 +21,8 @@ merges after any disconnect.
 - Whose table it is (the server's name on each busy table, a server taking a table by opening it, the host
   giving a table to a server and handing one over, the `host` role): `docs/table-servers.md`
 - Printers and stations (where a dish prints, the printers with their fallbacks set from the app, finding them on
-  the network, to-go orders at the takeout counter): `docs/printing.md`
+  the network, to-go orders at the takeout counter, tickets that say "Ticket 2 of 3" and name the other stations
+  cooking): `docs/printing.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

@@ -21,6 +21,9 @@ screen holds:
 - **Printers**: its own screen: each printer with the station it prints for, its address and language, its
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
+  On the same card, two switches for what the tickets of one send say about each other: **Number the
+  tickets of one send** ("Ticket 2 of 3") and **Name the other stations on each ticket** ("Also at: Wok 2,
+  Sushi Bar"). Both on to start; a flip is saved at once and the next ticket prints by it.
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
 - **Sign in by face**: the location's switch (off to start), how the hub stands with its face models (and,

@@ -58,6 +58,7 @@ from ..settings import (
     clean_printers,
     clean_quotes,
     clean_table_timers,
+    clean_tickets,
     clean_voids,
     default_settings,
 )
@@ -312,6 +313,13 @@ class PrintersIn(BaseModel):
 
     printers: list[PrinterIn] = Field(default_factory=list)
     takeout_station: str | None = "takeout"
+
+
+class TicketsIn(BaseModel):
+    """What a kitchen ticket says about the other tickets of the same send. One left out stays as it is."""
+
+    numbered: bool | None = Field(None, description='"Ticket 2 of 3" when more than one station is cooking')
+    also_at: bool | None = Field(None, description='"Also at: Wok 2, Sushi Bar": the other stations cooking')
 
 
 class DiscoverIn(BaseModel):
@@ -643,6 +651,8 @@ def create_app(
         code: app.state.menu.defs.localizer.text(st.names, "en") for code, st in app.state.menu.defs.stations.items()
     }
     app.state.printing.takeout_station = lambda: app.state.settings.get("printers")["takeout_station"]
+    # Whether a ticket says "Ticket 2 of 3" and "Also at: Wok 2, Sushi Bar" is the manager's to say.
+    app.state.printing.ticket_words = lambda: app.state.settings.get("tickets")
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -913,6 +923,23 @@ def create_app(
         the rest keep theirs, since fallbacks name them. The next ticket prints by the new list."""
         manager_from(app.state.tokens, authorization)
         return {**write_setting("printers", body.model_dump(), clean_printers), "source": "settings"}
+
+    @app.get("/settings/tickets")
+    def read_tickets() -> dict[str, Any]:
+        """What a kitchen ticket says about the other tickets of the same send: `numbered` ("Ticket 2 of 3",
+        when more than one station is cooking) and `also_at` ("Also at: Wok 2, Sushi Bar", the other stations
+        cooking)."""
+        settings: SettingStore = app.state.settings
+        return settings.get("tickets")
+
+    @app.put("/settings/tickets")
+    def write_tickets(body: TicketsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns either line on or off; one left out of the call stays as it is. The next ticket
+        prints by it."""
+        manager_from(app.state.tokens, authorization)
+        settings: SettingStore = app.state.settings
+        asked = body.model_dump(exclude_none=True)
+        return write_setting("tickets", {**settings.get("tickets"), **asked}, clean_tickets)
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")

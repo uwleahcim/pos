@@ -22,7 +22,8 @@ import 'void_rules_dialog.dart';
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
 /// the countdown on each table of the floor map, what voiding a sent dish takes (a manager's PIN or not, and
-/// the reasons to pick from), the kitchen printers (on their own screen), which screen each desk phone is
+/// the reasons to pick from), the kitchen printers (on their own screen) and what their tickets say about
+/// each other ("Ticket 2 of 3", "Also at: Wok 2"), which screen each desk phone is
 /// linked to, face sign-in with each staff member's enrollment and tag, and the hands-free switching between
 /// people. The hub keeps them; a terminal reads them when it opens an order. The report of voids and comps
 /// opens from here too. Behind the manager PIN.
@@ -115,6 +116,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
+  TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
+  bool _ticketWordsBusy = false;
+  String? _ticketWordsMessage;
 
   @override
   void initState() {
@@ -193,6 +197,33 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       });
     } on ApiException {
       // an older hub without printer settings: the card says so
+    }
+    try {
+      final words = await widget.api.ticketWords();
+      if (mounted) setState(() => _ticketWords = words);
+    } on ApiException {
+      // an older hub prints neither line: the card shows no switch for them
+    }
+  }
+
+  Future<void> _saveTicketWords(TicketWords next) async {
+    setState(() {
+      _ticketWordsBusy = true;
+      _ticketWordsMessage = null;
+    });
+    try {
+      final saved = await widget.api.saveTicketWords(widget.token, next);
+      if (!mounted) return;
+      setState(() {
+        _ticketWords = saved;
+        _ticketWordsBusy = false;
+      });
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _ticketWordsBusy = false;
+        _ticketWordsMessage = err.detail?['message'] as String? ?? err.message;
+      });
     }
   }
 
@@ -688,19 +719,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              key: const ValueKey('printers'),
-              leading: Icon(
-                (_stations?.missing.isNotEmpty ?? false) ? Icons.print_disabled_outlined : Icons.print_outlined,
-                color: (_stations?.missing.isNotEmpty ?? false) ? scheme.error : null,
-              ),
-              title: const Text('Printers'),
-              subtitle: Text(_printersLine),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _openPrinters,
-            ),
-          ),
+          _printersCard(context),
           const SizedBox(height: 12),
           Card(
             child: Padding(
@@ -772,6 +791,56 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       appBar: AppBar(title: const Text('Location settings')),
       body: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
+      ),
+    );
+  }
+
+  /// The printers (on their own screen) and, under them, what the tickets of one send say about each other:
+  /// two switches that save as they are flipped. A hub older than the switches shows none.
+  Widget _printersCard(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final missing = _stations?.missing.isNotEmpty ?? false;
+    final words = _ticketWords;
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            key: const ValueKey('printers'),
+            leading: Icon(
+              missing ? Icons.print_disabled_outlined : Icons.print_outlined,
+              color: missing ? scheme.error : null,
+            ),
+            title: const Text('Printers'),
+            subtitle: Text(_printersLine),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openPrinters,
+          ),
+          if (words != null) ...[
+            const Divider(height: 1),
+            SwitchListTile(
+              key: const ValueKey('tickets-numbered'),
+              value: words.numbered,
+              onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(numbered: on)),
+              title: const Text('Number the tickets of one send'),
+              subtitle: const Text('"Ticket 2 of 3", when more than one station is cooking'),
+            ),
+            SwitchListTile(
+              key: const ValueKey('tickets-also-at'),
+              value: words.alsoAt,
+              onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(alsoAt: on)),
+              title: const Text('Name the other stations on each ticket'),
+              subtitle: const Text('"Also at: Wok 2, Sushi Bar", so a cook can time a dish against them'),
+            ),
+            if (_ticketWordsMessage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_ticketWordsMessage!, style: TextStyle(color: scheme.error)),
+                ),
+              ),
+          ],
+        ],
       ),
     );
   }

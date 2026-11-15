@@ -500,6 +500,20 @@ class PosApi {
     ),
   );
 
+  /// What the kitchen tickets of one send say about each other at this location ("Ticket 2 of 3", "Also at").
+  Future<TicketWords> ticketWords() async => TicketWords.fromJson(await _get('/settings/tickets'));
+
+  /// A manager (token from [adminSession]) turns either line on or off; the next ticket prints by it.
+  Future<TicketWords> saveTicketWords(String token, TicketWords words) async => TicketWords.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/tickets'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(words.toJson()),
+      ),
+    ),
+  );
+
   /// The stations the menu prints at, with the printer serving each and the ones that have none yet.
   Future<StationList> printStations() async => StationList.fromJson(await _get('/print/stations'));
 

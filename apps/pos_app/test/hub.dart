@@ -149,6 +149,12 @@ class Hub {
   Map<String, dynamic> printers = {'printers': [], 'takeout_station': 'takeout', 'source': 'none'};
   String? printersAuth;
   String? refusePrinters;
+
+  /// What the tickets of one send say about each other (`GET/PUT /settings/tickets`), the token the last save
+  /// carried and a reason to refuse the next save with. Null is a hub older than the setting (404).
+  Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true};
+  String? ticketWordsAuth;
+  String? refuseTicketWords;
   Map<String, dynamic> stations = {'stations': [], 'missing': [], 'takeout_station': 'takeout'};
   List<Map<String, dynamic>> found = [];
   Map<String, dynamic> identity = {'reachable': false};
@@ -362,6 +368,18 @@ class Hub {
           deskPhones = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(deskPhones);
+      case '/settings/tickets':
+        if (ticketWords == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          ticketWordsAuth = request.headers['authorization'];
+          if (refuseTicketWords != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseTicketWords},
+            }, 422);
+          }
+          ticketWords = {...ticketWords!, ...jsonDecode(request.body) as Map<String, dynamic>};
+        }
+        return json(ticketWords!);
       case '/settings/printers':
         if (request.method == 'PUT') {
           printersAuth = request.headers['authorization'];

@@ -63,6 +63,39 @@ wok 3, the broiler, the range, the fryer and the sushi bar (`backend/src/pos/men
 `hidden_at`). `hubctl menu import --apply` gives a running hub the same on each of those groups nobody has
 set; a group a manager has set in the editor, to anything, is left alone.
 
+**What a ticket says about the other stations.** One send (a fire, or a void of sent dishes) often has
+more than one station cooking. Each of their tickets then says so, last before the dishes:
+
+```
+WOK 1
+#3412  dine in                             18:42
+Table 12  4 guests
+Server Amy
+Course: Entrees
+Ticket 1 of 3
+Also at: Fryer, Sushi Bar
+------------------------------------------------
+```
+
+- **Ticket 1 of 3** numbers the tickets that have something to cook, in the order the printers stand under
+  Location settings › Printers.
+- **Also at** names the other stations cooking for the same send, so a cook can time a dish against them.
+  It names stations, not printers: a printer that prints for Wok 1 and the Fryer is one ticket, and the
+  sushi bar's ticket reads "Also at: Wok 1, Fryer" only when both have a dish. A station with no printer of
+  its own is still named, though its dishes come out of the first printer.
+
+Both count one send, not the whole order: appetizers fired earlier are not on the entrees' tickets. With
+one station cooking, neither line prints. A void ticket says the same of the other stations it reaches,
+and the copy a fallback printer gets is the same ticket.
+
+The **takeout counter packs and does not cook**. Its ticket for a to-go order (the whole order, for the
+bag) is not numbered and the cooks' tickets do not name it; it reads "Also at: Wok 1, Sushi Bar" itself, so
+whoever packs knows where the food is coming from. A counter printer that also prints for a station that
+cooks is counted for that station.
+
+Each line is a switch, on to start: **Location settings**, on the Printers card, **Number the tickets of
+one send** and **Name the other stations on each ticket** (`GET`/`PUT /settings/tickets`).
+
 In the menu editor, each dish has a **Prints at** section: its station (the category's unless set), with
 a line saying whether a printer serves that station, and **A new station…** to add one (Dessert, say) from
 the dish itself. In an option group, the printer button on each option says where else the dish prints
@@ -158,6 +191,8 @@ still known as a Star by step 3, without its model.
   still accepted alone, for an app not yet rebuilt). `dialect` is `escpos`, `star` or `auto`; with `auto` the
   hub prints in `detected`, the language `POST /print/identify` or the scan heard, and in ESC/POS while that
   is null. Two printers with one address are refused: one printer prints for several stations.
+- `GET /settings/tickets`, `PUT /settings/tickets` (manager): `numbered` and `also_at`, true or false, for
+  the two lines a ticket says about the other tickets of its send; one left out of a `PUT` stays as it is.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with
@@ -166,8 +201,8 @@ still known as a Star by step 3, without its model.
 - `GET /print/printers`, `POST /print/test` (by id or station) and the relay's job calls as before; a job
   lists its `fallbacks` and how often it `moved`.
 
-Code: `backend/src/pos/printing/service.py` (routing), `jobs.py` (fallbacks), `discover.py` (the scan and
+Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above), `jobs.py` (fallbacks), `discover.py` (the scan and
 the languages), `pos/settings.py` (`clean_printers`), the engine's `routes_to` in `pos/menu/engine.py`;
 `apps/pos_app/lib/screens/printers_screen.dart`, `printers.dart`, the editor's Prints at in
-`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_discover.py`,
-`apps/pos_app/test/printers_screen_test.dart`.
+`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_other_stations.py`, `test_discover.py`,
+`apps/pos_app/test/printers_screen_test.dart`, `ticket_words_test.dart`.
