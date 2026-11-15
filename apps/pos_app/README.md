@@ -36,14 +36,16 @@ on the hub, never pictures). [`docs/face-signin.md`](../../docs/face-signin.md) 
 The menu on the order screen has a tab per menu the hub has open: Food and Drinks all day, Lunch at lunch
 (`docs/menus.md`). A tab shows its categories; a category opens its dishes below the tiles; a menu with a
 single category skips the tile and shows its dishes straight away; the search finds a dish on every menu
-open. With one menu open there are no tabs.
+open, the best match first (`beef broccoli` is Beef with Broccoli, then the other beef dishes; words in any
+order, plurals, slips of the keyboard, the Chinese name, the kitchen's label: `docs/menus.md`, "The search").
+With one menu open there are no tabs.
 
 With a keyboard (a Mac, or a tablet with one) an order is taken without the mouse; the highlighted tile is
 the one the keys act on.
 
 | Key | Highlight on | What it does |
 | --- | --- | --- |
-| Enter | the search field | Goes to the first tile under it: the first dish found, or the first category. |
+| Enter | the search field | Goes to the first tile under it: the best match of what was typed, or the first category. |
 | Arrows | a text box, the search field too | Move the cursor while they can, and leave the box once they cannot: Right and Down from the end of the text, Left and Up from its start. Down from the search field goes to the first tile under it. |
 | Arrows | a tile | Move to the next tile that way. Up from the top row is the search field again. |
 | Enter | a category | Opens it and goes to its first dish. |
@@ -99,6 +101,10 @@ what a change to a screen must not undo:
   a ring would look different (`_Rings.look`), and the few words that show the time (a table's minutes, a
   badge, the count of tables to look at) are each a `_Ticking` that hears every second and is rebuilt only
   when what it shows changed. `test/table_timers_test.dart` checks that a second redraws no table.
+- What runs on every key pressed does its preparing once. The menu's search (`lib/menu_search.dart`) splits
+  every dish's names into words when the menu is read; a key pressed compares what was typed with each
+  different word of the menu once and then only looks numbers up, dish by dish. `test/menu_search_test.dart`
+  times it.
 - Work on megabytes (every dish's choices at once) runs in a worker isolate.
 
 Settings shows, under Smoothness, how many frames this device drew late since the app started and the

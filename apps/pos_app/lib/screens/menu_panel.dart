@@ -10,6 +10,7 @@ import '../api.dart';
 import '../live.dart';
 import '../local_order.dart' show localPrice;
 import '../menu.dart';
+import '../menu_search.dart';
 import 'drill_down.dart';
 import 'text_arrows.dart';
 import 'theme.dart';
@@ -100,6 +101,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _tiles = <String, _Tiles>{}; // each grid's tiles as they were last built: see [_tilesOf]
   var _counted = 0; // goes up whenever the count on a tile may have changed: see [_tilesOf]
   (String, List<Menu>?, List<MenuEntry>)? _lastFound; // what the search last found, for what words on what menus
+  (List<Menu>?, MenuSearch<MenuEntry>)? _searchable; // the dishes prepared for the search, for what menus
   (List<Menu>, String, Widget)? _tabsBuilt; // the tabs as last built, for which menus with which one on screen
   (bool, Widget)? _searchBuilt; // the search field as last built, with or without its Clear button
   (_PendingItemSelection, int, int, double, Widget)? _trayBuilt; // the choices tray as last built: see [_trayFor]
@@ -367,8 +369,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   }
 
   /// What the search finds, on every menu open, whichever tab is showing: a soda typed on the Food tab is
-  /// found at the bar too. A dish on two menus at the same sizes and prices (the soft drinks) is listed once,
-  /// under its first menu; a dish the lunch menu sells as another size or price is listed from both.
+  /// found at the bar too. The best match comes first ([MenuSearch]: "beef broccoli" finds Beef with Broccoli,
+  /// then the other beef dishes), so Down or Enter in the search field lands on it. A dish on two menus at
+  /// the same sizes and prices (the soft drinks) is listed once, under its first menu; a dish the lunch menu
+  /// sells as another size or price is listed from both.
   ///
   /// Looked up once for the words typed, not on every frame while a tray moves under the results.
   List<MenuEntry> get _found {
@@ -378,17 +382,24 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     final seen = <String>{};
     String offer(MenuEntry e) => '${e.item}|${e.variants.map((v) => '${v.variantId}=${v.price}').join(',')}';
     final found = [
-      for (final m in _openMenus)
-        for (final s in m.sections)
-          for (final e in s.allEntries)
-            if ((e.number?.toLowerCase() == q ||
-                    e.name.toLowerCase().contains(q) ||
-                    (e.secondName ?? '').toLowerCase().contains(q)) &&
-                seen.add(offer(e)))
-              e,
+      for (final e in _dishes.find(q))
+        if (seen.add(offer(e))) e,
     ];
     _lastFound = (q, _menus, found);
     return found;
+  }
+
+  /// The dishes the search looks through, in the menus' order: prepared once for the menus as they were
+  /// read, not on every key pressed.
+  MenuSearch<MenuEntry> get _dishes {
+    final last = _searchable;
+    if (last != null && identical(last.$1, _menus)) return last.$2;
+    final dishes = MenuSearch<MenuEntry>([
+      for (final m in _openMenus)
+        for (final s in m.sections) ...s.allEntries,
+    ], (e) => SearchText(number: e.number, names: [e.name, e.secondName], labels: [e.kitchenName]));
+    _searchable = (_menus, dishes);
+    return dishes;
   }
 
   void _startTransition({required bool resetScroll, String? resetItemsSectionId}) {

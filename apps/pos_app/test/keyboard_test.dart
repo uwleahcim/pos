@@ -416,6 +416,25 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('Enter and Down in the search field land on the best match, and the arrows go on from it', (
+    tester,
+  ) async {
+    await pumpMenu(tester);
+    await tester.enterText(find.byType(TextField), 'roll dragon'); // the words the other way round
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(focused(), 'search-grid e:dinner:S4:DRAGON');
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    expect(focused(), 'search-grid e:dinner:1:EGGROLL', reason: 'the other rolls follow, as the menu has them');
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(focused(), 'search');
+    expect(typed(tester), 'roll dragon');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(), 'search-grid e:dinner:S4:DRAGON');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('an arrow leaves the search field only once it can move the cursor no further', (tester) async {
     await pumpMenu(tester);
     int cursor() => tester.widget<TextField>(find.byType(TextField)).controller!.selection.extentOffset;

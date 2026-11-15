@@ -27,6 +27,7 @@ class MenuEntry {
     required this.variants,
     this.number,
     this.secondName,
+    this.kitchenName,
     this.hasOptions = false,
     this.needsChoice = false,
     this.tags = const [],
@@ -43,6 +44,7 @@ class MenuEntry {
       name: json['name'] as String? ?? '',
       number: json['number'] as String?,
       secondName: json['second_name'] as String?,
+      kitchenName: json['kitchen_name'] as String?,
       hasOptions: hasOptions,
       // an older hub does not say: then assume a tap asks whenever there is anything to ask
       needsChoice: json['needs_choice'] as bool? ?? (hasOptions || variants.length > 1),
@@ -67,6 +69,10 @@ class MenuEntry {
   final String name;
   final String? number;
   final String? secondName;
+
+  /// What the kitchen's ticket calls the dish, when that is not its name (`腰果蝦 SHMP CASHEW r`): the search
+  /// finds a dish by it too. An older hub does not say.
+  final String? kitchenName;
   final bool hasOptions;
 
   /// A tap has to ask something (a size, a required choice with no default) before the dish can go on the
