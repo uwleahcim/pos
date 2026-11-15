@@ -92,7 +92,9 @@ def text_for(
 
 class Notifier:
     """Watches the operations the hub stores: an order marked ready (`stage` set to `ready`) gets its ready
-    text, once; a promised time moved later on an order the kitchen has not finished gets the new time."""
+    text, once; a promised time moved later on an order the kitchen has not finished gets the new time. The
+    time an order is given as it is first sent to the kitchen is its quote, not a delay: the terminal
+    settles it then (a big order takes longer), and whoever took the order has told the customer."""
 
     def __init__(self, messenger: Messenger, *, location: str, unpaid: Callable[[OrderState], bool]) -> None:
         self.messenger = messenger
@@ -120,6 +122,7 @@ class Notifier:
             return text_for("ready", after, location=self.location, unpaid=self._unpaid(after))
         was, now = before.fields.get("promised_at"), after.fields.get("promised_at")
         if before.first is not None and isinstance(was, int) and isinstance(now, int) and now > was:
-            if after.fields.get("stage") not in ("ready", "picked_up"):
+            first_send = not before.fired and bool(after.fired)
+            if not first_send and after.fields.get("stage") not in ("ready", "picked_up"):
                 return text_for("delayed", after, location=self.location, at=datetime.fromtimestamp(now / 1000))
         return None

@@ -593,9 +593,13 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   String get _quotesSummary {
     final quotes = _quotes;
     if (quotes == null) return 'Loading…';
-    return '${[
-      for (final c in const ['counter', 'phone', 'online', 'delivery']) '${channelLabel(c)} ${quotes.minutesFor(c)}',
-    ].join(' · ')} min';
+    final channels = [
+      for (final c in const ['counter', 'phone', 'online', 'delivery']) '${channelLabel(c)} ${quotes.baseFor(c)}',
+    ].join(' · ');
+    final big = quotes.extraFor(quotes.bigDishes) > 0
+        ? ' · ${quotes.bigDishes} dishes or more +${quotes.bigMinutes}'
+        : '';
+    return '$channels min$big';
   }
 
   @override

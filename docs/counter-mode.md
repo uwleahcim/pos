@@ -12,12 +12,15 @@ Tap **To go** on the orders screen.
    goes (leave it empty for a walk-up who waits). The language chips (English, 中文) pick the language
    of the texts.
 2. **Channel.** Counter or phone; online and delivery orders arrive on their own in phase 2. The hub's
-   quote for the channel says when it will be ready ("Ready in about 15 min").
+   quote for the channel says when it will be ready ("Ready in about 15 min"). While a manager's rush is
+   on, the quote is longer and the form says by how much ("Ready in about 35 min (busy kitchen: +20)").
 3. **For later.** Today or tomorrow, and a time. The kitchen ticket prints ahead of that time by the
    channel's quote, so the kitchen sees the order when it is time to cook it, not when it was taken.
 
 The check opens with no seats or courses. Add the dishes as on a table. The app bar shows the number the
-hub gave the order and the time it is for (`#42 Linda · 18:05`).
+hub gave the order and the time it is for (`#42 Linda · 18:05`). When the dishes make it a big order (see
+"Quote times" below), the screen says so once ("Big order: ready at 18:15, 10 minutes later.") and the app
+bar shows the later time, so the customer hears the right one before the order is sent.
 
 ### Phone orders
 
@@ -53,6 +56,17 @@ Once the kitchen has the order, **Ready** marks it ready (the hub texts the cust
 **Picked up** closes the check. The kitchen ticket prints `#42  LINDA` large, `READY BY 18:05`, and the
 channel where a table order shows its table.
 
+An order the customer named a time for reads "for 18:30" where another reads "ready 18:05", and is marked
+as its time to start cooking nears (its time less its quote):
+
+- amber **Send by 18:10**, from a quarter of an hour before it must start, while nobody has sent it;
+- amber **Starts 18:10** over the same quarter of an hour once it was sent: its ticket prints by itself;
+- red **Not sent, due to start 18:10** when that time has come and it was never sent, so nothing printed.
+
+The colours are the floor map's timer colours. The list redraws at the moment a mark changes, not by the
+second. While a rush is on, one line above the checks says so on every screen ("Kitchen is busy: new
+quotes +20 min").
+
 ## Order numbers
 
 The hub numbers each takeout, phone, online or delivery order when its `create` arrives (`order_no`,
@@ -65,7 +79,38 @@ A manager sets the minutes per channel, and which channels may pay at pickup, un
 **Quote times** (manager PIN; see `location-settings.md`). The hub keeps them for every terminal:
 `GET /settings/quotes`, `PUT` with a manager
 session token. Defaults: counter 15, phone 20, online 25, delivery 45 minutes; phone orders may pay at
-pickup. Kitchen pacing will quote the times itself in phase 2.
+pickup. Kitchen pacing will quote the times itself in phase 2; until then two things move a quote with the
+kitchen.
+
+### The rush
+
+When the kitchen is behind, a manager taps **Kitchen rush** on the orders screen (the flame; on a phone it
+is under More), gives the PIN and picks **+10, +15, +20, +30 or +45 min**, or **Off**. From then on every
+new to-go quote on every screen is that much longer, and one line above the checks says so. Tapping that
+line changes the rush the same way (it asks for a manager's PIN, whoever taps).
+
+- The rush is set, not added to: +30 after +20 is 30 minutes, not 50.
+- Orders already promised keep their time. Nobody is texted.
+- It ends by itself at the end of the night (04:00, `POS_TIMEZONE`), like the numbers left on a dish, so a
+  rush left on does not make tomorrow's lunch late.
+- An order for later takes the rush only when its time falls inside the rush's night; then its ticket
+  prints that much sooner, and its time stays the one the customer named.
+- With no hub in reach the screens keep the rush they last read.
+
+### Big orders
+
+Under **Location** › **Quote times** › **Big orders** a manager can say that an order of N dishes or more
+takes M more minutes (both boxes empty: no such rule, which is how it starts). Dishes are counted with
+their quantities: three egg rolls are three dishes.
+
+- The order screen says it when an order becomes big, and when it stops being one, and shows the later
+  time in the app bar.
+- The time is settled when the order is first sent (**Pay & send** or **Send**): the quote grows by the
+  extra minutes and so does the promised time, in the same batch as the send, so the ticket prints
+  `READY BY` the later time and the ready text is not a "delayed" one.
+- A time the customer named does not move: the kitchen starts sooner instead ("Big order: the kitchen
+  starts it 10 minutes sooner. Still for 18:30.").
+- Dishes added after the first send do not move the time again.
 
 ## Texts to the customer
 
@@ -74,7 +119,8 @@ The hub sends two texts, in the order's language (English or Chinese), to the ph
 - **Ready**, when the stage becomes `ready`: "Hi Linda, order #42 is ready for pickup at Golden Wok.
   Please pay at pickup." (the last sentence only while something is still due).
 - **Delayed**, when a future order's promised time is moved later before it is ready (a `set_field` on
-  `promised_at`; the app has no button for it yet).
+  `promised_at`; the app has no button for it yet). The time a big order is given as it is first sent is
+  its quote, not a delay: nothing is texted for it.
 
 Phase 1 ships the adapter and a messenger that only logs. `POS_MESSAGING=log` writes each text to the API
 log, and `GET /messages` lists the last ones, newest first, so the bench can see what would have gone
@@ -84,7 +130,19 @@ in phase 2.
 ## On the wire
 
 - `create` with an `order_type` other than `dine_in` carries `channel`, `customer_name`, `phone`,
-  `locale`, `quoted_minutes`, `promised_at` (ms) and `stage`; the hub adds `order_no`.
+  `locale`, `quoted_minutes`, `promised_at` (ms) and `stage`; the hub adds `order_no`. `for_later: true`
+  says the customer named the time (an order made before 2026-11-15 does not say; the app then goes by
+  whether its time is further off than its quote).
+- `GET /settings/quotes` answers `{"minutes": {...}, "pay_at_pickup": [...], "big_orders": {"dishes": 8,
+  "minutes": 10}, "rush": {"minutes": 20, "until": 1800000000000, "by": "Mike"}}`; `rush` is `null` while
+  there is none or its night is over. `PUT /settings/quotes` (the manager Bearer token) takes `minutes`,
+  `pay_at_pickup` and `big_orders` (left out, the rule stays as it was, so an app from before it does not
+  wipe it; 0 for either number takes the rule off) and never touches the rush.
+- `PUT /settings/rush` (the manager Bearer token) with `{"minutes": 20}`, 0 to 120, 0 for off: the hub
+  stamps when the night ends and who set it, tells every screen on the change feed (`settings`), and
+  answers like `GET /settings/quotes`.
+- A big order's first send is one batch: `set_field` with `quoted_minutes` and (unless the time was named)
+  `promised_at`, then `fire`.
 - `pay` carries `payment_id`, `method` (`cash`, `elsewhere` or `card`), `amount`, for cash `tendered`
   (at least the amount), and `note` and `by`. A bad one is refused as `invalid_payment` with its
   problems. The first `pay` with a given id wins, so a retry cannot pay twice.

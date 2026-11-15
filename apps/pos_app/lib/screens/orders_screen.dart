@@ -26,6 +26,7 @@ import 'floor_view.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
+import 'rush.dart';
 import 'server_picker.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
@@ -87,6 +88,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
   int _deskCalls = 0;
   bool _ordering = false; // the to-go form is open
   bool _inFront = true; // no check, screen or dialog is open over this one
+  // The quote times as the hub last gave them: a rush shows above the checks, for everyone taking orders.
+  Quotes? _quotes;
+  bool _quotesStale = true; // the hub said a setting changed, or nothing was read yet
+  DateTime _quotesRead = DateTime.fromMillisecondsSinceEpoch(0);
+  // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
+  // nears its start, or the rush runs out. Nothing here redraws by the second.
+  Timer? _clock;
   // The staff as the hub last listed them: who a table can be given to, and who gives tables out.
   Roster _roster = Roster.none;
   late Future<void> _rosterRead;
@@ -103,6 +111,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
     });
     _live = widget.api.live.changes.listen((change) {
+      if (change.settings || change.everything) _quotesStale = true;
       if (_inFront && change.anyOrder) _reader();
     });
     widget.outbox.addListener(_onOutbox);
@@ -124,6 +133,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _clock?.cancel();
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
@@ -197,15 +207,105 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Future<void> _read() async {
     _poll.asked();
+    unawaited(_readQuotes());
     try {
       final orders = await widget.api.listOrders(
         status: _showClosed ? null : 'open',
         within: _showClosed ? _closedWithin : null,
       );
       // A backend with nothing new hands back the list it gave last time: nothing to redraw then.
-      if (mounted && !identical(orders, _orders)) setState(() => _orders = orders);
+      if (mounted && !identical(orders, _orders)) {
+        setState(() => _orders = orders);
+        _armClock();
+      }
     } on ApiException {
       // The status bar already shows the outage; the list keeps its last picture.
+    }
+  }
+
+  /// The quote times, for the rush strip: read when the hub says a setting changed, and now and then while
+  /// it cannot say (twice a minute at most). The answer is the one already held unless something changed.
+  Future<void> _readQuotes() async {
+    final now = DateTime.now();
+    if (!_quotesStale && now.difference(_quotesRead) < const Duration(seconds: 30)) return;
+    _quotesStale = false;
+    _quotesRead = now;
+    try {
+      final quotes = await widget.api.quotes();
+      if (!mounted || identical(quotes, _quotes)) return;
+      setState(() => _quotes = quotes);
+      _armClock();
+    } on ApiException {
+      // nothing answers, or a hub with no quotes: the strip keeps what it showed
+    }
+  }
+
+  /// Sets [_clock] for the next moment the clock alone changes this screen: the rush running out, or an
+  /// order for later nearing or reaching its time to start.
+  void _armClock() {
+    _clock?.cancel();
+    final now = DateTime.now();
+    DateTime? next;
+    void consider(DateTime? at) {
+      if (at != null && at.isAfter(now) && (next == null || at.isBefore(next!))) next = at;
+    }
+
+    final rush = _quotes?.rush;
+    if (rush != null) consider(DateTime.fromMillisecondsSinceEpoch(rush.until));
+    for (final order in _orders) {
+      final promised = order.promisedAt;
+      if (order.isTakeout && order.isOpen && order.forLater && promised != null) {
+        consider(laterStageChanges(promisedAt: promised, quotedMinutes: order.quotedMinutes, now: now));
+      }
+    }
+    final at = next;
+    if (at == null) return;
+    _clock = Timer(at.difference(now) + const Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() {});
+      _armClock();
+    });
+  }
+
+  /// A manager says the kitchen is behind, or that it has caught up: minutes on every new quote, on every
+  /// screen, until the night is over. Anyone may tap; the hub takes it from a manager's PIN only.
+  Future<void> _rush() async {
+    final token = await showDialog<String>(
+      context: context,
+      builder: (_) => ManagerPinDialog(
+        api: widget.api,
+        device: widget.settings.device,
+        action: 'Set the rush',
+        what: 'add minutes to the quotes',
+      ),
+    );
+    if (token == null || !mounted) return;
+    final current = _quotes?.rushAt(DateTime.now()) ?? 0;
+    final minutes = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => RushSheet(current: current),
+    );
+    if (minutes == null || minutes == current || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final saved = await widget.api.saveRush(token, minutes);
+      if (!mounted) return;
+      setState(() => _quotes = saved);
+      _armClock();
+      messenger.showSnackBar(
+        SnackBar(
+          key: const ValueKey('rush-said'),
+          content: Text(
+            minutes == 0
+                ? 'The rush is off. New orders get the usual quote.'
+                : 'New to-go orders are quoted $minutes minutes longer on every screen, until closing.',
+          ),
+        ),
+      );
+    } on ApiException catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text('The rush was not changed: ${err.message}')));
     }
   }
 
@@ -228,7 +328,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       try {
         quotes = await widget.api.quotes();
       } on ApiException {
-        quotes = const Quotes(); // the hub's own defaults, until it answers
+        quotes = _quotes ?? const Quotes(); // as last read, or the hub's own defaults, until it answers
       }
       if (!mounted) return;
       final who = caller ?? widget.phone?.callerForOrder;
@@ -249,8 +349,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// sells them today, each to the course a dish rung in by hand would go to; the operator is told which
   /// prices moved and which dishes were left off, while the customer is still on the call.
   Future<void> _startOrder(TakeoutRequest request, Quotes quotes) async {
-    final minutes = quotes.minutesFor(request.channel);
-    final promised = request.promisedAt ?? DateTime.now().add(Duration(minutes: minutes));
+    // The quote is the channel's minutes and tonight's rush. A time the customer named stays theirs: the
+    // quote then says how long before it the kitchen starts.
+    final now = DateTime.now();
+    final minutes = quotes.minutesFor(request.channel, at: now, promised: request.promisedAt);
+    final promised = request.promisedAt ?? now.add(Duration(minutes: minutes));
     final staff = widget.session.staff;
     final messenger = ScaffoldMessenger.of(context);
     final note = request.note;
@@ -312,6 +415,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       'locale': request.locale,
       'quoted_minutes': minutes,
       'promised_at': promised.millisecondsSinceEpoch,
+      if (request.promisedAt != null) 'for_later': true,
       'stage': 'new',
     }, lines: lines);
   }
@@ -548,6 +652,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final posColors = PosColors.of(context);
     final small = compact(context);
     final listed = _listed;
+    final now = DateTime.now();
+    final rush = _quotes?.rush;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
       (
@@ -558,6 +664,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _refresh();
         }),
       ),
+      if (const {'manager', 'owner'}.contains(widget.session.staff?.role) && (_quotes?.takesRush ?? false))
+        ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
         ('Location', Icons.storefront_outlined, _location),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
@@ -642,6 +750,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       body: Column(
         children: [
           CaptureBanner(api: widget.api, outbox: widget.outbox),
+          if (rush != null && rush.runsAt(now)) RushStrip(key: const ValueKey('rush-strip'), rush: rush, onTap: _rush),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -682,6 +791,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         final items = lines.fold<int>(0, (n, l) => n + l.qty);
                         final isTakeout = order.isTakeout;
                         final stage = order.stage;
+                        // An order for later is marked as its time to start cooking nears, and when that
+                        // time has come and nobody sent it.
+                        final promisedAt = order.promisedAt;
+                        final later = !isTakeout || !order.isOpen || stage != 'new'
+                            ? LaterStage.none
+                            : laterStage(
+                                forLater: order.forLater,
+                                promisedAt: promisedAt,
+                                quotedMinutes: order.quotedMinutes,
+                                sent: order.isFired,
+                                now: now,
+                              );
                         // Counter mode: the number the hub gave it, the name, the channel, when it is for,
                         // whether it is paid, and the next step (Ready texts the customer; Picked up closes).
                         final Widget? step = !isTakeout || !order.isOpen || !order.isFired
@@ -722,19 +843,36 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                     : 'Table ${order.table}',
                                 style: theme.textTheme.titleMedium,
                               ),
-                              subtitle: Text(
-                                [
-                                  '$items items',
-                                  order.status,
-                                  if (order.isFired) 'fired',
-                                  if (isTakeout && order.promisedAt != null) 'ready ${clockTime(order.promisedAt!)}',
-                                  if (isTakeout) order.hasPaid ? 'paid' : 'pay at pickup',
-                                  if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
-                                  if (queued) 'waiting to send',
-                                ].join(' · '),
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: queued ? scheme.error : scheme.onSurfaceVariant,
-                                ),
+                              subtitle: Wrap(
+                                spacing: 6,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (promisedAt != null && (later == LaterStage.soon || later == LaterStage.unsent))
+                                    LaterMark(
+                                      key: ValueKey('later-${order.orderId}'),
+                                      stage: later,
+                                      sent: order.isFired,
+                                      starts: startsAt(promisedAt, order.quotedMinutes),
+                                      warn: (posColors.timerWarn, posColors.timerWarnText),
+                                      late: (posColors.timerLate, posColors.timerLateText),
+                                    ),
+                                  Text(
+                                    [
+                                      '$items items',
+                                      order.status,
+                                      if (order.isFired) 'fired',
+                                      if (isTakeout && promisedAt != null)
+                                        '${order.forLater ? 'for' : 'ready'} ${clockTime(promisedAt)}',
+                                      if (isTakeout) order.hasPaid ? 'paid' : 'pay at pickup',
+                                      if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
+                                      if (queued) 'waiting to send',
+                                    ].join(' · '),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: queued ? scheme.error : scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
                               ),
                               trailing: step ?? const Icon(Icons.chevron_right),
                               onTap: () => _open(order.orderId),
@@ -975,7 +1113,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final minutes = widget.quotes.minutesFor(_channel);
+    final now = DateTime.now();
+    final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised);
+    final rush = widget.quotes.rushAt(now, promised: _promised);
     final customer = _customer;
     return AlertDialog(
       title: const Text('To-go order'),
@@ -1032,7 +1172,12 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                 key: const ValueKey('takeout-later'),
                 contentPadding: EdgeInsets.zero,
                 title: const Text('For later'),
-                subtitle: Text(_later ? 'Prints ahead of its time by the quote' : 'Ready in about $minutes min'),
+                subtitle: Text(
+                  key: const ValueKey('takeout-quote'),
+                  _later
+                      ? 'Prints ahead of its time by the quote${rush > 0 ? ' ($minutes min tonight)' : ''}'
+                      : 'Ready in about $minutes min${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
+                ),
                 value: _later,
                 onChanged: (on) => setState(() => _later = on),
               ),

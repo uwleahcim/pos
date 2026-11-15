@@ -4,6 +4,7 @@ time, and the ready text behind a messenger that only logs."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import date, datetime
 
@@ -18,7 +19,7 @@ from pos.orders.numbers import OrderNumbers
 from pos.printing.jobs import JobStore
 from pos.printing.service import Printer, PrintService, lead_delay, ticket_for
 from pos.printing.ticket import render
-from pos.settings import SettingStore, clean_quotes
+from pos.settings import SettingStore, clean_quotes, clean_rush, rush_now
 from pos.sync.hlc import HLC
 from pos.sync.oplog import OpStore, replay
 from pos.tax import massachusetts
@@ -50,6 +51,7 @@ def client(
     messenger: LogMessenger | None = None,
     numbers: OrderNumbers | None = None,
     today: Callable[[], date] = lambda: DAY,
+    settings: SettingStore | None = None,
 ) -> TestClient:
     store = store if store is not None else OpStore(physical=lambda: NOW)  # an empty store is falsy
     return TestClient(
@@ -62,6 +64,7 @@ def client(
             location="China Sky",
             numbers=numbers or OrderNumbers(store, today=today),
             today=today,
+            settings=settings if settings is not None else SettingStore(),
         )
     )
 
@@ -155,6 +158,85 @@ def test_quote_times_are_set_by_a_manager_and_read_by_every_terminal():
         clean_quotes({"pay_at_pickup": ["kiosk"]})
     store = SettingStore()
     assert store.put("quotes", {"minutes": {"phone": 30}})["minutes"]["counter"] == 15
+
+
+def manager(c: TestClient) -> dict[str, str]:
+    token = c.post("/admin/session", json={"device": "t1", "pin": "9999"}).json()["token"]
+    return {"authorization": f"Bearer {token}"}
+
+
+def test_a_rush_adds_minutes_to_every_quote_until_the_night_is_over():
+    settings = SettingStore()
+    c = client(settings=settings)
+    assert c.get("/settings/quotes").json()["rush"] is None
+    assert c.put("/settings/rush", json={"minutes": 20}).status_code == 401
+    server = c.post("/admin/session", json={"device": "t1", "pin": "1111"})
+    assert server.status_code == 403  # a server's PIN opens no manager session, so no rush either
+    auth = manager(c)
+    before = int(time.time() * 1000)
+    quotes = c.put("/settings/rush", json={"minutes": 20}, headers=auth).json()
+    rush = quotes["rush"]
+    assert (rush["minutes"], rush["by"]) == (20, "Mike")
+    # it ends when the night does: the next four in the morning on the restaurant's clock, at most a day off
+    ends = datetime.fromtimestamp(rush["until"] / 1000, localtime.zone())
+    assert (ends.hour, ends.minute) == (4, 0) and before < rush["until"] <= before + 24 * HOUR
+    assert quotes["minutes"]["phone"] == 20  # the channel's own minutes are as they were: the app adds the rush
+    assert c.get("/settings/quotes").json() == quotes
+    # saving the quote times, from an app that knows of the rush or one that does not, leaves the rush on
+    c.put("/settings/quotes", json={"minutes": {"phone": 25}, "pay_at_pickup": ["phone"]}, headers=auth)
+    assert c.get("/settings/quotes").json()["rush"] == rush
+    # a new number replaces it, 0 takes it off
+    assert c.put("/settings/rush", json={"minutes": 10}, headers=auth).json()["rush"]["minutes"] == 10
+    assert c.put("/settings/rush", json={"minutes": 0}, headers=auth).json()["rush"] is None
+    for bad in (121, -5):
+        assert c.put("/settings/rush", json={"minutes": bad}, headers=auth).status_code == 422
+    # the night it was set for is over: nothing is added the next day, and nobody had to take it off
+    settings.put("rush", {"minutes": 20, "until": before - 1, "by": "Mike"})
+    assert c.get("/settings/quotes").json()["rush"] is None
+    assert rush_now({"minutes": 20, "until": 2000, "by": "Mike"}, 1999) == {"minutes": 20, "until": 2000, "by": "Mike"}
+    assert rush_now({"minutes": 20, "until": 2000}, 2000) is None and rush_now({}, 0) is None
+    with pytest.raises(ValueError):
+        clean_rush({"minutes": 2.5})
+
+
+def test_a_big_order_rule_is_kept_with_the_quotes_and_an_older_app_does_not_wipe_it():
+    c = client()
+    assert c.get("/settings/quotes").json()["big_orders"] == {"dishes": 0, "minutes": 0}
+    auth = manager(c)
+    body = {"minutes": {"phone": 25}, "pay_at_pickup": ["phone"], "big_orders": {"dishes": 8, "minutes": 10}}
+    assert c.put("/settings/quotes", json=body, headers=auth).json()["big_orders"] == {"dishes": 8, "minutes": 10}
+    # an app from before the rule sends the minutes alone: the rule stays
+    older = {"minutes": {"phone": 30}, "pay_at_pickup": ["phone"]}
+    saved = c.put("/settings/quotes", json=older, headers=auth).json()
+    assert (saved["minutes"]["phone"], saved["big_orders"]) == (30, {"dishes": 8, "minutes": 10})
+    off = c.put("/settings/quotes", json={**older, "big_orders": {"dishes": 0, "minutes": 0}}, headers=auth).json()
+    assert off["big_orders"] == {"dishes": 0, "minutes": 0}
+    for bad in ({"dishes": -1, "minutes": 10}, {"dishes": 8, "minutes": 999}):
+        assert c.put("/settings/quotes", json={**older, "big_orders": bad}, headers=auth).status_code == 422
+    with pytest.raises(ValueError):
+        clean_quotes({"big_orders": {"dishes": "many"}})
+
+
+def test_the_time_settled_as_an_order_is_first_sent_is_its_quote_not_a_delay():
+    messenger = LogMessenger()
+    c = client(messenger=messenger)
+    takeout(c, "o1", 0, channel="phone", phone="+16175551234", promised_at=NOW + 20 * 60_000, quoted_minutes=20)
+    # a big order: the terminal moves the time ten minutes as it sends the order, and tells the customer itself
+    later = NOW + 30 * 60_000
+    sent = [
+        payload("s1", "set_field", 3, promised_at=later, quoted_minutes=30),
+        payload("s2", "fire", 4, course="*"),
+    ]
+    r = c.post("/orders/o1/ops", json=sent).json()
+    assert r["refused"] == [] and r["texts"] == [] and messenger.sent == []
+    fields = c.get("/orders/o1").json()["fields"]
+    assert (fields["promised_at"], fields["quoted_minutes"]) == (later, 30)
+    # moved again once the kitchen has it: that is a delay, and the customer hears of it
+    r = c.post("/orders/o1/ops", json=[payload("s3", "set_field", 6, promised_at=later + 600_000)]).json()
+    assert [m["kind"] for m in r["texts"]] == ["delayed"]
+    # an order the customer named the time for says so, and keeps saying so
+    takeout(c, "o2", 10, channel="phone", promised_at=NOW + 2 * HOUR, quoted_minutes=20, for_later=True)
+    assert c.get("/orders/o2").json()["fields"]["for_later"] is True
 
 
 def test_a_future_order_prints_at_its_lead_time_and_a_void_at_once():
