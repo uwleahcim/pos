@@ -66,6 +66,19 @@ held down runs the cursor to the end of the text and stops there; a fresh press 
 Option, Control or Command select or jump inside the text and never leave. On a Mac a text box entered with an
 arrow has its text selected, as on any Mac: the first arrow drops the selection, the next one leaves.
 
+A touch or a click puts the highlight on what was touched, on every screen and dialog, so the keyboard goes on
+from there: touch a category and the arrows start from that category; touch a line of the check and Delete
+takes that line off. The touch still does what it always did. Only Enter moves the highlight into what a tile
+opens; a tile touched or clicked keeps it. Two things follow:
+
+- Enter or Space presses the button touched last once more, as on any computer.
+- A text box gives the highlight up when something else is touched, so the on-screen keyboard of a tablet
+  closes then. The search field's Clear button puts the cursor back in the field.
+
+A badge reader types a tag's id and Enter like a keyboard. Its Enter (and a space inside an id) is kept from
+the buttons, so a badge tapped at the reader signs its owner in and does not repeat the last thing touched.
+With the touch screen used last, the highlight does not show and nothing scrolls to follow it.
+
 A manager sees a menu editor button on the orders screen. It asks for the manager PIN again, then shows
 every dish by category: names in English and Chinese, the kitchen ticket name, the station it cooks at,
 its sizes and prices, where it sits on the menus and its option groups. Option groups and categories edit

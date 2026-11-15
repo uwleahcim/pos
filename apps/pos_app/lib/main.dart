@@ -22,8 +22,10 @@ import 'queue_store.dart';
 import 'ringer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
+import 'screens/reader_keys.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
+import 'screens/tap_focus.dart';
 import 'screens/text_arrows.dart';
 import 'screens/theme.dart';
 import 'session.dart';
@@ -233,6 +235,7 @@ class _PosAppState extends State<PosApp> {
     final api = widget.api;
     final phone = widget.phone;
     final camera = widget.camera;
+    final tags = widget.tags;
     return ListenableBuilder(
       listenable: Listenable.merge([settings, session]),
       builder: (context, _) {
@@ -247,16 +250,22 @@ class _PosAppState extends State<PosApp> {
           debugShowCheckedModeBanner: false,
           theme: PosTheme.light(highContrast: prefs.highContrast),
           darkTheme: PosTheme.dark(highContrast: prefs.highContrast),
-          // The call banner and strip sit over every screen and dialog. So does the rule for arrows in a
-          // text box: they leave it once the cursor can go no further.
+          // The call banner and strip sit over every screen and dialog. So do the rules of the keyboard's
+          // focus: a touch or a click takes it to what was touched, a badge reader's keys press none of the
+          // buttons, and the arrows leave a text box once the cursor can go no further.
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            child: ArrowsLeaveTextBoxes(
-              child: PhoneBar(
-                client: phone,
-                onOrder: canOrder ? _orderForCaller : null,
-                child: child ?? const SizedBox.shrink(),
+            child: TapTakesFocus(
+              child: ReaderKeysPressNothing(
+                typed: tags is WedgeTagReader ? tags.typed : null,
+                child: ArrowsLeaveTextBoxes(
+                  child: PhoneBar(
+                    client: phone,
+                    onOrder: canOrder ? _orderForCaller : null,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                ),
               ),
             ),
           ),

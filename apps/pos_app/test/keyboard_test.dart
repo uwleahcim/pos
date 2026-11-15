@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/menu.dart';
 import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
+import 'package:pos_app/screens/tap_focus.dart';
 import 'package:pos_app/screens/text_arrows.dart';
 import 'package:pos_app/settings.dart';
 
@@ -129,8 +131,8 @@ Future<({List<ChosenLine> chosen, List<MenuEntry> removed})> pumpMenu(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
-      // as the app has it, around every screen
-      builder: (context, child) => ArrowsLeaveTextBoxes(child: child!),
+      // as the app has them, around every screen
+      builder: (context, child) => TapTakesFocus(child: ArrowsLeaveTextBoxes(child: child!)),
       home: Scaffold(
         body: MenuPanel(api: api, onChosen: chosen.add, onRemove: removed.add),
       ),
@@ -483,6 +485,121 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  group('a touch or a click', () {
+    Finder tile(String key) => find.byKey(ValueKey(key));
+
+    testWidgets('puts the focus on the category touched, and only Enter moves it into the dishes', (tester) async {
+      await pumpMenu(tester);
+      await tester.tap(tile('s:dinner/chefs'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('items-dinner/chefs')), findsOneWidget);
+      expect(focused(), 'categories-0 s:dinner/chefs', reason: 'on the category, not on its first dish');
+
+      // the keyboard goes on from there: Down, into the dishes that opened under it
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      expect(focused(), startsWith('items-dinner/chefs e:'));
+
+      // a category that has the focus already and is clicked: still the click's, not Enter's
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(focused(), 'categories-0 s:dinner/chefs');
+      await tester.tap(tile('s:dinner/chefs'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('items-dinner/chefs')), findsOneWidget);
+      expect(focused(), 'categories-0 s:dinner/chefs');
+
+      // and Enter on it does what Enter does on an open category: it closes
+      await press(tester, LogicalKeyboardKey.enter);
+      expect(find.byKey(const ValueKey('items-dinner/chefs')), findsNothing);
+      expect(focused(), 'categories-0 s:dinner/chefs');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('on a dish and its choices: each keeps the focus, and the dish has it once it is added', (
+      tester,
+    ) async {
+      final menu = await pumpMenu(tester, items: {'GTC': saucy});
+      await tester.tap(tile('s:dinner/chefs'));
+      await tester.pumpAndSettle();
+      await tester.tap(tile('e:dinner:87:GTC'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(tray(), findsOneWidget);
+      expect(focused(), 'items-dinner/chefs e:dinner:87:GTC', reason: 'on the dish, not in its choices');
+
+      // the size, clicked: the focus is on it, and does not move on to the sauces by itself
+      await tester.tap(tile('req-variant:GTC:quart'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(focused(), 'tray req-variant:GTC:quart');
+      expect(menu.chosen, isEmpty);
+
+      // the keyboard takes over from the size clicked: to a sauce, Enter, and the dish is on the order
+      await press(tester, LogicalKeyboardKey.arrowRight);
+      expect(focused(), 'tray req-option:sauce:sauce:sweet');
+      await press(tester, LogicalKeyboardKey.enter);
+      expect(menu.chosen.single.request.variantId, 'GTC:quart');
+      expect(tray(), findsNothing);
+      expect(focused(), 'items-dinner/chefs e:dinner:87:GTC');
+
+      // all of it with the mouse: the last choice goes away with the tray, and the focus is the dish's
+      await tester.tap(tile('e:dinner:87:GTC'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      await tester.tap(tile('req-variant:GTC:pint'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sweet'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(menu.chosen.length, 2);
+      expect(focused(), 'items-dinner/chefs e:dinner:87:GTC');
+
+      // so Backspace takes that dish off, and Enter adds one more
+      await press(tester, LogicalKeyboardKey.backspace);
+      expect(menu.removed.single.item, 'GTC');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('on a category inside a category: the focus goes with its tile, opened and closed', (tester) async {
+      final menu = fixture('menu');
+      final sections = (menu['menus'] as List)[0]['sections'] as List;
+      final bar = sections.firstWhere((s) => s['section_id'] == 'dinner/bar') as Map<String, dynamic>;
+      final entries = bar['entries'] as List;
+      bar['sections'] = [
+        {'section_id': 'dinner/bar/beer', 'name': 'Beer', 'entries': entries.sublist(0, 2)},
+        {'section_id': 'dinner/bar/wine', 'name': 'Wine', 'entries': entries.sublist(2, 3)},
+      ];
+      bar['entries'] = entries.sublist(3);
+      await pumpMenu(tester, menu: menu);
+      await tester.tap(tile('s:dinner/bar'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(focused(), 'categories-0 s:dinner/bar');
+
+      // Wine shows among Bar's dishes; opened, its tile is up among the categories, and the focus with it
+      await tester.tap(tile('s:dinner/bar/wine'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('items-dinner/bar/wine')), findsOneWidget);
+      expect(focused(), 'categories-1 s:dinner/bar/wine');
+
+      // closed from its own tile, it is back among Bar's dishes, and so is the focus
+      await tester.tap(tile('s:dinner/bar/wine'), kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('items-dinner/bar/wine')), findsNothing);
+      expect(focused(), 'items-dinner/bar s:dinner/bar/wine');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('on the search field’s Clear button: the text goes, and the focus is in the field', (tester) async {
+      await pumpMenu(tester);
+      await tester.enterText(find.byType(TextField), '87');
+      await tester.pumpAndSettle();
+      await tester.tap(tile('e:dinner:87:GTC'));
+      await tester.pumpAndSettle();
+      expect(focused(), 'search-grid e:dinner:87:GTC', reason: 'a dish touched takes the focus from the field');
+
+      await tester.tap(find.byTooltip('Clear'));
+      await tester.pumpAndSettle();
+      expect(typed(tester), '');
+      expect(focused(), 'search');
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+
   testWidgets('Backspace edits the search field, and takes a dish off only with the focus on the dish', (tester) async {
     final menu = await pumpMenu(tester);
     await tester.enterText(find.byType(TextField), 'egg');
@@ -522,7 +639,7 @@ void main() {
       t.hub.orders.add(table('o1', lines));
       await tester.pumpWidget(
         MaterialApp(
-          builder: (context, child) => ArrowsLeaveTextBoxes(child: child!),
+          builder: (context, child) => TapTakesFocus(child: ArrowsLeaveTextBoxes(child: child!)),
           home: OrderScreen(api: t.api, outbox: t.outbox, photos: t.photos, orderId: 'o1', staffName: 'Amy'),
         ),
       );
@@ -589,6 +706,24 @@ void main() {
       await press(tester, LogicalKeyboardKey.arrowDown);
       await press(tester, LogicalKeyboardKey.backspace);
       expect(sent(t).last, 'set_line {line_id: L1, qty: 2}');
+      await stop(tester);
+    });
+
+    testWidgets('a line of the check touched has the focus: Delete takes that line off', (tester) async {
+      final t = await pumpOrder(tester, {
+        'L1': line('Egg roll', rank: 1),
+        'L2': line('Spring roll', rank: 2),
+        'L3': line('Pork fried rice', rank: 3),
+      });
+      // its quantity, touched for one more: the focus is in that line
+      await tester.tap(find.byKey(const ValueKey('qty-L2')));
+      await tester.pumpAndSettle();
+      expect(sent(t).last, 'set_line {line_id: L2, qty: 2}');
+      expect(focused(), 'line L2');
+
+      await press(tester, LogicalKeyboardKey.delete);
+      expect(sent(t).last, 'void_line {line_id: L2}');
+      expect(focused(), 'line L3');
       await stop(tester);
     });
 

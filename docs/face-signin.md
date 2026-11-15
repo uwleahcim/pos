@@ -79,8 +79,10 @@ For a location that does not allow faces, or a person who would rather not enrol
 same: an NFC badge, card or fob held to a reader at the terminal. The reader is one that works in keyboard
 mode (a USB or Bluetooth "wedge" reader: it types the tag's id and Enter), so it works on a Mac, an iPad, an
 iPhone and the Galaxy tablet alike with nothing to install. The app tells a reader's burst from someone
-typing: characters at most 60 ms apart, 4 to 64 of them, ending in Enter; a key the app would otherwise act
-on still acts.
+typing: characters at most 60 ms apart, 4 to 64 of them, ending in Enter. The Enter that ends a tag, and a
+space a reader types inside an id, press no button: the button touched last has the keyboard's focus, and a
+badge must not press it again (one more of the dish just added). A text box with the focus still gets what
+the reader types.
 
 - **Enrollment.** Orders screen › Location › **Sign in by face**: the tag button by a name opens "A tag for
   Amy"; hold the tag to this screen's reader and it is hers (a screen without a reader takes the id typed as
