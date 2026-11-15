@@ -43,6 +43,7 @@ from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
 from ..orders.numbers import OrderNumbers
+from ..orders.taken_off import by_check, taken_off_rows
 from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing import discover
@@ -1229,11 +1230,16 @@ def create_app(
         approved it: the manager's look at what came off the register and why (architecture section 9).
         Discounts taken off again are counted, not valued. `voids` lists every dish voided after the kitchen
         had it (since `since`, whatever the age of its order), oldest first, with the same three totals:
-        by reason, by who voided and by who approved."""
+        by reason, by who voided and by who approved. `taken_off` lists every dish taken off a check before
+        it was sent, and every time fewer of an unsent dish were kept (since `since`, oldest first): what it
+        was worth, who took it off (`by`; empty from an app that did not say) and who rang it in
+        (`rung_by`), on which screen, and how long it had been on the check (`on_check_ms`); added up by
+        who took it off and by check. A dish changed before it was sent is not one."""
         store: OpStore | PgOpStore = app.state.store
         discounts: list[dict[str, Any]] = []
         charges: list[dict[str, Any]] = []
         voids: list[dict[str, Any]] = []
+        taken_off: list[dict[str, Any]] = []
         by_reason: dict[str, Decimal] = {}
         by_staff: dict[str, Decimal] = {}
         by_approver: dict[str, Decimal] = {}
@@ -1250,8 +1256,15 @@ def create_app(
             charges.extend({**about, **row} for row in check["charges"])
             removed += sum(1 for d in state.discounts.values() if not d.active)
             voids.extend({**row, "status": state.status} for row in void_rows(state, since))
+            taken_off.extend({**row, "status": state.status} for row in taken_off_rows(state, since))
         voids.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
+        taken_off.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
         return {
+            "taken_off": taken_off,
+            "taken_off_total": str(sum((Decimal(t["amount"]) for t in taken_off), Decimal("0.00"))),
+            "taken_off_count": len(taken_off),
+            "taken_off_by_staff": _void_totals(taken_off, lambda t: t["by"]),
+            "taken_off_by_check": by_check(taken_off),
             "voids": voids,
             "void_total": str(sum((Decimal(v["amount"]) for v in voids), Decimal("0.00"))),
             "void_count": len(voids),

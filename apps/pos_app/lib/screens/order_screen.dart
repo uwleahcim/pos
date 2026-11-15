@@ -337,8 +337,24 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) => _appendAll([(kind, data)]);
 
-  /// Operations that belong together go in one batch, so the kitchen gets one ticket for a change.
-  Future<void> _appendAll(List<(String, Map<String, dynamic>)> ops) async {
+  /// Operations that belong together go in one batch, so the kitchen gets one ticket for a change. A dish
+  /// taken off, or fewer of one kept, says who did it: nothing is asked for an unsent dish, and the hub's
+  /// report of dishes taken off before sending names the person (a void of a sent dish already does).
+  Future<void> _appendAll(List<(String, Map<String, dynamic>)> asked) async {
+    final ops = [
+      for (final (kind, data) in asked)
+        if (kind == 'void_line' || (kind == 'set_line' && data.containsKey('qty')))
+          (
+            kind,
+            {
+              ...data,
+              if (!data.containsKey('by')) 'by': ?_staffName,
+              if (!data.containsKey('by_id')) 'by_id': ?_staffId,
+            },
+          )
+        else
+          (kind, data),
+    ];
     final ids = await widget.outbox.addAll(widget.orderId, ops);
     final i = ops.indexWhere((op) => _photographed.contains(op.$1));
     if (i >= 0) unawaited(widget.photos.capture(ops[i].$1, opId: ids[i]));

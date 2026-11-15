@@ -5,7 +5,8 @@ Taking a dish off after the kitchen has it is money leaving the register after t
 setting on the hub; the app asks first and the hub refuses anything the rules do not allow.
 
 **A dish the kitchen has not seen is not a void.** It comes off the check with nothing asked, as before
-(the log keeps it as `removed`). Everything below is about dishes already sent.
+(the log keeps it as `removed`), and the report lists it under "Taken off before sending" (see "The
+report"). Everything else below is about dishes already sent.
 
 ## On the order screen
 
@@ -53,12 +54,33 @@ Orders screen › **Location** › **Voids and comps report**, for today, the la
 - **Voids**: what they came to and how many, added up three ways (by reason, by who voided, by the manager
   who approved), then every void: when, the table or order number, the dish and how many, the reason, who
   voided it and who approved it.
+- **Taken off before sending**: dishes rung in and taken off again before the kitchen saw them. Nothing
+  printed and nothing was asked, so no other report shows them. What they came to and how many, added up by
+  who took them off and by check, then every one: when, the table or order number, the dish and how many,
+  who took it off and how long it had been on the check. The list starts with the dish that was on its check
+  the longest, because a dish taken off an hour after it was rung in is worth a question and one taken off
+  ten seconds later is a slip of the finger.
 - **Comps and discounts**: the same three totals for what is on the checks (see `discounts.md`).
+
+What counts as taken off: the whole line removed, and fewer of an unsent dish (three teas made one counts
+two). What does not: a dish changed for the same dish with other choices, and more of a dish. Nothing new is
+asked on the order screen: the app says who is signed in when a dish comes off, no more. A dish taken off by
+an app older than this list has no name on it, so its row says who rang it in instead ("rung in by Amy").
+An app newer than its hub shows "This hub is older than this list" in the section's place.
 
 It reads `GET /reports/adjustments?since=<ms>`, which now also returns `voids`, `void_total`, `void_count`,
 `voids_by_reason`, `voids_by_staff` and `voids_by_approver`. Voids are counted from `since` by when they were
 made, whatever the age of their order. A void made before reasons were asked shows under "No reason
 given". The audit photo of each void is in `/events/photos` under the operation's id, as before.
+
+For dishes taken off it returns `taken_off` (one row for each time: `order_id`, `table`, `order_no`,
+`customer_name`, `line_id`, `item`, `qty`, `amount` before tax, `by`, `by_id`, `rung_by`, `device`, `at_ms`,
+`on_check_ms`, `status` of the order), `taken_off_total`, `taken_off_count`, `taken_off_by_staff` and
+`taken_off_by_check`, counted from `since` the same way. The rows come from `pos/orders/taken_off.py`, which
+reads what the log's replay keeps on each line: `removed` (who took an unsent line off, and when) and `cuts`
+(each time its quantity went down before it was sent). The app puts `by` and `by_id` on every `void_line`
+and on every `set_line` that changes a quantity; the hub takes them as said, as it does for who rang a dish
+in. The older key `removed` of the same report is something else: discounts taken off a check.
 
 ## How the hub checks a void
 

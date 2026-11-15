@@ -206,7 +206,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('bin-L1')));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
-    expect(dataOf(t.hub.opsFor('o1').single), {'line_id': 'L1'});
+    // nothing asked, but the log knows who took it off: the report of dishes taken off before sending says so
+    expect(dataOf(t.hub.opsFor('o1').single), {'line_id': 'L1', 'by': 'Amy', 'by_id': 's1'});
     expect(t.hub.requests.where((r) => r.contains('/settings/voids')), isEmpty);
     await stop(tester);
   });
@@ -228,7 +229,7 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
     var ops = t.hub.opsFor('o1');
     expect(ops.map((op) => op['kind']), ['void_line', 'add_line', 'fire']);
-    expect(dataOf(ops[0]), {'line_id': 'L1', 'reason': 'changed'});
+    expect(dataOf(ops[0]), {'line_id': 'L1', 'reason': 'changed', 'by': 'Amy', 'by_id': 's1'});
     final changed = dataOf(ops[1])['line_id'] as String;
 
     await openDish();
@@ -282,7 +283,7 @@ void main() {
     expect(find.text('Void Egg roll?'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, 'Void'));
     await tester.pumpAndSettle();
-    expect(dataOf(t.hub.opsFor('o1').single), {'line_id': 'L1', 'reason': 'void'});
+    expect(dataOf(t.hub.opsFor('o1').single), {'line_id': 'L1', 'reason': 'void', 'by': 'Amy', 'by_id': 's1'});
     await stop(tester);
   });
 

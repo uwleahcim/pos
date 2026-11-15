@@ -89,12 +89,77 @@ class VoidRow {
   final String approvedBy;
 
   /// Where it was: the table, or the takeout order's number.
-  String get where => table != null && table!.isNotEmpty
-      ? 'Table $table'
-      : orderNo != null
-      ? '#$orderNo'
-      : '';
+  String get where => checkName(table, orderNo);
 }
+
+/// A dish taken off a check before the kitchen saw it (or fewer of one kept): what, how many and what they
+/// were worth, who took it off, who had rung it in, when, and how long it had been on the check.
+class TakenOffRow {
+  const TakenOffRow({
+    required this.orderId,
+    required this.item,
+    required this.qty,
+    required this.amount,
+    required this.atMs,
+    this.onCheckMs = 0,
+    this.table,
+    this.orderNo,
+    this.by = '',
+    this.rungBy = '',
+  });
+  factory TakenOffRow.fromJson(Map<String, dynamic> json) => TakenOffRow(
+    orderId: json['order_id'] as String? ?? '',
+    item: json['item'] as String? ?? '',
+    qty: json['qty'] as int? ?? 1,
+    amount: json['amount']?.toString() ?? '0.00',
+    atMs: json['at_ms'] as int? ?? 0,
+    onCheckMs: json['on_check_ms'] as int? ?? 0,
+    table: json['table']?.toString(),
+    orderNo: json['order_no'] as int?,
+    by: json['by'] as String? ?? '',
+    rungBy: json['rung_by'] as String? ?? '',
+  );
+
+  final String orderId;
+  final String item;
+  final int qty;
+  final String amount;
+  final int atMs;
+
+  /// How long the dish had been on the check when it came off: seconds for a slip of the finger, a good
+  /// while for a dish that was served first.
+  final int onCheckMs;
+  final String? table;
+  final int? orderNo;
+
+  /// Who took it off; empty from an app older than the question.
+  final String by;
+  final String rungBy;
+
+  /// Where it was: the table, or the takeout order's number.
+  String get where => checkName(table, orderNo);
+
+  /// Who, as far as the log knows: whoever took it off, or at least whoever rang it in.
+  String get who => by.isNotEmpty
+      ? 'by $by'
+      : rungBy.isNotEmpty
+      ? 'rung in by $rungBy'
+      : '';
+
+  /// "under a minute on the check", "14 min on the check", "1 h 5 min on the check".
+  String get onCheck {
+    final minutes = onCheckMs ~/ 60000;
+    if (minutes < 1) return 'under a minute on the check';
+    return minutes < 60 ? '$minutes min on the check' : '${minutes ~/ 60} h ${minutes % 60} min on the check';
+  }
+}
+
+/// A check as a report names it: its table, or its takeout number; nothing when it has neither.
+String checkName(String? table, int? orderNo) => table != null && table.isNotEmpty
+    ? 'Table $table'
+    : orderNo != null
+    ? '#$orderNo'
+    : '';
 
 /// A discount or comp still on a check: what came off, why, who put it on and who approved it.
 class DiscountRow {
@@ -126,7 +191,8 @@ class DiscountRow {
 }
 
 /// What came off the register and why (`GET /reports/adjustments`): the voids of sent dishes and the
-/// discounts and comps, each added up by reason, by who did it and by who approved it.
+/// discounts and comps, each added up by reason, by who did it and by who approved it; and the dishes taken
+/// off before the kitchen saw them, which nothing else shows.
 class AdjustmentsReport {
   const AdjustmentsReport({
     this.voids = const [],
@@ -140,6 +206,11 @@ class AdjustmentsReport {
     this.discountsByStaff = const [],
     this.discountsByApprover = const [],
     this.hasVoids = true,
+    this.takenOff = const [],
+    this.takenOffTotal = '0.00',
+    this.takenOffByStaff = const [],
+    this.takenOffByCheck = const [],
+    this.hasTakenOff = true,
   });
   factory AdjustmentsReport.fromJson(Map<String, dynamic> json) {
     List<ReportTotal> totals(String name) => [
@@ -159,6 +230,24 @@ class AdjustmentsReport {
       discountsByStaff: totals('by_staff'),
       discountsByApprover: totals('by_approver'),
       hasVoids: json.containsKey('voids'),
+      takenOff: [
+        for (final t in json['taken_off'] as List? ?? const []) TakenOffRow.fromJson(t as Map<String, dynamic>),
+      ],
+      takenOffTotal: json['taken_off_total']?.toString() ?? '0.00',
+      takenOffByStaff: totals('taken_off_by_staff'),
+      takenOffByCheck: [
+        for (final c in (json['taken_off_by_check'] as List? ?? const []).cast<Map<String, dynamic>>())
+          ReportTotal(
+            // a to-go check by its number and whose it is: "#41 Linda"
+            key: [
+              checkName(c['table']?.toString(), c['order_no'] as int?),
+              if (c['table'] == null) c['customer_name']?.toString() ?? '',
+            ].where((word) => word.isNotEmpty).join(' '),
+            amount: c['amount']?.toString() ?? '0.00',
+            count: c['count'] as int?,
+          ),
+      ],
+      hasTakenOff: json.containsKey('taken_off'),
     );
   }
 
@@ -175,6 +264,24 @@ class AdjustmentsReport {
 
   /// False from a hub older than the void report: its answer lists no voids at all.
   final bool hasVoids;
+
+  /// The dishes taken off checks before the kitchen saw them, oldest first, what they came to, and the
+  /// same added up by who took them off and by check.
+  final List<TakenOffRow> takenOff;
+  final String takenOffTotal;
+  final List<ReportTotal> takenOffByStaff;
+  final List<ReportTotal> takenOffByCheck;
+
+  /// False from a hub older than that list.
+  final bool hasTakenOff;
+
+  /// How many dishes came off before they were sent: a row of two teas is two.
+  int get takenOffDishes => takenOff.fold(0, (sum, row) => sum + row.qty);
+
+  /// The same rows, the dish that was longest on its check first: a slip of the finger sinks to the end.
+  List<TakenOffRow> get takenOffLongestFirst =>
+      [...takenOff]
+        ..sort((a, b) => b.onCheckMs != a.onCheckMs ? b.onCheckMs.compareTo(a.onCheckMs) : a.atMs.compareTo(b.atMs));
 
   /// A discount reason's name for the key the totals carry (the rules' own word for it).
   String discountReason(String key) => discounts.where((d) => d.reasonId == key).firstOrNull?.reason ?? key;
