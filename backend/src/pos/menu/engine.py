@@ -14,7 +14,9 @@ from decimal import Decimal
 from typing import Any
 
 from .defs import (
+    MAX_FACTOR,
     ONE,
+    WORDS,
     Availability,
     Definitions,
     Entry,
@@ -155,6 +157,9 @@ class GroupDetail:
     free_count: int
     allow_quantity: bool
     options: tuple[OptionDetail, ...]
+    words: Mapping[str, Decimal] = field(default_factory=dict)
+    """What each one-tap word charges on this group's choices, as times the option's price (`extra`, `side`,
+    `light`): a screen shows the price of a choice with its word before the hub has priced the line."""
 
 
 MAX_DEPTH = 8
@@ -231,7 +236,9 @@ def one_line(labels: Sequence[tuple[Any, ...]]) -> str:
 PREFIXES: dict[str, str] = {"no": "NO", "extra": "EXTRA", "side": "SIDE", "light": "LIGHT"}
 """The one-tap instructions a selection may carry (`Selection.prefix`), printed in front of the option's
 kitchen label: NO 加虾, SIDE 糙米. "no" also makes the option free and skips its recipe effects; the other
-three keep the option's price and effects. A price per instruction waits for a real need."""
+three keep its effects and charge its price times the word's factor (`Definitions.word_factor`: the group's
+own rule, else the location's `Word`, else Extra twice and the other two once). A choice that is a dish (a
+slot) is not charged again: there the word is for the kitchen only."""
 
 
 def prefixed_label(prefix: str | None, kitchen_label: str | None, name: str) -> str:
@@ -240,6 +247,18 @@ def prefixed_label(prefix: str | None, kitchen_label: str | None, name: str) -> 
     if prefix is None:
         return kitchen_label or ""
     return f"{PREFIXES[prefix]} {kitchen_label or name}"
+
+
+def _factor_problems(where: str, word: str, factor: Decimal, group_id: str | None = None) -> list[Problem]:
+    """What is wrong with one price rule of a one-tap word: a word no rule can be set for, or a factor that
+    is no sensible price (below nothing, or more than ten times the option)."""
+    if word not in WORDS:
+        message = f"{where}: no price can be set for {word!r}; one of {', '.join(WORDS)}"
+        return [Problem("bad_word", message, group_id=group_id)]
+    if not dec(factor).is_finite() or not 0 <= dec(factor) <= MAX_FACTOR:
+        message = f"{where}: {word} must charge between 0 and {MAX_FACTOR} times the option"
+        return [Problem("bad_factor", message, group_id=group_id)]
+    return []
 
 
 class MenuEngine:
@@ -666,6 +685,9 @@ class MenuEngine:
                 delta = money(price * (sq - free_units))
             else:  # absolute: charged as-is, outside the free count
                 delta = money(price * sq)
+            if prefix is not None and prefix != "no":
+                # the word's price rule: "extra shrimp" charges the shrimp again unless the menu says otherwise
+                delta = money(delta * defs.word_factor(group, prefix))
             if prefix == "no":
                 # "no shrimp": nothing goes into the dish, so nothing comes out of inventory
                 effects = tuple(
@@ -1362,6 +1384,7 @@ class MenuEngine:
                     group.free_count,
                     group.allow_quantity,
                     tuple(options),
+                    defs.word_factors(group),
                 )
             )
         return tuple(groups)
@@ -1396,7 +1419,11 @@ class MenuEngine:
                 problems.append(Problem("no_variant", f"{item.code} has no active variant"))
             if item.category not in defs.categories:
                 problems.append(Problem("unknown_category", f"{item.code} is in unknown category {item.category}"))
+        for word in defs.words.values():
+            problems.extend(_factor_problems("the location's rule", word.code, word.factor))
         for group in defs.groups.values():
+            for code, factor in (group.word_factors or {}).items():
+                problems.extend(_factor_problems(group.code, code, factor, group_id=group.code))
             if group.min_select > 0 and not any(o.active for o in defs.options_of(group.code)):
                 problems.append(Problem("empty_required_group", f"{group.code} is required but has no options"))
             if group.source_category and group.source_category not in defs.categories:

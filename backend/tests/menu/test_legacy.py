@@ -158,7 +158,7 @@ def test_the_original_pos_s_groups_are_offered_with_its_labels_and_take_the_inst
         ("spice", "spice:extra_hot"),
         ("allergy", "allergy:nut"),
     )
-    assert line.line_total == D("19.95")  # 17.95 + 2.00 for the cashews; NO is free
+    assert line.line_total == D("21.95")  # 17.95 + the 2.00 cashews twice, for EXTRA; NO is free
     # the white rice the dish comes with is not said; what was asked for is
     assert line.kitchen_lines[0].labels == ("XXXhot", "*NUT ALRGY", "NO BROCOL", "EXTRA CASHEW")
     spice = defs.groups["spice"]

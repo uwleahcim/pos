@@ -14,6 +14,7 @@ const kinds = [
   'item',
   'variant',
   'group',
+  'word',
   'option',
   'attachment',
   'menu',
@@ -31,6 +32,25 @@ String keyOf(String kind, Map<String, dynamic> row) => switch (kind) {
   'override' => '${row['owner_kind']}:${row['owner']}/${row['allergen']}',
   _ => row['code'] as String,
 };
+
+/// The one-tap words on a choice whose price the menu sets, as the backend spells them, with the word the
+/// order screen shows for each. "No" is not one of them: a choice left off costs nothing.
+const pricedWords = {'extra': 'Extra', 'side': 'On the side', 'light': 'Light'};
+
+/// What each word charges, as times the option's price, while the menu says nothing: the backend's standing
+/// rule (Extra charges the option again).
+const standingFactors = {'extra': 2.0, 'side': 1.0, 'light': 1.0};
+
+/// The factors the editor offers for a word, with the short name on each button.
+final factorChoices = <double, String>{0.5: '½×', 1.0: '1×', 1.5: '1½×', 2.0: '2×'};
+
+/// A factor's button name: one of [factorChoices], or the number itself for one set some other way.
+String factorName(double factor) => factorChoices[factor] ?? '${factorText(factor)}×';
+
+/// A factor as the editor sends it: "2", "1.5".
+String factorText(double factor) => factor == factor.roundToDouble() ? '${factor.round()}' : '$factor';
+
+double? _factorOf(Object? stored) => stored == null ? null : double.tryParse('$stored');
 
 /// A copy deep enough to edit without touching the original.
 Map<String, dynamic> copyRow(Map<String, dynamic> row) => jsonDecode(jsonEncode(row)) as Map<String, dynamic>;
@@ -153,6 +173,49 @@ class MenuCatalog {
   bool categoryOn(String categoryKey, String menu) => get('section', '$menu/$categoryKey') != null;
 
   List<Map<String, dynamic>> stations() => all('station').toList();
+
+  // --- what the one-tap words charge ---------------------------------------------------------------------
+
+  /// Whether the hub keeps what Extra, On the side and Light charge: every group it sent then carries
+  /// `word_factors`. An older hub refuses the field and the `word` kind, so the editor offers neither there.
+  bool get pricesWords => all('group').any((g) => g.containsKey('word_factors'));
+
+  /// How many times an option's price [word] charges at this location: the menu's `word` row, or the
+  /// standing rule while nobody has said.
+  double locationFactor(String word) => _factorOf(get('word', word)?['factor']) ?? standingFactors[word] ?? 1;
+
+  /// Sets what [word] charges at this location. Setting it to what it already is changes nothing.
+  void setLocationFactor(String word, double factor) {
+    if (locationFactor(word) == factor) return;
+    final was = _original['word']?[word]?['factor'];
+    if (was == null && factor == standingFactors[word]) {
+      delete('word', word); // nobody had said and it is the standing rule again: nothing to save
+    } else {
+      // back at the saved number: the saved row as it was, so nothing shows as changed
+      put('word', {'code': word, 'factor': _factorOf(was) == factor ? was : factorText(factor)});
+    }
+  }
+
+  /// What [word] charges on the choices of a group that says so itself; null while it follows the location.
+  double? groupFactor(String groupKey, String word) =>
+      _factorOf((get('group', groupKey)?['word_factors'] as Map?)?[word]);
+
+  /// What [word] charges on a group's choices in the end: the group's own rule, else the location's.
+  double factorIn(String groupKey, String word) => groupFactor(groupKey, word) ?? locationFactor(word);
+
+  /// Sets what [word] charges on a group's choices, or with null puts the group back on the location's rule
+  /// for that word. A group with no rule of its own left carries none at all.
+  void setGroupFactor(String groupKey, String word, double? factor) {
+    final group = get('group', groupKey)!;
+    final own = Map<String, dynamic>.from(group['word_factors'] as Map? ?? const {});
+    if (factor == null) {
+      own.remove(word);
+    } else {
+      final was = (_original['group']?[groupKey]?['word_factors'] as Map?)?[word];
+      own[word] = _factorOf(was) == factor ? was : factorText(factor);
+    }
+    group['word_factors'] = own.isEmpty ? null : own;
+  }
 
   static List<Map<String, dynamic>> _sorted(Iterable<Map<String, dynamic>> rows) => rows.toList()
     ..sort((a, b) {

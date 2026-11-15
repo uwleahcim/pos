@@ -51,6 +51,7 @@ KINDS: dict[str, Kind] = {
         Kind("item", d.Item, "items", _code),
         Kind("variant", d.Variant, "variants", _id),
         Kind("group", d.Group, "groups", _code),
+        Kind("word", d.Word, "words", _code),
         Kind("option", d.Option, "options", _id),
         Kind("attachment", d.Attachment, "attachments", lambda a: f"{a.owner_kind}:{a.owner}/{a.group}"),
         Kind("menu", d.Menu, "menus", _code),

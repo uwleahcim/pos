@@ -25,7 +25,7 @@ enum _Pane { dishes, options }
 
 class _Selection {
   const _Selection(this.kind, this.key);
-  final String kind; // item | category | group
+  final String kind; // item | category | group | words (what Extra, On the side and Light charge: no key)
   final String key;
 }
 
@@ -73,7 +73,10 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
       setState(() {
         _catalog = MenuCatalog.fromJson(json);
         _error = null;
-        if (_selected != null && _catalog!.get(_selected!.kind, _selected!.key) == null) _selected = null;
+        final picked = _selected;
+        if (picked != null && picked.kind != 'words' && _catalog!.get(picked.kind, picked.key) == null) {
+          _selected = null;
+        }
       });
     } on ApiException catch (err) {
       if (err.status == 401 && mounted && await _signIn()) return _load();
@@ -419,6 +422,28 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         }
       }
     } else {
+      if (catalog.pricesWords && q.isEmpty) {
+        // what the one-tap words charge on every group, ahead of the groups
+        tiles.add(
+          ListTile(
+            key: const ValueKey('words-tile'),
+            dense: true,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.55),
+            leading: const Icon(Icons.price_change_outlined, size: 20),
+            title: Text(
+              pricedWords.values.join(', '),
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(wordsLine(catalog), maxLines: 2, overflow: TextOverflow.ellipsis),
+            trailing: pricedWords.keys.any((word) => catalog.isChanged('word', word))
+                ? Icon(Icons.edit, size: 16, color: scheme.primary)
+                : null,
+            selected: _selected?.kind == 'words',
+            onTap: () => setState(() => _selected = const _Selection('words', '')),
+          ),
+        );
+      }
       for (final group in catalog.groups().where(matches)) {
         final key = group['code'] as String;
         tiles.add(
@@ -471,7 +496,13 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
   Widget _detail(MenuCatalog catalog) {
     final s = _selected;
     final Widget child;
-    if (s == null || catalog.get(s.kind, s.key) == null) {
+    if (s?.kind == 'words') {
+      child = SingleChildScrollView(
+        key: ValueKey('words/${catalog.revision}'),
+        padding: const EdgeInsets.all(24),
+        child: WordsEditor(catalog: catalog, onChanged: _changed),
+      );
+    } else if (s == null || catalog.get(s.kind, s.key) == null) {
       child = const Center(key: ValueKey('empty-detail'), child: Text('Pick a dish, a category or an option group.'));
     } else {
       final Widget editor = switch (s.kind) {
@@ -491,7 +522,12 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
         child: editor,
       );
     }
-    return AnimatedSwitcher(duration: const Duration(milliseconds: 180), child: child);
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      // a short page (the location's rule for Extra) starts at the top like a long one, not in the middle
+      layoutBuilder: (current, previous) => Stack(alignment: Alignment.topLeft, children: [...previous, ?current]),
+      child: child,
+    );
   }
 }
 
@@ -999,6 +1035,28 @@ class GroupEditor extends StatelessWidget {
             ),
           ),
         ],
+        if (catalog.pricesWords) ...[
+          _heading(context, pricedWords.values.join(', ')),
+          for (final word in pricedWords.keys)
+            _FactorChips(
+              id: groupKey,
+              word: word,
+              value: catalog.groupFactor(groupKey, word),
+              location: catalog.locationFactor(word),
+              onPicked: (factor) {
+                catalog.setGroupFactor(groupKey, word, factor);
+                onChanged();
+              },
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'On a choice picked here: ${wordsLine(catalog, groupKey)} $_wordsSmallPrint',
+              key: ValueKey('$groupKey/words-line'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
         _heading(context, 'Options'),
         for (final o in options)
           Padding(
@@ -1165,6 +1223,135 @@ class GroupEditor extends StatelessWidget {
     if (locale == 'en' && row.containsKey('kitchen_label')) row['kitchen_label'] = names['en'];
     onChanged();
   }
+}
+
+// --- what the one-tap words charge ----------------------------------------------------------------------
+
+const _wordsSmallPrint =
+    'A free option stays free, "No" always costs nothing, and a choice that is a dish is charged once whatever '
+    'the word.';
+
+/// What Extra, On the side and Light charge on a choice, for the whole location: each as times the option's
+/// own price. An option group can charge otherwise, on its own page.
+class WordsEditor extends StatelessWidget {
+  const WordsEditor({super.key, required this.catalog, required this.onChanged});
+
+  final MenuCatalog catalog;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final apart = [
+      for (final g in catalog.groups())
+        if (g['word_factors'] != null) nameOf(g),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(pricedWords.values.join(', '), style: theme.textTheme.headlineSmall),
+        const Text(
+          'What a choice costs with one of these words on it, as times the option\'s own price. '
+          'It holds for every option group that does not say otherwise.',
+        ),
+        const SizedBox(height: 16),
+        for (final word in pricedWords.keys)
+          _FactorChips(
+            id: 'words',
+            word: word,
+            value: catalog.locationFactor(word),
+            onPicked: (factor) {
+              catalog.setLocationFactor(word, factor!);
+              onChanged();
+            },
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(wordsLine(catalog), key: const ValueKey('words/line'), style: theme.textTheme.bodyMedium),
+        ),
+        const SizedBox(height: 8),
+        Text(_wordsSmallPrint, style: theme.textTheme.bodySmall),
+        if (apart.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Charging otherwise, set on the group: ${_listed(apart)}.',
+              key: const ValueKey('words/apart'),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The buttons for what one word charges. With [location] (on a group) a first button puts the group back on
+/// the location's rule and says what that is.
+class _FactorChips extends StatelessWidget {
+  const _FactorChips({
+    required this.id,
+    required this.word,
+    required this.value,
+    required this.onPicked,
+    this.location,
+  });
+
+  final String id; // what the keys start with: the group's key, or "words" for the location
+  final String word;
+  final double? value; // null on a group that follows the location
+  final double? location;
+  final ValueChanged<double?> onPicked;
+
+  @override
+  Widget build(BuildContext context) {
+    final offered = {...factorChoices.keys, ?value}.toList()..sort();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(width: 96, child: Text(pricedWords[word]!, style: Theme.of(context).textTheme.titleSmall)),
+          if (location != null)
+            ChoiceChip(
+              key: ValueKey('$id/word:$word:location'),
+              label: Text('As the location (${factorName(location!)})'),
+              selected: value == null,
+              onSelected: (_) => onPicked(null),
+            ),
+          for (final factor in offered)
+            ChoiceChip(
+              key: ValueKey('$id/word:$word:${factorText(factor)}'),
+              label: Text(factorName(factor)),
+              selected: value == factor,
+              onSelected: (_) => onPicked(factor),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What the words charge in a sentence or two, at the location or on the choices of one group: "Extra charges
+/// the option twice. On the side and Light charge the option once."
+String wordsLine(MenuCatalog catalog, [String? groupKey]) {
+  final byFactor = <double, List<String>>{};
+  for (final e in pricedWords.entries) {
+    final factor = groupKey == null ? catalog.locationFactor(e.key) : catalog.factorIn(groupKey, e.key);
+    byFactor.putIfAbsent(factor, () => []).add(e.value);
+  }
+  return [for (final e in byFactor.entries) '${_listed(e.value)} ${_charges(e.key, e.value.length > 1)}.'].join(' ');
+}
+
+String _charges(double factor, bool several) {
+  final verb = several ? 'charge' : 'charges';
+  if (factor == 0) return several ? 'cost nothing' : 'costs nothing';
+  if (factor == 0.5) return "$verb half the option's price";
+  if (factor == 1) return '$verb the option once';
+  if (factor == 1.5) return '$verb the option one and a half times';
+  if (factor == 2) return '$verb the option twice';
+  return '$verb ${factorText(factor)} times the option';
 }
 
 // --- stations -------------------------------------------------------------------------------------------

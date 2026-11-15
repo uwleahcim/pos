@@ -88,6 +88,9 @@ as its own line rather than as a pick. `docs/printing.md` has how the hub decide
   the line underneath says in words who still reads it. Nothing ticked off is how every group starts.
 - **Option groups › a group › Several of the same option.** Lets a choice go on a dish more than once, each
   one counted and charged.
+- **Option groups › a group › Extra, On the side, Light.** What a choice of the group costs with one of
+  those words on it (Extra charges the option twice unless the group or the location says otherwise). A
+  choice that is a dish is charged once whatever the word. The rule is in `docs/word-prices.md`.
 - **Option groups › a group › Options come from.** Pick a category and the group offers its dishes; the
   dish rows show the dish's name read-only (it is the dish's), with the price it adds, Default and On sale
   editable. They cannot be removed, since the category puts them back; options typed by hand can.

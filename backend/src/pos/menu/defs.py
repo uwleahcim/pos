@@ -141,6 +141,28 @@ class Option:
     active: bool = True
 
 
+WORDS: tuple[str, ...] = ("extra", "side", "light")
+"""The one-tap words on a choice whose price can be set (`Selection.prefix`). "no" is not one of them: a choice
+left off always costs nothing."""
+
+STANDING_FACTORS: Mapping[str, Decimal] = {"extra": Decimal(2), "side": Decimal(1), "light": Decimal(1)}
+"""What a word charges while the menu says nothing (no `Word` row, nothing on the group): Extra charges the
+option again, On the side and Light charge it once (Mike, 2026-11-15)."""
+
+MAX_FACTOR = Decimal(10)
+
+
+@dataclass(frozen=True)
+class Word:
+    """The price rule of a one-tap word for the whole location: a choice carrying the word costs `factor`
+    times what the option adds (2 for Extra: the option is charged again; 1: the word is only for the
+    kitchen; 0.5: half). A free option stays free whatever the word. A group can say otherwise for its own
+    choices (`Group.word_factors`)."""
+
+    code: str  # extra | side | light
+    factor: Decimal = Decimal(1)
+
+
 @dataclass(frozen=True)
 class Group:
     code: str
@@ -162,6 +184,9 @@ class Group:
     list the choice, and a choice that is a dish (the soup) still prints at its own station. None while nobody
     has said: every station lists the choices, and the bundled files may still name stations (`seed.fill`);
     an empty list is a manager saying every station reads them."""
+    word_factors: Mapping[str, Decimal] | None = None
+    """What a one-tap word charges on this group's choices, where it is not the location's rule (`Word`):
+    `{"extra": 1}` for a group whose Extra costs nothing more. A word left out follows the location."""
 
 
 @dataclass(frozen=True)
@@ -331,6 +356,7 @@ class Definitions:
         self.items: dict[str, Item] = {}
         self.variants: dict[str, Variant] = {}
         self.groups: dict[str, Group] = {}
+        self.words: dict[str, Word] = {}
         self.options: dict[str, Option] = {}
         self.attachments: list[Attachment] = []
         self.menus: dict[str, Menu] = {}
@@ -358,6 +384,8 @@ class Definitions:
                     self.variants[obj.id] = obj
                 case Group():
                     self.groups[obj.code] = obj
+                case Word():
+                    self.words[obj.code] = obj
                 case Option():
                     self.options[obj.id] = obj
                 case Attachment():
@@ -379,6 +407,21 @@ class Definitions:
         return self
 
     # --- lookups -------------------------------------------------------------------------------
+
+    def word_factor(self, group: Group | None, word: str | None) -> Decimal:
+        """How many times an option's price a choice carrying `word` costs in `group`: the group's own rule,
+        else the location's, else the standing one. No word charges the option once."""
+        if word is None:
+            return ONE
+        own = (group.word_factors or {}).get(word) if group is not None else None
+        if own is not None:
+            return dec(own)
+        held = self.words.get(word)
+        return dec(held.factor) if held is not None else STANDING_FACTORS.get(word, ONE)
+
+    def word_factors(self, group: Group | None = None) -> dict[str, Decimal]:
+        """`word_factor` for every word a price can be set for."""
+        return {word: self.word_factor(group, word) for word in WORDS}
 
     def entry(self, entry_id: str) -> Entry | None:
         return next((e for e in self.entries if e.id == entry_id), None)

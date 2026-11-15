@@ -234,7 +234,8 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
 }
 
 /// This screen's own price for a configured line, from the menu it has: the size's price plus every chosen
-/// extra that costs something (a choice marked "no" is free, as the backend makes it), the choices on a
+/// extra that costs something (a choice marked "no" is free and one marked Extra is charged again where the
+/// menu says so, as the backend has it), the choices on a
 /// chosen dish included, with a problem for each required choice still missing. Used only while no backend
 /// answers (ADR 6); the backend prices the line for real once it is back.
 Priced localPrice(String name, List<VariantOffer> variants, ItemDetail? detail, LineRequest request) {
@@ -256,7 +257,7 @@ int choicesPrice(List<GroupDetail> groups, Choices choices, List<String> problem
     }
     for (final o in g.options) {
       if (!picked.contains(o.optionId)) continue;
-      if (!o.free && choices.prefixes[o.optionId] != 'no') total += cents(o.price) * choices.qty(o.optionId);
+      total += choiceCents(g, o, choices.prefixes[o.optionId], choices.qty(o.optionId));
       if (o.groups.isNotEmpty) {
         total += choicesPrice(o.groups, choices.nested[o.optionId] ?? Choices(), problems, on: o.name);
       }
