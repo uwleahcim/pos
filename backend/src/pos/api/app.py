@@ -40,6 +40,7 @@ from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rul
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.numbers import OrderNumbers
+from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing import discover
 from ..printing.jobs import PrintJob
@@ -57,6 +58,7 @@ from ..settings import (
     clean_printers,
     clean_quotes,
     clean_table_timers,
+    clean_voids,
     default_settings,
 )
 from ..sync.hlc import HLC
@@ -214,11 +216,12 @@ class PriceIn(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    """A manager's PIN on the spot, for one purpose on one order."""
+    """A manager's PIN on the spot, for one purpose on one order: a discount or a charge (`adjust`), or the
+    void of a dish the kitchen already has (`void`)."""
 
     device: str
     pin: str
-    purpose: str = Field("adjust", pattern="^adjust$")
+    purpose: str = Field("adjust", pattern="^(adjust|void)$")
     order_id: str
 
 
@@ -240,6 +243,18 @@ class CoursingIn(BaseModel):
     enabled: bool = True
     default: str | None = Field(None, description="the course a new dish goes to; the first one when left out")
     courses: list[CourseIn] = Field(default_factory=list)
+
+
+class VoidReasonIn(BaseModel):
+    id: str | None = Field(None, description="left out for a reason new on the screen: the hub names it from the name")
+    name: str
+
+
+class VoidsIn(BaseModel):
+    """What voiding a dish the kitchen already has takes: a manager's PIN or not, and the reasons to pick from."""
+
+    approval: str = Field("manager", description="manager: a manager's PIN on the spot; none: the reason alone")
+    reasons: list[VoidReasonIn] = Field(default_factory=list)
 
 
 class StageTimesIn(BaseModel):
@@ -480,6 +495,16 @@ def _totals(totals: dict[str, Decimal]) -> list[dict[str, str]]:
     return [{"key": key, "amount": str(amount)} for key, amount in sorted(totals.items(), key=lambda kv: -kv[1])]
 
 
+def _void_totals(voids: list[dict[str, Any]], key: Callable[[dict[str, Any]], str]) -> list[dict[str, Any]]:
+    """The voids added up under `key` (a reason, a name): what they were worth and how many, the most first."""
+    totals: dict[str, tuple[Decimal, int]] = {}
+    for row in voids:
+        amount, count = totals.get(key(row), (Decimal(0), 0))
+        totals[key(row)] = (amount + Decimal(row["amount"]), count + 1)
+    ranked = sorted(totals.items(), key=lambda kv: (-kv[1][0], kv[0]))
+    return [{"key": name, "amount": str(amount), "count": count} for name, (amount, count) in ranked]
+
+
 def job_out(job: PrintJob, *, with_data: bool = False, due_in: float = 0.0) -> dict[str, Any]:
     out: dict[str, Any] = {
         "job_id": job.job_id,
@@ -682,10 +707,11 @@ def create_app(
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         app.state.menu.refresh()
         fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
+        fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
         fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
         fresh, refused_payments = pay_ops(fresh)
         fresh = number_orders(app.state.numbers, fresh)
-        refused += refused_adjustments + refused_payments
+        refused += refused_voids + refused_adjustments + refused_payments
         try:
             accepted = store.append(fresh)
         except ClockDriftError as err:
@@ -833,6 +859,21 @@ def create_app(
         floor map follows at once (the change feed tells them a setting changed)."""
         manager_from(app.state.tokens, authorization)
         return write_setting("table_timers", body.model_dump(exclude_unset=True), clean_table_timers)
+
+    @app.get("/settings/voids")
+    def read_voids() -> dict[str, Any]:
+        """What voiding a dish the kitchen already has takes: `approval` (`manager` for a manager's PIN on the
+        spot, `none` for the reason alone) and `reasons`, the list the person voiding picks from."""
+        settings: SettingStore = app.state.settings
+        return settings.get("voids")
+
+    @app.put("/settings/voids")
+    def write_voids(body: VoidsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager says whether a void of a sent dish needs a manager, and names the reasons. A reason sent
+        without an id is new and gets one from its name; the rest keep theirs, since voids in the order log
+        carry them. The hub holds every void to this from the next one on."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("voids", body.model_dump(), clean_voids)
 
     @app.get("/settings/desk_phones")
     def read_desk_phones() -> dict[str, Any]:
@@ -1028,10 +1069,13 @@ def create_app(
     ) -> dict[str, Any]:
         """Every discount and charge on the orders, with totals by reason, by who applied it and by who
         approved it: the manager's look at what came off the register and why (architecture section 9).
-        Discounts taken off again are counted, not valued."""
+        Discounts taken off again are counted, not valued. `voids` lists every dish voided after the kitchen
+        had it (since `since`, whatever the age of its order), oldest first, with the same three totals:
+        by reason, by who voided and by who approved."""
         store: OpStore | PgOpStore = app.state.store
         discounts: list[dict[str, Any]] = []
         charges: list[dict[str, Any]] = []
+        voids: list[dict[str, Any]] = []
         by_reason: dict[str, Decimal] = {}
         by_staff: dict[str, Decimal] = {}
         by_approver: dict[str, Decimal] = {}
@@ -1047,7 +1091,15 @@ def create_app(
                 _tally(by_approver, (row["approved_by"] or {}).get("name", ""), amount)
             charges.extend({**about, **row} for row in check["charges"])
             removed += sum(1 for d in state.discounts.values() if not d.active)
+            voids.extend({**row, "status": state.status} for row in void_rows(state, since))
+        voids.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
         return {
+            "voids": voids,
+            "void_total": str(sum((Decimal(v["amount"]) for v in voids), Decimal("0.00"))),
+            "void_count": len(voids),
+            "voids_by_reason": _void_totals(voids, lambda v: v["reason_name"]),
+            "voids_by_staff": _void_totals(voids, lambda v: v["by"]),
+            "voids_by_approver": _void_totals(voids, lambda v: (v["approved_by"] or {}).get("name", "")),
             "discounts": discounts,
             "charges": charges,
             "discount_total": str(sum(by_reason.values(), Decimal(0))),

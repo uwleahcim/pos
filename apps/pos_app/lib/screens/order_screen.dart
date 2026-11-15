@@ -17,6 +17,7 @@ import '../photos.dart';
 import '../pricing.dart';
 import '../session.dart';
 import '../takeout.dart';
+import '../voids.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
 import 'compact.dart';
@@ -25,6 +26,7 @@ import 'menu_panel.dart';
 import 'pay_dialog.dart';
 import 'status_bar.dart';
 import 'theme.dart';
+import 'void_dialog.dart';
 
 /// One order: its check as the backend prices it, and the menu whose taps append to it.
 class OrderScreen extends StatefulWidget {
@@ -264,11 +266,17 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  /// A manager's PIN for one adjustment on this order; null when they walk away.
-  Future<String?> _approve(String what) => showDialog<String>(
+  /// A manager's PIN for one adjustment on this order (or, with [purpose] `void`, one void of a sent dish);
+  /// null when they walk away.
+  Future<String?> _approve(String what, {String purpose = 'adjust'}) => showDialog<String>(
     context: context,
-    builder: (_) =>
-        ApprovalDialog(api: widget.api, device: widget.api.settings.device, orderId: widget.orderId, what: what),
+    builder: (_) => ApprovalDialog(
+      api: widget.api,
+      device: widget.api.settings.device,
+      orderId: widget.orderId,
+      what: what,
+      purpose: purpose,
+    ),
   );
 
   Future<void> _removeDiscount(CheckDiscount discount) =>
@@ -353,21 +361,62 @@ class _OrderScreenState extends State<OrderScreen> {
   /// Makes a line hold `qty` of its dish: one more from a tap on the quantity, one fewer from a tap on the
   /// bin, any number typed after holding the quantity, none after holding the bin. Before the kitchen has the
   /// line it simply changes. After, more is a new line of the extra, held until fired like any new dish; fewer
-  /// or none voids it (and sends the rest again), so a VOID ticket prints and the operator confirms first.
+  /// or none voids it (and sends the rest again), so a VOID ticket prints and the operator says why first.
   Future<void> _setQty(Line line, int qty) async {
-    final change = qtyChange(line, qty, newId: widget.outbox.newId);
+    var change = qtyChange(line, qty, newId: widget.outbox.newId);
     if (change.isEmpty) return;
     if (change.voidsFired) {
-      final ok = await _confirmVoid(
+      final word = await _voidWord(
+        line,
         title: qty == 0 ? 'Void ${line.item}?' : 'Void ${line.item} and send $qty again?',
         body: qty == 0
             ? 'It has gone to the kitchen. A VOID ticket prints so they stop making it.'
             : 'It has gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for $qty.',
-        action: 'Void',
       );
-      if (!ok) return;
+      if (word == null) return;
+      change = change.voiding(word);
     }
     await _send(change, line);
+  }
+
+  /// The operator's word for voiding a dish the kitchen already has, as what goes on the void: the reason
+  /// picked from the location's list, who is voiding and, where the location asks for one, a manager's
+  /// approval (the PIN is checked by the hub, so that needs a backend). Null when they keep the dish, or
+  /// when the void cannot be made now (a message says why). A hub older than the rule asks for nothing:
+  /// the operator confirms as before ([confirm]; an edit's own sheet has already warned).
+  Future<Map<String, dynamic>?> _voidWord(
+    Line line, {
+    required String title,
+    required String body,
+    bool confirm = true,
+  }) async {
+    final VoidRules? rules;
+    try {
+      rules = await widget.api.voidRules();
+    } on ApiException {
+      _say('Voiding a sent dish needs a hub or the cloud, and none answers now.');
+      return null;
+    }
+    if (!mounted) return null;
+    if (rules == null) {
+      if (confirm && !await _confirmVoid(title: title, body: body, action: 'Void')) return null;
+      return const {};
+    }
+    if (rules.needsManager && !widget.api.connection.value.isOnline) {
+      _say("A void needs a manager's PIN, and no hub or cloud answers to check it.");
+      return null;
+    }
+    final reason = await showDialog<VoidReason>(
+      context: context,
+      builder: (_) => VoidDialog(title: title, body: body, reasons: rules!.reasons),
+    );
+    if (reason == null || !mounted) return null;
+    String? approval;
+    if (rules.needsManager) {
+      approval = await _approve('Voiding ${line.item} (${reason.name})', purpose: 'void');
+      if (approval == null) return null;
+    }
+    return {'reason': reason.id, 'by': ?_staffName, 'by_id': ?_staffId, 'approval': ?approval};
   }
 
   /// Delete or Backspace on a dish of the menu: one of it comes off the check, the opposite of the Enter that
@@ -455,6 +504,7 @@ class _OrderScreenState extends State<OrderScreen> {
   /// Reopens a line's choices. The changed dish replaces the old one: an unfired line just comes off, a
   /// fired one is voided and the new one fired with it, so the kitchen gets both on one ticket. The new
   /// line says which line it replaces, so a comp on the old one follows it (nobody approves it again).
+  /// Fewer of a sent dish on the way is a void of the difference, with the operator's word like any void.
   Future<void> _edit(Line line) async {
     final itemId = line.itemId ?? _local[line.lineId]?.itemId;
     final entryId = line.entryId ?? _local[line.lineId]?.entryId;
@@ -479,9 +529,21 @@ class _OrderScreenState extends State<OrderScreen> {
         warning: line.fired ? 'Already sent to the kitchen: updating voids it and fires the new one.' : null,
       ),
     );
-    if (chosen == null) return;
+    if (chosen == null || !mounted) return;
+    var word = const <String, dynamic>{};
+    if (line.fired && chosen.qty < line.qty) {
+      final said = await _voidWord(
+        line,
+        title: 'Void ${line.qty - chosen.qty} of the ${line.qty} ${line.item}?',
+        body:
+            'They have gone to the kitchen. A VOID ticket prints for the ${line.qty}, and a new one for ${chosen.qty}.',
+        confirm: false,
+      );
+      if (said == null) return;
+      word = said;
+    }
     await _appendAll([
-      ('void_line', {'line_id': line.lineId, 'reason': 'changed'}),
+      ('void_line', {'line_id': line.lineId, 'reason': 'changed', ...word}),
       ('add_line', _lineData(chosen, seat: line.seat, course: line.course, replaces: line.lineId)),
       if (line.fired) ('fire', {'course': line.course ?? '*'}),
     ]);
@@ -930,7 +992,7 @@ class _TicketPanelState extends State<_TicketPanel> {
           )
         : child;
     final words = [
-      if (line.isVoid) 'void',
+      if (line.isVoid) line.voidReason.isEmpty ? 'void' : 'void · ${line.voidReason}',
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
       if (line.isActive && line.modifiedAfterFire) 'added after fire',
       if (line.note.isNotEmpty) line.note,

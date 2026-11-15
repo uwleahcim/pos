@@ -26,7 +26,10 @@ KINDS = frozenset(
         "set_field",  # data: any order fields
         "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?
         "set_line",  # data: line_id + any line fields (a drag on the check: course and rank)
-        "void_line",  # data: line_id, reason? (removes a line the kitchen has not seen, voids one it has)
+        # void_line removes a line the kitchen has not seen and voids one it has. A void of a sent line says
+        # why (a reason from the location's list) and who (`by`, `by_id`); the hub adds the reason's name
+        # and the manager who approved it (pos.orders.voids).
+        "void_line",  # data: line_id, reason?, by?, by_id?, reason_name?, approved_by?
         "fire",  # data: course ("*" = everything); sends that course's lines not yet sent
         "close",
         "reopen",
@@ -40,8 +43,8 @@ KINDS = frozenset(
 )
 """Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
 (ADR 6, capture-only mode). The replay ignores it; the printer heads the ticket "late" and reports list it.
-A `discount`, `charge` or `remove_charge` may carry `approval`, a manager's token; the hub swaps it for
-`approved_by` (who) before storing (pos.orders.adjustments)."""
+A `discount`, `charge`, `remove_charge` or `void_line` may carry `approval`, a manager's token; the hub swaps
+it for `approved_by` (who) before storing (pos.orders.adjustments, pos.orders.voids)."""
 ORDER_FIELDS = frozenset(
     {
         "table",
@@ -102,6 +105,9 @@ class Line:
     rank: float = 0.0  # its place on the check: lines show, print and are charged in rank order
     status: str = "active"  # active | removed (taken off before the kitchen saw it) | void (after)
     void_reason: str | None = None
+    # For a line voided after the kitchen had it: why (the reason's id and the name it had then), who
+    # (`by`, `by_id`), the manager who approved it (`approved_by`, or None) and when (`at_ms`).
+    voided: dict[str, Any] | None = None
     modified_after_fire: bool = False
     request: dict[str, Any] | None = None  # what the operator chose, so a screen can reopen the choices
     priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
@@ -253,6 +259,7 @@ class OrderState:
                     "rank": line.rank,
                     "status": line.status,
                     "void_reason": line.void_reason,
+                    "voided": line.voided,
                     "modified_after_fire": line.modified_after_fire,
                     "fired": line.fired_at is not None,
                     "request": line.request,
@@ -351,6 +358,15 @@ def apply(state: OrderState, op: Op) -> None:
             line.void_reason = data.get("reason")
             if line.fired_at is not None:
                 line.modified_after_fire = True
+                approved = data.get("approved_by")
+                line.voided = {
+                    "reason": data.get("reason"),
+                    "reason_name": str(data.get("reason_name") or ""),
+                    "by": str(data.get("by") or ""),
+                    "by_id": data.get("by_id") if isinstance(data.get("by_id"), str) else None,
+                    "approved_by": approved if isinstance(approved, dict) else None,
+                    "at_ms": op.hlc.wall_ms,
+                }
 
     elif kind == "fire":
         course = data.get("course", "*")

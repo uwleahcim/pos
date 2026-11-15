@@ -96,3 +96,6 @@ will edit these in phase 2.
 `GET /reports/adjustments?since=<ms>` lists every discount and charge on the orders active since then, with
 totals by reason, by who applied them and by who approved them, and how many discounts were taken off
 again. The audit photo for each one is in `/events/photos` under the operation's id.
+
+The same call lists the dishes voided after the kitchen had them, and the app shows both to a manager under
+Location › **Voids and comps report**: see `voids.md`.

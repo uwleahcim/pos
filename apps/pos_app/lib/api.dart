@@ -17,6 +17,7 @@ import 'printers.dart';
 import 'roster.dart';
 import 'settings.dart';
 import 'takeout.dart';
+import 'voids.dart';
 
 /// Worker: the `/menu/items` answer split into one JSON text per dish, under the name [PosApi.item] reads
 /// it back by, with the menu revision the answer carries. Decoding ten megabytes and encoding each dish
@@ -50,6 +51,7 @@ class Line {
     this.replaces,
     this.by = '',
     this.byId,
+    this.voidReason = '',
     this.pending = false,
   });
 
@@ -70,6 +72,7 @@ class Line {
     replaces: json['replaces'] as String?,
     by: json['by'] as String? ?? '',
     byId: json['by_id'] as String?,
+    voidReason: (json['voided'] as Map?)?['reason_name'] as String? ?? '',
   );
 
   final String lineId;
@@ -101,6 +104,10 @@ class Line {
   /// a check one server opened is added to by another, and each dish says whose it is.
   final String by;
   final String? byId;
+
+  /// Why it was voided, as the location names the reason; empty for a line that is not a void, and for a
+  /// void made before reasons were asked.
+  final String voidReason;
 
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
@@ -140,6 +147,7 @@ class Line {
     replaces: replaces,
     by: by,
     byId: byId,
+    voidReason: voidReason,
     pending: pending ?? this.pending,
   );
 }
@@ -595,10 +603,45 @@ class PosApi {
   /// The discount reasons and service charges this location allows, with who may apply them.
   Future<PricingRules> pricingRules() async => PricingRules.fromJson(await _get('/pricing/rules'));
 
-  /// A manager's PIN for a discount or a charge on one order: the answer's `approval` goes on the operation.
-  /// 401 is a wrong PIN, 403 not a manager, 423 locked after too many tries.
-  Future<Map<String, dynamic>> approve({required String device, required String pin, required String orderId}) =>
-      _post('/approvals', {'device': device, 'pin': pin, 'order_id': orderId});
+  /// A manager's PIN for a discount or a charge on one order (`adjust`), or for the void of a dish the
+  /// kitchen already has (`void`): the answer's `approval` goes on the operation. 401 is a wrong PIN, 403 not
+  /// a manager, 423 locked after too many tries.
+  Future<Map<String, dynamic>> approve({
+    required String device,
+    required String pin,
+    required String orderId,
+    String purpose = 'adjust',
+  }) => _post('/approvals', {'device': device, 'pin': pin, 'order_id': orderId, 'purpose': purpose});
+
+  /// What voiding a dish the kitchen already has takes at this location: a manager's PIN or not, and the
+  /// reasons to pick from. The last answer read when nothing answers, so the reasons still show (ADR 6).
+  /// Null from a hub older than the rule, which asks for nothing.
+  Future<VoidRules?> voidRules() async {
+    try {
+      final rules = await _repeated('/settings/voids', VoidRules.fromJson, remember: 'voids');
+      return rules.reasons.isEmpty ? null : rules;
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets the void rules for every terminal. A reason without an id is
+  /// new; the answer carries the id the hub gave it.
+  Future<VoidRules> saveVoidRules(String token, VoidRules rules) async => VoidRules.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/voids'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(rules.toJson()),
+      ),
+    ),
+  );
+
+  /// What came off the register since [sinceMs] (wall-clock ms) and why: voids of sent dishes, discounts
+  /// and comps, with totals by reason, by who did it and by who approved it.
+  Future<AdjustmentsReport> adjustmentsReport({required int sinceMs}) async =>
+      AdjustmentsReport.fromJson(await _get('/reports/adjustments', query: {'since': '$sinceMs'}));
 
   /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
   /// no backend works a new check's tax from. Null until a check has been read on this device.

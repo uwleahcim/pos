@@ -4,8 +4,10 @@
 /// Before the kitchen has a line, it simply changes. After, the kitchen is already cooking it: more of it
 /// is a new line of the extra, held like any dish just added until the operator fires it; fewer is a void
 /// of the line (a VOID ticket prints) and the rest sent again on the same ticket, in the line's place (a
-/// comp on the line follows the rest). A void is confirmed by the operator first. Its place and its course are the check's business alone: a dish moves freely, sent
-/// or not, and keeps its place on the ticket it went out on.
+/// comp on the line follows the rest). A void is the operator's word first: a reason from the location's
+/// list and, where the location asks for one, a manager's PIN (voids.dart); [LineChange.voiding] puts them
+/// on the void. Its place and its course are the check's business alone: a dish moves freely, sent or not,
+/// and keeps its place on the ticket it went out on.
 library;
 
 import 'api.dart';
@@ -24,6 +26,16 @@ class LineChange {
   final bool voidsFired;
 
   bool get isEmpty => ops.isEmpty;
+
+  /// The same change with [word] on its void: the reason picked, who is voiding and the manager's approval.
+  LineChange voiding(Map<String, dynamic> word) => LineChange(
+    [
+      for (final (kind, data) in ops)
+        if (kind == 'void_line') (kind, {...data, ...word}) else (kind, data),
+    ],
+    newLineId: newLineId,
+    voidsFired: voidsFired,
+  );
 }
 
 /// The operations that make `line` hold `qty`. Zero takes it off (a void once fired).

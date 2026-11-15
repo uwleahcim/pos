@@ -22,6 +22,10 @@
 - `table_timers`: the timer ring around each table on the floor map (`pos/floor/plan.py`, `check_timer`):
   whether it is drawn, and for each thing a table can be waiting on (`sat`, `unsent`, `held`, `fired`) after
   how many minutes the ring warns and after how many it is overdue; 0 for never.
+- `voids`: what voiding a dish the kitchen already has takes (`pos/orders/voids.py`): `approval`, whether a
+  manager's PIN is needed (`manager`, the default) or a reason alone will do (`none`), and `reasons`, the
+  short list the person voiding picks from, by name in the order the screen shows them. A void in the order
+  log carries its reason's id and the name it had then, so a reason can be renamed or dropped later.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -51,6 +55,12 @@ STANDARD_COURSES = [
     {"id": "2", "name": "Entrees"},
     {"id": "3", "name": "Dessert"},
 ]
+STANDARD_VOID_REASONS = [
+    {"id": "guest-changed-mind", "name": "Guest changed mind"},
+    {"id": "rung-in-wrong", "name": "Rung in wrong"},
+    {"id": "kitchen-error", "name": "Kitchen error"},
+    {"id": "out-of-stock", "name": "Out of stock"},
+]
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
@@ -73,6 +83,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "fired": {"warn": 25, "late": 0},
         },
     },
+    "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
 }
 AWAY_MAX = 3600
 TIMER_MAX = 24 * 60
@@ -89,6 +100,15 @@ DEVICE = re.compile(r"^[A-Za-z0-9]{1,40}$")
 COURSE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 """A course's id: short, no spaces, never `*` (which a `fire` uses for every course)."""
 COURSE_NAME_MAX = 40
+VOID_APPROVALS = ("manager", "none")
+"""Who stands behind a void of a sent dish: a manager's PIN on the spot, or nobody beyond the reason."""
+VOID_REASON_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+VOID_REASON_NAME_MAX = 40
+VOID_REASONS_MAX = 12
+"""A screenful of buttons on a phone: the person voiding picks one at a glance."""
+VOID_WORDS = frozenset({"void", "fewer", "changed"})
+"""What a `void_line` said in place of a reason before reasons were asked, and what the void half of an edit
+still says (`changed`): never a reason's id, so the reports can tell them apart."""
 
 
 def clean_quotes(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -161,6 +181,51 @@ def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:
     elif not any(c["id"] == default for c in courses):
         raise ValueError(f"the default course {default!r} is not on the list")
     return {"enabled": enabled, "default": default, "courses": courses}
+
+
+def clean_voids(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The void rules as the app may set them, checked: `approval` (`manager` or `none`) and `reasons`, a list
+    of `{id, name}` in the order the screen shows them, at least one. A reason without an id is new on the
+    screen and gets one from its name; ids never change after that, since voids in the order log carry
+    them. Raises ValueError on a bad value."""
+    approval = data.get("approval", "manager")
+    if approval not in VOID_APPROVALS:
+        raise ValueError("approval must be manager or none")
+    raw = data.get("reasons") or []
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("reasons must be a list of {id, name}")
+    if not raw:
+        raise ValueError("voids need at least one reason to pick from")
+    if len(raw) > VOID_REASONS_MAX:
+        raise ValueError(f"at most {VOID_REASONS_MAX} reasons, so they fit one screen")
+    names: set[str] = set()
+    taken: set[str] = set(VOID_WORDS)
+    for entry in raw:
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise ValueError("every reason needs a name")
+        if len(name) > VOID_REASON_NAME_MAX:
+            raise ValueError(f"a reason is at most {VOID_REASON_NAME_MAX} characters")
+        if name.casefold() in names:
+            raise ValueError(f"the reason {name!r} is listed twice")
+        names.add(name.casefold())
+        ident = entry.get("id")
+        if ident not in (None, ""):
+            if not isinstance(ident, str) or not VOID_REASON_ID.match(ident):
+                raise ValueError(f"a reason id is letters, digits, - or _, not {ident!r}")
+            if ident in VOID_WORDS:
+                raise ValueError(f"the reason id {ident!r} is taken")
+            if ident in taken:
+                raise ValueError(f"the reason id {ident!r} is listed twice")
+            taken.add(ident)
+    reasons: list[dict[str, str]] = []
+    for entry in raw:
+        ident = entry.get("id")
+        if ident in (None, ""):
+            ident = _new_id(str(entry["name"]), taken, "reason")
+            taken.add(ident)
+        reasons.append({"id": str(ident), "name": str(entry["name"]).strip()})
+    return {"approval": approval, "reasons": reasons}
 
 
 def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -354,8 +419,13 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _new_course_id(name: str, taken: set[str]) -> str:
-    """An id from the name (`Soup & Salad` -> `soup-salad`), numbered when that one is taken."""
-    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:28] or "course"
+    return _new_id(name, taken, "course")
+
+
+def _new_id(name: str, taken: set[str], kind: str) -> str:
+    """An id from the name (`Soup & Salad` -> `soup-salad`), numbered when that one is taken; `kind` when
+    the name has no letter or digit to make one from."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:28] or kind
     if base not in taken:
         return base
     return next(f"{base}-{n}" for n in itertools.count(2) if f"{base}-{n}" not in taken)
