@@ -21,7 +21,8 @@ merges after any disconnect.
 - Sold out, and a number left (86 a dish, or type how many are left: the tile counts down as it sells, the
   dish sells out at zero, the number clears overnight; the manager's list of what is out and running low):
   `docs/eighty-six.md`
-- Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
+- Counter mode and takeout (order numbers, pay first, future orders, quote times with the kitchen rush and
+  big orders, ready texts): `docs/counter-mode.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
   note line, their past orders with Same again at today's menu): `docs/customers.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check

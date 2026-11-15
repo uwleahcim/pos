@@ -2,7 +2,12 @@
 
 - `quotes`: how many minutes each channel promises a takeout order (architecture section 12, "Quote times":
   set by hand until kitchen pacing quotes them in phase 2) and which channels may pay at pickup instead of
-  before the kitchen sees the order (counter mode pays first).
+  before the kitchen sees the order (counter mode pays first). `big_orders`: an order of `dishes` dishes or
+  more is promised `minutes` later than the channel's quote (0 for either: no such rule). The terminal
+  settles that as the order is first sent, when it knows how big the order is.
+- `rush`: the kitchen is behind tonight. `minutes` is added to every quote made from now on, on every
+  terminal, until `until` (the end of the night, `pos.localtime.night_end`), so a rush set at seven is not
+  still on the next morning. `by` is the manager who set it. `GET /settings/quotes` carries it while it runs.
 - `coursing`: whether dishes are coursed at all, the courses by name in the order the kitchen serves them
   (any number of them; the standard four to start) and which course a new dish goes to. A line in the order
   log carries only its course's id, so a course can be renamed or moved without touching any order.
@@ -68,7 +73,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
         "pay_at_pickup": ["phone"],
+        "big_orders": {"dishes": 0, "minutes": 0},
     },
+    "rush": {"minutes": 0, "until": 0, "by": ""},
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},
@@ -89,6 +96,10 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
     "tickets": {"numbered": True, "also_at": True},
 }
+RUSH_MAX = 120
+"""The most minutes a rush can add to a quote: past two hours the kitchen is closed, not busy."""
+BIG_ORDER_DISHES_MAX = 500
+BIG_ORDER_MINUTES_MAX = 240
 AWAY_MAX = 3600
 TIMER_MAX = 24 * 60
 """The longest a table timer can be set to, in minutes."""
@@ -138,7 +149,37 @@ def clean_quotes(data: Mapping[str, Any]) -> dict[str, Any]:
         if channel not in CHANNELS:
             raise ValueError(f"unknown channel {channel!r} in pay_at_pickup")
     out["pay_at_pickup"] = sorted(set(pay))
+    big = data.get("big_orders") or {}
+    if not isinstance(big, Mapping):
+        raise ValueError("big_orders is how many dishes make a big order and the minutes it adds")
+    out["big_orders"] = {
+        "dishes": _whole(big.get("dishes", 0), "the dishes that make a big order", BIG_ORDER_DISHES_MAX),
+        "minutes": _whole(big.get("minutes", 0), "the minutes a big order adds", BIG_ORDER_MINUTES_MAX),
+    }
     return out
+
+
+def clean_rush(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The rush as a manager may set it: `minutes` added to every new quote, 0 to take it off. Raises
+    ValueError on a bad value. When it ends and who set it are the hub's to say."""
+    return {"minutes": _whole(data.get("minutes", 0), "the rush minutes", RUSH_MAX)}
+
+
+def rush_now(stored: Mapping[str, Any], now_ms: int) -> dict[str, Any] | None:
+    """The rush that is running at `now_ms`, as the terminals read it, or None: none was set, it was taken
+    off, or the night it was set for is over."""
+    minutes, until = stored.get("minutes"), stored.get("until")
+    if not isinstance(minutes, int) or not isinstance(until, int) or minutes <= 0 or until <= now_ms:
+        return None
+    return {"minutes": minutes, "until": until, "by": str(stored.get("by") or "")}
+
+
+def _whole(value: Any, what: str, most: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+        raise ValueError(f"{what} must be a whole number")
+    if not 0 <= value <= most:
+        raise ValueError(f"{what} is 0 (none) to {most}")
+    return int(value)
 
 
 def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:

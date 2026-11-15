@@ -97,6 +97,17 @@ class Hub {
   String? quotesAuth;
   bool paid = false;
 
+  /// The rush (`PUT /settings/rush`): the minutes it was set to, in order, who asked, and when a rush set
+  /// now runs out. It answers only when its quotes name a rush (`'rush': null` for none): the hub the tests
+  /// start with is one from before the rush and before big orders.
+  final rushSet = <int>[];
+  String? rushAuth;
+  int rushUntil = DateTime.now().add(const Duration(hours: 6)).millisecondsSinceEpoch;
+
+  /// Called with every operation as it arrives, for a test that plays the hub's part (a dish added shows
+  /// on the order it serves).
+  void Function(String orderId, Map<String, dynamic> op)? onOp;
+
   /// What it answers for a caller's last order of the day (null: none), the numbers it was asked about, and
   /// whether it is down for that call.
   Map<String, dynamic>? lastOrder;
@@ -211,6 +222,9 @@ class Hub {
       final id = _ops.firstMatch(path)!.group(1)!;
       final ops = (jsonDecode(request.body) as List).cast<Map<String, dynamic>>();
       sent.addAll(ops.map((op) => (id, op)));
+      for (final op in ops) {
+        onOp?.call(id, op);
+      }
       return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
     }
     if (_check.hasMatch(path)) return json(checkJson(paid: paid));
@@ -223,8 +237,19 @@ class Hub {
       case '/settings/quotes':
         if (request.method == 'PUT') {
           quotesAuth = request.headers['authorization'];
-          quotes = jsonDecode(request.body) as Map<String, dynamic>;
+          // What a save names is kept as sent; what it does not name (the rush, always) stays as it was.
+          quotes = {...quotes, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
+        return json(quotes);
+      case '/settings/rush':
+        if (!quotes.containsKey('rush')) return json({'detail': 'Not Found'}, 404);
+        rushAuth = request.headers['authorization'];
+        final minutes = (jsonDecode(request.body) as Map)['minutes'] as int;
+        rushSet.add(minutes);
+        quotes = {
+          ...quotes,
+          'rush': minutes > 0 ? {'minutes': minutes, 'until': rushUntil, 'by': 'Mike'} : null,
+        };
         return json(quotes);
       case '/admin/session':
         final pin = (jsonDecode(request.body) as Map)['pin'] as String;
@@ -318,10 +343,17 @@ Future<Terminal> pumpOrders(
 }
 
 /// The order screen for [order], pushed over a home page so the test sees it go back for the next customer.
-Future<Terminal> pumpOrder(WidgetTester tester, Map<String, dynamic> order, {bool paid = false}) async {
+/// [before] runs once the terminal stands, before the screen comes up.
+Future<Terminal> pumpOrder(
+  WidgetTester tester,
+  Map<String, dynamic> order, {
+  bool paid = false,
+  void Function(Hub hub)? before,
+}) async {
   final t = await terminal(tester);
   t.hub.orders.add(order);
   t.hub.paid = paid;
+  before?.call(t.hub);
   await tester.pumpWidget(
     const MaterialApp(
       home: Scaffold(body: Center(child: Text('next customer'))),
@@ -556,6 +588,7 @@ void main() {
       ('takeout', 'phone', 'Linda', '617 555 0100'),
     );
     expect((data['locale'], data['quoted_minutes'], data['stage']), ('zh', 20, 'new'));
+    expect(data.containsKey('for_later'), isFalse); // as soon as the quote allows: nobody named a time
     expect((data['server'], data['server_id']), ('Mike', 's3'));
     expect(data.containsKey('order_no'), isFalse); // the hub numbers it
     final promisedAt = DateTime.fromMillisecondsSinceEpoch(data['promised_at'] as int);
@@ -599,7 +632,7 @@ void main() {
     final tomorrow = DateTime.now().add(const Duration(days: 1));
     expect((promisedAt.year, promisedAt.month, promisedAt.day), (tomorrow.year, tomorrow.month, tomorrow.day));
     expect((promisedAt.hour, promisedAt.minute), (18, 30));
-    expect(data['quoted_minutes'], 15);
+    expect((data['quoted_minutes'], data['for_later']), (15, true)); // the customer named the time
     await stop(tester);
   });
 

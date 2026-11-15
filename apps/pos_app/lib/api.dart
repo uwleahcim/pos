@@ -227,6 +227,13 @@ class Order {
   String get channel => fields['channel']?.toString() ?? '';
   String get stage => fields['stage']?.toString() ?? 'new';
   int? get promisedAt => fields['promised_at'] as int?;
+  int get quotedMinutes => (fields['quoted_minutes'] as num? ?? 0).toInt();
+
+  /// The customer named the time ("for 18:30"), so it is theirs: a big order starts sooner, never later.
+  bool get forLater => fields['for_later'] == true;
+
+  /// How many dishes are on the order: what a kitchen counts when it says an order is big.
+  int get dishes => activeLines.fold(0, (n, l) => n + l.qty);
   bool get hasPaid => payments.isNotEmpty;
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
@@ -500,8 +507,10 @@ class PosApi {
     }),
   );
 
-  /// Minutes each channel promises a takeout order, and which channels may pay at pickup.
-  Future<Quotes> quotes() async => Quotes.fromJson(await _get('/settings/quotes'));
+  /// Minutes each channel promises a takeout order, which channels may pay at pickup, the rush a manager
+  /// set for tonight and the minutes a big order adds; the last answer read when nothing answers, so an
+  /// order taken with no hub is still quoted the location's way (ADR 6).
+  Future<Quotes> quotes() => _repeated('/settings/quotes', Quotes.fromJson, remember: 'quotes');
 
   /// Whether dishes are coursed, the courses by name and where a new dish goes; the last answer read when
   /// nothing answers, so a check can still be coursed the usual way (ADR 6).
@@ -526,6 +535,19 @@ class PosApi {
         Uri.parse('$base/settings/quotes'),
         headers: {'content-type': 'application/json', ..._bearer(token)},
         body: jsonEncode(quotes.toJson()),
+      ),
+    ),
+  );
+
+  /// A manager (token from [adminSession]) says the kitchen is behind: [minutes] more on every quote made
+  /// from now on, on every terminal, until the night is over; 0 takes it off. Answers with the quotes as
+  /// they stand now.
+  Future<Quotes> saveRush(String token, int minutes) async => Quotes.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/rush'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'minutes': minutes}),
       ),
     ),
   );

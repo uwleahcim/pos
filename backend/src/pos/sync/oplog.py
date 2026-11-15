@@ -66,6 +66,7 @@ ORDER_FIELDS = frozenset(
         "channel",  # counter | phone | online | delivery | catering
         "promised_at",  # wall-clock ms; a future order waits on the hub until its lead time
         "quoted_minutes",
+        "for_later",  # the customer named the time: a big order or a rush starts it sooner, never moves it
         "stage",  # new | ready | picked_up
         "locale",  # the customer's language for texts
     }

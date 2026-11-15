@@ -60,10 +60,12 @@ from ..settings import (
     clean_desk_phones,
     clean_printers,
     clean_quotes,
+    clean_rush,
     clean_table_timers,
     clean_tickets,
     clean_voids,
     default_settings,
+    rush_now,
 )
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
@@ -237,6 +239,15 @@ class QuotesIn(BaseModel):
 
     minutes: dict[str, int] = Field(default_factory=dict)
     pay_at_pickup: list[str] = Field(default_factory=list)
+    big_orders: dict[str, int] | None = Field(
+        None, description="dishes and minutes; left out (an app from before the rule) keeps what is stored"
+    )
+
+
+class RushIn(BaseModel):
+    """The kitchen is behind: minutes added to every new quote until the night is over. 0 takes it off."""
+
+    minutes: int = 0
 
 
 class CourseIn(BaseModel):
@@ -917,17 +928,37 @@ def create_app(
         app.state.feed.changed("settings")  # the floor carries the courses, the order screen the quotes
         return saved
 
+    def quotes_now() -> dict[str, Any]:
+        settings: SettingStore = app.state.settings
+        rush = rush_now(settings.get("rush"), int(time.time() * 1000))
+        return {**settings.get("quotes"), "rush": rush}
+
     @app.get("/settings/quotes")
     def read_quotes() -> dict[str, Any]:
-        """Minutes each channel promises a takeout order, and which channels may pay at pickup."""
-        settings: SettingStore = app.state.settings
-        return settings.get("quotes")
+        """Minutes each channel promises a takeout order, which channels may pay at pickup, the minutes a big
+        order adds (`big_orders`), and `rush`: the minutes a manager added to every new quote for tonight,
+        with when that ends and who set it; null while there is none."""
+        return quotes_now()
 
     @app.put("/settings/quotes")
     def write_quotes(body: QuotesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager sets the quote times by hand; kitchen pacing takes over in phase 2."""
         manager_from(app.state.tokens, authorization)
-        return write_setting("quotes", body.model_dump(), clean_quotes)
+        data = body.model_dump()
+        if data["big_orders"] is None:
+            data["big_orders"] = app.state.settings.get("quotes")["big_orders"]
+        write_setting("quotes", data, clean_quotes)
+        return quotes_now()
+
+    @app.put("/settings/rush")
+    def write_rush(body: RushIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager says the kitchen is behind: `minutes` more on every quote made from now on, on every
+        terminal, until the night is over (four in the morning, the location's time); 0 takes it off. Orders
+        already promised keep their time. Answers with the quotes as `GET /settings/quotes` now gives them."""
+        manager = manager_from(app.state.tokens, authorization)
+        until = int(localtime.night_end().timestamp() * 1000)
+        write_setting("rush", body.model_dump(), lambda data: {**clean_rush(data), "until": until, "by": manager.name})
+        return quotes_now()
 
     @app.get("/settings/coursing")
     def read_coursing() -> dict[str, Any]:

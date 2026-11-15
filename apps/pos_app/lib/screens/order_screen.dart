@@ -87,6 +87,9 @@ class _OrderScreenState extends State<OrderScreen> {
   final _warned = <String>{}; // the dishes whose allergy mark this screen has already said
   String _customerNote = ''; // the line kept about the customer at this order's number
   String? _noteFor; // the number's digits it was read for
+  Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
+  bool _quotesAsked = false;
+  int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
@@ -101,6 +104,90 @@ class _OrderScreenState extends State<OrderScreen> {
     widget.outbox.addListener(_onOutbox);
     _refresh();
     unawaited(_readAllergens());
+    final fresh = _order; // a to-go order opened here a moment ago: no hub has it yet
+    if (fresh != null) unawaited(_readQuotes(fresh));
+  }
+
+  /// The quote times, once, for a to-go order the kitchen does not have yet: what a big order adds shows
+  /// in the title while the dishes go on, so the customer hears the right time.
+  Future<void> _readQuotes(Order order) async {
+    if (_quotesAsked || !order.isTakeout) return;
+    _quotesAsked = true;
+    try {
+      final quotes = await widget.api.quotes();
+      if (!mounted) return;
+      setState(() => _quotes = quotes);
+      _extraSaid = 0; // one that is big as it opens (the same again as last time) is said like any other
+      _sayIfBig();
+    } on ApiException {
+      // nothing answers and nothing was saved: the order keeps the time it was given
+    }
+  }
+
+  /// The minutes this order takes on top of its quote for being big, while that is still open: until it is
+  /// first sent to the kitchen. After that its time is settled and changes only by hand.
+  int _extra(Order order) {
+    final quotes = _quotes;
+    if (quotes == null || !order.isTakeout || !order.isOpen || order.isFired || order.promisedAt == null) return 0;
+    return quotes.extraFor(order.dishes);
+  }
+
+  /// Whether the customer named this order's time. An order from before orders said so is told by its
+  /// time: further off than its own quote, it was asked for then.
+  bool _namedTime(Order order) {
+    if (order.forLater) return true;
+    final promised = order.promisedAt;
+    if (promised == null || order.fields.containsKey('for_later')) return false;
+    final ahead = promised - DateTime.now().millisecondsSinceEpoch;
+    return ahead > (order.quotedMinutes + 1) * 60000;
+  }
+
+  /// When the order will be ready as it stands on this screen: its promised time, and what being big adds
+  /// while that is still to settle. A time the customer named does not move.
+  int? _readyAt(Order order) {
+    final promised = order.promisedAt;
+    if (promised == null) return null;
+    return _namedTime(order) ? promised : promised + _extra(order) * 60000;
+  }
+
+  /// What settles a big order's time, to go in the batch that first sends it: the quote grows by the extra
+  /// minutes, and so does the promised time unless the customer named it (then the kitchen starts sooner).
+  List<(String, Map<String, dynamic>)> _settleQuote(Order order) {
+    final extra = _extra(order);
+    final promised = order.promisedAt;
+    if (extra == 0 || promised == null) return const [];
+    return [
+      (
+        'set_field',
+        {
+          'quoted_minutes': order.quotedMinutes + extra,
+          if (!_namedTime(order)) 'promised_at': promised + extra * 60000,
+        },
+      ),
+    ];
+  }
+
+  /// Says it once when the order becomes big, or stops being big, so the operator can tell the customer.
+  void _sayIfBig() {
+    final order = _order;
+    if (order == null || _quotes == null || _extraSaid == null) return;
+    final extra = _extra(order);
+    if (extra == _extraSaid) return;
+    _extraSaid = extra;
+    if (order.isFired) return; // sent: the time is settled, nothing more to tell
+    final ready = _readyAt(order);
+    if (ready == null) return;
+    final named = _namedTime(order);
+    final String words;
+    if (extra > 0) {
+      words = named
+          ? 'Big order: the kitchen starts it $extra minutes sooner. Still for ${clockTime(ready)}.'
+          : 'Big order: ready at ${clockTime(ready)}, $extra minutes later.';
+    } else {
+      words = named ? 'No longer a big order.' : 'No longer a big order: ready at ${clockTime(ready)}.';
+    }
+    // Queued behind whatever is showing: an allergy warning is never cut short for this.
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(key: const ValueKey('big-order-said'), content: Text(words)));
   }
 
   Future<void> _readAllergens() async {
@@ -129,6 +216,7 @@ class _OrderScreenState extends State<OrderScreen> {
   void _onOutbox() {
     if (!mounted) return;
     setState(() {});
+    _sayIfBig();
     final waiting = widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId);
     if (!waiting && widget.outbox.localOps(widget.orderId).isNotEmpty) _refresh();
   }
@@ -154,7 +242,9 @@ class _OrderScreenState extends State<OrderScreen> {
           _readCheck = check;
         });
         _sayAllergic(order, quiet: first);
+        _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
+        unawaited(_readQuotes(order));
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
@@ -399,6 +489,15 @@ class _OrderScreenState extends State<OrderScreen> {
     if (leave && mounted) Navigator.of(context).pop();
   }
 
+  /// A to-go order with nothing due goes to the kitchen: its time is settled first if it is a big one.
+  Future<void> _sendToGo(Order order) async {
+    await _appendAll([
+      ..._settleQuote(order),
+      ('fire', {'course': '*'}),
+    ]);
+    if (mounted) Navigator.of(context).pop();
+  }
+
   /// Counter mode (architecture section 12): the check is paid before the kitchen sees it, the change shows,
   /// and the screen goes back for the next customer. Where the location lets the channel pay at pickup (a
   /// phone order), the order can go to the kitchen unpaid and the ready text says so.
@@ -428,6 +527,7 @@ class _OrderScreenState extends State<OrderScreen> {
             'by': ?_staffName,
           },
         ),
+      ..._settleQuote(_order ?? order),
       ('fire', {'course': '*'}),
     ]);
     if (!mounted) return;
@@ -779,7 +879,7 @@ class _OrderScreenState extends State<OrderScreen> {
           order == null
               ? 'Order'
               : order.isTakeout
-              ? _takeoutTitle(order)
+              ? _takeoutTitle(order, _readyAt(order))
               : 'Table ${order.table} · ${order.status}',
         ),
         actions: [
@@ -790,7 +890,7 @@ class _OrderScreenState extends State<OrderScreen> {
           if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
             check != null && cents(check.due) > 0
                 ? _Action('Pay & send', Icons.point_of_sale, () => _payAndSend(order, check))
-                : _Action('Send', Icons.send, () => _fire('*', leave: true)),
+                : _Action('Send', Icons.send, () => _sendToGo(order)),
           if (order != null && open) _Action('Discount', Icons.percent, _discount),
           if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
           if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
@@ -1802,9 +1902,10 @@ class _FireMenu extends StatelessWidget {
 }
 
 /// "#42 Linda · 18:05" for the app bar of a to-go order; the hub gives the number when the create lands.
-String _takeoutTitle(Order order) => [
+/// [readyAt] is when it will be ready as the screen works it out (a big order not sent yet takes longer).
+String _takeoutTitle(Order order, int? readyAt) => [
   '#${order.orderNo ?? '…'} ${order.customerName.isEmpty ? 'To go' : order.customerName}',
-  if (order.promisedAt != null) clockTime(order.promisedAt!),
+  if (readyAt != null) clockTime(readyAt),
   if (!order.isOpen) order.status,
 ].join(' · ');
 

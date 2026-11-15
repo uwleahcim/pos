@@ -16,7 +16,9 @@ screen holds:
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
-- **Quote times**: the minutes per channel and which channels may pay at pickup (see `counter-mode.md`).
+- **Quote times**: the minutes per channel, which channels may pay at pickup, and how many more minutes
+  an order of so many dishes takes (see `counter-mode.md`). Tonight's rush is not here: it is the flame on
+  the orders screen, because it is set in the middle of service.
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick
@@ -139,7 +141,8 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   countdown.
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
-- `GET /settings/quotes` and `PUT /settings/quotes` as before.
+- `GET /settings/quotes`, `PUT /settings/quotes` and `PUT /settings/rush`: see "On the wire" in
+  `counter-mode.md`.
 - `GET /settings/desk_phones` and `PUT /settings/desk_phones` (the manager Bearer token): `{"links":
   [{"extension": "200", "device": "tab1"}]}`, each extension once; details in `desk-phones.md`.
 - `GET /settings/faces` and `PUT /settings/faces` (the manager Bearer token): `{"enabled": false}`; the
