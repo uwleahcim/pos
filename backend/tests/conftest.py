@@ -4,6 +4,7 @@ import itertools
 
 import pytest
 
+from pos.settings import DEFAULTS, SettingStore
 from pos.sync.hlc import HLC
 from pos.sync.oplog import Op
 
@@ -23,6 +24,14 @@ def make_op(kind: str, order_id: str = "o1", at: int = 0, node: str = "a", **dat
 
 
 _seq = itertools.count()
+
+
+def servers_void() -> SettingStore:
+    """Location settings that let a server void a sent dish with a reason alone: for the tests about what a
+    void prints, which have no manager at hand. The default asks for a manager's PIN (tests/orders/test_voids.py)."""
+    settings = SettingStore()
+    settings.put("voids", {**DEFAULTS["voids"], "approval": "none"})
+    return settings
 
 
 @pytest.fixture

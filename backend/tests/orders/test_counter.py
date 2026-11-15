@@ -23,7 +23,7 @@ from pos.sync.hlc import HLC
 from pos.sync.oplog import OpStore, replay
 from pos.tax import massachusetts
 
-from ..conftest import T0, make_op
+from ..conftest import T0, make_op, servers_void
 from ..printing.fake_printer import decode
 
 TEA = {"unit_price": "10.00", "tax_class": "prepared_food", "name": "Tea"}
@@ -183,7 +183,8 @@ def test_a_future_order_prints_at_its_lead_time_and_a_void_at_once():
     assert "#1  LINDA" in text and f"READY BY {datetime.fromtimestamp(promised / 1000):%H:%M}" in text
     assert "Counter" in text and not any("No table" in t for t in text)
     # A void on a future order does not wait: the kitchen may have started early.
-    c.post("/orders/o1/ops", json=[payload("v", "void_line", 3, line_id="L1")])
+    c.app.state.settings = servers_void()  # no manager at hand: this is about when the void prints
+    c.post("/orders/o1/ops", json=[payload("v", "void_line", 3, line_id="L1", reason="kitchen-error")])
     assert [j.job_id for j in store.pending()] == ["v:kitchen"]
 
 

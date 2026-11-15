@@ -264,12 +264,23 @@ class _DiscountSheetState extends State<DiscountSheet> {
 /// A manager's PIN on the spot, for one discount or charge on one order (`POST /approvals`). Pops the
 /// approval token the operation carries; the hub records who the manager was, never the token.
 class ApprovalDialog extends StatefulWidget {
-  const ApprovalDialog({super.key, required this.api, required this.device, required this.orderId, required this.what});
+  const ApprovalDialog({
+    super.key,
+    required this.api,
+    required this.device,
+    required this.orderId,
+    required this.what,
+    this.purpose = 'adjust',
+  });
 
   final PosApi api;
   final String device;
   final String orderId;
   final String what;
+
+  /// What the PIN is for on this order: a discount or a charge (`adjust`), or a void of a sent dish (`void`).
+  /// The hub takes an approval for the one thing only.
+  final String purpose;
 
   @override
   State<ApprovalDialog> createState() => _ApprovalDialogState();
@@ -297,7 +308,12 @@ class _ApprovalDialogState extends State<ApprovalDialog> {
     if (_busy || _pin.text.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final json = await widget.api.approve(device: widget.device, pin: _pin.text, orderId: widget.orderId);
+      final json = await widget.api.approve(
+        device: widget.device,
+        pin: _pin.text,
+        orderId: widget.orderId,
+        purpose: widget.purpose,
+      );
       if (mounted) Navigator.of(context).pop(json['approval'] as String);
     } on ApiException catch (err) {
       if (!mounted) return;

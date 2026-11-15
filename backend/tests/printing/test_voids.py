@@ -10,7 +10,7 @@ from pos.printing.service import Printer, PrintService
 from pos.printing.ticket import Ticket, TicketLine, render
 from pos.sync.oplog import OpStore, replay
 
-from ..conftest import T0
+from ..conftest import T0, servers_void
 from .fake_printer import decode
 from .test_service import op, payload
 
@@ -23,7 +23,7 @@ START = [
 
 def setup():
     service = PrintService([Printer("kitchen", "10.0.0.1")], direct=False)
-    client = TestClient(create_app(OpStore(physical=lambda: T0 + 100), printing=service))
+    client = TestClient(create_app(OpStore(physical=lambda: T0 + 100), printing=service, settings=servers_void()))
     client.post("/orders/o1/ops", json=[payload(o) for o in START])
     return client, service
 
@@ -50,7 +50,7 @@ def test_a_line_taken_off_before_it_is_fired_is_just_removed():
 def test_a_fired_line_taken_off_prints_a_void_at_once_in_reverse():
     client, service = setup()
     post(client, op("d", "fire", 3, course="2"))
-    assert post(client, op("e", "void_line", 4, line_id="L1"))["print_jobs"] == ["e:kitchen"]
+    assert post(client, op("e", "void_line", 4, line_id="L1", reason="kitchen-error"))["print_jobs"] == ["e:kitchen"]
     assert client.get("/orders/o1").json()["lines"]["L1"]["status"] == "void"
     fire, void = tickets(service)
     assert any("1 x Sweet & Sour" in t for t in fire.text) and fire.inverted == []
@@ -80,7 +80,16 @@ def test_changing_a_fired_line_prints_the_void_and_the_new_dish_on_one_ticket():
     change = post(
         client,
         op("e", "void_line", 4, line_id="L1", reason="changed"),
-        op("f", "add_line", 5, line_id="L4", item="Sweet & Sour Chicken - brown rice", course="2", seat=1),
+        op(
+            "f",
+            "add_line",
+            5,
+            line_id="L4",
+            item="Sweet & Sour Chicken - brown rice",
+            course="2",
+            seat=1,
+            replaces="L1",
+        ),
         op("g", "fire", 6, course="2"),
     )
     assert change["print_jobs"] == ["e:kitchen"]

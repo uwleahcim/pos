@@ -9,18 +9,23 @@ import '../printers.dart';
 import '../table_timers.dart';
 import '../tags.dart';
 import '../takeout.dart';
+import '../voids.dart';
+import 'adjustments_screen.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
+import 'void_rules_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
-/// the countdown on each table of the floor map, the kitchen printers (on their own screen), which screen each desk phone is linked to, face sign-in with
-/// each staff member's enrollment and tag, and the hands-free switching between people. The hub keeps them;
-/// a terminal reads them when it opens an order. Behind the manager PIN.
+/// the countdown on each table of the floor map, what voiding a sent dish takes (a manager's PIN or not, and
+/// the reasons to pick from), the kitchen printers (on their own screen), which screen each desk phone is
+/// linked to, face sign-in with each staff member's enrollment and tag, and the hands-free switching between
+/// people. The hub keeps them; a terminal reads them when it opens an order. The report of voids and comps
+/// opens from here too. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
   const LocationSettingsScreen({
     super.key,
@@ -108,6 +113,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   String? _handsFreeMessage;
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
+  VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
 
   @override
@@ -165,6 +171,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _timers = timers);
     } on ApiException {
       // an older hub without table timers: the card says so
+    }
+    try {
+      final voids = await widget.api.voidRules();
+      if (mounted) setState(() => _voids = voids);
+    } on ApiException {
+      // nothing answered about voids: the card says so
     }
     await _loadFaces();
     await _loadPrinters();
@@ -499,6 +511,26 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Table timers saved')));
   }
 
+  Future<void> _voidRules() async {
+    final saved = await showDialog<VoidRules>(
+      context: context,
+      builder: (_) => VoidRulesDialog(api: widget.api, token: widget.token, rules: _voids!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _voids = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Void rules saved')));
+  }
+
+  /// One line on the void rules: who stands behind a void, and how many reasons there are to pick from.
+  String get _voidsSummary {
+    final voids = _voids;
+    if (voids == null) return 'The hub has not answered about voids (an older hub: update it)';
+    final reasons = '${voids.reasons.length} ${voids.reasons.length == 1 ? 'reason' : 'reasons'}';
+    return voids.needsManager
+        ? "A sent dish is voided with a reason and a manager's PIN · $reasons"
+        : 'A sent dish is voided with a reason alone · $reasons';
+  }
+
   /// One line on the timers: each stage's minutes to amber and to red, a dash for never.
   String get _timersSummary {
     final timers = _timers;
@@ -627,6 +659,32 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               subtitle: Text(_timersSummary),
               trailing: const Icon(Icons.chevron_right),
               onTap: _timers == null ? null : _tableTimers,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  key: const ValueKey('voids'),
+                  leading: const Icon(Icons.block_outlined),
+                  title: const Text('Voids'),
+                  subtitle: Text(_voidsSummary),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _voids == null ? null : _voidRules,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('adjustments-report'),
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: const Text('Voids and comps report'),
+                  subtitle: const Text('What came off the checks: by reason, by person and by manager'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context)
+                          .push(MaterialPageRoute<void>(builder: (_) => AdjustmentsScreen(api: widget.api))),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

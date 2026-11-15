@@ -9,10 +9,9 @@ from pos.api.app import create_app
 from pos.menu import admin
 from pos.menu.service import MenuService, load_definitions
 from pos.printing.service import Printer, PrintService, Takes, kitchen_changes, ticket_for
-from pos.settings import SettingStore
 from pos.sync.oplog import OpStore, replay
 
-from ..conftest import T0
+from ..conftest import T0, servers_void
 from ..orders.test_menu_orders import DINNER, GTC_QUART, payload
 from .fake_printer import FakePrinter, decode
 from .test_service import wait_for
@@ -30,7 +29,7 @@ def menu_hiding_rice(*stations: str) -> MenuService:
 
 def app_with(printing: PrintService, menu: MenuService) -> TestClient:
     c = TestClient(
-        create_app(OpStore(physical=lambda: T0 + 100), menu=menu, printing=printing, settings=SettingStore())
+        create_app(OpStore(physical=lambda: T0 + 100), menu=menu, printing=printing, settings=servers_void())
     )
     token = c.post("/admin/session", json={"device": "t1", "pin": "9999"}).json()["token"]
     headers = {"authorization": f"Bearer {token}"}
@@ -47,7 +46,7 @@ def order(c: TestClient, order_id: str, *, to_go: bool, void: bool = False) -> N
         payload("c", "fire", 2, course="*"),
     ]
     if void:
-        ops.append(payload("d", "void_line", 3, line_id="L1", reason="changed their mind"))
+        ops.append(payload("d", "void_line", 3, line_id="L1", reason="guest-changed-mind"))
     for n, op in enumerate(ops):
         c.post(f"/orders/{order_id}/ops", json=[{**op, "op_id": f"{order_id}-{n}", "order_id": order_id}])
 

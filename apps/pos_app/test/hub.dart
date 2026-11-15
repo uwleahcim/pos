@@ -75,6 +75,19 @@ class Hub {
   String? tableTimersAuth;
   String? refuseTableTimers;
 
+  /// The void rules it keeps (`GET/PUT /settings/voids`), the token the last save carried and a reason to
+  /// refuse the next save with. Null is a hub older than the rules, which a terminal voids on with the
+  /// operator's word alone: what the tests written before the rules still run against. [purposes] is what
+  /// each manager's PIN was asked for (`POST /approvals`), and [report] what it says came off the register.
+  Map<String, dynamic>? voids;
+  String? voidsAuth;
+  String? refuseVoids;
+  final purposes = <String>[];
+  Map<String, dynamic>? report;
+
+  /// Unreachable: every call fails, as with the hub's cable pulled.
+  bool down = false;
+
   /// The staff by name and role (`GET /staff`): who a table can be given to and who gives tables out. Null
   /// for a hub older than the list.
   List<Map<String, dynamic>>? roster = [
@@ -165,6 +178,7 @@ class Hub {
 
   /// The hub as the terminal reaches it: [answer], with every read named like the real hub names them.
   Future<http.Response> handle(http.Request request) async {
+    if (down) throw http.ClientException('connection refused', request.url);
     requests.add('${request.method} ${request.url.path}${request.url.hasQuery ? '?${request.url.query}' : ''}');
     final response = await answer(request);
     if (!namesAnswers || request.method != 'GET' || response.statusCode != 200) return response;
@@ -312,6 +326,31 @@ class Hub {
           tableTimers = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(tableTimers!);
+      case '/settings/voids':
+        if (voids == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          voidsAuth = request.headers['authorization'];
+          if (refuseVoids != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseVoids},
+            }, 422);
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          voids = {
+            ...body,
+            // a reason new on the screen gets its id from its name, as the hub gives it
+            'reasons': [
+              for (final r in body['reasons'] as List)
+                {
+                  ...r as Map,
+                  'id': r['id'] ?? (r['name'] as String).toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+                },
+            ],
+          };
+        }
+        return json(voids!);
+      case '/reports/adjustments':
+        return report == null ? json({'detail': 'Not Found'}, 404) : json(report!);
       case '/settings/desk_phones':
         if (request.method == 'PUT') {
           deskPhonesAuth = request.headers['authorization'];
@@ -422,6 +461,7 @@ class Hub {
         // a manager's PIN for a discount on one order: Mike (9999) approves, anyone else is no manager
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         pins.add(body['pin'] as String);
+        purposes.add(body['purpose'] as String? ?? 'adjust');
         if (body['pin'] != '9999') {
           return json({
             'detail': {'error': 'not_allowed', 'role': 'server'},
