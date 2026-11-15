@@ -117,12 +117,14 @@ _LIST_LEAVES_OUT = ("request", "priced")
 
 def listed(state: OrderState) -> dict[str, Any]:
     """An order as a list of orders needs it: the snapshot without what each line was configured as and
-    priced at, which is nine tenths of it and which only the order's own screen reads."""
+    priced at, which is nine tenths of it and which only the order's own screen reads; and `opened_ms`, when
+    it was opened (wall-clock ms), which a list of older checks is read by."""
     snapshot = state.snapshot()
     snapshot["lines"] = {
         line_id: {k: v for k, v in line.items() if k not in _LIST_LEAVES_OUT}
         for line_id, line in snapshot["lines"].items()
     }
+    snapshot["opened_ms"] = state.first.wall_ms if state.first is not None else None
     return snapshot
 
 
@@ -801,16 +803,26 @@ def create_app(
     def list_orders(
         status: str | None = Query(None, pattern="^(open|closed|void)$"),
         hours: float | None = Query(None, gt=0, le=24 * 366, description="only orders changed this recently"),
-        brief: bool = Query(False, description="lines without `request` and `priced`"),
+        day: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="only that day's service"),
+        brief: bool = Query(False, description="lines without `request` and `priced`, with `opened_ms`"),
     ) -> Response:
         """Every order the store knows, newest activity first; `status` filters. With `hours`, the orders
         that changed within that many hours and, whatever their age, the ones still open: what a screen
-        lists, the same size on the hub's thousandth day as on its first. With `brief`, each line comes
-        without what it was configured as and priced at: a list shows neither, and they are most of the
-        answer. The orders come from the log's index and are replayed only when they changed, so a screen
-        asking every two seconds costs a query."""
+        lists, the same size on the hub's thousandth day as on its first. With `day` (which `hours` then
+        adds nothing to), the orders opened during that day's service, four in the morning to four the next,
+        the location's time: what a manager looks through to find an older check. With `brief`, each line
+        comes without what it was configured as and priced at: a list shows neither, and they are most of
+        the answer. The orders come from the log's index and are replayed only when they changed, so a
+        screen asking every two seconds costs a query."""
         store: OpStore | PgOpStore = app.state.store
-        if hours is None:
+        if day is not None:
+            try:
+                start, end = localtime.service_day(date.fromisoformat(day))
+            except ValueError as err:
+                raise HTTPException(422, {"error": "bad_value", "message": "That is not a day."}) from err
+            opened = store.index(status=status, opened_since=start)
+            entries = [entry for entry in opened if entry.first_ms is not None and entry.first_ms < end]
+        elif hours is None:
             entries = store.index(status=status)
         else:
             entries = store.index(status=status, active_since=store.now_ms() - int(hours * 3_600_000))

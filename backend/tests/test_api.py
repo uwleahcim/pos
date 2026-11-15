@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -119,6 +120,47 @@ def test_a_screen_lists_the_open_orders_and_the_recent_ones():
     assert client.get("/orders", params={"hours": 0}).status_code == 422
 
 
+def test_a_day_s_checks_are_the_ones_opened_during_its_service(monkeypatch):
+    """`day` lists what was opened between four that morning and four the next, the location's time, open or
+    not: a check opened after midnight is found under the evening it belongs to."""
+    monkeypatch.setenv("POS_TIMEZONE", "America/New_York")
+    zone = ZoneInfo("America/New_York")
+
+    def at(day: int, hour: int, minute: int = 0) -> int:
+        return int(datetime(2026, 11, day, hour, minute, tzinfo=zone).timestamp() * 1000)
+
+    client = TestClient(create_app(OpStore(physical=lambda: at(20, 12))))
+
+    def order(order_id: str, opened: int, *more: str) -> None:
+        hlc = [str(HLC(opened + i, 0, "t1")) for i in range(len(more) + 1)]
+        ops = [{**payload(f"{order_id}-create", "create", 0, table=1), "hlc": hlc[0]}]
+        ops += [{**payload(f"{order_id}-{kind}", kind, 0), "hlc": hlc[i + 1]} for i, kind in enumerate(more)]
+        assert (
+            client.post(f"/orders/{order_id}/ops", json=[{**op, "order_id": order_id} for op in ops]).status_code == 202
+        )
+
+    order("early-bird", at(14, 3, 30), "close")  # half past three: still the night of the 13th
+    order("lunch", at(14, 12), "close")
+    order("dinner", at(14, 19), "void_order")
+    order("nightcap", at(15, 0, 30), "close")  # after midnight, the same evening
+    order("still-open", at(14, 21))
+    order("next-day", at(15, 11), "close")
+
+    def listed(**params) -> list[str]:
+        return sorted(o["order_id"] for o in client.get("/orders", params={"brief": True, **params}).json()["orders"])
+
+    assert listed(day="2026-11-14") == ["dinner", "lunch", "nightcap", "still-open"]
+    assert listed(day="2026-11-13") == ["early-bird"]
+    assert listed(day="2026-11-15") == ["next-day"]
+    assert listed(day="2026-11-14", status="closed") == ["lunch", "nightcap"]
+    assert listed(day="2026-11-14", hours=1) == listed(day="2026-11-14")  # the day says it all
+    assert listed(day="2026-11-01") == []
+    assert client.get("/orders", params={"day": "yesterday"}).status_code == 422
+    assert client.get("/orders", params={"day": "2026-02-30"}).status_code == 422
+    rows = client.get("/orders", params={"day": "2026-11-14", "brief": True}).json()["orders"]
+    assert {row["order_id"]: row["opened_ms"] for row in rows}["nightcap"] == at(15, 0, 30)
+
+
 def test_a_list_can_leave_out_what_only_the_order_s_own_screen_reads():
     """`brief` drops each line's `request` and `priced` (most of an order's bytes); everything a list shows
     stays: the fields, each line's quantity and status, what was fired, what was paid."""
@@ -150,6 +192,7 @@ def test_a_list_can_leave_out_what_only_the_order_s_own_screen_reads():
         "active",
         True,
     )
+    assert brief.pop("opened_ms") == T0  # when it was opened: what a list of older checks is read by
     assert {k: v for k, v in brief.items() if k != "lines"} == {k: v for k, v in full.items() if k != "lines"}
 
 

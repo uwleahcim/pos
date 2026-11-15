@@ -19,8 +19,10 @@ import '../session.dart';
 import '../switching.dart';
 import '../tags.dart';
 import '../settings.dart';
+import '../check_search.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
+import 'check_search_bar.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
 import 'floor_view.dart';
@@ -99,6 +101,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Timer? _clock;
   // The chip the list of checks is narrowed to (Later, Cooking, Ready, Unpaid); null lists every check.
   ToGoChip? _chip;
+  // Finding a check: the search box is open in the chips' row, the list holds closed checks too and is
+  // narrowed to what is typed. A manager can list another day's checks ([_findDay]; null is now).
+  bool _finding = false;
+  final _find = TextEditingController();
+  final _findFocus = FocusNode(debugLabel: 'find a check');
+  DateTime? _findDay;
   // The staff as the hub last listed them: who a table can be given to, and who gives tables out.
   Roster _roster = Roster.none;
   late Future<void> _rosterRead;
@@ -138,6 +146,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void dispose() {
     _timer?.cancel();
     _clock?.cancel();
+    _find.dispose();
+    _findFocus.dispose();
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
@@ -213,10 +223,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _poll.asked();
     unawaited(_readQuotes());
     try {
+      // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
+      final finding = _finding;
+      final day = finding ? _findDay : null;
+      final closedToo = finding || _showClosed;
       final orders = await widget.api.listOrders(
-        status: _showClosed ? null : 'open',
-        within: _showClosed ? _closedWithin : null,
+        status: closedToo ? null : 'open',
+        within: closedToo ? _closedWithin : null,
+        day: day,
       );
+      // An answer to what the screen no longer asks (the search was closed, another day picked) is dropped.
+      if (finding != _finding || day != (_finding ? _findDay : null)) return;
       // A backend with nothing new hands back the list it gave last time: nothing to redraw then.
       if (mounted && !identical(orders, _orders)) {
         setState(() => _orders = orders);
@@ -314,10 +331,59 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   /// The checks to list: the backend's, and before them the ones opened on this screen that no backend has
-  /// heard of yet (their create is still queued), so a check taken offline can be reopened.
+  /// heard of yet (their create is still queued), so a check taken offline can be reopened. Another day's
+  /// checks are the backend's alone: what is queued here is today's.
   List<(Order, bool)> get _listed {
+    if (_finding && _findDay != null) {
+      // A hub from before days answers with the last day's checks whatever day was asked: those say no
+      // opening time, and are not that day's.
+      return [
+        for (final o in _orders)
+          if (o.openedMs != null) (o, false),
+      ];
+    }
     final queued = queuedOrders(widget.outbox).where((q) => !_orders.any((o) => o.orderId == q.orderId));
     return [for (final q in queued) (q, true), for (final o in _orders) (o, false)];
+  }
+
+  /// Opens the search box in the chips' row: the list takes in the closed checks of the last day.
+  void _startFinding() {
+    setState(() {
+      _finding = true;
+      _chip = null;
+    });
+    unawaited(_refresh());
+  }
+
+  /// Closes the search: the list is the open checks again (and the closed ones, if they were shown).
+  void _stopFinding() {
+    if (!_finding) return;
+    setState(() {
+      _finding = false;
+      _findDay = null;
+      _find.clear();
+    });
+    unawaited(_refresh());
+  }
+
+  /// A manager looks through another day's checks: the calendar goes back a year and never forward.
+  Future<void> _pickFindDay() async {
+    final today = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _findDay ?? today,
+      firstDate: today.subtract(const Duration(days: 366)),
+      lastDate: today,
+      helpText: 'Checks opened on',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _findDay = DateTime(picked.year, picked.month, picked.day));
+    unawaited(_refresh());
+  }
+
+  void _clearFindDay() {
+    setState(() => _findDay = null);
+    unawaited(_refresh());
   }
 
   /// Counter mode (architecture section 12): name and phone first, the channel, when it is for. The hub
@@ -658,11 +724,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final now = DateTime.now();
     // Every check, and above them the to-go orders by stage: a chip narrows the list to its orders, the
     // one due first at the top. The row shows once there is a to-go order to sort.
+    // While a check is being looked for, the row is the search box and the list is what the words find.
     final checks = _listed;
-    final chip = _chip;
+    final finding = _finding;
+    final chip = finding ? null : _chip;
     final counts = chipCounts(checks.map((row) => row.$1), now);
-    final listed = chip == null ? checks : dueFirst(checks.where((row) => inChip(chip, row.$1, now)), (row) => row.$1);
+    final listed = finding
+        ? [
+            for (final row in checks)
+              if (checkMatches(row.$1, _find.text)) row,
+          ]
+        : chip == null
+        ? checks
+        : dueFirst(checks.where((row) => inChip(chip, row.$1, now)), (row) => row.$1);
     final sorts = chip != null || checks.any((row) => row.$1.isTakeout && row.$1.isOpen);
+    final manages = const {'manager', 'owner'}.contains(widget.session.staff?.role);
     final rush = _quotes?.rush;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
@@ -761,12 +837,37 @@ class _OrdersScreenState extends State<OrdersScreen> {
         children: [
           CaptureBanner(api: widget.api, outbox: widget.outbox),
           if (rush != null && rush.runsAt(now)) RushStrip(key: const ValueKey('rush-strip'), rush: rush, onTap: _rush),
-          if (!_floor && sorts)
-            ToGoChips(
-              key: const ValueKey('to-go-chips'),
-              counts: counts,
-              picked: chip,
-              onPicked: (picked) => setState(() => _chip = picked),
+          // One row over the list: the way into the search and the to-go orders by stage; the search box
+          // takes the whole of it while a check is being looked for.
+          if (!_floor)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: finding
+                  ? CheckSearchBar(
+                      controller: _find,
+                      focusNode: _findFocus,
+                      onChanged: (_) => setState(() {}),
+                      onClose: _stopFinding,
+                      day: _findDay,
+                      onPickDay: manages ? _pickFindDay : null,
+                      onClearDay: _clearFindDay,
+                    )
+                  : Row(
+                      children: [
+                        FindCheckButton(key: const ValueKey('find-open'), wide: !sorts, onTap: _startFinding),
+                        if (sorts) ...[
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: ToGoChips(
+                              key: const ValueKey('to-go-chips'),
+                              counts: counts,
+                              picked: chip,
+                              onPicked: (picked) => setState(() => _chip = picked),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
             ),
           Expanded(
             child: AnimatedSwitcher(
@@ -780,6 +881,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       outbox: widget.outbox,
                       onTable: _onTable,
                       onTableHeld: _onTableHeld,
+                    )
+                  : listed.isEmpty && finding
+                  ? Center(
+                      key: const ValueKey('empty-find'),
+                      child: Text(
+                        _find.text.trim().isEmpty
+                            ? 'No checks were opened ${_findDay == null ? 'in the last day' : 'that day'}.'
+                            : 'No check matches.',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
                     )
                   : listed.isEmpty && chip != null
                   ? Center(
@@ -884,6 +995,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                     ),
                                   Text(
                                     [
+                                      // Looked for, a check says when it was opened and whose it is.
+                                      if (finding && order.openedMs != null) _opened(order.openedMs!, now),
                                       '$items items',
                                       order.status,
                                       if (order.isFired) 'fired',
@@ -891,6 +1004,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                         '${order.forLater ? 'for' : 'ready'} ${clockTime(promisedAt)}',
                                       if (isTakeout) order.hasPaid ? 'paid' : 'pay at pickup',
                                       if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
+                                      if (finding && (order.fields['server']?.toString() ?? '').isNotEmpty)
+                                        order.fields['server'].toString(),
                                       if (queued) 'waiting to send',
                                     ].join(' · '),
                                     style: theme.textTheme.bodySmall?.copyWith(
@@ -922,6 +1037,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
     );
   }
+}
+
+/// When a check was opened, for the list a check is looked for in: the time, and the day before it when
+/// that is not today ("19:42", "yesterday 19:42", "14 Nov 19:42").
+String _opened(int ms, DateTime now) {
+  final day = dayLabel(ms, now);
+  return day == 'today' ? clockTime(ms) : '$day ${clockTime(ms)}';
 }
 
 /// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is

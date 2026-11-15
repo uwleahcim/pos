@@ -121,6 +121,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     fired: order.fired,
     payments: payments,
     allergies: allergies..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
+    openedMs: order.openedMs,
   );
 }
 

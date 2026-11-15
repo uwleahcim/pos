@@ -176,6 +176,7 @@ class Order {
     required this.fired,
     this.payments = const [],
     this.allergies = const [],
+    this.openedMs,
   });
 
   /// A check the backend has not heard of yet (its create is still on the way).
@@ -185,7 +186,8 @@ class Order {
       lines = const [],
       fired = const {},
       payments = const [],
-      allergies = const [];
+      allergies = const [],
+      openedMs = null;
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries
@@ -204,8 +206,13 @@ class Order {
         for (final told in json['allergies'] as List? ?? const [])
           if (told is Map<String, dynamic>) Allergy.fromJson(told),
       ],
+      openedMs: (json['opened_ms'] as num?)?.toInt(),
     );
   }
+
+  /// When the check was opened (wall-clock ms), as a list of checks says it; null on a read of one order,
+  /// and from a hub older than the search of the checks.
+  final int? openedMs;
 
   final String orderId;
   final String status;
@@ -396,9 +403,19 @@ class PosApi {
   /// the ones that changed that recently and the ones still open, so a list of every order is a day long,
   /// not the restaurant's whole history. Each line comes without its choices and price (`brief`): a list
   /// shows neither, and they are nine tenths of the answer; [order] reads one order whole.
-  Future<List<Order>> listOrders({String? status, Duration? within}) => _repeated(
+  ///
+  /// With [day], the checks opened during that day's service instead (four in the morning to four the
+  /// next, the location's time), open or not: what a manager looks through for an older check. [within]
+  /// still goes along, though the day says it all: a hub from before days would otherwise answer with
+  /// every order it ever took. Such a hub's orders carry no [Order.openedMs], which is how a screen tells.
+  Future<List<Order>> listOrders({String? status, Duration? within, DateTime? day}) => _repeated(
     '/orders',
-    query: {'status': ?status, if (within != null) 'hours': (within.inMinutes / 60).toString(), 'brief': 'true'},
+    query: {
+      'status': ?status,
+      if (day != null) 'day': isoDay(day),
+      if (within != null) 'hours': (within.inMinutes / 60).toString(),
+      'brief': 'true',
+    },
     (json) => (json['orders'] as List).map((o) => Order.fromJson(o as Map<String, dynamic>)).toList(),
   );
 
@@ -1195,6 +1212,10 @@ class PosApi {
     connection.dispose();
   }
 }
+
+/// A day as the hub takes one: `2026-11-14`.
+String isoDay(DateTime day) =>
+    '${day.year.toString().padLeft(4, '0')}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 final _httpDate = RegExp(r'^\w{3}, (\d{2}) (\w{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$');

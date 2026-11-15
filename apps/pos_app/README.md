@@ -27,6 +27,11 @@ thumbnail in the orders screen is the sign that a small photo is taken when an o
 closed, reopened or a line is voided; the photos queue on disk like the operations and go to the backend
 when it answers.
 
+The list of checks has one row above it: a magnifier that opens a search box (name, phone, table, order
+number or server, among the open checks and the closed ones of the last day; a manager can pick another day:
+[`docs/finding-checks.md`](../../docs/finding-checks.md)), and the to-go orders by stage (Later, Cooking,
+Ready, Unpaid: `docs/counter-mode.md`, "The list").
+
 With face sign-in on for the location (Location settings, a manager's switch, off to start), the sign-in
 screen also looks for an enrolled face: frames off the camera go to the hub, which recognises them, and two
 frames in a row that agree sign the person in while the pad keeps working. A manager enrolls each person
