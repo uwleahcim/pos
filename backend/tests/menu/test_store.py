@@ -134,6 +134,24 @@ def test_the_86_board_survives_a_restart(store):
         store.set_availability(None, "NOPE:x")
 
 
+def test_a_number_left_survives_a_restart(store):
+    from pos.menu.service import MenuService
+
+    hub = MenuService(load_definitions("example"), store=store)
+    hub.set_availability("GTC:quart", "available", remaining=5, by="amy")
+    hub.take({"GTC:quart": 2})
+    again = MenuService(store=store)
+    count = again.engine.count_of("GTC:quart")
+    assert (count.remaining, count.total, count.set_by) == (3, 5, "amy") and count.until is not None
+    assert again.engine.status_of("GTC:quart") == "available"
+    again.take({"GTC:quart": 3})
+    assert MenuService(store=store).engine.status_of("GTC:quart") == "sold_out"  # at zero, and still after a restart
+    again.take({"GTC:quart": -9})
+    assert MenuService(store=store).engine.count_of("GTC:quart").remaining == 5  # given back, never above the five
+    again.set_availability("GTC:quart", "available")
+    assert store.availability() == {}  # the count taken off leaves no row behind
+
+
 def test_a_hub_seeds_an_empty_database_once_and_picks_up_edits(store):
     from fastapi.testclient import TestClient
 

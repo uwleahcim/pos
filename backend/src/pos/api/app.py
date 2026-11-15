@@ -41,6 +41,7 @@ from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
+from ..orders.counts import count_ops
 from ..orders.numbers import OrderNumbers
 from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
@@ -208,6 +209,9 @@ class AvailabilityIn(BaseModel):
     status: str = Field(pattern="^(available|sold_out)$")
     by: str | None = None
     reason: str | None = None
+    remaining: int | None = Field(
+        None, ge=1, le=999, description="with `available`, for a size: how many are left to sell tonight"
+    )
 
 
 class PriceIn(BaseModel):
@@ -405,7 +409,7 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
     for op in ops:
         if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
             data = {k: v for k, v in op.data.items() if k != "priced"}
-            priced, blocking = sellable(menu, data["request"])
+            priced, blocking = sellable(menu, data["request"], counted_out=False)
             if priced is None:
                 refused.append({"op_id": op.op_id, "error": "invalid_line", "problems": blocking})
                 continue
@@ -420,11 +424,22 @@ WARNINGS: frozenset[str] = frozenset()
 """Problem codes a line may still be sold with; none yet, so every problem stops the sale."""
 
 
-def sellable(menu: MenuService, request: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+COUNTED_OUT = "none_left"
+"""The menu's problem for a dish whose number left is at zero. It stops a new sale, but a line arriving at
+the hub is not judged by it: whether one is left for that line is weighed against what the checks hold
+(`pos.orders.counts`), so the last one of a dish can still be changed after it sold out."""
+
+
+def sellable(
+    menu: MenuService, request: dict[str, Any], *, counted_out: bool = True
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """The line as the menu prices it now, or None with the problems that stop its sale (a required choice
-    missing, an 86'd dish, an id the menu does not know)."""
+    missing, an 86'd dish, an id the menu does not know). With `counted_out` false a dish whose number left
+    is at zero is priced all the same, and the caller weighs it (`count_ops`)."""
     try:
         priced = menu.priced(request)
+        if not counted_out:
+            priced["problems"] = [p for p in priced["problems"] if p["code"] != COUNTED_OUT]
         blocking = [p for p in priced["problems"] if p["code"] not in WARNINGS]
     except (KeyError, ValueError, TypeError) as err:
         return None, [{"code": "bad_request", "message": str(err)}]
@@ -742,17 +757,22 @@ def create_app(
         app.state.menu.refresh()
         fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
         fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
-        fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
-        fresh, refused_payments = pay_ops(fresh)
-        fresh = number_orders(app.state.numbers, fresh)
-        refused += refused_voids + refused_adjustments + refused_payments
-        try:
-            accepted = store.append(fresh)
-        except ClockDriftError as err:
-            raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
-        except ReadOnlyError as err:
-            # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
-            raise HTTPException(503, {"error": "read_only"}) from err
+        # The numbers left on counted dishes: weighed, stored and taken off as one step, so two screens cannot
+        # both sell the last one. While no dish has a number nothing is held and nothing is read.
+        with app.state.menu.counting():
+            fresh, refused_counts, taken = count_ops(app.state.menu, store, fresh)
+            fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
+            fresh, refused_payments = pay_ops(fresh)
+            fresh = number_orders(app.state.numbers, fresh)
+            refused += refused_voids + refused_counts + refused_adjustments + refused_payments
+            try:
+                accepted = store.append(fresh)
+            except ClockDriftError as err:
+                raise HTTPException(422, {"error": "clock_drift", "op_id": err.op.op_id}) from err
+            except ReadOnlyError as err:
+                # A standby hub: the terminal moves to the next address and comes back when this one is promoted.
+                raise HTTPException(503, {"error": "read_only"}) from err
+            app.state.menu.take(taken)
         if accepted:
             app.state.feed.poke()  # the other screens hear of it now, before the tickets print
         printing: PrintService = app.state.printing
@@ -1254,27 +1274,39 @@ def create_app(
 
     @app.get("/menu/86")
     def eighty_sixed() -> dict[str, Any]:
-        """What the kitchen is out of right now: the 86 board."""
+        """The 86 board: what the kitchen is out of right now (`status` sold_out), and every dish with a
+        number left (`left` of the `total` typed; `status` available while any is left), the ones that are
+        out first, then the fewest left."""
         menu: MenuService = app.state.menu
         return {"items": menu.eighty_sixed()}
 
     @app.post("/menu/86")
     def set_86(body: AvailabilityIn) -> dict[str, Any]:
         """86 a size or an option (`sold_out`), or bring it back (`available`). Stored with the menu, so a
-        restart keeps the board."""
+        restart keeps the board. `available` with `remaining` puts a number left on a size instead: every
+        one sold takes it down, one removed or voided gives it back, at zero the dish is sold out, and the
+        count clears when the night is over. Setting it again starts from the new number; `available`
+        without it takes the count off."""
         menu: MenuService = app.state.menu
         if body.target_id not in menu.defs.variants and body.target_id not in menu.defs.options:
             raise HTTPException(404, {"error": "unknown_id", "id": body.target_id})
-        menu.set_availability(body.target_id, body.status, reason=body.reason, by=body.by)
+        if body.remaining is not None and (body.status != "available" or body.target_id not in menu.defs.variants):
+            # a number left is for a dish that is on sale; a choice that is only a word has none
+            raise HTTPException(422, {"error": "bad_count", "id": body.target_id})
+        menu.set_availability(body.target_id, body.status, reason=body.reason, by=body.by, remaining=body.remaining)
         return {"items": menu.eighty_sixed()}
 
     @app.post("/menu/price")
     def price_line(body: PriceIn) -> dict[str, Any]:
-        """A preview of one configured line, so the screen can show the price before adding it."""
+        """A preview of one configured line, so the screen can show the price before adding it. It does
+        not say that a counted dish has none left: the dish being previewed may be the last one, already on
+        a check and now being changed, and that is settled when the line arrives (`count_ops`)."""
         menu: MenuService = app.state.menu
         menu.refresh()
         try:
-            return menu.priced(body.model_dump())
+            priced = menu.priced(body.model_dump())
+            priced["problems"] = [p for p in priced["problems"] if p["code"] != COUNTED_OUT]
+            return priced
         except KeyError as err:
             raise HTTPException(404, {"error": "unknown_id", "id": str(err)}) from err
 

@@ -758,6 +758,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   onChosen: _add,
                   qtyOf: (entry) => _entryQty(order, entry),
                   onRemove: _takeOff,
+                  by: _staffName,
                 ),
               ),
             ],

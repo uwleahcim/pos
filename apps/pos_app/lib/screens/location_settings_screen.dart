@@ -5,12 +5,14 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
+import '../menu.dart';
 import '../printers.dart';
 import '../table_timers.dart';
 import '../tags.dart';
 import '../takeout.dart';
 import '../voids.dart';
 import 'adjustments_screen.dart';
+import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
@@ -115,6 +117,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
+  List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
   bool _ticketWordsBusy = false;
@@ -181,6 +184,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _voids = voids);
     } on ApiException {
       // nothing answered about voids: the card says so
+    }
+    try {
+      final board = await widget.api.board();
+      if (mounted) setState(() => _board = board);
+    } on ApiException {
+      // nothing answered about the 86 board: the card says so
     }
     await _loadFaces();
     await _loadPrinters();
@@ -552,6 +561,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Void rules saved')));
   }
 
+  /// The 86 board: what is sold out and what is running low, read again each time it is opened.
+  Future<void> _openBoard() async {
+    final rows = await showDialog<List<BoardRow>>(
+      context: context,
+      builder: (_) => EightySixBoard(api: widget.api),
+    );
+    if (rows != null && mounted) setState(() => _board = rows);
+  }
+
   /// One line on the void rules: who stands behind a void, and how many reasons there are to pick from.
   String get _voidsSummary {
     final voids = _voids;
@@ -602,6 +620,20 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       body = ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // first, above the settings: it is what a manager comes to look at in the middle of service
+          Card(
+            child: ListTile(
+              key: const ValueKey('board'),
+              leading: const Icon(Icons.inventory_2_outlined),
+              title: const Text('Sold out and running low'),
+              subtitle: Text(
+                _board == null ? 'The hub has not answered about what is sold out' : EightySixBoard.summary(_board!),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openBoard,
+            ),
+          ),
+          const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),

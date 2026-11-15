@@ -67,7 +67,7 @@ abstract final class MenuPanelCheck {
 /// their category (the choices close too), from the categories to the search field. Delete or Backspace on a
 /// dish takes one of it off the order ([onRemove]); in the search field they edit the text.
 class MenuPanel extends StatefulWidget {
-  const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf, this.onRemove});
+  const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf, this.onRemove, this.by});
 
   /// How long the trays take to open, close or change size.
   static const transition = Duration(milliseconds: 280);
@@ -78,6 +78,9 @@ class MenuPanel extends StatefulWidget {
 
   /// Delete or Backspace pressed on a dish's tile: one of that dish comes off the order, if it is on it.
   final ValueChanged<MenuEntry>? onRemove;
+
+  /// Who is at the screen, by name: the 86 board says who marked a dish sold out or typed its number left.
+  final String? by;
 
   @override
   State<MenuPanel> createState() => _MenuPanelState();
@@ -654,11 +657,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     return false;
   }
 
-  /// The 86 board from the order screen: mark a size sold out or back.
+  /// The 86 board from the order screen: mark a size sold out or back, or type how many are left.
   Future<void> _eightySix(MenuEntry entry) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => _EightySixDialog(api: widget.api, entry: entry),
+      builder: (context) => EightySixDialog(api: widget.api, entry: entry, by: widget.by),
     );
     await _load();
   }
@@ -1757,7 +1760,7 @@ class _RequiredSelectionsSection extends StatelessWidget {
                 ChoiceTile(
                   key: ValueKey(_PendingItemSelection.variantKey(v)),
                   focusNode: focusOf(_PendingItemSelection.variantKey(v)),
-                  groupLabel: 'Size',
+                  groupLabel: sizeLabel(v),
                   name: v.name,
                   priceLabel: v.price,
                   available: v.available,
@@ -1788,6 +1791,9 @@ class _RequiredSelectionsSection extends StatelessWidget {
     );
   }
 }
+
+/// What heads a size's button: "Size", with how many are left where someone is counting that size.
+String sizeLabel(VariantOffer v) => v.available && v.left != null ? 'Size · ${v.left} left' : 'Size';
 
 /// A choice as a button of the menu's grid: the tray under the tiles and the item sheet show a dish's sizes
 /// and choices with it, so a choice looks and taps like a category or a dish.
@@ -1994,6 +2000,8 @@ class _EntryButton extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final available = entry.available;
+    // Someone typed a number left: it stands where the price does, as 86 does once none are left.
+    final left = available ? entry.left : null;
     final bg = !available
         ? scheme.surfaceContainerHighest
         : (selected ? scheme.primaryContainer : scheme.surfaceContainerLowest);
@@ -2049,15 +2057,20 @@ class _EntryButton extends StatelessWidget {
                       const SizedBox(width: 4),
                     ],
                     Container(
+                      key: left == null ? null : ValueKey('entry-left:${entry.entryId}:${entry.item}'),
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: available ? scheme.secondaryContainer : scheme.errorContainer,
+                        color: !available
+                            ? scheme.errorContainer
+                            : (left != null ? scheme.tertiaryContainer : scheme.secondaryContainer),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        available ? entry.priceLabel : '86',
+                        !available ? '86' : (left != null ? '$left left' : entry.priceLabel),
                         style: theme.textTheme.labelMedium?.copyWith(
-                          color: available ? scheme.onSecondaryContainer : scheme.onErrorContainer,
+                          color: !available
+                              ? scheme.onErrorContainer
+                              : (left != null ? scheme.onTertiaryContainer : scheme.onSecondaryContainer),
                           fontWeight: FontWeight.w700,
                           fontFeatures: PosTheme.tabular,
                         ),
@@ -2254,7 +2267,7 @@ class _ItemSheetState extends State<ItemSheet> {
                           for (final v in widget.entry.variants)
                             ChoiceTile(
                               key: ValueKey('size:${v.variantId}'),
-                              groupLabel: 'Size',
+                              groupLabel: sizeLabel(v),
                               name: v.name,
                               priceLabel: v.price,
                               available: v.available,
@@ -2670,23 +2683,66 @@ class _DishChoicesSheetState extends State<DishChoicesSheet> {
   }
 }
 
-class _EightySixDialog extends StatefulWidget {
-  const _EightySixDialog({required this.api, required this.entry});
+/// The 86 sheet for one dish: mark a size sold out or bring it back, or, where the hub keeps numbers, type
+/// how many are left. With a number the dish stays on sale, every one sold takes it down, one taken off a
+/// check gives it back, the hub marks the dish sold out at zero, and the number clears overnight.
+class EightySixDialog extends StatefulWidget {
+  const EightySixDialog({super.key, required this.api, required this.entry, this.by});
   final PosApi api;
   final MenuEntry entry;
 
+  /// Who is setting it, by name, for the board.
+  final String? by;
+
   @override
-  State<_EightySixDialog> createState() => _EightySixDialogState();
+  State<EightySixDialog> createState() => _EightySixDialogState();
 }
 
-class _EightySixDialogState extends State<_EightySixDialog> {
+class _EightySixDialogState extends State<EightySixDialog> {
   late final Map<String, bool> _out = {for (final v in widget.entry.variants) v.variantId: !v.available};
+  late final Map<String, int?> _left = {for (final v in widget.entry.variants) v.variantId: v.left};
+  late final Map<String, TextEditingController> _number = {
+    for (final v in widget.entry.variants) v.variantId: TextEditingController(text: v.left == null ? '' : '${v.left}'),
+  };
   String? _error;
+
+  @override
+  void dispose() {
+    for (final number in _number.values) {
+      number.dispose();
+    }
+    super.dispose();
+  }
 
   Future<void> _set(String variantId, bool out) async {
     try {
-      await widget.api.set86(variantId, soldOut: out);
-      setState(() => _out[variantId] = out);
+      await widget.api.set86(variantId, soldOut: out, by: widget.by);
+      setState(() {
+        _out[variantId] = out;
+        _left[variantId] = null; // sold out by hand, or back on sale: either way nobody is counting it now
+        _number[variantId]!.clear();
+        _error = null;
+      });
+    } on ApiException catch (err) {
+      setState(() => _error = err.toString());
+    }
+  }
+
+  /// Puts the typed number on the size, or with [off] takes the number off and leaves the dish on sale.
+  Future<void> _count(String variantId, {bool off = false}) async {
+    final n = off ? null : int.tryParse(_number[variantId]!.text.trim());
+    if (!off && (n == null || n < 1 || n > 999)) {
+      setState(() => _error = 'Type how many are left, from 1 to 999.');
+      return;
+    }
+    try {
+      await widget.api.set86(variantId, soldOut: false, left: n, by: widget.by);
+      setState(() {
+        _out[variantId] = false;
+        _left[variantId] = n;
+        if (off) _number[variantId]!.clear();
+        _error = null;
+      });
     } on ApiException catch (err) {
       setState(() => _error = err.toString());
     }
@@ -2694,19 +2750,75 @@ class _EightySixDialogState extends State<_EightySixDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final sizes = widget.entry.variants.length > 1;
     return AlertDialog(
       title: Text('86 ${widget.entry.name}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final v in widget.entry.variants)
-            SwitchListTile(
-              title: Text(widget.entry.variants.length > 1 ? v.name : 'Sold out'),
-              value: _out[v.variantId] ?? false,
-              onChanged: (out) => _set(v.variantId, out),
-            ),
-          if (_error != null) Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        ],
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final v in widget.entry.variants) ...[
+              SwitchListTile(
+                key: ValueKey('out:${v.variantId}'),
+                contentPadding: EdgeInsets.zero,
+                title: Text(sizes ? v.name : 'Sold out'),
+                subtitle: sizes ? const Text('Sold out') : null,
+                value: _out[v.variantId] ?? false,
+                onChanged: (out) => _set(v.variantId, out),
+              ),
+              if (v.counts)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  // on a phone the sheet is too narrow for all three: taking the number off goes underneath
+                  child: Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 132,
+                        child: TextField(
+                          key: ValueKey('left:${v.variantId}'),
+                          controller: _number[v.variantId],
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(3),
+                          ],
+                          decoration: const InputDecoration(labelText: 'Number left', isDense: true),
+                          onSubmitted: (_) => _count(v.variantId),
+                        ),
+                      ),
+                      FilledButton.tonal(
+                        key: ValueKey('left-set:${v.variantId}'),
+                        onPressed: () => _count(v.variantId),
+                        child: const Text('Set'),
+                      ),
+                      if (_left[v.variantId] != null)
+                        TextButton(
+                          key: ValueKey('left-off:${v.variantId}'),
+                          onPressed: () => _count(v.variantId, off: true),
+                          child: const Text('No number'),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+            if (widget.entry.counts)
+              Text(
+                'With a number the dish stays on sale: every one sold takes it down, and at zero it is sold out. '
+                'The number clears overnight.',
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_error!, style: TextStyle(color: scheme.error)),
+              ),
+          ],
+        ),
       ),
       actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
     );
