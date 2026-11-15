@@ -671,9 +671,9 @@ void main() {
 
       // the one added last goes first; neither was sent, so they simply come off
       await press(tester, LogicalKeyboardKey.backspace);
-      expect(sent(t).last, 'void_line {line_id: ${added[1]}}');
+      expect(sent(t).last, 'void_line {line_id: ${added[1]}, by: Amy}');
       await press(tester, LogicalKeyboardKey.backspace);
-      expect(sent(t).last, 'void_line {line_id: ${added[0]}}');
+      expect(sent(t).last, 'void_line {line_id: ${added[0]}, by: Amy}');
       expect(find.byType(AlertDialog), findsNothing);
       expect(focused(), 'search-grid e:dinner:1:EGGROLL', reason: 'the focus stays on the dish');
 
@@ -688,7 +688,7 @@ void main() {
       await press(tester, LogicalKeyboardKey.backspace);
       await press(tester, LogicalKeyboardKey.tab);
       await press(tester, LogicalKeyboardKey.enter);
-      expect(sent(t).last, 'void_line {line_id: L1, reason: void}');
+      expect(sent(t).last, 'void_line {line_id: L1, reason: void, by: Amy}');
 
       // nothing of it left on the check: nothing happens
       await press(tester, LogicalKeyboardKey.backspace);
@@ -705,7 +705,7 @@ void main() {
       await tester.pumpAndSettle();
       await press(tester, LogicalKeyboardKey.arrowDown);
       await press(tester, LogicalKeyboardKey.backspace);
-      expect(sent(t).last, 'set_line {line_id: L1, qty: 2}');
+      expect(sent(t).last, 'set_line {line_id: L1, qty: 2, by: Amy}');
       await stop(tester);
     });
 
@@ -718,11 +718,11 @@ void main() {
       // its quantity, touched for one more: the focus is in that line
       await tester.tap(find.byKey(const ValueKey('qty-L2')));
       await tester.pumpAndSettle();
-      expect(sent(t).last, 'set_line {line_id: L2, qty: 2}');
+      expect(sent(t).last, 'set_line {line_id: L2, qty: 2, by: Amy}');
       expect(focused(), 'line L2');
 
       await press(tester, LogicalKeyboardKey.delete);
-      expect(sent(t).last, 'void_line {line_id: L2}');
+      expect(sent(t).last, 'void_line {line_id: L2, by: Amy}');
       expect(focused(), 'line L3');
       await stop(tester);
     });
@@ -742,12 +742,12 @@ void main() {
 
       // the whole line, both spring rolls; the focus is on the line after it
       await press(tester, LogicalKeyboardKey.delete);
-      expect(sent(t).last, 'void_line {line_id: L2}');
+      expect(sent(t).last, 'void_line {line_id: L2, by: Amy}');
       expect(find.widgetWithText(ListTile, 'Spring roll'), findsNothing);
       expect(focused(), 'line L3');
 
       await press(tester, LogicalKeyboardKey.backspace);
-      expect(sent(t).last, 'void_line {line_id: L3}');
+      expect(sent(t).last, 'void_line {line_id: L3, by: Amy}');
       expect(focused(), 'line L4');
 
       // a line the kitchen has: asked first, and kept, it keeps the focus
@@ -761,7 +761,7 @@ void main() {
       await press(tester, LogicalKeyboardKey.delete);
       await tester.tap(find.text('Void'));
       await tester.pumpAndSettle();
-      expect(sent(t).last, 'void_line {line_id: L4, reason: void}');
+      expect(sent(t).last, 'void_line {line_id: L4, reason: void, by: Amy}');
       expect(focused(), 'line L1');
       await stop(tester);
     });

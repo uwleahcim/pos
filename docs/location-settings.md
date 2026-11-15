@@ -22,7 +22,8 @@ screen holds:
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick
-  from; under it, the **Voids and comps report** (see `voids.md`).
+  from; under it, the **Voids and comps report**, which also lists the dishes taken off a check before they
+  were sent (see `voids.md`).
 - **Printers**: its own screen: each printer with the station it prints for, its address and language, its
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).

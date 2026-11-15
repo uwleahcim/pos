@@ -6,8 +6,9 @@ import 'theme.dart';
 
 /// What came off the checks and why, for a manager: the dishes voided after the kitchen had them, and the
 /// comps and discounts, each added up by reason, by who did it and by the manager who approved it, with
-/// every void listed under them. For today, the last 7 days or the last 30. One column, so it reads the
-/// same on a phone.
+/// every void listed under them; and between the two, the dishes taken off before the kitchen saw them,
+/// by who took them off and by check, the one longest on its check first. For today, the last 7 days or the
+/// last 30. One column, so it reads the same on a phone.
 class AdjustmentsScreen extends StatefulWidget {
   const AdjustmentsScreen({super.key, required this.api, this.now = DateTime.now});
 
@@ -115,6 +116,44 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                   ].join(' · '),
                 ),
                 trailing: Text('\$${v.amount}', style: const TextStyle(fontFeatures: PosTheme.tabular)),
+              ),
+          ],
+          const Divider(height: 28),
+          _Heading(
+            'Taken off before sending',
+            report.takenOffTotal,
+            '${report.takenOffDishes} ${report.takenOffDishes == 1 ? 'dish' : 'dishes'}',
+          ),
+          if (!report.hasTakenOff)
+            const Text('This hub is older than this list. Update the hub to see it here.')
+          else if (report.takenOff.isEmpty)
+            const Text('No dish was taken off a check before it was sent.')
+          else ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Rung in and taken off again before the kitchen saw them. Nothing printed, so no other '
+                'report shows them. A dish changed for another is not counted.',
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+            _Totals('By who took it off', report.takenOffByStaff, blank: 'Not recorded'),
+            _Totals('By check', report.takenOffByCheck, blank: 'No table or number'),
+            const SizedBox(height: 6),
+            Text(
+              'Each one, longest on the check first',
+              style: theme.textTheme.labelLarge?.copyWith(color: scheme.primary),
+            ),
+            for (final (i, t) in report.takenOffLongestFirst.indexed)
+              ListTile(
+                key: ValueKey('taken-off-row:$i'),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text('${t.qty} × ${t.item}'),
+                subtitle: Text(
+                  [_when(t.atMs), if (t.where.isNotEmpty) t.where, if (t.who.isNotEmpty) t.who, t.onCheck].join(' · '),
+                ),
+                trailing: Text('\$${t.amount}', style: const TextStyle(fontFeatures: PosTheme.tabular)),
               ),
           ],
           const Divider(height: 28),

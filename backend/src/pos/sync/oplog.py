@@ -26,10 +26,13 @@ KINDS = frozenset(
         "create",  # data: any order fields
         "set_field",  # data: any order fields
         "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?
-        "set_line",  # data: line_id + any line fields (a drag on the check: course and rank)
+        # data: line_id + any line fields (a drag on the check: course and rank), by?, by_id? (who, when it
+        # changes how many: fewer of a dish the kitchen has not seen is in the report of dishes taken off)
+        "set_line",
         # void_line removes a line the kitchen has not seen and voids one it has. A void of a sent line says
         # why (a reason from the location's list) and who (`by`, `by_id`); the hub adds the reason's name
-        # and the manager who approved it (pos.orders.voids).
+        # and the manager who approved it (pos.orders.voids). Taking off an unsent line says who as well,
+        # for the report of dishes taken off before sending (pos.orders.taken_off).
         "void_line",  # data: line_id, reason?, by?, by_id?, reason_name?, approved_by?
         "fire",  # data: course ("*" = everything); sends that course's lines not yet sent
         "close",
@@ -115,6 +118,12 @@ class Line:
     # For a line voided after the kitchen had it: why (the reason's id and the name it had then), who
     # (`by`, `by_id`), the manager who approved it (`approved_by`, or None) and when (`at_ms`).
     voided: dict[str, Any] | None = None
+    # For a line taken off before the kitchen saw it: who (`by`, `by_id`; empty from an app that did not
+    # say), on which screen (`device`) and when (`at_ms`).
+    removed: dict[str, Any] | None = None
+    # Each time fewer of the dish were kept before it was sent: how many came off (`qty`), with the same
+    # who, where and when. More of it again takes no cut back: both happened.
+    cuts: list[dict[str, Any]] = field(default_factory=list)
     modified_after_fire: bool = False
     request: dict[str, Any] | None = None  # what the operator chose, so a screen can reopen the choices
     priced: dict[str, Any] | None = None  # the menu engine's snapshot at the time of sale, set by the hub
@@ -363,6 +372,11 @@ def apply(state: OrderState, op: Op) -> None:
                 value = _rank(data[name]) if name == "rank" else data[name]
                 if value is None and name == "rank":
                     continue  # not a number: the line keeps its place
+                if name == "qty" and line.fired_at is None:
+                    # fewer of a dish the kitchen has not seen: they came off the check, and the log says so
+                    fewer = _count(line.qty) - _count(value)
+                    if fewer > 0:
+                        line.cuts.append({"qty": fewer, **_who(op)})
                 setattr(line, name, value)
                 line.stamps[name] = op.hlc
         if not KITCHEN_FIELDS & data.keys():
@@ -397,6 +411,8 @@ def apply(state: OrderState, op: Op) -> None:
                     "approved_by": approved if isinstance(approved, dict) else None,
                     "at_ms": op.hlc.wall_ms,
                 }
+            else:
+                line.removed = _who(op)
 
     elif kind == "allergy":
         seat = data.get("seat")
@@ -499,6 +515,22 @@ def apply(state: OrderState, op: Op) -> None:
 
 
 _MIN = HLC(0, 0, "")
+
+
+def _who(op: Op) -> dict[str, Any]:
+    """Who took a dish off the check before it was sent, on which screen and when, as the operation says."""
+    by_id = op.data.get("by_id")
+    return {
+        "by": str(op.data.get("by") or ""),
+        "by_id": by_id if isinstance(by_id, str) else None,
+        "device": op.device,
+        "at_ms": op.hlc.wall_ms,
+    }
+
+
+def _count(value: Any) -> int:
+    """How many of a dish, as a terminal sent it; 0 for anything that is not a whole number."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _rank(value: Any) -> float | None:
