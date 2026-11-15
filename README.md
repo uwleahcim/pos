@@ -33,8 +33,8 @@ merges after any disconnect.
   giving a table to a server and handing one over, the `host` role, and **Mine**, which fades the other
   servers' tables on the floor map): `docs/table-servers.md`
 - Printers and stations (where a dish prints, the printers with their fallbacks set from the app, finding them on
-  the network, to-go orders at the takeout counter, tickets that say "Ticket 2 of 3" and name the other stations
-  cooking): `docs/printing.md`
+  the network, to-go orders at the takeout counter with PAID or NOT PAID on the bag's ticket, tickets that say
+  "Ticket 2 of 3" and name the other stations cooking): `docs/printing.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

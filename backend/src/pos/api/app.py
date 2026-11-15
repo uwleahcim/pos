@@ -348,6 +348,7 @@ class TicketsIn(BaseModel):
 
     numbered: bool | None = Field(None, description='"Ticket 2 of 3" when more than one station is cooking')
     also_at: bool | None = Field(None, description='"Also at: Wok 2, Sushi Bar": the other stations cooking')
+    paid: bool | None = Field(None, description="PAID or NOT PAID on the takeout station's ticket of a to-go order")
 
 
 class DiscoverIn(BaseModel):
@@ -707,6 +708,8 @@ def create_app(
     }
     # Whether a ticket says "Ticket 2 of 3" and "Also at: Wok 2, Sushi Bar" is the manager's to say.
     app.state.printing.ticket_words = lambda: app.state.settings.get("tickets")
+    # The takeout counter's copy of a to-go order says PAID or NOT PAID, by the check as the hub reckons it.
+    app.state.printing.check_of = lambda state: check_for(state, app.state.taxes, app.state.pricing)
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -1060,14 +1063,15 @@ def create_app(
     def read_tickets() -> dict[str, Any]:
         """What a kitchen ticket says about the other tickets of the same send: `numbered` ("Ticket 2 of 3",
         when more than one station is cooking) and `also_at` ("Also at: Wok 2, Sushi Bar", the other stations
-        cooking)."""
+        cooking). And `paid`: the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
+        is still to collect."""
         settings: SettingStore = app.state.settings
         return settings.get("tickets")
 
     @app.put("/settings/tickets")
     def write_tickets(body: TicketsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
-        """A manager turns either line on or off; one left out of the call stays as it is. The next ticket
-        prints by it."""
+        """A manager turns any of the lines on or off; one left out of the call stays as it is. The next
+        ticket prints by it."""
         manager_from(app.state.tokens, authorization)
         settings: SettingStore = app.state.settings
         asked = body.model_dump(exclude_none=True)

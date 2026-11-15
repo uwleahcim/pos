@@ -33,7 +33,8 @@
   log carries its reason's id and the name it had then, so a reason can be renamed or dropped later.
 - `tickets`: what a kitchen ticket says about the other tickets of the same send (`PrintService.send`), each on
   to start: `numbered`, "Ticket 2 of 3" when more than one station is cooking, and `also_at`, the names of the
-  other stations cooking ("Also at: Wok 2, Sushi Bar").
+  other stations cooking ("Also at: Wok 2, Sushi Bar"). And `paid`: the takeout station's ticket of a to-go
+  order says PAID, or NOT PAID with what is still to collect.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -94,7 +95,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
-    "tickets": {"numbered": True, "also_at": True},
+    "tickets": {"numbered": True, "also_at": True, "paid": True},
 }
 RUSH_MAX = 120
 """The most minutes a rush can add to a quote: past two hours the kitchen is closed, not busy."""
@@ -301,8 +302,9 @@ def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
-    """What the tickets of one send say about each other, as the app may set it: `numbered` and `also_at`, each
-    true or false; one left out keeps its default. Raises ValueError on a bad value."""
+    """What the tickets of one send say about each other, as the app may set it: `numbered` and `also_at`; and
+    `paid`, whether the takeout counter's copy of a to-go order says PAID or NOT PAID. Each true or false; one
+    left out keeps its default. Raises ValueError on a bad value."""
     out = {}
     for name, default in DEFAULTS["tickets"].items():
         value = data.get(name, default)

@@ -599,10 +599,11 @@ class PosApi {
     ),
   );
 
-  /// What the kitchen tickets of one send say about each other at this location ("Ticket 2 of 3", "Also at").
+  /// What the kitchen tickets of one send say about each other at this location ("Ticket 2 of 3", "Also at"),
+  /// and whether a to-go order's takeout ticket says PAID or NOT PAID.
   Future<TicketWords> ticketWords() async => TicketWords.fromJson(await _get('/settings/tickets'));
 
-  /// A manager (token from [adminSession]) turns either line on or off; the next ticket prints by it.
+  /// A manager (token from [adminSession]) turns any of the lines on or off; the next ticket prints by it.
   Future<TicketWords> saveTicketWords(String token, TicketWords words) async => TicketWords.fromJson(
     await _withFailover(
       (base) => _client.put(

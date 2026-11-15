@@ -175,9 +175,10 @@ class Hub {
   String? printersAuth;
   String? refusePrinters;
 
-  /// What the tickets of one send say about each other (`GET/PUT /settings/tickets`), the token the last save
-  /// carried and a reason to refuse the next save with. Null is a hub older than the setting (404).
-  Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true};
+  /// What the tickets say beyond their dishes (`GET/PUT /settings/tickets`), the token the last save carried
+  /// and a reason to refuse the next save with. Null is a hub older than the setting (404); one with no `paid`
+  /// is a hub older than PAID / NOT PAID on the takeout ticket.
+  Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true, 'paid': true};
   String? ticketWordsAuth;
   String? refuseTicketWords;
   Map<String, dynamic> stations = {'stations': [], 'missing': [], 'takeout_station': 'takeout'};

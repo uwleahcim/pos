@@ -211,7 +211,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       final words = await widget.api.ticketWords();
       if (mounted) setState(() => _ticketWords = words);
     } on ApiException {
-      // an older hub prints neither line: the card shows no switch for them
+      // an older hub prints none of the lines: the card shows no switch for them
     }
   }
 
@@ -831,8 +831,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     );
   }
 
-  /// The printers (on their own screen) and, under them, what the tickets of one send say about each other:
-  /// two switches that save as they are flipped. A hub older than the switches shows none.
+  /// The printers (on their own screen) and, under them, what the tickets say beyond their dishes: two switches
+  /// for what the tickets of one send say about each other, and one for PAID or NOT PAID on a to-go order's
+  /// takeout ticket. Each saves as it is flipped. A hub older than a switch does not show it.
   Widget _printersCard(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final missing = _stations?.missing.isNotEmpty ?? false;
@@ -867,6 +868,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               title: const Text('Name the other stations on each ticket'),
               subtitle: const Text('"Also at: Wok 2, Sushi Bar", so a cook can time a dish against them'),
             ),
+            if (words.paid case final paid?)
+              SwitchListTile(
+                key: const ValueKey('tickets-paid'),
+                value: paid,
+                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(paid: on)),
+                title: const Text('Print PAID or NOT PAID on to-go orders'),
+                subtitle: const Text("On the takeout station's ticket, with what is still to collect"),
+              ),
             if (_ticketWordsMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
