@@ -16,6 +16,10 @@ class BurstDetector {
   final _buffer = StringBuffer();
   DateTime? _last;
 
+  /// Whether the key fed last came on the heels of a tag's characters, at the reader's pace: the reader is
+  /// most likely still typing.
+  bool midBurst = false;
+
   static final _tagChar = RegExp(r'^[A-Za-z0-9]$');
   static final _separator = RegExp(r'^[ :\-]$'); // some readers type the id in groups
 
@@ -24,6 +28,7 @@ class BurstDetector {
     final last = _last;
     final continues = last != null && at.difference(last) <= gap;
     if (!continues) _buffer.clear();
+    midBurst = continues && _buffer.isNotEmpty;
     if (enter) {
       final text = _buffer.toString();
       _buffer.clear();
@@ -67,6 +72,7 @@ class WedgeTagReader implements TagReader {
   final BurstDetector bursts;
   Completer<String?>? _waiting;
   bool _installed = false;
+  KeyEvent? _typed;
 
   /// Starts listening to the keyboard, for as long as the app runs.
   void install() {
@@ -86,9 +92,18 @@ class WedgeTagReader implements TagReader {
     if (event is! KeyDownEvent) return false;
     final enter = event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter;
     final uid = bursts.feed(character: enter ? null : event.character, enter: enter, at: clock());
+    // The Enter that ends a tag, and a space the reader types inside one: keys that would press a button.
+    final presses = enter ? uid != null : event.logicalKey == LogicalKeyboardKey.space && bursts.midBurst;
+    _typed = presses ? event : null;
     if (uid != null) read(uid);
     return false;
   }
+
+  /// Whether [event] is a key the reader typed that would press whatever button has the keyboard's focus:
+  /// the Enter that ends a tag, or a space inside one. The app keeps these from the buttons
+  /// (`ReaderKeysPressNothing`): a badge tapped at the reader signs its owner in, it must not also repeat
+  /// the last thing touched on the screen. True only while that same key is being handled.
+  bool typed(KeyEvent event) => identical(event, _typed);
 
   /// A tag as the reader typed it (or as something else says it did).
   void read(String uid) {

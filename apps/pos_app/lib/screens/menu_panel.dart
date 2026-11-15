@@ -12,6 +12,7 @@ import '../local_order.dart' show localPrice;
 import '../menu.dart';
 import '../menu_search.dart';
 import 'drill_down.dart';
+import 'tap_focus.dart';
 import 'text_arrows.dart';
 import 'theme.dart';
 
@@ -66,6 +67,10 @@ abstract final class MenuPanelCheck {
 /// opened it, and closes whatever is open under that level: from the choices to the dish, from the dishes to
 /// their category (the choices close too), from the categories to the search field. Delete or Backspace on a
 /// dish takes one of it off the order ([onRemove]); in the search field they edit the text.
+///
+/// A touch or a click puts the focus on what was touched ([TapTakesFocus], around the whole app), so the
+/// keyboard goes on from there. Only Enter moves the focus into what a tile opens: a tile touched or clicked
+/// keeps it.
 class MenuPanel extends StatefulWidget {
   const MenuPanel({super.key, required this.api, required this.onChosen, this.qtyOf, this.onRemove, this.by});
 
@@ -148,6 +153,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _trayScroll = ScrollController();
   _Wanted? _wanted; // the tile the focus goes to as soon as it is on screen
   FocusNode? _toShow; // the tile that took the focus while the trays moved: brought into view once they rest
+  var _keying = false; // a key is being handled right now: what a tile does this moment, the keyboard did
   var _columns = 1; // the grids as last laid out: how many tiles across, how tall each
   var _tileHeight = 0.0;
 
@@ -255,7 +261,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _wanted = null;
         return;
       }
-      final scroll = wanted.scroll;
+      final scroll = _touched ? null : wanted.scroll;
       if (scroll != null && scroll.hasClients && scroll.position.haveDimensions) {
         final position = scroll.position;
         final row = wanted.index ~/ _columns;
@@ -265,12 +271,21 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     _nextFrame();
   }
 
+  /// Whether the screen was touched last, not a key or the mouse: the focus shows no highlight then, and no
+  /// grid scrolls to show where it went. A finger put it there; the screen stays as the finger left it.
+  static bool get _touched => FocusManager.instance.highlightMode == FocusHighlightMode.touch;
+
+  /// Whether what a tile does right now was done with the keyboard: Enter on [from], which has the focus,
+  /// while that key is being handled ([_onKey]). A touch or a click on a tile that happens to have the focus
+  /// is not.
+  bool _byKey(FocusNode? from) => _keying && (from?.hasPrimaryFocus ?? false);
+
   /// Scrolls the tile that took the focus into view, if its grid shows only part of it.
   void _show() {
     final node = _toShow;
     _toShow = null;
     final context = node?.context;
-    if (node == null || context == null || !context.mounted || !node.hasPrimaryFocus) return;
+    if (node == null || context == null || !context.mounted || !node.hasPrimaryFocus || _touched) return;
     for (final policy in const [
       ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
       ScrollPositionAlignmentPolicy.keepVisibleAtStart,
@@ -425,10 +440,12 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// Opens `section` at `depth`. The categories stay the same size in their grid above, smoothly
   /// collapsing or expanding to match the rows needed by `section`'s items.
   ///
-  /// Opened with the keyboard ([from] is the tile it was opened from, and has the focus), the focus goes to
-  /// the first of what opened.
+  /// [from] is the tile it was opened from. Opened with the keyboard (Enter on that tile), the focus goes to
+  /// the first of what opened. Touched or clicked, the focus is the tile's ([TapTakesFocus]) and stays with
+  /// it: a category inside a category shows among the categories above once it is open, and the focus goes
+  /// there with it.
   void _openAt(int depth, MenuSection section, {FocusNode? from}) {
-    final keyed = from?.hasPrimaryFocus ?? false;
+    final keyed = _byKey(from);
     final currentDepth = _open.isEmpty ? 0 : _open.length - 1;
     _startTransition(resetScroll: depth != currentDepth, resetItemsSectionId: section.sectionId);
     setState(() {
@@ -436,7 +453,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       _pending = null;
       _search.clear();
     });
-    if (!keyed) return;
+    if (!keyed) {
+      final shown = _focusOf('categories-$depth', _sectionKey(section));
+      if (from != null && from != shown) _want(shown);
+      return;
+    }
     final first = section.sections.isNotEmpty
         ? _sectionKey(section.sections.first)
         : section.entries.isNotEmpty
@@ -447,9 +468,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     }
   }
 
-  /// Closes the open category (the innermost one). Closed with the keyboard, from its own tile, the focus
-  /// stays with that tile where it shows now.
-  void _close({FocusNode? from}) => _closeTo(_open.length - 1, focus: from?.hasPrimaryFocus ?? false);
+  /// Closes the open category (the innermost one). Closed from its own tile ([from]: Enter on it, a touch or
+  /// a click), the focus stays with that tile where it shows now.
+  void _close({FocusNode? from}) => _closeTo(_open.length - 1, focus: from != null);
 
   /// Backs out to the first [keep] open categories: the ones under them close, and a dish's choices with
   /// them. With [focus], the keyboard's focus goes to the tile of the category that closed, where it shows now:
@@ -534,17 +555,19 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
   /// The tray closes and the dish goes on the order once nothing is left to ask; otherwise it shows the rest.
   ///
-  /// With the keyboard (the focus is in the tray): once the dish is on the order the focus is back on its
-  /// tile, for one more of it or the next dish; while questions are left, it moves on to the first of them as
-  /// soon as the one just picked in has its answer ([answered]), and stays put while that one wants more.
+  /// Once the dish is on the order the focus is on its tile, for one more of it or the next dish: the choice
+  /// that was picked, with the keyboard, a finger or the mouse, is gone with the tray. While questions are
+  /// left, a choice picked with the keyboard moves the focus on to the first of them as soon as the one just
+  /// picked in has its answer ([answered]), and leaves it put while that one wants more; a choice touched or
+  /// clicked keeps the focus ([TapTakesFocus]).
   void _settlePending(_PendingItemSelection pending, {bool answered = true}) {
-    final keyed = _choiceLevel.hasFocus;
+    final keyed = _keying && _choiceLevel.hasFocus;
     if (pending.isComplete) {
       final chosen = pending.toChosenLine();
       _closePending();
       _choose(chosen);
       final tile = pending.tile;
-      if (keyed && tile != null) _want(tile);
+      if (tile != null) _want(tile);
     } else {
       setState(() => _answered++);
       if (keyed && answered) _focusOpenChoice(pending);
@@ -588,11 +611,22 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     _pending = null;
   });
 
+  /// The field's Clear button: the button goes away with the text, so the focus (its own while it was being
+  /// pressed, [TapTakesFocus]) goes to the field it cleared, ready for the next search.
+  void _clearFromButton() {
+    _clearSearch();
+    _want(_searchFocus);
+  }
+
   /// Keys pressed with the focus anywhere in the menu: see [MenuPanel]. What is not for the menu goes on to
   /// whoever has it next (the search field edits its text with Backspace and Delete as it always did).
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     final key = event.logicalKey;
     final down = event is KeyDownEvent;
+    if (event is! KeyUpEvent && !_keying) {
+      _keying = true;
+      scheduleMicrotask(() => _keying = false);
+    }
     if (key == LogicalKeyboardKey.escape) {
       return down && _backOut() ? KeyEventResult.handled : KeyEventResult.ignored;
     }
@@ -671,11 +705,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// (such as choosing a size or a required modifier group with no defaults), it expands the
   /// inline required-selections section below.
   ///
-  /// [from] is the tile tapped. When it has the keyboard's focus (Enter was pressed on it), the focus goes
-  /// into the choices that open, and comes back to it once they are made ([_settlePending]).
+  /// [from] is the tile tapped. When Enter was pressed on it, the focus goes into the choices that open; it
+  /// is back on the tile once they are made ([_settlePending]). Touched or clicked, the tile keeps the focus.
   Future<void> _tap(MenuEntry entry, {FocusNode? from}) async {
     if (!entry.available) return;
-    final keyed = from?.hasPrimaryFocus ?? false;
+    final keyed = _byKey(from);
     if (_pending != null && _pending!.entry == entry) {
       _closePending();
       return;
@@ -850,7 +884,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         decoration: InputDecoration(
           prefixIcon: const Icon(Icons.search),
           suffixIcon: searching
-              ? IconButton(tooltip: 'Clear', icon: const Icon(Icons.close), onPressed: _clearSearch)
+              ? IconButton(tooltip: 'Clear', icon: const Icon(Icons.close), onPressed: _clearFromButton)
               : null,
           hintText: 'Number or name',
           isDense: true,
