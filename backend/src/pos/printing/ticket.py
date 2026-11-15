@@ -49,6 +49,8 @@ class Ticket:
     customer: str = ""  # the name on a takeout order
     channel: str = ""  # counter | phone | online | delivery | catering
     promised: datetime | None = None  # a takeout order's promised time
+    part: tuple[int, int] | None = None  # (2, 3): the second of the three tickets this send has the cooks working on
+    also_at: tuple[str, ...] = ()  # the other stations cooking for the same send, by name ("Wok 2", "Sushi Bar")
 
 
 def render(
@@ -96,6 +98,11 @@ def render(
         b.line(f"Server {ticket.server}")
     if ticket.course:
         b.line(f"Course: {ticket.course}")
+    # What else this send has cooking, last before the dishes: a cook times a dish against the other stations.
+    if ticket.part is not None:
+        b.line(f"Ticket {ticket.part[0]} of {ticket.part[1]}")
+    if ticket.also_at:
+        b.line(f"Also at: {', '.join(ticket.also_at)}", bold=True)
     b.rule()
     for line in ticket.lines:
         # A void is printed white on black, the dish and its choices, so nobody cooks it by mistake.

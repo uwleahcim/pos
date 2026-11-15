@@ -225,17 +225,17 @@ class Takes:
     served: frozenset[str] = frozenset()
     whole: str | None = None
 
-    def _cooks(self, station: str | None) -> bool:
+    def cooks(self, station: str | None) -> bool:
         return station in self.own or (self.first and station not in self.served)
 
     def __call__(self, station: str | None) -> bool:
-        return self.whole is not None or self._cooks(station)
+        return self.whole is not None or self.cooks(station)
 
     def readers(self, station: str | None) -> frozenset[str | None]:
         """The stations a line cooked at `station` is printed for here: its own, when this printer prints
         that station's tickets, and the takeout station when the order prints whole for the bag. A choice
         hidden from all of them is left off; one any of them reads prints."""
-        cook = {station} if self._cooks(station) else set()
+        cook = {station} if self.cooks(station) else set()
         return frozenset(cook | ({self.whole} if self.whole is not None else set()))
 
 
@@ -346,6 +346,9 @@ class PrintService:
         """Station code -> name as the menu has it (`wok1` -> `Wok 1`), for the head of the ticket."""
         self.takeout_station: Callable[[], str | None] = lambda: None
         """The station a to-go order prints whole at, besides its lines' own stations; None for none."""
+        self.ticket_words: Callable[[], Mapping[str, Any]] = dict
+        """What a ticket says about the other tickets of the same send (the `tickets` setting): `numbered` for
+        "Ticket 2 of 3", `also_at` for "Also at: Wok 2, Sushi Bar". Neither until the API wires the setting in."""
 
     @classmethod
     def from_env(cls) -> PrintService:
@@ -412,12 +415,18 @@ class PrintService:
         delay: float = 0.0,
     ) -> list[PrintJob]:
         """One ticket per printer that has lines in this change. `delay` seconds holds the tickets back (a
-        future order's lead time); the hub's retry loop and the relays pick them up when they are due."""
+        future order's lead time); the hub's retry loop and the relays pick them up when they are due.
+
+        When the change has more than one station cooking, each ticket can say so (the `tickets` setting):
+        "Ticket 2 of 3" numbers the tickets that have something to cook, in the order the printers stand, and
+        "Also at: Wok 2, Sushi Bar" names the stations cooking the rest. The takeout counter packs and does not
+        cook: its ticket is not numbered and it is not named on the cooks', but it reads where the food is
+        coming from like any other."""
         with self._lock:
             ticket_no = next(self._tickets)
-        jobs = []
         printers = self.printers
         courses = self.course_names() if self.course_names is not None else {}
+        made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
         for printer, routes in self.routing(printers, to_go=is_to_go(state)):
             ticket = ticket_for(
                 state,
@@ -432,8 +441,32 @@ class PrintService:
                 continue
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
+            made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
+        words = self.ticket_words()
+        cooks = sum(1 for _, _, cooked in made if cooked)
+        jobs, nth = [], 0
+        for printer, ticket, cooked in made:
+            nth += bool(cooked)
+            if words.get("numbered") and cooked and cooks > 1:
+                ticket = replace(ticket, part=(nth, cooks))
+            if words.get("also_at"):
+                others = dict.fromkeys(name for _, _, there in made for name in there if name not in cooked)
+                ticket = replace(ticket, also_at=tuple(others))
             jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
         return jobs
+
+    def cooking(self, printer: Printer, takes: Takes, lines: Iterable[Line]) -> tuple[str, ...]:
+        """The stations these lines are cooked at on this printer's ticket, by name, in the order they stand on
+        it: the stations the printer prints for itself, not what it only lists for the bag, and never the
+        takeout counter, which packs. A line with no station is cooked where its ticket comes out."""
+        takeout = self.takeout_station()
+        names: dict[str, None] = {}
+        for line in lines:
+            for k in (line.priced or {}).get("kitchen") or [{}]:
+                station = k.get("station")
+                if takes.cooks(station) and (station is None or station != takeout):
+                    names.setdefault(self.station_name(station) if station else self.head(printer))
+        return tuple(names)
 
     def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Takes]]:
         """Which lines each printer takes, by station: a printer takes its own stations (the first printer on

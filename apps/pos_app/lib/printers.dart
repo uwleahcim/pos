@@ -225,3 +225,29 @@ class FoundPrinter {
     return name.isEmpty ? language : '$name · $language';
   }
 }
+
+/// What a kitchen ticket says about the other tickets of the same send, as the hub keeps it
+/// (`GET/PUT /settings/tickets`; a manager sets it under Location settings): [numbered] for "Ticket 2 of 3"
+/// when more than one station is cooking, [alsoAt] for the other stations by name ("Also at: Wok 2, Sushi
+/// Bar").
+@immutable
+class TicketWords {
+  const TicketWords({this.numbered = true, this.alsoAt = true});
+
+  factory TicketWords.fromJson(Map<String, dynamic> json) =>
+      TicketWords(numbered: json['numbered'] as bool? ?? true, alsoAt: json['also_at'] as bool? ?? true);
+
+  final bool numbered;
+  final bool alsoAt;
+
+  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt};
+
+  TicketWords copyWith({bool? numbered, bool? alsoAt}) =>
+      TicketWords(numbered: numbered ?? this.numbered, alsoAt: alsoAt ?? this.alsoAt);
+
+  @override
+  bool operator ==(Object other) => other is TicketWords && other.numbered == numbered && other.alsoAt == alsoAt;
+
+  @override
+  int get hashCode => Object.hash(numbered, alsoAt);
+}

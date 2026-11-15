@@ -26,6 +26,9 @@
   manager's PIN is needed (`manager`, the default) or a reason alone will do (`none`), and `reasons`, the
   short list the person voiding picks from, by name in the order the screen shows them. A void in the order
   log carries its reason's id and the name it had then, so a reason can be renamed or dropped later.
+- `tickets`: what a kitchen ticket says about the other tickets of the same send (`PrintService.send`), each on
+  to start: `numbered`, "Ticket 2 of 3" when more than one station is cooking, and `also_at`, the names of the
+  other stations cooking ("Also at: Wok 2, Sushi Bar").
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -84,6 +87,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
+    "tickets": {"numbered": True, "also_at": True},
 }
 AWAY_MAX = 3600
 TIMER_MAX = 24 * 60
@@ -253,6 +257,18 @@ def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
         seen.add(extension)
         links.append({"extension": extension, "device": device})
     return {"links": links}
+
+
+def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
+    """What the tickets of one send say about each other, as the app may set it: `numbered` and `also_at`, each
+    true or false; one left out keeps its default. Raises ValueError on a bad value."""
+    out = {}
+    for name, default in DEFAULTS["tickets"].items():
+        value = data.get(name, default)
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false")
+        out[name] = value
+    return out
 
 
 def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:
