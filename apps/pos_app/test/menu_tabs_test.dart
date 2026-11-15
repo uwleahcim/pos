@@ -98,7 +98,12 @@ Future<void> mount(WidgetTester tester, Map<String, dynamic> Function() served, 
     client: MockClient((request) async {
       final body = served();
       return switch (request.url.path) {
-        '/menu' => http.Response.bytes(utf8.encode(jsonEncode(body)), 200),
+        // with the hub's content type: without it the Chinese names would be read as Latin-1
+        '/menu' => http.Response.bytes(
+          utf8.encode(jsonEncode(body)),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
         '/menu/revision' => http.Response(jsonEncode({'revision': body['revision']}), 200),
         _ => http.Response('{}', 404),
       };
@@ -120,6 +125,25 @@ Future<void> mount(WidgetTester tester, Map<String, dynamic> Function() served, 
 }
 
 Finder tab(String name) => find.descendant(of: find.byKey(const ValueKey('menu-tabs')), matching: find.text(name));
+
+/// The dishes the search found, as they read on the screen: row by row, left to right.
+List<String> foundDishes(WidgetTester tester) {
+  final tiles = find
+      .descendant(
+        of: find.byKey(const ValueKey('search-grid')),
+        matching: find.byWidgetPredicate(
+          (w) => switch (w.key) {
+            ValueKey<String>(:final value) => value.startsWith('e:'),
+            _ => false,
+          },
+        ),
+      )
+      .evaluate()
+      .toList();
+  Offset at(Element tile) => (tile.renderObject! as RenderBox).localToGlobal(Offset.zero);
+  tiles.sort((a, b) => at(a).dy != at(b).dy ? at(a).dy.compareTo(at(b).dy) : at(a).dx.compareTo(at(b).dx));
+  return [for (final tile in tiles) (tile.widget.key! as ValueKey<String>).value];
+}
 
 void main() {
   testWidgets('the menus open are tabs: Food first, a tap shows the other menu and closes what was open', (
@@ -199,6 +223,75 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('e:lunch:L1:EGGROLL')), findsOneWidget);
     expect(find.byKey(const ValueKey('e:dinner:1:EGGROLL')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the search lists the best match first: every word typed, in any order, then one of them', (
+    tester,
+  ) async {
+    await mount(tester, menus);
+    // both words, the other way round: the spring roll, then the other rolls as the menu has them (the one
+    // with the longest name last)
+    await tester.enterText(find.byType(TextField), 'roll spring');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), [
+      'e:dinner:2:SPRINGROLL',
+      'e:dinner:1:EGGROLL',
+      'e:dinner:S1:CALROLL',
+      'e:dinner:S4:DRAGON',
+      'e:dinner:S2:SPTUNA',
+    ]);
+    // "with" is not a word to look for, a slip of the keyboard is forgiven, several is one
+    await tester.enterText(find.byType(TextField), 'beef with brocoli');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:88:BB']);
+    await tester.enterText(find.byType(TextField), 'chicken wing');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:3:WINGS', 'e:dinner:87:GTC']);
+    // two words typed as one, at the bar
+    await tester.enterText(find.byType(TextField), 'maitai');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:drinks:B3:MAITAI']);
+    // the Chinese name on the button, and a number typed whole
+    await tester.enterText(find.byType(TextField), '芥兰');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:88:BB']);
+    await tester.enterText(find.byType(TextField), 's4');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:S4:DRAGON']);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('the search finds a dish by what the kitchen calls it, after the dishes named so', (tester) async {
+    Map<String, dynamic> served() {
+      final served = menus();
+      Iterable<Map<String, dynamic>> entries() sync* {
+        for (final menu in served['menus'] as List) {
+          for (final section in menu['sections'] as List) {
+            yield* (section['entries'] as List).cast<Map<String, dynamic>>();
+          }
+        }
+      }
+
+      // as the hub sends the original POS's labels: the Chinese name, the abbreviation, r for "with rice"
+      entries().firstWhere((e) => e['item'] == 'GTC')['kitchen_name'] = '左宗棠鸡 GEN TSO CHKN r';
+      entries().firstWhere((e) => e['item'] == 'WINGS')['kitchen_name'] = '鸡翅 CHKN WING r';
+      entries().firstWhere((e) => e['item'] == 'PFR')['kitchen_name'] = '叉烧炒饭 PORK FR RICE (chicken on request)';
+      return served;
+    }
+
+    await mount(tester, served);
+    await tester.enterText(find.byType(TextField), 'tso chkn');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:87:GTC', 'e:dinner:3:WINGS']);
+    await tester.enterText(find.byType(TextField), 'chicken');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester), ['e:dinner:3:WINGS', 'e:dinner:87:GTC', 'e:dinner:40:PFR']);
+    // the kitchen's mark for "with rice" is no word: r finds the names with an r, the rolls first, not the wings
+    await tester.enterText(find.byType(TextField), 'r');
+    await tester.pumpAndSettle();
+    expect(foundDishes(tester).first, 'e:dinner:1:EGGROLL');
+    expect(foundDishes(tester), isNot(contains('e:dinner:3:WINGS')));
     await tester.pumpWidget(const SizedBox());
   });
 

@@ -8,6 +8,53 @@ with sub-categories shows those as the tiles). Switching tabs closes whatever wa
 search finds a dish on every menu open, whichever tab shows, so a soda typed on the Food tab is found at
 the bar too. With one menu open there are no tabs.
 
+## The search
+
+What is typed in the search field is taken word by word, and the best match comes first: `beef broccoli`
+lists **Beef with Broccoli** first, then the other beef dishes, then the other broccoli dishes. Down or
+Enter in the field lands on the best match.
+
+- **Any order, no filler.** `broccoli beef` finds the same dish; `with`, `and`, `&`, `in`, `of`, `the`,
+  `a`, `an`, `or`, `on`, `w`, `n` are not looked for (`sweet sour chicken`, `sex beach`).
+- **One or several.** `egg rolls` finds Egg Roll, `dumpling` finds Dumplings, `general tso` finds General
+  Tso's.
+- **Still typing.** The start of a word already finds it: `chick broc` is Chicken with Broccoli.
+- **Slips of the keyboard.** A word that is in no dish name at all is taken for the closest words:
+  `brocoli`, `chiken`, `lo mien`, `szechwan`. One letter wrong, missing, too many or swapped (two in a word
+  of eight letters or more); the first letter has to be right, and the word at least four letters long. A
+  word the menu does have is never taken for another: `beef` does not find the beer.
+- **Accents and apostrophes** need not be typed: `patron`, `pina colada`, `titos`.
+- **One word or two.** `lomein`, `maitai` and `tsingtao` find Lo Mein, Mai Tai and Tsing Tao; `won ton` finds
+  Wonton.
+- **The Chinese name** on the button finds the dish, and so does **the kitchen's label**, the abbreviation
+  the original POS printed (`shmp cashew`, `chkn`). Its marks are not words: the single letters (`r`) and
+  what stands before a colon (`sa:`, `LUN:`).
+- **A number** typed whole (`A15`, `802`) puts that dish first.
+
+The order of what is found:
+
+1. the dish whose number was typed;
+2. the dishes with every word typed, then the dishes with at least half of them as whole words (so
+   `general tso tofu` still finds the General Tso's dishes, and `lo mein` lists the chow mein after the lo
+   mein but not the lobster);
+3. a name on the button before the kitchen's label;
+4. a whole word before the start of a word, that before letters inside a word (`berry` in Strawberry), that
+   before a slip of the keyboard;
+5. the word typed first before the word typed after it (the beef dishes before the broccoli dishes);
+6. the shortest name: the one with the least beside what was typed;
+7. the menu's own order, so a lunch special stays ahead of the same dish at dinner.
+
+Whatever the plain text match of before found is still found (`f with b` still finds Beef with Broccoli),
+only after the better matches. Categories are not searched: `vodka` finds no bottle, because no bottle is
+named vodka.
+
+The search runs in the app, over the menu it already holds (`apps/pos_app/lib/menu_search.dart`): it needs
+no hub, and the dishes are prepared once when the menu is read, so a key pressed costs far less than a
+frame (about a third of a millisecond for the restaurant's 535 dishes in the test runner; not measured on
+the tablets). The hub sends each dish's kitchen label with the menu
+(`kitchen_name`) for it; with an older hub the search does without. The hub's own `GET /menu/search` (the
+menu engine's `search`) is a different, simpler lookup that no screen uses.
+
 This is the Menu Engine Design's model as written (`menu-engine-design.md`, "Menus"): a menu is a
 presentation, with its own sections and entries, of the one catalog. "When two menus are active at once,
 the POS shows both as tabs." The drinks are not a flag on dishes or categories: they are a menu.

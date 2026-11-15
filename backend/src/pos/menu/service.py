@@ -229,6 +229,7 @@ class MenuService:
                     "item": e.item,
                     "name": e.name,
                     "second_name": self._second_name(e.item, locale),
+                    "kitchen_name": self._kitchen_name(e.item),
                     "variants": [_plain(asdict(v)) for v in e.variants],
                     "contains": list(e.contains),
                     "tags": list(e.tags),
@@ -269,6 +270,11 @@ class MenuService:
         names = self.defs.items[item_code].names
         other = "en" if locale.startswith("zh") else "zh"
         return names.get(other)
+
+    def _kitchen_name(self, item_code: str) -> str | None:
+        """What the dish's ticket calls it when that is not its name (`腰果蝦 SHMP CASHEW r`): the screens'
+        search finds a dish by it too."""
+        return self.defs.items[item_code].names.get("kitchen") or None
 
     def item(self, item_id: str, entry_id: str | None = None, locale: str = "en") -> dict[str, Any]:
         detail = self.engine.item_detail(item_id, entry_id, locale=locale)

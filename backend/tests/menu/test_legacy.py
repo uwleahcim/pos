@@ -96,6 +96,19 @@ def test_dishes_print_in_chinese_with_the_old_label_and_cook_where_the_original_
     assert {"午特", "頭抬", "湯", "大廚菜", "捲", "壽司", "飲料", "調酒", "點心"} <= zh
 
 
+def test_the_screens_get_each_dish_s_kitchen_label_so_their_search_finds_it_by_the_old_abbreviation():
+    def entries(sections):
+        for section in sections:
+            yield from section["entries"]
+            yield from entries(section["sections"])
+
+    menus = MenuService(load_restaurant_menu()[0]).menus("pos")
+    dishes = {e["item"]: e for m in menus for e in entries(m["sections"])}
+    assert dishes["S01"]["name"] == "Shrimp with Cashew Nuts"
+    assert dishes["S01"]["kitchen_name"] == "腰果蝦 SHMP CASHEW r"
+    assert dishes["beefeater"]["kitchen_name"] is None  # a bottle the original POS never labelled
+
+
 def test_the_dishes_only_the_original_pos_sold_are_on_sale():
     defs, _ = load_restaurant_menu()
     engine = MenuEngine(defs)
