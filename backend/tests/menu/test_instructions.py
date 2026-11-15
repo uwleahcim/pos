@@ -27,7 +27,7 @@ def test_no_makes_the_option_free_and_skips_its_effects(engine):
     assert list(all_problems(line)) == []
 
 
-def test_side_and_extra_keep_the_price_and_print_in_front_of_the_label(engine):
+def test_side_keeps_the_price_extra_charges_it_again_and_both_print_in_front_of_the_label(engine):
     line = engine.resolve(
         LineRequest(
             "GTC:pint",
@@ -36,7 +36,7 @@ def test_side_and_extra_keep_the_price_and_print_in_front_of_the_label(engine):
             (Selection("rice", "rice:brown", prefix="side"), Selection("addons", "addons:sauce", prefix="extra")),
         )
     )
-    assert line.line_total == D("15.45")  # 13.95 + 1.00 brown rice + 0.50 sauce
+    assert line.line_total == D("15.95")  # 13.95 + 1.00 brown rice + the 0.50 sauce twice (test_word_prices.py)
     labels = line.kitchen_lines[0].labels
     assert "SIDE 糙米" in labels and "EXTRA 多汁" in labels
     sauce = next(m for m in line.modifiers if m.option_id == "addons:sauce")

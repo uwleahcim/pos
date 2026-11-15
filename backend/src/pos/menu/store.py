@@ -11,7 +11,10 @@ The tables follow "Schema sketch" in the Menu Engine Design. Three columns are a
 "dinner:87"), plus `station_id` and `routes_to_id` on `modifier_option`, `defaults`/`locked` on `recipe_component`,
 and `source_category_id` (a group whose options are a category's dishes) and `hidden_station_ids` (the stations
 whose tickets leave the group's choices off; NULL while nobody has said) on `modifier_group`, which the engine
-already has. A hub creates the tables on start, like the order log, and adds a column a table gained since.
+already has. One table is added, `option_word`: what each one-tap word on a choice (Extra, On the side, Light)
+charges at this location, as times the option's price, with `word_factors` on `modifier_group` for a group
+that charges otherwise (NULL: as the location). A hub creates the tables on start, like the order log, and
+adds a column a table gained since.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ from .defs import (
     Station,
     Unit,
     Variant,
+    Word,
 )
 
 SCHEMA = """
@@ -160,6 +164,12 @@ CREATE TABLE IF NOT EXISTS modifier_option (
 );
 ALTER TABLE modifier_option
   ADD COLUMN IF NOT EXISTS routes_to_id uuid REFERENCES station DEFERRABLE INITIALLY DEFERRED;
+-- What a one-tap word on a choice charges (2026-11): times the option's price, for the location and by group.
+CREATE TABLE IF NOT EXISTS option_word (
+  code   text PRIMARY KEY CHECK (code IN ('extra','side','light')),
+  factor numeric(6,3) NOT NULL CHECK (factor >= 0)
+);
+ALTER TABLE modifier_group ADD COLUMN IF NOT EXISTS word_factors jsonb;
 CREATE TABLE IF NOT EXISTS modifier_attachment (
   id         uuid PRIMARY KEY,
   owner_kind owner_kind NOT NULL CHECK (owner_kind IN ('item','category')),
@@ -354,6 +364,7 @@ TABLES = {
         _Table("item", ("code",)),
         _Table("item_variant", ("item_id", "code")),
         _Table("modifier_group", ("code",)),
+        _Table("option_word", ("code",), uuid_id=False, pk=("code",)),
         _Table("modifier_option", ("group_id", "code")),
         _Table("modifier_attachment", ("owner_kind", "owner_id", "group_id")),
         _Table("menu", ("code",)),
@@ -404,7 +415,7 @@ class MenuStore:
 
     def load(self, localizer: Localizer | None = None) -> Definitions:
         with self._pool.connection() as conn:
-            rows = {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in ORDER}  # noqa: S608
+            rows = {name: _all(conn, name) for name in ORDER}
         return _definitions(rows, localizer)
 
     def availability(self) -> dict[str, Availability]:
@@ -521,6 +532,18 @@ class MenuStore:
             return conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT %s", (limit,)).fetchall()
 
 
+LATER_TABLES = frozenset({"option_word"})
+"""Tables the menu gained after the first hubs were installed. Only a primary makes tables, so a standby
+running newer code than its primary reads the menu before the table is there: it reads it as empty."""
+
+
+def _all(conn, name: str) -> list[dict[str, Any]]:
+    """Every row of one table."""
+    if name in LATER_TABLES and conn.execute("SELECT to_regclass(%s) AS found", (name,)).fetchone()["found"] is None:
+        return []
+    return conn.execute(f"SELECT * FROM {name}").fetchall()  # noqa: S608
+
+
 # --- Definitions -> rows -------------------------------------------------------------------------------
 
 
@@ -628,8 +651,10 @@ def _rows(defs: Definitions, ids: _Ids) -> dict[str, list[dict[str, Any]]]:
                 "hidden_station_ids": (
                     None if g.hidden_at is None else [ids.id("station", code) for code in g.hidden_at]
                 ),
+                "word_factors": None if g.word_factors is None else dict(g.word_factors),
             }
         )
+    out["option_word"] = [{"code": w.code, "factor": w.factor} for w in defs.words.values()]
     for o in defs.options.values():
         out["modifier_option"].append(
             {
@@ -917,8 +942,11 @@ def _definitions(rows: Mapping[str, list[dict[str, Any]]], localizer: Localizer 
                 r["sort"],
                 ids.code("category", r.get("source_category_id")),
                 _stations(ids, r.get("hidden_station_ids")),
+                _factors(r.get("word_factors")),
             )
         )
+    for r in rows.get("option_word", ()):
+        defs.add(Word(r["code"], r["factor"]))
     for r in by_sort(rows["modifier_option"]):
         defs.add(
             Option(
@@ -1098,6 +1126,11 @@ def _stations(ids: _Ids, row_ids: Any) -> tuple[str, ...] | None:
 # --- SQL helpers -------------------------------------------------------------------------------------
 
 
+def _factors(stored: Any) -> dict[str, Decimal] | None:
+    """A group's own word prices as stored (`{"extra": "1"}`), or None for a group that follows the location."""
+    return None if stored is None else {str(word): Decimal(str(factor)) for word, factor in stored.items()}
+
+
 def _key(table: _Table, row: Mapping[str, Any]) -> tuple:
     return tuple(_plain_value(row[c]) for c in table.key)
 
@@ -1108,7 +1141,7 @@ def _row_id(table: _Table, row: Mapping[str, Any]) -> str:
 
 JSON_COLUMNS = {
     "names", "description", "attrs", "component_overrides", "effects", "overrides", "schedule", "display",
-    "price_overrides", "availability", "defaults",
+    "price_overrides", "availability", "defaults", "word_factors",
 }  # fmt: skip
 TEXT_COLUMNS = {("modifier_group", "display")}  # a JSON column name elsewhere, plain text here
 

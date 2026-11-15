@@ -12,6 +12,8 @@ merges after any disconnect.
   running hub's drinks to their menu): `docs/menus.md`
 - Choices that are dishes (the soup with a lunch special, the rolls of a maki combination; a group that offers a
   whole category; a chosen dish's own choices asked under it; the check and the tickets): `docs/modifiers.md`
+- What Extra, On the side and Light cost (Extra charges a paid option twice, a free one stays free; the
+  location's rule and a group that charges otherwise, both in the menu editor): `docs/word-prices.md`
 - Discounts, comps and service charges (reasons, who approves, a comp for several dishes picked up together,
   the rules file, the report): `docs/discounts.md`
 - Voids of sent dishes (a reason, a manager's PIN unless the location lets servers void, several dishes

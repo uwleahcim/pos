@@ -261,10 +261,14 @@ class GroupDetail {
     required this.options,
     this.maxSelect,
     this.allowQuantity = false,
+    this.words = const {},
   });
 
   factory GroupDetail.fromJson(Map<String, dynamic> json) => GroupDetail(
     allowQuantity: json['allow_quantity'] as bool? ?? false,
+    words: {
+      for (final e in (json['words'] as Map? ?? const {}).entries) '${e.key}': double.tryParse('${e.value}') ?? 1,
+    },
     groupId: json['group_id'] as String,
     name: json['name'] as String? ?? '',
     minSelect: json['min_select'] as int? ?? 0,
@@ -283,6 +287,15 @@ class GroupDetail {
   /// The same choice can go on a dish several times (two chicken fingers on an appetizer platter); each one
   /// counts toward [minSelect] and [maxSelect].
   final bool allowQuantity;
+
+  /// What each one-tap word charges on this group's choices, as times the option's price (the hub's `words`):
+  /// 2 for an Extra that charges the option again. Empty from a hub older than the rule, where every word but
+  /// "no" charges the option once.
+  final Map<String, double> words;
+
+  /// How many times its price a choice of this group costs with [word] on it: nothing with "no", once with
+  /// no word, and what the menu says for Extra, On the side and Light.
+  double factor(String? word) => word == null ? 1 : (word == 'no' ? 0 : words[word] ?? 1);
 
   bool get single => maxSelect == 1;
   bool get required => minSelect > 0;
@@ -316,6 +329,19 @@ class ItemDetail {
 
 /// The one-tap instructions a choice can carry, as the backend spells them, with the word shown for each.
 const instructions = {'no': 'No', 'extra': 'Extra', 'side': 'On the side', 'light': 'Light'};
+
+/// What [qty] of [option] adds to one of the dish with [word] on it, in cents, as the hub charges it: nothing
+/// for a free choice or one marked "no", and the word's factor in its group for the others ("extra shrimp"
+/// charges the shrimp again). A choice that is a dish is never charged again for its word.
+int choiceCents(GroupDetail group, OptionDetail option, String? word, [int qty = 1]) {
+  if (option.free || word == 'no') return 0;
+  final each = ((double.tryParse(option.price) ?? 0) * 100).round();
+  return (each * qty * (option.isDish ? 1 : group.factor(word))).round();
+}
+
+/// [choiceCents] as the app writes money: "6.00".
+String choicePrice(GroupDetail group, OptionDetail option, String? word, [int qty = 1]) =>
+    (choiceCents(group, option, word, qty) / 100).toStringAsFixed(2);
 
 /// What was chosen on a dish: the options picked in each of its groups, the word on any of them, and, for a
 /// choice that is itself a dish (the soup with a lunch special, each roll of a maki combination), the choices
@@ -555,8 +581,9 @@ void fillDefaults(List<GroupDetail> groups, Choices choices) {
 }
 
 /// The choices on a dish as the check lists them before the hub has priced the line: every choice that is not
-/// the menu's default or carries a word, with the price of one (a choice marked "no" is free, as the hub makes
-/// it). A choice that is a dish is followed by the changed choices on that dish and its note to the kitchen
+/// the menu's default or carries a word, with what it adds (a choice marked "no" is free and an Extra is
+/// charged again where the menu says so, as the hub has it: [choiceCents]). A choice that is a dish is
+/// followed by the changed choices on that dish and its note to the kitchen
 /// one level deeper, and a dish the menu picked by default is listed when a choice on it changed, so the
 /// change reads under its dish.
 List<CheckModifier> pickedModifiers(List<GroupDetail> groups, Choices choices, {int depth = 0}) {
@@ -576,7 +603,7 @@ List<CheckModifier> pickedModifiers(List<GroupDetail> groups, Choices choices, {
       rows.add(
         CheckModifier(
           n > 1 ? '${n}x $name' : name, // two of the same choice, as the hub lists them
-          price: o.free || word == 'no' ? '0.00' : (double.parse(o.price) * n).toStringAsFixed(2),
+          price: choicePrice(g, o, word, n),
           depth: depth,
         ),
       );

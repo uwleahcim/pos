@@ -238,6 +238,8 @@ class LineRequest:
 
 `prefix` was added on 1 November 2026 (architecture draft 8, from the competitive review): the NO, EXTRA, SIDE and LIGHT row the item sheet offers on any option, so "no peanuts" or "sauce on the side" need no option of their own. The engine prints the instruction in front of the option's kitchen label (NO 加虾), makes a "no" option free and skips its recipe effects, and keeps the price and effects of the other three.
 
+What a prefix charges was changed on 15 November 2026 (the Toast comparison, item 10, the owner's yes): EXTRA charges the option's price twice, SIDE and LIGHT charge it once, and "no" stays free. The factor is data: a `Word(code, factor)` per word for the location and `Group.word_factors` for a group that charges otherwise, with extra 2, side 1 and light 1 where neither says. It multiplies what the option adds after the group's free picks, so a free option or a free pick stays free, and a slot (a choice that is an item) is not multiplied. Recipe effects are unchanged. `docs/word-prices.md` has the rule in full.
+
 **Output.** Resolution is a pure function of (definitions as of now, request, time, locale):
 
 ```python

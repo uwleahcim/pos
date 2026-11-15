@@ -20,7 +20,8 @@ pytestmark = pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to ru
 
 TABLES = (
     "audit_log recipe_component recipe item_allergen_override ingredient_allergen ingredient availability_state "
-    "menu_entry menu_section menu modifier_attachment modifier_option modifier_group item_variant item category "
+    "menu_entry menu_section menu modifier_attachment modifier_option option_word modifier_group item_variant item "
+    "category "
     "station allergen unit"
 ).split()
 
@@ -186,6 +187,59 @@ def test_ids_must_follow_their_codes(store):
     defs.variants["GTC:big"] = replace(v, id="GTC:big")
     with pytest.raises(ValueError, match="GTC:big"):
         store.save(defs)
+
+
+def test_what_the_words_charge_is_kept_and_a_hub_from_before_gains_the_table_and_the_column(store):
+    """The location's rule and a group's own come back as saved, a second save writes nothing, and a database
+    made before either existed reads as nobody having said."""
+    import psycopg
+
+    from pos.menu.defs import Word
+    from pos.menu.store import MenuStore
+
+    defs = load_definitions("example")
+    store.save(defs, actor="import")
+    loaded = store.load(defs.localizer)
+    assert loaded.words == {} and all(g.word_factors is None for g in loaded.groups.values())
+    loaded.add(Word("extra", Decimal("1.5")), Word("light", Decimal("0.5")))
+    loaded.groups["addons"] = replace(loaded.groups["addons"], word_factors={"extra": Decimal(1)})
+    result = store.save(loaded, actor="mike")
+    assert (result.inserted, result.updated, result.deleted) == (2, 1, 0)
+    assert {row["table_name"] for row in store.audit(3)} == {"option_word", "modifier_group"}
+    again = store.load(defs.localizer)
+    assert again.words == {"extra": Word("extra", Decimal("1.5")), "light": Word("light", Decimal("0.5"))}
+    assert again.groups["addons"].word_factors == {"extra": Decimal(1)}
+    assert again.groups["rice"].word_factors is None
+    assert store.save(again).changed == 0
+    engine = MenuEngine(again)
+    line = engine.resolve(
+        LineRequest("GTC:pint", 1, "dinner:87", (Selection("rice", "rice:brown", prefix="extra"),)),
+        datetime(2026, 10, 28, 18, 30, tzinfo=UTC),
+    )
+    assert line.line_total == Decimal("15.45")  # 13.95 + the 1.00 brown rice one and a half times
+    # the row taken away again: the standing rule
+    del again.words["light"]
+    assert store.save(again, actor="mike").deleted == 1
+    with psycopg.connect(DSN) as conn:
+        conn.execute("DROP TABLE option_word")
+        conn.execute("ALTER TABLE modifier_group DROP COLUMN word_factors")
+        standby = MenuStore.__new__(MenuStore)  # a standby makes no table: it reads the menu as it finds it
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    standby._pool = ConnectionPool(DSN, min_size=1, max_size=1, open=True, kwargs={"row_factory": dict_row})
+    try:
+        before = standby.load(defs.localizer)
+        assert before.words == {} and all(g.word_factors is None for g in before.groups.values())
+    finally:
+        standby.close()
+    upgraded = MenuStore(DSN)  # a hub adds the table and the column on start
+    try:
+        fresh = upgraded.load(defs.localizer)
+        assert fresh.words == {} and all(g.word_factors is None for g in fresh.groups.values())
+        assert upgraded.save(fresh).changed == 0
+    finally:
+        upgraded.close()
 
 
 def test_the_stations_a_group_is_hidden_at_are_kept_and_a_hub_from_before_gains_the_column(store):

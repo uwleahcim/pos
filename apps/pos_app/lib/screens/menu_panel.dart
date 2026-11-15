@@ -2510,12 +2510,20 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
   }
 
   /// What a choice's button reads: how many of it and its word in front of its name. Its price is the
-  /// button's badge, left off when the word is "no" (the backend charges nothing for a choice left off).
+  /// button's badge ([_optionPrice]).
   String _optionLabel(Choices choices, OptionDetail o) {
     final mark = choices.prefixes[o.optionId];
     final n = choices.qty(o.optionId);
     final word = mark == null ? o.name : '${instructions[mark]} ${o.name}';
     return n > 1 ? '${n}x $word' : word;
+  }
+
+  /// The badge on a choice's button: what one of it adds with the word it carries, so "Extra" on the shrimp
+  /// shows the shrimp charged again. None on a free choice and on one marked "no" (the backend charges
+  /// nothing for a choice left off).
+  String? _optionPrice(Choices choices, GroupDetail g, OptionDetail o) {
+    final price = choiceCents(g, o, choices.prefixes[o.optionId]);
+    return price == 0 ? null : '+${(price / 100).toStringAsFixed(2)}';
   }
 
   /// One fewer of a choice in a group that takes several: the minus on its chip.
@@ -2565,7 +2573,7 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
               key: ValueKey('choice:${o.optionId}@$depth'),
               groupLabel: g.name,
               name: _optionLabel(choices, o),
-              priceLabel: o.free || choices.prefixes[o.optionId] == 'no' ? null : '+${o.price}',
+              priceLabel: _optionPrice(choices, g, o),
               available: o.available,
               selected: choices.picked(g.groupId, o.optionId),
               dish: o.isDish,

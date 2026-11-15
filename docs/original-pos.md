@@ -131,7 +131,8 @@ labelled as the original POS printed it, and attaches them where the original PO
 
 The one-tap NO / EXTRA / SIDE / LIGHT of the modifier sheet (`Selection.prefix`, `docs/menu-engine-design.md`)
 go in front of any of these, so NO BROCOL and EXTRA CASHEW print as the original POS printed them, and a
-NO is free while an EXTRA charges the option's price. The export's pancake group of the Moo Shu dishes is
+NO is free while an EXTRA charges the option's price twice (EXTRA CASHEW is 4.00; the rule and how a group
+is set to charge once are in `docs/word-prices.md`). The export's pancake group of the Moo Shu dishes is
 attached to the whole category. A few labels were read by eye from the original POS's abbreviations (H.G.S.
 hot garlic sauce, B.B.S. black bean sauce, EFY/S egg foo young sauce, F DUCK S and F MUSD S as the free
 duck and mustard sauce, Fry BK fry back; ABS WAND stays as written); the kitchen label is the original POS's
