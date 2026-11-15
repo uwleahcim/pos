@@ -52,6 +52,9 @@ Map<String, dynamic> line(String item, {String? course, bool fired = false, doub
 class Hub {
   final orders = <Map<String, dynamic>>[];
   final sent = <(String, Map<String, dynamic>)>[];
+
+  /// The operations of each call that brought some, as they came: what was sent together is one change.
+  final batches = <List<Map<String, dynamic>>>[];
   final pins = <String>[];
   Map<String, dynamic> coursing = {'enabled': true, 'default': '1', 'courses': standard};
   Map<String, dynamic> quotes = {
@@ -320,6 +323,7 @@ class Hub {
       final id = _ops.firstMatch(path)!.group(1)!;
       final ops = (jsonDecode(request.body) as List).cast<Map<String, dynamic>>();
       sent.addAll(ops.map((op) => (id, op)));
+      batches.add(ops);
       _apply(id, ops);
       return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
     }

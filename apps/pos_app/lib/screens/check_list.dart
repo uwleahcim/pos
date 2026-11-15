@@ -5,6 +5,10 @@
 /// and move out of its way as it passes them, and once let go the stack comes down onto that room and
 /// spreads into full rows, the rows around it moving apart to fit them; then the lines take their places in
 /// the order stacked.
+///
+/// While dishes are in hand, the foot of the check offers places to drop them on instead of putting them
+/// back down ([LotTarget]: Comp, Void): let go over one and the lines go nowhere, and the screen is told
+/// which place took them.
 library;
 
 import 'dart:ui' show lerpDouble;
@@ -13,6 +17,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../api.dart' show Line;
 import '../check_order.dart';
 
 /// A hold on the check, as the rows see it: the line in hand, the lines picked up to go along with it in
@@ -30,8 +35,31 @@ class CheckDrag {
 /// Builds a row: in the list, or in the stack in hand when the drag moves its line.
 typedef CheckRowBuilder = Widget Function(BuildContext context, int index, CheckRow row, CheckDrag? drag);
 
+/// A place at the foot of the check to drop the dishes in hand on, instead of putting them back down.
+@immutable
+class LotTarget {
+  const LotTarget({required this.id, required this.label, required this.icon, this.danger = false});
+
+  final String id;
+
+  /// What it does with them, in a word or two: "Comp 3", "Void 3".
+  final String label;
+  final IconData icon;
+
+  /// It takes dishes off the check: drawn in the colour of a void.
+  final bool danger;
+}
+
 class CheckList extends StatefulWidget {
-  const CheckList({super.key, required this.rows, required this.rowBuilder, required this.paper, required this.onDrop});
+  const CheckList({
+    super.key,
+    required this.rows,
+    required this.rowBuilder,
+    required this.paper,
+    required this.onDrop,
+    this.targets,
+    this.onTarget,
+  });
 
   final List<CheckRow> rows;
   final CheckRowBuilder rowBuilder;
@@ -41,6 +69,16 @@ class CheckList extends StatefulWidget {
 
   /// The stack has come down: the lines, as stacked, and where.
   final void Function(Drop drop) onDrop;
+
+  /// The places the lines in hand (as stacked) can be dropped on, shown across the foot of the check while
+  /// they are held. Null, or none: the check only rearranges.
+  final List<LotTarget> Function(List<Line> inHand)? targets;
+
+  /// The lines in hand were let go over the target with that id. They stay where they were on the check.
+  final void Function(String target, List<Line> lines)? onTarget;
+
+  /// How tall the places to drop on are, across the foot of the check.
+  static const targetBar = 56.0;
 
   /// A row folding away or back, the rows making room, the stack growing.
   static const settle = Duration(milliseconds: 150);
@@ -165,6 +203,27 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     return box.globalToLocal(global).dy + _offset;
   }
 
+  /// A point on the screen, as a place in the check's own frame (the part of the list that shows).
+  Offset _local(Offset global) => (_viewport.currentContext!.findRenderObject() as RenderBox).globalToLocal(global);
+
+  /// The places the lines in hand can be dropped on: none when the screen offers none.
+  List<LotTarget> _targets(_Hold hold) =>
+      widget.onTarget == null ? const [] : widget.targets?.call([for (final row in _stack(hold)) row.line]) ?? const [];
+
+  /// How much of the foot of the check the places to drop on take.
+  double _barHeight(_Hold hold) => _targets(hold).isEmpty ? 0 : CheckList.targetBar;
+
+  /// The target the finger is over, if it is over one: they share the foot of the check evenly.
+  LotTarget? _over(_Hold hold) {
+    final targets = _targets(hold);
+    final box = _viewport.currentContext?.findRenderObject() as RenderBox?;
+    if (targets.isEmpty || box == null || hold.landing) return null;
+    final at = hold.finger;
+    if (at.dy < box.size.height - CheckList.targetBar || at.dy > box.size.height) return null;
+    if (at.dx < 0 || at.dx >= box.size.width) return null;
+    return targets[(at.dx / box.size.width * targets.length).floor().clamp(0, targets.length - 1)];
+  }
+
   double _measuredHeight(String rowId) =>
       (_rowKeys[rowId]?.currentContext?.findRenderObject() as RenderBox?)?.size.height ?? 0;
 
@@ -226,7 +285,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
       grab: _contentY(global) - top,
       roomBefore: index + 1 < rows.length ? rows[index + 1].rowId : null,
       top: top,
-    );
+    )..finger = _local(global);
     setState(() {
       _hold = hold;
       _generation++;
@@ -238,8 +297,13 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     final hold = _hold;
     if (hold == null || hold.landing) return;
     hold.top = _contentY(global) - hold.grab;
-    _settle(hold);
-    _scrollIfAtEdge(hold);
+    hold.finger = _local(global);
+    if (_over(hold) == null) {
+      _settle(hold);
+      _scrollIfAtEdge(hold);
+    } else {
+      _ticker.stop(); // over a place to drop on: the rows keep still, the room stays where it was
+    }
     setState(() {});
   }
 
@@ -312,6 +376,14 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   void _end() {
     final hold = _hold;
     if (hold == null || hold.landing) return;
+    final target = _over(hold);
+    if (target != null) {
+      // let go over Comp or Void: the lines go back to their rows and the screen does the rest
+      final lines = [for (final row in _stack(hold)) row.line];
+      _putDown();
+      widget.onTarget?.call(target.id, lines);
+      return;
+    }
     _ticker.stop();
     _shifting.stop();
     final remaining = _remaining(hold);
@@ -369,7 +441,8 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
     final box = _viewport.currentContext?.findRenderObject() as RenderBox?;
     if (box == null || !_scroll.hasClients) return;
     final finger = hold.top + hold.grab - _offset;
-    final atEdge = finger < _edge || finger > box.size.height - _edge;
+    // the foot of the list is above the places to drop on
+    final atEdge = finger < _edge || finger > box.size.height - _barHeight(hold) - _edge;
     if (atEdge && !_ticker.isActive) _ticker.start();
     if (!atEdge && _ticker.isActive) _ticker.stop();
   }
@@ -382,7 +455,7 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
       return;
     }
     final finger = hold.top + hold.grab - _offset;
-    final height = box.size.height;
+    final height = box.size.height - _barHeight(hold);
     final double delta;
     if (finger < _edge) {
       delta = -(_edge - finger) / _edge * 10;
@@ -433,7 +506,12 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
         ),
       );
     }
-    if (hold != null) children.add(_room(hold, null));
+    final targets = hold == null ? const <LotTarget>[] : _targets(hold);
+    if (hold != null) {
+      children.add(_room(hold, null));
+      // the end of the check can still be reached above the places to drop on
+      if (targets.isNotEmpty) children.add(const SizedBox(height: CheckList.targetBar));
+    }
     return Stack(
       key: _viewport,
       children: [
@@ -443,6 +521,15 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
         ),
         if (hold != null) _stackInHand(context, hold, drag!),
+        // over the stack, so the stack goes in under them and the place the finger is on can be read
+        if (hold != null && targets.isNotEmpty && !hold.landing)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: CheckList.targetBar,
+            child: _TargetBar(targets: targets, over: _over(hold)?.id),
+          ),
       ],
     );
   }
@@ -514,6 +601,84 @@ class CheckListState extends State<CheckList> with TickerProviderStateMixin {
   }
 }
 
+/// The places to drop the dishes in hand on, side by side across the foot of the check; the one the finger
+/// is over is filled in.
+class _TargetBar extends StatelessWidget {
+  const _TargetBar({required this.targets, required this.over});
+
+  final List<LotTarget> targets;
+  final String? over;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Listener(
+      behavior: HitTestBehavior.opaque, // a second finger here picks up nothing from the rows underneath
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: CheckList.settle,
+        curve: Curves.easeOut,
+        builder: (context, t, child) => Opacity(opacity: t, child: child),
+        child: Material(
+          key: const ValueKey('lot-targets'),
+          color: scheme.surface,
+          elevation: 8,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (i, target) in targets.indexed) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  Expanded(child: _target(theme, scheme, target)),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _target(ThemeData theme, ColorScheme scheme, LotTarget target) {
+    final on = target.id == over;
+    // a place that takes dishes off is the red of a void; the other is the theme's green, so the two are
+    // told apart at a glance and by more than their words
+    final (fill, ink) = switch ((target.danger, on)) {
+      (true, true) => (scheme.error, scheme.onError),
+      (true, false) => (scheme.errorContainer, scheme.onErrorContainer),
+      (false, true) => (scheme.tertiary, scheme.onTertiary),
+      (false, false) => (Color.alphaBlend(scheme.tertiary.withValues(alpha: 0.16), scheme.surface), scheme.tertiary),
+    };
+    return AnimatedContainer(
+      key: ValueKey('lot-target:${target.id}'),
+      duration: const Duration(milliseconds: 90),
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: on ? fill : ink.withValues(alpha: 0.35), width: on ? 2 : 1),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(target.icon, size: 20, color: ink),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              target.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleSmall?.copyWith(color: ink, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// A line that has joined the stack fades in under the others.
 class _Joined extends StatelessWidget {
   const _Joined({required this.fresh, required this.child});
@@ -555,6 +720,9 @@ class _Hold {
 
   /// The top of the stack, as a height down the check's rows.
   double top;
+
+  /// Where the finger is, in the check's own frame: over a place to drop on, or not.
+  Offset finger = Offset.zero;
 
   /// Let go: the stack is coming down onto its room, from [landFrom] to [landTo] down the check's rows.
   bool landing = false;

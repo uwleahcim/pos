@@ -71,6 +71,27 @@ the line, holding the dish's name drags it, and the quantity and the bin keep th
 Nothing happens on a price while a dish is in hand. Like the Discount button, the menu needs a hub or the
 cloud, because somebody has to check the PIN.
 
+## Several dishes at once
+
+For a course that went wrong, or a table's whole round. Hold a dish, tap the others with another finger so
+they stack behind it, and let go over **Comp** at the foot of the check (see `location-settings.md`,
+"Arranging the check"). One dish let go there works the same.
+
+1. **The dishes.** The box lists what is in hand, each with what it comes to now.
+2. **One reason for all of them.** The reasons the rules allow on one item, as buttons, two across on a
+   phone, each with what it gives and "PIN" where a manager must approve. A reason with a range asks how
+   much once, and that percentage or amount goes on each dish, not across them.
+3. **One manager PIN**, when the reason needs one.
+
+Each dish then carries its own discount, exactly as if it had been comped alone: its own row under the
+subtotal, taken off one at a time with a tap, and its own line in the report, all with the same reason and
+the same manager. A dish that already has a discount the reason cannot go on top of is left as it is; the
+button says how many it will go on ("Free · 2 of 3"), and a reason that fits none of them is not offered.
+Cancel, or walking away from the PIN, changes nothing. Like every discount it needs a hub or the cloud.
+
+It is one batch of `discount` operations, one for each dish, each with its own `discount_id` and the same
+`approval` token; the hub checks each one as it would alone.
+
 ## Service charges
 
 - **Automatic**: the hub puts them on by itself when their conditions hold. Defaults: 18% gratuity on

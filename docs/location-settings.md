@@ -121,6 +121,12 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   into full rows, the rows around it moving apart to fit them; the dishes take their places in the order
   stacked: the one held, then the others as they were tapped. This takes a second finger, so it is for the
   phones and the iPads; on the Mac, dishes move one at a time.
+- While a dish is in hand, two places show at the foot of the check: **Comp** and **Void**, with the number
+  in hand when there is more than one ("Comp 3", "Void 3"). Letting go over one of them moves nothing: it
+  comps or voids every dish in hand with one reason and one manager PIN (`discounts.md` and `voids.md`,
+  "Several dishes at once"). The place under the finger lights up, the check stops scrolling while the
+  finger is on one, and letting go anywhere else is a move as before. Void reads **Take off** when the
+  kitchen has seen none of the dishes in hand.
 
 ## On the wire
 
