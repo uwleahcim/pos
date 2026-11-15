@@ -167,8 +167,30 @@ def lead_delay(state: OrderState, now_ms: int, *, default_lead_minutes: int = DE
     return delay if delay > 60 else 0.0
 
 
+def _told(state: OrderState) -> list[tuple[Any, ...]]:
+    """The allergies on the order as the kitchen reads them: who typed one in is not its business."""
+    return [(told["seat"], tuple(told["allergens"]), told["note"]) for told in state.allergy_list()]
+
+
 def _when(ms: Any) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000) if isinstance(ms, int) else None
+
+
+def allergy_words(told: Mapping[str, Any], names: Mapping[str, str]) -> str:
+    """One allergy in words: its allergens by name, then whatever else was said ("Peanuts, Sesame - no MSG").
+    Plain letters, so a printer writes it as text."""
+    listed = ", ".join(names.get(code) or code for code in told.get("allergens") or ())
+    return " - ".join(part for part in (listed, str(told.get("note") or "")) if part)
+
+
+def allergy_lines(state: OrderState, names: Mapping[str, str]) -> tuple[str, ...]:
+    """The allergies told on the order, one a line, the whole table's first ("Table: Peanuts", "Seat 2:
+    Sesame"; "Order:" on an order with no table)."""
+    whole = "Table" if state.fields.get("table") else "Order"
+    return tuple(
+        f"{f'Seat {told["seat"]}' if told.get('seat') else whole}: {allergy_words(told, names)}"
+        for told in state.allergy_list()
+    )
 
 
 def ticket_for(
@@ -181,15 +203,25 @@ def ticket_for(
     routes: Callable[[str | None], bool] | None = None,
     course: str | None = None,
     late: datetime | None = None,
+    allergens: Mapping[str, str] | None = None,
+    kind: str | None = None,
 ) -> Ticket | None:
     """One station's ticket: voided lines first, printed in reverse, then the lines being sent.
     `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
-    every line does. `late` is when the operator took it, for a batch that reached the backend late."""
-    lines = [*_ticket_lines(voided or [], routes, void=True), *_ticket_lines(sent, routes, void=False)]
+    every line does. `late` is when the operator took it, for a batch that reached the backend late.
+    `allergens` names the menu's allergens by code, for the allergies told on the order: they head every
+    station's ticket, and a seat's own stands under each of its dishes. `kind` says what the ticket is when it
+    is not for dishes sent or voided (`allergy`: an allergy told after `sent` had gone to the kitchen)."""
+    names = allergens or {}
+    by_seat = {told["seat"]: allergy_words(told, names) for told in state.allergy_list() if told.get("seat")}
+    lines = [
+        *_ticket_lines(voided or [], routes, void=True, allergies=by_seat),
+        *_ticket_lines(sent, routes, void=False, allergies=by_seat),
+    ]
     if not lines:
         return None
     voids = sum(line.void for line in lines)
-    kind = "new" if not voids else "void" if voids == len(lines) else "modify"
+    kind = kind or ("new" if not voids else "void" if voids == len(lines) else "modify")
     if course is None:
         courses = {line.course for line in sent}
         course = courses.pop() if len(courses) == 1 else None
@@ -210,6 +242,7 @@ def ticket_for(
         customer=str(fields.get("customer_name", "")),
         channel=str(fields.get("channel", "")),
         promised=_when(fields.get("promised_at")),
+        allergies=allergy_lines(state, names),
     )
 
 
@@ -251,7 +284,14 @@ def _read_here(k: Mapping[str, Any], routes: Callable[[str | None], bool] | None
     return {i for i in range(count) if i >= len(hidden) or not readers <= set(hidden[i])}
 
 
-def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None, *, void: bool) -> list[TicketLine]:
+def _ticket_lines(
+    lines: list[Line],
+    routes: Callable[[str | None], bool] | None,
+    *,
+    void: bool,
+    allergies: Mapping[int, str] | None = None,
+) -> list[TicketLine]:
+    """`allergies` is what was told for each seat, in words: it prints under that seat's dishes."""
     out = []
     for line in lines:
         kitchen = (line.priced or {}).get("kitchen")
@@ -285,6 +325,7 @@ def _ticket_lines(lines: list[Line], routes: Callable[[str | None], bool] | None
                     void=void,
                     changed=not void and line.modified_after_fire,
                     header=k.get("header") or None,
+                    allergy=(allergies or {}).get(line.seat, "") if line.seat else "",
                 )
             )
     return out
@@ -346,6 +387,9 @@ class PrintService:
         """Station code -> name as the menu has it (`wok1` -> `Wok 1`), for the head of the ticket."""
         self.takeout_station: Callable[[], str | None] = lambda: None
         """The station a to-go order prints whole at, besides its lines' own stations; None for none."""
+        self.allergen_names: Callable[[], Mapping[str, str]] = dict
+        """Allergen code -> name as the menu has it (`peanut` -> `Peanuts`), for the allergies on a ticket; a
+        code the menu does not name prints as it is."""
         self.ticket_words: Callable[[], Mapping[str, Any]] = dict
         """What a ticket says about the other tickets of the same send (the `tickets` setting): `numbered` for
         "Ticket 2 of 3", `also_at` for "Also at: Wok 2, Sushi Bar". Neither until the API wires the setting in."""
@@ -383,7 +427,11 @@ class PrintService:
         """Called after operations are stored. Each order's tickets come from comparing the order before and
         after this batch, so a fire prints only lines not sent yet, a void of a sent line prints at once,
         and a change (void plus a new line plus a fire, sent together) prints as one ticket. A batch taken
-        while no backend answered prints headed "late", with the time the operator took it."""
+        while no backend answered prints headed "late", with the time the operator took it.
+
+        An allergy told, changed or taken off after dishes went to the kitchen prints a ticket of its own at
+        every station that has some of them, headed ALLERGY and listing those dishes: the tickets the cooks
+        are working from were printed without it."""
         if not self.printers:
             return []
         jobs: list[PrintJob] = []
@@ -402,6 +450,20 @@ class PrintService:
                 late = taken_offline(batch, now, self._late_after_ms)
                 delay = lead_delay(after, now) if not voided else 0.0  # a void prints at once
                 jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, delay=delay))
+            if _told(before) != _told(after):
+                gone = {line.line_id for line in sent}
+                had = [
+                    line
+                    for line in after.ordered_lines()
+                    if line.active and line.fired_at is not None and line.line_id not in gone
+                ]
+                if had:
+                    key = next(op for op in batch if op.kind == "allergy")
+                    now = self._now()
+                    late = taken_offline(batch, now, self._late_after_ms)
+                    # with a future order's own tickets, when those are still waiting for their time
+                    delay = lead_delay(after, now)
+                    jobs.extend(self.send(after, had, [], key=key.op_id, late=late, delay=delay, kind="allergy"))
         return jobs
 
     def send(
@@ -413,9 +475,11 @@ class PrintService:
         key: str,
         late: datetime | None = None,
         delay: float = 0.0,
+        kind: str | None = None,
     ) -> list[PrintJob]:
         """One ticket per printer that has lines in this change. `delay` seconds holds the tickets back (a
         future order's lead time); the hub's retry loop and the relays pick them up when they are due.
+        `kind` is `allergy` for the notice that follows dishes already sent, which lists them again.
 
         When the change has more than one station cooking, each ticket can say so (the `tickets` setting):
         "Ticket 2 of 3" numbers the tickets that have something to cook, in the order the printers stand, and
@@ -426,6 +490,7 @@ class PrintService:
             ticket_no = next(self._tickets)
         printers = self.printers
         courses = self.course_names() if self.course_names is not None else {}
+        allergens = self.allergen_names()
         made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
         for printer, routes in self.routing(printers, to_go=is_to_go(state)):
             ticket = ticket_for(
@@ -436,13 +501,15 @@ class PrintService:
                 ticket_no=ticket_no,
                 routes=routes,
                 late=late,
+                allergens=allergens,
+                kind=kind,
             )
             if ticket is None:
                 continue
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
             made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
-        words = self.ticket_words()
+        words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         cooks = sum(1 for _, _, cooked in made if cooked)
         jobs, nth = [], 0
         for printer, ticket, cooked in made:

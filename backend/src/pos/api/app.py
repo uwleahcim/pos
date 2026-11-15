@@ -651,6 +651,10 @@ def create_app(
         code: app.state.menu.defs.localizer.text(st.names, "en") for code, st in app.state.menu.defs.stations.items()
     }
     app.state.printing.takeout_station = lambda: app.state.settings.get("printers")["takeout_station"]
+    # An allergy told at the table prints by the allergen's name as the menu has it.
+    app.state.printing.allergen_names = lambda: {
+        code: app.state.menu.defs.localizer.text(a.names, "en") for code, a in app.state.menu.defs.allergens.items()
+    }
     # Whether a ticket says "Ticket 2 of 3" and "Also at: Wok 2, Sushi Bar" is the manager's to say.
     app.state.printing.ticket_words = lambda: app.state.settings.get("tickets")
     if printing is None:
@@ -1154,6 +1158,15 @@ def create_app(
         menu: MenuService = app.state.menu
         menu.refresh()
         return {"revision": menu.revision}
+
+    @app.get("/menu/allergens")
+    def read_allergens(locale: str = "en") -> dict[str, Any]:
+        """The allergens the menu lists, in its order: what a server picks from when a guest tells of an
+        allergy (an `allergy` operation on the order names them by `code`)."""
+        menu: MenuService = app.state.menu
+        menu.refresh()
+        listed = sorted(menu.defs.allergens.values(), key=lambda a: (a.sort, a.code))
+        return {"allergens": [{"code": a.code, "name": menu.defs.localizer.text(a.names, locale)} for a in listed]}
 
     @app.get("/menu/items")
     def read_items(channel: str = "pos", locale: str = "en") -> dict[str, Any]:

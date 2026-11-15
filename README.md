@@ -15,6 +15,9 @@ merges after any disconnect.
 - Discounts, comps and service charges (reasons, who approves, the rules file, the report): `docs/discounts.md`
 - Voids of sent dishes (a reason, a manager's PIN unless the location lets servers void, the report of who
   voided what and why): `docs/voids.md`
+- Allergies told at the table (the Allergy chip for a seat or the whole table, the block on every station's
+  ticket, the notice when one is told after dishes were sent, what the mark on the check does and does not
+  know): `docs/allergies.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times, ready texts): `docs/counter-mode.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`

@@ -85,6 +85,21 @@ class Hub {
   final purposes = <String>[];
   Map<String, dynamic>? report;
 
+  /// The allergens the menu names (`GET /menu/allergens`): what a server picks from when a guest tells of an
+  /// allergy. Null is a hub older than allergies on the order (404). An `allergy` operation is kept on the
+  /// order, and each dish is marked with what its `priced.contains` has of it, as the real hub does.
+  List<Map<String, dynamic>>? allergens = [
+    {'code': 'milk', 'name': 'Milk'},
+    {'code': 'egg', 'name': 'Eggs'},
+    {'code': 'fish', 'name': 'Fish'},
+    {'code': 'crustacean', 'name': 'Crustacean shellfish'},
+    {'code': 'tree_nut', 'name': 'Tree nuts'},
+    {'code': 'peanut', 'name': 'Peanuts'},
+    {'code': 'wheat', 'name': 'Wheat'},
+    {'code': 'soy', 'name': 'Soybeans'},
+    {'code': 'sesame', 'name': 'Sesame'},
+  ];
+
   /// Unreachable: every call fails, as with the hub's cable pulled.
   bool down = false;
 
@@ -471,6 +486,8 @@ class Hub {
         return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
       case '/menu/revision':
         return json({'revision': revision});
+      case '/menu/allergens':
+        return allergens == null ? json({'detail': 'Not Found'}, 404) : json({'allergens': allergens});
       case '/menu/price':
         return json({'name': "General Tso's Chicken (Quart)", 'unit_price': '26.95'});
       case '/pricing/rules':
@@ -534,7 +551,31 @@ class Hub {
               line['fired'] = true;
             }
           }
+        case 'allergy':
+          final told = [...(order['allergies'] as List? ?? const []).cast<Map<String, dynamic>>()];
+          told.removeWhere((a) => a['seat'] == data['seat']);
+          if ((data['allergens'] as List).isNotEmpty || (data['note'] as String).isNotEmpty) {
+            told.add({
+              'seat': data['seat'],
+              'allergens': data['allergens'],
+              'note': data['note'],
+              'by': data['by'] ?? '',
+              'by_id': data['by_id'],
+            });
+          }
+          order['allergies'] = told..sort((a, b) => (a['seat'] as int? ?? 0).compareTo(b['seat'] as int? ?? 0));
       }
+    }
+    // each dish against the table's allergy and its own seat's, by what the menu says it contains
+    final told = (order['allergies'] as List? ?? const []).cast<Map<String, dynamic>>();
+    for (final line in lines.values.cast<Map>()) {
+      final contains = ((line['priced'] as Map?)?['contains'] as List?) ?? const [];
+      line['allergy'] = <String>{
+        for (final a in told)
+          if (a['seat'] == null || a['seat'] == line['seat'])
+            for (final code in a['allergens'] as List)
+              if (contains.contains(code)) code as String,
+      }.toList();
     }
   }
 

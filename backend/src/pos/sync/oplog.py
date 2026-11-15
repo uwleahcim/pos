@@ -39,6 +39,9 @@ KINDS = frozenset(
         "charge",  # data: charge_id, code (a charge rule), + the rule's snapshot the hub fills in
         "remove_charge",  # data: charge_id (a rule's code takes off the automatic charge it applies)
         "pay",  # data: payment_id, method (cash|elsewhere|card), amount, tendered?, note?, by?
+        # An allergy a guest told the server of, for one seat or (no seat) the whole table: the allergens by
+        # the menu's codes and whatever else was said, in words. One with neither takes the allergy off.
+        "allergy",  # data: seat?, allergens?, note?, by?, by_id?
     }
 )
 """Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
@@ -66,6 +69,8 @@ ORDER_FIELDS = frozenset(
         "locale",  # the customer's language for texts
     }
 )
+ALLERGY_NOTE_MAX = 80
+"""How long the words of an allergy may be: a line of a kitchen ticket and a little more."""
 LINE_FIELDS = frozenset({"qty", "seat", "course", "note", "rank"})
 KITCHEN_FIELDS = frozenset({"qty", "seat", "course", "note"})
 """The line fields the kitchen cares about. Changing the quantity, seat or note of a line it has marks the
@@ -217,6 +222,11 @@ class OrderState:
     discounts: dict[str, Discount] = field(default_factory=dict)
     charges: dict[str, Charge] = field(default_factory=dict)
     payments: dict[str, Payment] = field(default_factory=dict)
+    # The allergies told at the table, by seat (0 is the whole table): `allergens` by the menu's codes, a
+    # `note` in words, and who took it (`by`, `by_id`). The latest word on a seat stands; seats do not
+    # overwrite each other, so two screens noting two seats both count.
+    allergies: dict[int, dict[str, Any]] = field(default_factory=dict)
+    allergy_stamps: dict[int, HLC] = field(default_factory=dict)
     applied: list[str] = field(default_factory=list)  # op ids in replay order
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
@@ -241,6 +251,22 @@ class OrderState:
             seen.add(line_id)
             line_id = replaced_by[line_id]
         return line_id
+
+    def allergy_list(self) -> list[dict[str, Any]]:
+        """The allergies on the order, the table's first, then by seat."""
+        return [self.allergies[seat] for seat in sorted(self.allergies)]
+
+    def allergens_for(self, seat: int | None) -> list[str]:
+        """The allergens a dish for this seat must be kept from: the table's and the seat's own, by code."""
+        own = self.allergies.get(seat, {}) if seat else {}
+        return list(dict.fromkeys([*self.allergies.get(0, {}).get("allergens", ()), *own.get("allergens", ())]))
+
+    def allergy_conflicts(self, line: Line) -> list[str]:
+        """The allergens noted for this line's seat or the table that the menu says its dish contains, as it
+        was sold (`priced.contains`). Empty says only that the menu names none: it is no promise of a dish
+        without them."""
+        contains = set((line.priced or {}).get("contains") or ())
+        return [code for code in self.allergens_for(line.seat) if code in contains]
 
     def snapshot(self) -> dict[str, Any]:
         """A plain, comparable picture of the order; two replicas agree when their snapshots are equal. The
@@ -267,9 +293,11 @@ class OrderState:
                     "replaces": line.replaces,
                     "by": line.by,
                     "by_id": line.by_id,
+                    "allergy": self.allergy_conflicts(line),
                 }
                 for line in self.ordered_lines()
             },
+            "allergies": self.allergy_list(),
             "fired": {course: str(stamp) for course, stamp in sorted(self.fired.items())},
             "discounts": {did: d.as_json() for did, d in sorted(self.discounts.items())},
             "charges": {cid: c.as_json() for cid, c in sorted(self.charges.items())},
@@ -367,6 +395,26 @@ def apply(state: OrderState, op: Op) -> None:
                     "approved_by": approved if isinstance(approved, dict) else None,
                     "at_ms": op.hlc.wall_ms,
                 }
+
+    elif kind == "allergy":
+        seat = data.get("seat")
+        key = seat if isinstance(seat, int) and not isinstance(seat, bool) and seat > 0 else 0
+        if state.allergy_stamps.get(key, _MIN) <= op.hlc:
+            state.allergy_stamps[key] = op.hlc
+            listed = data.get("allergens")
+            codes = [a.strip() for a in listed if isinstance(a, str)] if isinstance(listed, list | tuple) else []
+            allergens = list(dict.fromkeys(code for code in codes if code))
+            note = " ".join(str(data.get("note") or "").split())[:ALLERGY_NOTE_MAX]
+            if allergens or note:
+                state.allergies[key] = {
+                    "seat": key or None,
+                    "allergens": allergens,
+                    "note": note,
+                    "by": str(data.get("by") or ""),
+                    "by_id": data.get("by_id") if isinstance(data.get("by_id"), str) else None,
+                }
+            else:
+                state.allergies.pop(key, None)
 
     elif kind == "fire":
         course = data.get("course", "*")
