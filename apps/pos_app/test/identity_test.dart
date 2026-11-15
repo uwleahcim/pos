@@ -97,7 +97,7 @@ void main() {
     expect(session.prefs.textScale, 1.0);
     final put = requests.last;
     expect((put.method, put.url.path), ('PUT', '/staff/s1/preferences'));
-    expect(jsonDecode(put.body), {'text_scale': 1.0, 'high_contrast': true, 'locale': 'en'});
+    expect(jsonDecode(put.body), {'text_scale': 1.0, 'high_contrast': true, 'locale': 'en', 'my_tables': false});
 
     backendUp = false; // applied on this screen all the same, and the dialog says it was not saved
     expect(await session.savePrefs(session.prefs.copyWith(highContrast: false)), isNotNull);
@@ -122,7 +122,12 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('high-contrast')));
     await tester.pumpAndSettle();
     expect(session.prefs.highContrast, isFalse);
-    expect(jsonDecode(requests.last.body), {'text_scale': 1.0, 'high_contrast': false, 'locale': 'en'});
+    expect(jsonDecode(requests.last.body), {
+      'text_scale': 1.0,
+      'high_contrast': false,
+      'locale': 'en',
+      'my_tables': false,
+    });
   });
 
   test('an event photo is taken at once and sent when the backend is reachable', () async {

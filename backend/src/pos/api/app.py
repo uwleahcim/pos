@@ -182,6 +182,7 @@ class PreferencesIn(BaseModel):
     text_scale: float | None = Field(None, description="1.0 is the normal size; 0.8 to 1.6")
     high_contrast: bool | None = None
     locale: str | None = None
+    my_tables: bool | None = Field(None, description="the floor map picks out this person's own tables")
 
 
 class PhotoIn(BaseModel):

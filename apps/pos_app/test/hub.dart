@@ -112,6 +112,11 @@ class Hub {
     {'staff_id': 's4', 'name': 'Holly', 'role': 'host', 'takes_tables': false, 'assigns_tables': true},
   ];
 
+  /// The floor it serves when a test changed it (the fixture otherwise), and what each person saved of their
+  /// own settings (`PUT /staff/<id>/preferences`), in order.
+  Map<String, dynamic>? floor;
+  final prefsSaved = <(String, Map<String, dynamic>)>[];
+
   /// Desk phones: the links it keeps, the token the last save carried, a reason to refuse the next save with,
   /// and how it stands with the PBX (`GET /phones/status`).
   Map<String, dynamic> deskPhones = {'links': []};
@@ -187,6 +192,7 @@ class Hub {
   bool faces = true; // false: an older hub, which has none of the face calls
 
   static final _ops = RegExp(r'^/orders/([^/]+)/ops$');
+  static final _prefs = RegExp(r'^/staff/([^/]+)/preferences$');
   static final _samples = RegExp(r'^/admin/staff/([^/]+)/face/samples$');
   static final _face = RegExp(r'^/admin/staff/([^/]+)/face$');
   static final _tag = RegExp(r'^/admin/staff/([^/]+)/tag$');
@@ -320,6 +326,12 @@ class Hub {
       return json(check ?? {'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
     }
     if (path.startsWith('/menu/items/')) return json(fixture('item_${path.split('/').last.toLowerCase()}'));
+    if (_prefs.hasMatch(path) && request.method == 'PUT') {
+      final id = _prefs.firstMatch(path)!.group(1)!;
+      final saved = jsonDecode(request.body) as Map<String, dynamic>;
+      prefsSaved.add((id, saved));
+      return json({'staff_id': id, 'preferences': saved});
+    }
     if (_order.hasMatch(path)) {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
@@ -486,7 +498,7 @@ class Hub {
         }
         return json({'token': 'tok-admin', 'name': 'Mike', 'role': 'manager'});
       case '/floor':
-        return json(fixture('floor'));
+        return json(floor ?? fixture('floor'));
       case '/menu':
         return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
       case '/menu/revision':
