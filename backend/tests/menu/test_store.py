@@ -168,3 +168,34 @@ def test_ids_must_follow_their_codes(store):
     defs.variants["GTC:big"] = replace(v, id="GTC:big")
     with pytest.raises(ValueError, match="GTC:big"):
         store.save(defs)
+
+
+def test_the_stations_a_group_is_hidden_at_are_kept_and_a_hub_from_before_gains_the_column(store):
+    """Nobody has said (None), a manager's list, and a manager's "every station" (empty) each come back as
+    saved; a database made before the column existed reads as nobody having said."""
+    import psycopg
+
+    from pos.menu.store import MenuStore
+
+    defs = load_definitions("example")
+    defs.groups["rice"] = replace(defs.groups["rice"], hidden_at=("wok", "fryer"))
+    defs.groups["spice"] = replace(defs.groups["spice"], hidden_at=())
+    store.save(defs, actor="mike")
+    loaded = store.load(defs.localizer)
+    assert loaded.groups["rice"].hidden_at == ("wok", "fryer") and loaded.groups["spice"].hidden_at == ()
+    assert loaded.groups["addons"].hidden_at is None
+    assert store.save(loaded).changed == 0
+    # only the group's row is written when the list changes
+    loaded.groups["rice"] = replace(loaded.groups["rice"], hidden_at=("wok",))
+    result = store.save(loaded, actor="mike")
+    assert (result.inserted, result.updated, result.deleted) == (0, 1, 0)
+    assert store.audit(1)[0]["table_name"] == "modifier_group"
+    with psycopg.connect(DSN) as conn:
+        conn.execute("ALTER TABLE modifier_group DROP COLUMN hidden_station_ids")
+    upgraded = MenuStore(DSN)  # a hub adds the column on start
+    try:
+        again = upgraded.load(defs.localizer)
+        assert all(g.hidden_at is None for g in again.groups.values())
+        assert upgraded.save(again).changed == 0
+    finally:
+        upgraded.close()

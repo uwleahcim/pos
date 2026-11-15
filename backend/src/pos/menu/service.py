@@ -402,6 +402,8 @@ class MenuService:
                     "depths": list(k.depths),
                     "header": k.header,
                     "note": k.note,
+                    # where each of `labels` is left off the ticket; not there when nothing is hidden anywhere
+                    **({"hidden": [list(off) for off in k.hidden]} if k.hidden else {}),
                 }
                 for k in line.kitchen_lines
             ],

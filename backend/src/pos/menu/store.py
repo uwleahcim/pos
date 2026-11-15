@@ -8,8 +8,9 @@ know when to reload.
 
 The tables follow "Schema sketch" in the Menu Engine Design. Three columns are added: `code` on
 `menu_section`, `menu_entry` and `recipe_component` (the in-memory ids, e.g. "dinner/chefs",
-"dinner:87"), plus `station_id` and `routes_to_id` on `modifier_option`, `defaults`/`locked` on `recipe_component` and
-`source_category_id` on `modifier_group` (a group whose options are a category's dishes), which the engine
+"dinner:87"), plus `station_id` and `routes_to_id` on `modifier_option`, `defaults`/`locked` on `recipe_component`,
+and `source_category_id` (a group whose options are a category's dishes) and `hidden_station_ids` (the stations
+whose tickets leave the group's choices off; NULL while nobody has said) on `modifier_group`, which the engine
 already has. A hub creates the tables on start, like the order log, and adds a column a table gained since.
 """
 
@@ -132,10 +133,12 @@ CREATE TABLE IF NOT EXISTS modifier_group (
   allow_duplicates boolean NOT NULL DEFAULT false,
   display          text NOT NULL DEFAULT 'inline',
   sort             int NOT NULL DEFAULT 0,
-  source_category_id uuid REFERENCES category DEFERRABLE INITIALLY DEFERRED
+  source_category_id uuid REFERENCES category DEFERRABLE INITIALLY DEFERRED,
+  hidden_station_ids uuid[]
 );
 ALTER TABLE modifier_group
   ADD COLUMN IF NOT EXISTS source_category_id uuid REFERENCES category DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE modifier_group ADD COLUMN IF NOT EXISTS hidden_station_ids uuid[];
 CREATE TABLE IF NOT EXISTS modifier_option (
   id                uuid PRIMARY KEY,
   group_id          uuid NOT NULL REFERENCES modifier_group ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
@@ -598,6 +601,9 @@ def _rows(defs: Definitions, ids: _Ids) -> dict[str, list[dict[str, Any]]]:
                 "display": g.display,
                 "sort": g.sort,
                 "source_category_id": ids.id("category", g.source_category),
+                "hidden_station_ids": (
+                    None if g.hidden_at is None else [ids.id("station", code) for code in g.hidden_at]
+                ),
             }
         )
     for o in defs.options.values():
@@ -886,6 +892,7 @@ def _definitions(rows: Mapping[str, list[dict[str, Any]]], localizer: Localizer 
                 r["display"],
                 r["sort"],
                 ids.code("category", r.get("source_category_id")),
+                _stations(ids, r.get("hidden_station_ids")),
             )
         )
     for r in by_sort(rows["modifier_option"]):
@@ -1055,6 +1062,13 @@ def _target_ids(conn) -> dict[str, Any]:
 
 def _target_codes(conn) -> dict[Any, str]:
     return {row_id: code for code, row_id in _target_ids(conn).items()}
+
+
+def _stations(ids: _Ids, row_ids: Any) -> tuple[str, ...] | None:
+    """Station codes for a column of station ids; a station that has since gone is left out."""
+    if row_ids is None:
+        return None
+    return tuple(code for row_id in row_ids if (code := ids.code("station", row_id)) is not None)
 
 
 # --- SQL helpers -------------------------------------------------------------------------------------

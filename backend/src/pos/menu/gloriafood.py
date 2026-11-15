@@ -125,6 +125,9 @@ class ImportSettings:
     """By the export's group name: `{"items_from": <category name>}` links each option to the dish of that
     name in the category (an option with no such dish, "No Soup", stays a plain option); `{"category":
     <category name>}` makes the group offer the whole category instead of the export's copies of its dishes."""
+    hidden_groups: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """By the export's group name: the stations whose tickets leave the group's choices off (`Group.hidden_at`):
+    the cooks do not read the rice or the soup a dish comes with."""
     include_inactive_categories: bool = True
     """Online-only switches: the export marks beer and wine inactive because they are not sold online, but
     the bar sells them at the table. Items marked inactive stay out either way."""
@@ -394,6 +397,15 @@ def import_gloriafood(
             if re.search(r"\d+\.\d\d?$", name):
                 report.notes.append(f"{code}: name {name!r} ends in what looks like a price")
     _link_groups(defs, settings, group_names, report)
+    for name, stations in settings.hidden_groups.items():
+        code = group_names.get(name)
+        if code is None:
+            report.notes.append(f"groups.json hides a group {name!r} the export does not have")
+            continue
+        unknown = [station for station in stations if station not in defs.stations]
+        if unknown:
+            report.notes.append(f"group {name!r}: hidden at unknown station {', '.join(unknown)}")
+        defs.groups[code] = replace(defs.groups[code], hidden_at=tuple(s for s in stations if s in defs.stations))
     if data.get("currency", "USD") != "USD":
         report.notes.append(f"currency {data.get('currency')} is not USD")
     return defs, report
@@ -433,11 +445,24 @@ def linked_groups_from(path: Path | str = GROUPS) -> dict[str, dict[str, str]]:
     return out
 
 
+def hidden_groups_from(path: Path | str = GROUPS) -> dict[str, tuple[str, ...]]:
+    """Which of the export's option groups are left off which stations' tickets, from a JSON file like
+    `data/groups.json`."""
+    config = json.loads(Path(path).read_text(encoding="utf-8"))
+    out: dict[str, tuple[str, ...]] = {}
+    for name, stations in (config.get("hidden_at") or {}).items():
+        if not isinstance(stations, list) or not all(isinstance(station, str) for station in stations):
+            raise ValueError(f"{path}: hidden_at {name!r} needs a list of station codes")
+        out[str(name)] = tuple(stations)
+    return out
+
+
 def settings_from(
     path: Path | str = STATIONS, menus: Path | str = MENUS, groups: Path | str = GROUPS
 ) -> ImportSettings:
     """Stations and the category-to-station map from a JSON file like `data/stations.json`, the menus from
-    one like `data/menus.json`, and the groups that offer dishes from one like `data/groups.json`."""
+    one like `data/menus.json`, and the groups that offer dishes, with the stations that do not read a group's
+    choices, from one like `data/groups.json`."""
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     return ImportSettings(
         stations=config.get("stations", {}),
@@ -445,6 +470,7 @@ def settings_from(
         default_station=config.get("default_station"),
         menus=menus_from(menus),
         linked_groups=linked_groups_from(groups),
+        hidden_groups=hidden_groups_from(groups),
     )
 
 

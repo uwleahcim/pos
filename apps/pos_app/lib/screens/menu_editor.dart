@@ -876,7 +876,8 @@ class CategoryEditor extends StatelessWidget {
   }
 }
 
-/// An option group (choice of rice, spice level): its rules and its options with their prices.
+/// An option group (choice of rice, spice level): its rules, the stations whose tickets list what is picked
+/// in it, and its options with their prices.
 class GroupEditor extends StatelessWidget {
   const GroupEditor({super.key, required this.catalog, required this.groupKey, required this.onChanged, this.stations});
 
@@ -969,6 +970,35 @@ class GroupEditor extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
+        if (hubHidesGroups(catalog)) ...[
+          _heading(context, 'On the tickets at'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in catalog.stations())
+                FilterChip(
+                  key: ValueKey('$groupKey/ticket:${s['code']}'),
+                  label: Text(nameOf(s)),
+                  // a tick says it at a glance: this station's ticket lists the group
+                  showCheckmark: true,
+                  selected: !hiddenAt(group).contains(s['code']),
+                  onSelected: (shown) {
+                    showOnTickets(catalog, groupKey, s['code'] as String, shown);
+                    onChanged();
+                  },
+                ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              ticketsLine(catalog, groupKey),
+              key: ValueKey('$groupKey/tickets-line'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
         _heading(context, 'Options'),
         for (final o in options)
           Padding(
@@ -1157,6 +1187,61 @@ String _printsAtLine(MenuCatalog catalog, String? station, StationList? stations
   return 'No printer for $name yet: it prints on the first printer in the list. '
       'Add one under Location settings › Printers.';
 }
+
+/// Whether the hub keeps, per option group, the stations whose tickets leave the group off: every group it
+/// sent then carries `hidden_at`. An older hub refuses the field, so the editor does not offer it there.
+bool hubHidesGroups(MenuCatalog catalog) => catalog.all('group').any((g) => g.containsKey('hidden_at'));
+
+/// The stations whose tickets leave a group's picks off (`hidden_at`; none while nobody has said).
+Set<String> hiddenAt(Map<String, dynamic>? group) => {
+  for (final code in group?['hidden_at'] as List? ?? const []) code as String,
+};
+
+/// Puts a group's picks on a station's tickets, or takes them off. The list is kept in the stations' own
+/// order; an empty one is a manager saying every station reads the group, which the hub's menu import then
+/// leaves alone.
+void showOnTickets(MenuCatalog catalog, String groupKey, String station, bool shown) {
+  final group = catalog.get('group', groupKey)!;
+  final hidden = hiddenAt(group);
+  shown ? hidden.remove(station) : hidden.add(station);
+  group['hidden_at'] = [
+    for (final s in catalog.stations())
+      if (hidden.contains(s['code'])) s['code'] as String,
+  ];
+}
+
+/// One line under the stations: which tickets list what is picked in the group, and what the others print.
+String ticketsLine(MenuCatalog catalog, String groupKey) {
+  final hidden = hiddenAt(catalog.get('group', groupKey));
+  final stations = catalog.stations();
+  final off = [
+    for (final s in stations)
+      if (hidden.contains(s['code'])) nameOf(s),
+  ];
+  final on = [
+    for (final s in stations)
+      if (!hidden.contains(s['code'])) nameOf(s),
+  ];
+  if (off.isEmpty) return 'Every station\'s ticket lists what is picked here, under the dish.';
+  // a soup picked with a dish is a dish of its own: the soup station still gets it
+  final dish = catalog.optionsOf(groupKey).any((o) => o['linked_variant'] != null)
+      ? ' A pick that is a dish still prints at its own station.'
+      : '';
+  if (on.isEmpty) {
+    return 'No station\'s ticket lists what is picked here: the dish prints without it. '
+        'The check still shows it.$dish';
+  }
+  if (off.length <= on.length) {
+    return 'Left off the tickets at ${_listed(off)}: the dish prints there without what is picked here. '
+        'The check and the other stations still show it.$dish';
+  }
+  return 'Only the tickets at ${_listed(on)} list what is picked here: the dish prints at the other stations '
+      'without it. The check still shows it.$dish';
+}
+
+/// "Wok 1", "Wok 1 and Wok 2", "Wok 1, Wok 2 and Fryer".
+String _listed(List<String> names) =>
+    names.length < 2 ? names.join() : '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
 
 /// Asks for a new station's name and adds it to the menu; its code, or null when nothing was typed.
 Future<String?> newStation(BuildContext context, MenuCatalog catalog) async {

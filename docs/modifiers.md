@@ -72,8 +72,20 @@ out** under Preparation sends the dish, with its choices, to the takeout counter
 station still cooks it. The printer button on an option in the menu editor sets it; `docs/printing.md` has
 the printers and the stations.
 
+## A choice a station does not read
+
+An option group names the stations whose tickets leave its picks off (`hidden_at`): the rice and the soup
+that come with a dish are of no use to the cook at the wok. The dish prints there without them; the check,
+the other stations and the takeout counter's whole-order ticket still list them. A choice that is a dish
+keeps printing at its own station (the soup station still gets "1 Hot & Sour Soup" with the dish it goes
+with under it), and when that station is the very one that does not read the group, the dish prints there
+as its own line rather than as a pick. `docs/printing.md` has how the hub decides it per printer.
+
 ## In the menu editor
 
+- **Option groups › a group › On the tickets at.** One button per station, ticked while that station's
+  ticket lists what is picked in the group. Tap a station off and its ticket prints the dish without it;
+  the line underneath says in words who still reads it. Nothing ticked off is how every group starts.
 - **Option groups › a group › Several of the same option.** Lets a choice go on a dish more than once, each
   one counted and charged.
 - **Option groups › a group › Options come from.** Pick a category and the group offers its dishes; the
@@ -98,4 +110,8 @@ groups; either is refused with the reason.
 - A hub seeded before any of this catches up with `hubctl menu import --apply` (`pos.menu.seed`): the soup
   options take their links, the Roll group takes the Roll category and loses the export's numbered copies
   of the rolls, and the editor's own changes stay. Without `--apply` it lists what it would do.
+- The same file's `hidden_at` names, by group, the stations whose tickets leave the group off (the two rice
+  groups and the two soup groups, off the seven cooking stations). The import gives a running hub those
+  stations on a group nobody has set (`hidden_at` still empty of any answer); once a manager has touched
+  the buttons in the editor, even to tick every station back on, the import leaves that group alone.
 - The database gained one column, `modifier_group.source_category_id`; the hub adds it on start.
