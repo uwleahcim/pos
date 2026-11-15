@@ -20,6 +20,7 @@ import '../switching.dart';
 import '../tags.dart';
 import '../settings.dart';
 import '../takeout.dart';
+import '../to_go_stages.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
 import 'floor_view.dart';
@@ -31,6 +32,7 @@ import 'server_picker.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'theme.dart';
+import 'to_go_chips.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
 /// Both refresh every two seconds; a later slice replaces polling with a push.
@@ -95,6 +97,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
   Timer? _clock;
+  // The chip the list of checks is narrowed to (Later, Cooking, Ready, Unpaid); null lists every check.
+  ToGoChip? _chip;
   // The staff as the hub last listed them: who a table can be given to, and who gives tables out.
   Roster _roster = Roster.none;
   late Future<void> _rosterRead;
@@ -651,8 +655,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final scheme = theme.colorScheme;
     final posColors = PosColors.of(context);
     final small = compact(context);
-    final listed = _listed;
     final now = DateTime.now();
+    // Every check, and above them the to-go orders by stage: a chip narrows the list to its orders, the
+    // one due first at the top. The row shows once there is a to-go order to sort.
+    final checks = _listed;
+    final chip = _chip;
+    final counts = chipCounts(checks.map((row) => row.$1), now);
+    final listed = chip == null ? checks : dueFirst(checks.where((row) => inChip(chip, row.$1, now)), (row) => row.$1);
+    final sorts = chip != null || checks.any((row) => row.$1.isTakeout && row.$1.isOpen);
     final rush = _quotes?.rush;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
@@ -751,6 +761,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
         children: [
           CaptureBanner(api: widget.api, outbox: widget.outbox),
           if (rush != null && rush.runsAt(now)) RushStrip(key: const ValueKey('rush-strip'), rush: rush, onTap: _rush),
+          if (!_floor && sorts)
+            ToGoChips(
+              key: const ValueKey('to-go-chips'),
+              counts: counts,
+              picked: chip,
+              onPicked: (picked) => setState(() => _chip = picked),
+            ),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -763,6 +780,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       outbox: widget.outbox,
                       onTable: _onTable,
                       onTableHeld: _onTableHeld,
+                    )
+                  : listed.isEmpty && chip != null
+                  ? Center(
+                      key: ValueKey('empty-chip:${chip.name}'),
+                      child: Text(chip.none, style: TextStyle(color: scheme.onSurfaceVariant)),
                     )
                   : listed.isEmpty
                   ? Center(
@@ -805,7 +827,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                               );
                         // Counter mode: the number the hub gave it, the name, the channel, when it is for,
                         // whether it is paid, and the next step (Ready texts the customer; Picked up closes).
-                        final Widget? step = !isTakeout || !order.isOpen || !order.isFired
+                        // An order sent ahead for a later time has no step until its ticket prints: the
+                        // kitchen has seen nothing of it, and a slip of the thumb would text the customer.
+                        final Widget? step =
+                            !isTakeout || !order.isOpen || !order.isFired || waitsForItsTime(order, now)
                             ? null
                             : stage == 'new'
                             ? FilledButton.tonal(
