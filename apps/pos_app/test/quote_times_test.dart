@@ -30,9 +30,10 @@ Map<String, dynamic> quoted(
   int? at,
   bool forLater = false,
   bool fired = false,
+  String stage = 'new',
   Map<String, dynamic> payments = const {},
 }) {
-  final order = takeout(id, no: no, name: name, channel: channel, fired: fired, payments: payments);
+  final order = takeout(id, no: no, name: name, channel: channel, stage: stage, fired: fired, payments: payments);
   order['fields'] = <String, dynamic>{
     ...order['fields'] as Map<String, dynamic>,
     'quoted_minutes': quote,

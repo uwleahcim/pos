@@ -56,6 +56,20 @@ Once the kitchen has the order, **Ready** marks it ready (the hub texts the cust
 **Picked up** closes the check. The kitchen ticket prints `#42  LINDA` large, `READY BY 18:05`, and the
 channel where a table order shows its table.
 
+One row of chips above the list sorts the to-go orders by stage, each chip with its count:
+
+- **Later**: orders waiting for a time the customer named, sent ahead or not. The kitchen has seen
+  nothing of them yet.
+- **Cooking**: orders the kitchen has, from the moment their ticket prints.
+- **Ready**: orders on the shelf, waiting to be picked up.
+- **Unpaid**: every open to-go order with nothing paid on it, whatever its stage.
+
+Tapping a chip lists only its orders, the one due first at the top; tapping it again brings every check
+back. The row shows once there is a to-go order to sort, and only on the list, not on the floor map. An
+order still being rung up for now is under no stage yet (it is under Unpaid, and in the whole list). An
+order sent ahead for a later time has no **Ready** button until its ticket prints, so a slip of the thumb
+cannot text a customer whose food nobody has started.
+
 An order the customer named a time for reads "for 18:30" where another reads "ready 18:05", and is marked
 as its time to start cooking nears (its time less its quote):
 
