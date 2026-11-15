@@ -16,36 +16,46 @@ class ToGoChips extends StatelessWidget {
   /// The chip tapped, or null when the picked one was tapped again.
   final ValueChanged<ToGoChip?> onPicked;
 
+  static const _gap = 6.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520), // a tablet does not stretch them across the room
-          child: Row(
-            children: [
-              for (final chip in ToGoChip.values) ...[
-                if (chip != ToGoChip.values.first) const SizedBox(width: 6),
-                Expanded(
-                  child: _Chip(
-                    key: ValueKey('chip:${chip.name}'),
-                    label: chip.label,
-                    count: counts[chip] ?? 0,
-                    on: chip == picked,
-                    fill: chip == picked ? scheme.secondaryContainer : scheme.surfaceContainerHigh,
-                    ink: chip == picked ? scheme.onSecondaryContainer : scheme.onSurface,
-                    border: chip == picked ? scheme.secondary : scheme.outlineVariant,
-                    style: theme.textTheme.labelLarge,
-                    onTap: () => onPicked(chip == picked ? null : chip),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520), // a tablet does not stretch them across the room
+        child: LayoutBuilder(
+          builder: (context, box) {
+            // All four in one size of letters, whichever fits the longest of them on this screen.
+            final each = (box.maxWidth - _gap * (ToGoChip.values.length - 1)) / ToGoChip.values.length;
+            final style = each >= 80
+                ? theme.textTheme.labelLarge
+                : each >= 62
+                ? theme.textTheme.labelMedium
+                : theme.textTheme.labelSmall;
+            return Row(
+              children: [
+                for (final chip in ToGoChip.values) ...[
+                  if (chip != ToGoChip.values.first) const SizedBox(width: _gap),
+                  Expanded(
+                    child: _Chip(
+                      key: ValueKey('chip:${chip.name}'),
+                      label: chip.label,
+                      count: counts[chip] ?? 0,
+                      on: chip == picked,
+                      fill: chip == picked ? scheme.secondaryContainer : scheme.surfaceContainerHigh,
+                      ink: chip == picked ? scheme.onSecondaryContainer : scheme.onSurface,
+                      border: chip == picked ? scheme.secondary : scheme.outlineVariant,
+                      style: style,
+                      onTap: () => onPicked(chip == picked ? null : chip),
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -95,7 +105,7 @@ class _Chip extends StatelessWidget {
           child: SizedBox(
             height: 36,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text.rich(

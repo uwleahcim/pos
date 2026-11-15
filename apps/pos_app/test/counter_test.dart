@@ -108,6 +108,13 @@ class Hub {
   /// on the order it serves).
   void Function(String orderId, Map<String, dynamic> op)? onOp;
 
+  /// Finding a check: the closed checks of the last day ([past], listed after [orders] when a list asks for
+  /// more than the open ones), the checks opened on a day by its date ([byDay], `GET /orders?day=`), and
+  /// what every list of orders asked for.
+  final past = <Map<String, dynamic>>[];
+  final byDay = <String, List<Map<String, dynamic>>>{};
+  final listsAsked = <Map<String, String>>[];
+
   /// What it answers for a caller's last order of the day (null: none), the numbers it was asked about, and
   /// whether it is down for that call.
   Map<String, dynamic>? lastOrder;
@@ -170,7 +177,14 @@ class Hub {
 
   Future<http.Response> handle(http.Request request) async {
     final path = request.url.path;
-    if (path == '/orders') return json({'orders': orders});
+    if (path == '/orders') {
+      final asked = request.url.queryParameters;
+      listsAsked.add(asked);
+      if (asked['day'] != null) return json({'orders': byDay[asked['day']] ?? const <Object>[]});
+      return json({
+        'orders': [...orders, if (asked['status'] != 'open') ...past],
+      });
+    }
     if (customersOld && (path.startsWith('/customers/') || _again.hasMatch(path))) {
       return json({'detail': 'Not Found'}, 404);
     }

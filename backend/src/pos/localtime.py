@@ -35,6 +35,15 @@ NIGHT_ENDS = time(4, 0)
 not at midnight: a bar still pouring at half past twelve keeps its counts until it has closed."""
 
 
+def service_day(day: date) -> tuple[int, int]:
+    """The wall-clock stamps (milliseconds since the epoch) a day's service runs between: from `NIGHT_ENDS`
+    that morning to `NIGHT_ENDS` the next. A check opened at half past midnight belongs to the evening
+    before, and is found under it."""
+    start = datetime.combine(day, NIGHT_ENDS, zone())
+    end = datetime.combine(day + timedelta(days=1), NIGHT_ENDS, zone())
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+
 def night_end(at: datetime | None = None) -> datetime:
     """The next time the location's clock reads `NIGHT_ENDS`: when what was set for tonight clears."""
     at = (at or now()).astimezone(zone())

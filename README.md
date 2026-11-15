@@ -23,6 +23,8 @@ merges after any disconnect.
   `docs/eighty-six.md`
 - Counter mode and takeout (order numbers, pay first, future orders, quote times with the kitchen rush and
   big orders, ready texts): `docs/counter-mode.md`
+- Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
+  and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
   note line, their past orders with Same again at today's menu): `docs/customers.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
