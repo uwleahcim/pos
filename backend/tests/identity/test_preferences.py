@@ -1,4 +1,4 @@
-"""Text size, contrast and language per staff member, kept by the backend so they follow the person."""
+"""Text size, contrast, language and "my tables" per staff member, kept by the backend so they follow the person."""
 
 from __future__ import annotations
 
@@ -19,10 +19,17 @@ DSN = os.environ.get("POS_TEST_DATABASE_URL")
 
 def test_defaults_merge_and_checks():
     store = PreferenceStore()
-    assert store.get("s1") == DEFAULTS == {"text_scale": 1.0, "high_contrast": False, "locale": "en"}
+    usual = {"text_scale": 1.0, "high_contrast": False, "locale": "en", "my_tables": False}
+    assert store.get("s1") == DEFAULTS == usual
     assert store.put("s1", {"text_scale": 1.3})["text_scale"] == 1.3
-    assert store.put("s1", {"high_contrast": True}) == {"text_scale": 1.3, "high_contrast": True, "locale": "en"}
+    assert store.put("s1", {"high_contrast": True}) == {**usual, "text_scale": 1.3, "high_contrast": True}
+    # the floor map picks out this person's own tables: kept like the rest, and a save of something else keeps it
+    assert store.put("s1", {"my_tables": True})["my_tables"] is True
+    assert store.put("s1", {"locale": "zh-Hans"})["my_tables"] is True
+    assert store.put("s1", {"my_tables": False})["my_tables"] is False
     assert store.get("s2") == DEFAULTS, "someone else is untouched"
+    with pytest.raises(ValueError):
+        clean({"my_tables": "sometimes"})
     with pytest.raises(ValueError):
         clean({"text_scale": 3})
     with pytest.raises(ValueError):
@@ -34,9 +41,10 @@ def test_sign_in_brings_the_preferences_along():
     api = TestClient(create_app(OpStore(), menu=MenuService(build_example()), printing=PrintService([])))
     r = api.put("/staff/s1/preferences", json={"text_scale": 1.15, "high_contrast": True})
     assert r.status_code == 200 and r.json()["preferences"]["text_scale"] == 1.15
+    assert api.put("/staff/s1/preferences", json={"my_tables": True}).json()["preferences"]["my_tables"] is True
     r = api.post("/signin", json={"device": "t1", "pin": "1111"})
     assert r.status_code == 200
-    assert r.json()["preferences"] == {"text_scale": 1.15, "high_contrast": True, "locale": "en"}
+    assert r.json()["preferences"] == {"text_scale": 1.15, "high_contrast": True, "locale": "en", "my_tables": True}
     assert api.get("/staff/s2/preferences").json()["preferences"] == DEFAULTS
     r = api.put("/staff/s1/preferences", json={"text_scale": 9})
     assert r.status_code == 422 and r.json()["detail"]["error"] == "bad_preference"
@@ -57,7 +65,8 @@ def test_preferences_survive_in_postgres():
         assert store.get("s9") == DEFAULTS
         store.put("s9", {"text_scale": 1.3})
         merged = store.put("s9", {"locale": "zh-Hans"})
-        assert merged == {"text_scale": 1.3, "high_contrast": False, "locale": "zh-Hans"}
+        assert merged == {"text_scale": 1.3, "high_contrast": False, "locale": "zh-Hans", "my_tables": False}
+        assert store.put("s9", {"my_tables": True})["my_tables"] is True
         again = PgPreferenceStore(DSN)
         try:
             assert again.get("s9")["locale"] == "zh-Hans"

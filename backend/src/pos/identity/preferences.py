@@ -1,5 +1,5 @@
 """What a staff member sets for themselves and keeps on every device they sign in on: text size, a
-high-contrast setting and their screen language.
+high-contrast setting, their screen language, and whether the floor map picks out their own tables.
 
 The backend stores them, so a server who likes big text on the Mac at the host stand gets it on the
 handheld too. The app applies them the moment the sign-in answer arrives and sends a change back here.
@@ -17,7 +17,7 @@ from psycopg_pool import ConnectionPool
 
 from ..sync.pgstore import ReadOnlyError
 
-DEFAULTS: dict[str, Any] = {"text_scale": 1.0, "high_contrast": False, "locale": "en"}
+DEFAULTS: dict[str, Any] = {"text_scale": 1.0, "high_contrast": False, "locale": "en", "my_tables": False}
 TEXT_SCALE_RANGE = (0.8, 1.6)
 
 
@@ -37,6 +37,10 @@ def clean(data: Mapping[str, Any]) -> dict[str, Any]:
         if not locale or len(locale) > 16:
             raise ValueError("locale must be a language tag such as en or zh-Hans")
         out["locale"] = locale
+    if data.get("my_tables") is not None:
+        if not isinstance(data["my_tables"], bool):
+            raise ValueError("my_tables must be true or false")
+        out["my_tables"] = data["my_tables"]
     return out
 
 

@@ -9,8 +9,9 @@ class Session extends ChangeNotifier {
   final PosApi api;
   Staff? staff;
 
-  /// What the signed-in person set for themselves: text size, contrast, language. The backend keeps it,
-  /// so it comes with the sign-in and follows them to the next device.
+  /// What the signed-in person set for themselves: text size, contrast, language, and whether the floor map
+  /// picks out their own tables. The backend keeps it, so it comes with the sign-in and follows them to the
+  /// next device.
   DisplayPrefs prefs = const DisplayPrefs();
 
   bool get signedIn => staff != null;
@@ -75,12 +76,13 @@ class Staff {
 /// A staff member's own display settings, as the backend stores them.
 @immutable
 class DisplayPrefs {
-  const DisplayPrefs({this.textScale = 1.0, this.highContrast = false, this.locale = 'en'});
+  const DisplayPrefs({this.textScale = 1.0, this.highContrast = false, this.locale = 'en', this.myTables = false});
 
   factory DisplayPrefs.fromJson(Map<String, dynamic>? json) => DisplayPrefs(
     textScale: (json?['text_scale'] as num?)?.toDouble() ?? 1.0,
     highContrast: json?['high_contrast'] as bool? ?? false,
     locale: json?['locale'] as String? ?? 'en',
+    myTables: json?['my_tables'] as bool? ?? false,
   );
 
   /// The text sizes offered, as a factor on every font size with its name: the backend accepts 0.8 to 1.6.
@@ -90,21 +92,31 @@ class DisplayPrefs {
   final bool highContrast;
   final String locale;
 
-  DisplayPrefs copyWith({double? textScale, bool? highContrast, String? locale}) => DisplayPrefs(
+  /// "Mine" on the floor map: this person's own tables stand out and the other servers' fade.
+  final bool myTables;
+
+  DisplayPrefs copyWith({double? textScale, bool? highContrast, String? locale, bool? myTables}) => DisplayPrefs(
     textScale: textScale ?? this.textScale,
     highContrast: highContrast ?? this.highContrast,
     locale: locale ?? this.locale,
+    myTables: myTables ?? this.myTables,
   );
 
-  Map<String, dynamic> toJson() => {'text_scale': textScale, 'high_contrast': highContrast, 'locale': locale};
+  Map<String, dynamic> toJson() => {
+    'text_scale': textScale,
+    'high_contrast': highContrast,
+    'locale': locale,
+    'my_tables': myTables,
+  };
 
   @override
   bool operator ==(Object other) =>
       other is DisplayPrefs &&
       other.textScale == textScale &&
       other.highContrast == highContrast &&
-      other.locale == locale;
+      other.locale == locale &&
+      other.myTables == myTables;
 
   @override
-  int get hashCode => Object.hash(textScale, highContrast, locale);
+  int get hashCode => Object.hash(textScale, highContrast, locale, myTables);
 }

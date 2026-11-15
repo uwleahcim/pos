@@ -109,6 +109,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   DateTime? _findDay;
   // The staff as the hub last listed them: who a table can be given to, and who gives tables out.
   Roster _roster = Roster.none;
+  bool _rosterAsked = false; // the staff list was asked for, whatever came of it
   late Future<void> _rosterRead;
 
   @override
@@ -566,6 +567,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // keeps what it has
     }
+    // The floor map offers "Mine" by what the list says of the person signed in.
+    if (mounted && !_rosterAsked) setState(() => _rosterAsked = true);
+  }
+
+  /// Who "Mine" on the floor map is offered to: the person signed in, when a table can be theirs. The hub's
+  /// staff list says so; a hub with no list leaves it to everyone. Nobody until the list was asked for, so the
+  /// chip does not show and go for a host; someone who has it on keeps it from the first frame.
+  StaffMember? get _me {
+    final staff = widget.session.staff;
+    if (staff == null) return null;
+    final listed = _roster.byId(staff.staffId);
+    if (!widget.session.prefs.myTables && !(_rosterAsked && (listed?.takesTables ?? true))) return null;
+    return listed ?? StaffMember(staffId: staff.staffId, name: staff.name, role: staff.role, takesTables: true);
+  }
+
+  /// "Mine" was tapped: kept with the person's own settings, so it is on at the next device they sign in on.
+  /// A hub that cannot keep it leaves it on here until they sign out.
+  void _setMine(bool on) {
+    unawaited(widget.session.savePrefs(widget.session.prefs.copyWith(myTables: on)));
+    if (mounted) setState(() {});
   }
 
   /// The staff list for seating a party: read at start; asked for again when that came to nothing and a hub
@@ -881,6 +902,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       outbox: widget.outbox,
                       onTable: _onTable,
                       onTableHeld: _onTableHeld,
+                      me: _me,
+                      mine: widget.session.prefs.myTables,
+                      onMine: _setMine,
                     )
                   : listed.isEmpty && finding
                   ? Center(
