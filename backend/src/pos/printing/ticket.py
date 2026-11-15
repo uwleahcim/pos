@@ -32,6 +32,15 @@ class TicketLine:
 
 
 @dataclass(frozen=True)
+class Money:
+    """Where a to-go order stands with its money when its ticket is made, for whoever hands the bag over."""
+
+    words: str  # "PAID", "NOT PAID  $45.20", "NOTHING TO PAY"
+    owing: bool = False  # something is still to be collected: printed white on black
+    detail: str = ""  # the smaller line under it: "$20.00 paid of $65.20"
+
+
+@dataclass(frozen=True)
 class Ticket:
     station: str  # "Wok"
     kind: str  # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent)
@@ -53,6 +62,7 @@ class Ticket:
     part: tuple[int, int] | None = None  # (2, 3): the second of the three tickets this send has the cooks working on
     also_at: tuple[str, ...] = ()  # the other stations cooking for the same send, by name ("Wok 2", "Sushi Bar")
     allergies: tuple[str, ...] = ()  # the allergies told at the table, one a line ("Table: Peanuts", "Seat 2: Sesame")
+    money: Money | None = None  # the takeout counter's copy of a to-go order: paid, or what is still owed
 
 
 def render(
@@ -90,6 +100,12 @@ def render(
         b.line(f"{number}{ticket.customer}".strip().upper(), big=True, bold=True)
     if ticket.promised is not None:
         b.line(f"READY BY {ticket.promised:%H:%M}", bold=True)
+    if ticket.money is not None:
+        # Under the number and the name: the third thing asked at the shelf. Money still to collect is a
+        # black bar across the paper, so a bag is not handed over on the strength of a quiet line.
+        b.line(ticket.money.words, big=True, bold=True, center=ticket.money.owing, invert=ticket.money.owing)
+        if ticket.money.detail:
+            b.line(ticket.money.detail, bold=True)
     if ticket.table:
         guests = f"  {ticket.guests} guests" if ticket.guests else ""
         b.line(f"Table {ticket.table}{guests}", bold=True)

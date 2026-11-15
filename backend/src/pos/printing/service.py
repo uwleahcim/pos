@@ -30,13 +30,14 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
-from .ticket import AUTO, DIALECTS, Ticket, TicketLine, render
+from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
 
 LATE_AFTER_MS = 10 * 60 * 1000
 """An operation stamped this long before it arrives was queued through an outage, flagged or not."""
@@ -165,6 +166,29 @@ def lead_delay(state: OrderState, now_ms: int, *, default_lead_minutes: int = DE
     lead_ms = (quoted if isinstance(quoted, int) and quoted > 0 else default_lead_minutes) * 60_000
     delay = (promised - lead_ms - now_ms) / 1000
     return delay if delay > 60 else 0.0
+
+
+def _dollars(amount: Decimal) -> str:
+    return f"${amount:,.2f}"
+
+
+def money_words(check: Mapping[str, Any]) -> Money | None:
+    """What the takeout counter's ticket says about the money, from the order's check (`total`, `paid`, `due`
+    as the hub reckons them, tax and charges in): PAID, or NOT PAID with what is still to collect, white on
+    black. Part paid says both sums. Paid more than the check now comes to (a dish voided after paying) says
+    by how much. None when the check cannot be trusted to the cent (a line with no price)."""
+    if check.get("unpriced"):
+        return None
+    try:
+        total, paid, due = (Decimal(str(check[key])) for key in ("total", "paid", "due"))
+    except (KeyError, InvalidOperation):
+        return None
+    if due > 0:
+        so_far = f"{_dollars(paid)} paid of {_dollars(total)}" if paid > 0 else ""
+        return Money(f"NOT PAID  {_dollars(due)}", owing=True, detail=so_far)
+    if paid > total:
+        return Money("PAID", detail=f"{_dollars(paid - total)} more than the check, now {_dollars(total)}")
+    return Money("PAID" if paid > 0 else "NOTHING TO PAY")
 
 
 def _told(state: OrderState) -> list[tuple[Any, ...]]:
@@ -392,7 +416,14 @@ class PrintService:
         code the menu does not name prints as it is."""
         self.ticket_words: Callable[[], Mapping[str, Any]] = dict
         """What a ticket says about the other tickets of the same send (the `tickets` setting): `numbered` for
-        "Ticket 2 of 3", `also_at` for "Also at: Wok 2, Sushi Bar". Neither until the API wires the setting in."""
+        "Ticket 2 of 3", `also_at` for "Also at: Wok 2, Sushi Bar"; and `paid`, for PAID or NOT PAID on the
+        takeout counter's copy of a to-go order. None of them until the API wires the setting in."""
+        self.check_of: Callable[[OrderState], Mapping[str, Any]] | None = None
+        """An order's check as the hub reckons it (`total`, `paid`, `due`, `unpriced`), for the takeout
+        counter's PAID or NOT PAID. The API wires it in; without it no ticket speaks of money."""
+        self._waiting: dict[str, list[tuple[PrintJob, Ticket, Printer]]] = {}
+        """A future order's takeout tickets that are made and wait for their time, by order: what they say
+        about the money is brought up to date while they wait (`_keep_money_current`)."""
 
     @classmethod
     def from_env(cls) -> PrintService:
@@ -444,6 +475,7 @@ class PrintService:
             before = replay([op for op in everything if op.op_id not in new], order_id)
             after = replay(everything, order_id)
             sent, voided = kitchen_changes(before, after)
+            self._keep_money_current(after)
             if sent or voided:
                 key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
                 now = self._now()
@@ -491,6 +523,8 @@ class PrintService:
         printers = self.printers
         courses = self.course_names() if self.course_names is not None else {}
         allergens = self.allergen_names()
+        words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
+        money = self.money(state) if kind is None else None
         made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
         for printer, routes in self.routing(printers, to_go=is_to_go(state)):
             ticket = ticket_for(
@@ -508,8 +542,9 @@ class PrintService:
                 continue
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
+            if routes.whole is not None and money is not None:
+                ticket = replace(ticket, money=money)  # the copy that goes in the bag
             made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
-        words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         cooks = sum(1 for _, _, cooked in made if cooked)
         jobs, nth = [], 0
         for printer, ticket, cooked in made:
@@ -519,8 +554,41 @@ class PrintService:
             if words.get("also_at"):
                 others = dict.fromkeys(name for _, _, there in made for name in there if name not in cooked)
                 ticket = replace(ticket, also_at=tuple(others))
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
+            job = self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers)
+            if ticket.money is not None and self.store.due_in(job) > 0:
+                with self._lock:
+                    self._waiting.setdefault(state.order_id, []).append((job, ticket, printer))
+            jobs.append(job)
         return jobs
+
+    def money(self, state: OrderState) -> Money | None:
+        """What the takeout counter's ticket for this order says about the money, as the order stands: None
+        for a table's order, with the location's switch off (`tickets.paid`), or before the API wired the
+        check in."""
+        if self.check_of is None or not is_to_go(state) or not self.ticket_words().get("paid"):
+            return None
+        return money_words(self.check_of(state))
+
+    def _keep_money_current(self, state: OrderState) -> None:
+        """A future order's ticket is made when the order is sent and prints when its time comes, which can be
+        days later (catering). Whatever is paid, added or taken off in between changes what the ticket should
+        say about the money, so the waiting ticket is made again with the order as it stands now. A ticket
+        whose time has come is left alone: it may be on paper."""
+        if state.order_id not in self._waiting:
+            return
+        money = self.money(state)
+        with self._lock:
+            still = []
+            for job, ticket, printer in self._waiting.pop(state.order_id, []):
+                if job.status != "queued" or self.store.due_in(job) <= 0:
+                    continue
+                if money is not None and money != ticket.money:
+                    ticket = replace(ticket, money=money)
+                    if not self.store.rewrite(job.job_id, *self._rendered(ticket, printer)):
+                        continue
+                still.append((job, ticket, printer))
+            if still:
+                self._waiting[state.order_id] = still
 
     def cooking(self, printer: Printer, takes: Takes, lines: Iterable[Line]) -> tuple[str, ...]:
         """The stations these lines are cooked at on this printer's ticket, by name, in the order they stand on
@@ -564,6 +632,16 @@ class PrintService:
     ) -> PrintJob:
         """Renders the ticket for the printer and for each of its fallbacks (headed with whose ticket it is),
         and queues it; a hub starts writing it at once."""
+        data, fallbacks = self._rendered(ticket, printer, printers)
+        job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
+        if self.direct and delay <= 0:
+            threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
+        return job
+
+    def _rendered(
+        self, ticket: Ticket, printer: Printer, printers: list[Printer] | None = None
+    ) -> tuple[bytes, list[tuple[str, bytes]]]:
+        """The ticket as the printer prints it, and as each of its fallbacks does (address, bytes), in order."""
         data = render(ticket, dots=self._dots, font=self._font, dialect=printer.dialect)
         fallbacks = []
         by_id = {p.id: p for p in (printers if printers is not None else self.printers)}
@@ -574,10 +652,7 @@ class PrintService:
             copy = replace(ticket, reprinted_from=ticket.station)
             rendered = render(copy, dots=self._dots, font=self._font, dialect=fallback.dialect)
             fallbacks.append((fallback.address, rendered))
-        job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
-        if self.direct and delay <= 0:
-            threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
-        return job
+        return data, fallbacks
 
     def _deliver(self, job: PrintJob) -> None:
         self.store.deliver_direct(job, send=self._send)

@@ -96,6 +96,26 @@ cooks is counted for that station.
 Each line is a switch, on to start: **Location settings**, on the Printers card, **Number the tickets of
 one send** and **Name the other stations on each ticket** (`GET`/`PUT /settings/tickets`).
 
+**PAID or NOT PAID.** Orders paid first and orders paid at pickup sit on the same shelf, so the takeout
+counter's ticket of a to-go order says which it is, under the number and the name:
+
+- `PAID` when nothing is owed.
+- `NOT PAID  $45.20`, large and white on black, when there is money to collect: the sum is what is still
+  owed, tax and charges in. Part paid, a line under it says both sums (`$100.00 paid of $412.40`).
+- `PAID` with `$10.00 more than the check, now $35.20` under it when a dish was voided after the order was
+  paid, so whoever hands the bag over knows money goes back.
+- `NOTHING TO PAY` for an order that comes to nothing (all of it comped).
+
+Only the copy for the bag says it: the cooks' tickets never do, nor does a table's order, nor the notice
+for an allergy told late. With no printer at the takeout station no ticket says it. It is what the hub knew
+when the ticket was made: a ticket on paper stays as it printed, and the list of checks is where an order
+paid since shows as paid (the **Unpaid** chip, `counter-mode.md`). A dish added later prints its own ticket
+with what is owed now. One case is kept right on paper: the ticket of an order **sent ahead for later** is
+made at once and waits for its time, so the hub makes it again whenever the order is paid or changed while
+it waits, and it prints with the money as it stands then.
+
+The switch is the third on the Printers card, **Print PAID or NOT PAID on to-go orders**, on to start.
+
 **Allergies.** An allergy noted on the order prints in a block of its own, white on black, on every
 station's ticket, and again under each dish of the seat it was told for. Told after dishes were sent, each
 station that has some gets an ALLERGY ticket listing them. See `allergies.md`.
@@ -195,8 +215,10 @@ still known as a Star by step 3, without its model.
   still accepted alone, for an app not yet rebuilt). `dialect` is `escpos`, `star` or `auto`; with `auto` the
   hub prints in `detected`, the language `POST /print/identify` or the scan heard, and in ESC/POS while that
   is null. Two printers with one address are refused: one printer prints for several stations.
-- `GET /settings/tickets`, `PUT /settings/tickets` (manager): `numbered` and `also_at`, true or false, for
-  the two lines a ticket says about the other tickets of its send; one left out of a `PUT` stays as it is.
+- `GET /settings/tickets`, `PUT /settings/tickets` (manager): `numbered` and `also_at`, the two lines a
+  ticket says about the other tickets of its send, and `paid`, PAID or NOT PAID on the takeout station's
+  ticket (`PrintService.money`, from the order's check). Each true or false; one left out of a `PUT` stays
+  as it is.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with

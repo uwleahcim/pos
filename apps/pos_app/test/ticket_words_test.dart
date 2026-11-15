@@ -6,8 +6,8 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 import 'hub.dart';
 
 /// What the kitchen tickets of one send say about each other (the Toast comparison, 2026-11-15): "Ticket 2
-/// of 3" and "Also at: Wok 2, Sushi Bar". The hub prints them; a manager turns either off under Location
-/// settings, on the printers' card.
+/// of 3" and "Also at: Wok 2, Sushi Bar"; and PAID or NOT PAID on a to-go order's takeout ticket. The hub
+/// prints them; a manager turns any of them off under Location settings, on the printers' card.
 
 /// Scrolls the settings down to [finder]: the cards low on the screen are built only once they come near.
 Future<void> show(WidgetTester tester, Finder finder) async {
@@ -16,12 +16,19 @@ Future<void> show(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  test('the setting is two switches, both on unless the hub says otherwise', () {
+  test('the setting is a switch for each line, on unless the hub says otherwise', () {
     expect(TicketWords.fromJson(const {}), const TicketWords());
     final words = TicketWords.fromJson(const {'numbered': false, 'also_at': true});
-    expect((words.numbered, words.alsoAt), (false, true));
+    expect((words.numbered, words.alsoAt, words.paid), (false, true, null));
+    // a hub that says nothing of PAID / NOT PAID hears nothing of it back
     expect(words.copyWith(alsoAt: false).toJson(), {'numbered': false, 'also_at': false});
     expect(words == const TicketWords(numbered: false), isTrue);
+
+    final newer = TicketWords.fromJson(const {'numbered': true, 'also_at': true, 'paid': true});
+    expect(newer.paid, isTrue);
+    expect(newer.copyWith(paid: false).toJson(), {'numbered': true, 'also_at': true, 'paid': false});
+    expect(newer.copyWith(numbered: false).paid, isTrue);
+    expect(newer == const TicketWords(), isFalse);
   });
 
   testWidgets('a manager flips either line under the printers, and it is saved at once', (tester) async {
@@ -41,13 +48,24 @@ void main() {
 
     await tester.tap(numbered);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': true});
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': true, 'paid': true});
     expect(t.hub.ticketWordsAuth, 'Bearer tok-admin');
     expect(tester.widget<SwitchListTile>(numbered).value, isFalse);
 
     await tester.tap(alsoAt);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false});
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': true});
+
+    // the third switch: PAID or NOT PAID on the takeout station's ticket
+    final paid = find.byKey(const ValueKey('tickets-paid'));
+    await show(tester, paid);
+    expect(tester.widget<SwitchListTile>(paid).value, isTrue);
+    expect(find.text('Print PAID or NOT PAID on to-go orders'), findsOneWidget);
+    await tester.tap(paid);
+    await tester.pumpAndSettle();
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false});
+    expect(tester.widget<SwitchListTile>(paid).value, isFalse);
+    await show(tester, numbered);
 
     // what the hub refuses is said in its words, and the switch stays where the hub has it
     t.hub.refuseTicketWords = 'numbered must be true or false';
@@ -71,10 +89,31 @@ void main() {
     expect(find.byKey(const ValueKey('printers')), findsOneWidget);
     expect(find.byKey(const ValueKey('tickets-numbered')), findsNothing);
     expect(find.byKey(const ValueKey('tickets-also-at')), findsNothing);
+    expect(find.byKey(const ValueKey('tickets-paid')), findsNothing);
     await stop(tester);
   });
 
-  testWidgets('the two switches fit a phone', (tester) async {
+  testWidgets('a hub older than PAID / NOT PAID shows the two it has, and saving them says nothing of it', (
+    tester,
+  ) async {
+    final t = await terminal(tester);
+    t.hub.ticketWords = {'numbered': true, 'also_at': true};
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final alsoAt = find.byKey(const ValueKey('tickets-also-at'));
+    await show(tester, alsoAt);
+    expect(find.byKey(const ValueKey('tickets-paid')), findsNothing);
+    await tester.tap(alsoAt);
+    await tester.pumpAndSettle();
+    expect(t.hub.ticketWords, {'numbered': true, 'also_at': false});
+    await stop(tester);
+  });
+
+  testWidgets('the switches fit a phone', (tester) async {
     final t = await terminal(tester);
     tester.view.physicalSize = const Size(390, 844);
     await tester.pumpWidget(
@@ -86,6 +125,9 @@ void main() {
     await show(tester, find.byKey(const ValueKey('tickets-also-at')));
     expect(tester.takeException(), isNull);
     expect(find.text('Name the other stations on each ticket'), findsOneWidget);
+    await show(tester, find.byKey(const ValueKey('tickets-paid')));
+    expect(tester.takeException(), isNull);
+    expect(find.text("On the takeout station's ticket, with what is still to collect"), findsOneWidget);
     await stop(tester);
   });
 }

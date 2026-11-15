@@ -54,7 +54,8 @@ due. When nothing is due the button is **Send**.
 To-go orders sit in the list of checks with their number, name, channel, time and whether they are paid.
 Once the kitchen has the order, **Ready** marks it ready (the hub texts the customer, once) and
 **Picked up** closes the check. The kitchen ticket prints `#42  LINDA` large, `READY BY 18:05`, and the
-channel where a table order shows its table.
+channel where a table order shows its table. The takeout counter's copy, the one for the bag, also says
+`PAID` or `NOT PAID  $45.20` under the name (see `printing.md`).
 
 One row of chips above the list sorts the to-go orders by stage, each chip with its count:
 

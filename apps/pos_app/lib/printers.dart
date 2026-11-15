@@ -229,25 +229,31 @@ class FoundPrinter {
 /// What a kitchen ticket says about the other tickets of the same send, as the hub keeps it
 /// (`GET/PUT /settings/tickets`; a manager sets it under Location settings): [numbered] for "Ticket 2 of 3"
 /// when more than one station is cooking, [alsoAt] for the other stations by name ("Also at: Wok 2, Sushi
-/// Bar").
+/// Bar"). And [paid]: whether the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
+/// is still to collect; null from a hub that does not print it yet, which gets no word about it back.
 @immutable
 class TicketWords {
-  const TicketWords({this.numbered = true, this.alsoAt = true});
+  const TicketWords({this.numbered = true, this.alsoAt = true, this.paid});
 
-  factory TicketWords.fromJson(Map<String, dynamic> json) =>
-      TicketWords(numbered: json['numbered'] as bool? ?? true, alsoAt: json['also_at'] as bool? ?? true);
+  factory TicketWords.fromJson(Map<String, dynamic> json) => TicketWords(
+    numbered: json['numbered'] as bool? ?? true,
+    alsoAt: json['also_at'] as bool? ?? true,
+    paid: json['paid'] as bool?,
+  );
 
   final bool numbered;
   final bool alsoAt;
+  final bool? paid;
 
-  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt};
+  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt, 'paid': ?paid};
 
-  TicketWords copyWith({bool? numbered, bool? alsoAt}) =>
-      TicketWords(numbered: numbered ?? this.numbered, alsoAt: alsoAt ?? this.alsoAt);
-
-  @override
-  bool operator ==(Object other) => other is TicketWords && other.numbered == numbered && other.alsoAt == alsoAt;
+  TicketWords copyWith({bool? numbered, bool? alsoAt, bool? paid}) =>
+      TicketWords(numbered: numbered ?? this.numbered, alsoAt: alsoAt ?? this.alsoAt, paid: paid ?? this.paid);
 
   @override
-  int get hashCode => Object.hash(numbered, alsoAt);
+  bool operator ==(Object other) =>
+      other is TicketWords && other.numbered == numbered && other.alsoAt == alsoAt && other.paid == paid;
+
+  @override
+  int get hashCode => Object.hash(numbered, alsoAt, paid);
 }
