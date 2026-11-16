@@ -15,6 +15,7 @@ import 'package:pos_app/settings.dart';
 
 import 'floor_test.dart' show floorJson;
 import 'hub.dart';
+import 'location_rows.dart';
 
 const minute = 60000;
 
@@ -339,6 +340,7 @@ void main() {
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
+    await bringUp(tester, 'table-timers');
     expect(find.text('Seated 5/10 · Not sent 5/10 · Held 15/25 · All sent 25/– min'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('table-timers')));
@@ -398,6 +400,7 @@ void main() {
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
+    await bringUp(tester, 'table-timers');
     expect(find.textContaining('The hub has not answered about table timers'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('table-timers')));
     await tester.pumpAndSettle();

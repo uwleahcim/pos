@@ -19,6 +19,7 @@ import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
+import 'sales_screen.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
@@ -740,6 +741,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => DayReportScreen(api: widget.api, token: widget.token, device: widget.device),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('sales-report'),
+                  leading: const Icon(Icons.insights_outlined),
+                  title: const Text('Sales'),
+                  subtitle: const Text('Any days, beside the same days the weeks before'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => SalesScreen(api: widget.api, token: widget.token),
                     ),
                   ),
                 ),

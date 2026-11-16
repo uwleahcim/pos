@@ -86,6 +86,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .history import add_history
 from .menu_admin import add_menu_admin
+from .sales import add_sales_report
 from .timeclock import add_time_clock
 
 if TYPE_CHECKING:
@@ -1841,6 +1842,7 @@ def create_app(
     add_face_signin(app)
     add_time_clock(app)
     add_day_report(app)
+    add_sales_report(app)
     add_history(app)
     return app
 

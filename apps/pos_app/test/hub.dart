@@ -145,6 +145,19 @@ class Hub {
   String? dayPrinter = 'Takeout';
   int? refuseDay;
 
+  /// Sales over a span of days (docs/sales-report.md). [sales] answers `GET /reports/sales` by the days asked
+  /// for, written "2026-11-09..2026-11-15" ("" when none were named: the running day); a span it has nothing
+  /// for reads all zeroes beside the same days whole weeks earlier, and null is a hub older than the
+  /// report. Each ask is in [salesAsks] and the token of the last one in [salesAuth]. [refuseSales] answers
+  /// with a status instead, saying [salesRefusal]. While [salesHeld] is set no answer goes out until a test
+  /// completes it: a hub still adding up.
+  Map<String, Map<String, dynamic>>? sales = {};
+  Completer<void>? salesHeld;
+  final salesAsks = <String>[];
+  String? salesAuth;
+  int? refuseSales;
+  String salesRefusal = 'sign in with a manager PIN';
+
   /// A check's history (docs/check-history.md). [histories] answers `GET /orders/<id>/history` by the order
   /// asked for; one it has nothing for is `unknown_id`, and null is a hub older than the history. Each ask
   /// is in [historyAsks] and the token of the last one in [historyAuth]; [refuseHistory] answers with a
@@ -738,6 +751,32 @@ class Hub {
       dayAsks.add(asked);
       final day = asked.isEmpty ? dayRunning : asked;
       return json(days![asked] ?? {'day': day, 'today': day == dayRunning, 'now_ms': clockNow});
+    }
+    if (path == '/reports/sales') {
+      if (sales == null) return json({'detail': 'Not Found'}, 404);
+      salesAuth = request.headers['authorization'];
+      if (refuseSales != null) {
+        return json({
+          'detail': {'error': refuseSales == 422 ? 'too_long' : 'sign_in', 'message': salesRefusal},
+        }, refuseSales!);
+      }
+      final from = request.url.queryParameters['from'], to = request.url.queryParameters['to'];
+      final asked = from == null && to == null ? '' : '${from ?? to}..${to ?? from}';
+      salesAsks.add(asked);
+      if (salesHeld != null) await salesHeld!.future;
+      final first = DateTime.parse('${from ?? to ?? dayRunning}T00:00:00Z');
+      final last = DateTime.parse('${to ?? from ?? dayRunning}T00:00:00Z');
+      final back = Duration(days: 7 * ((last.difference(first).inDays + 7) ~/ 7));
+      String name(DateTime day) => day.toIso8601String().substring(0, 10);
+      return json(
+        sales![asked] ??
+            {
+              'span': {'first': name(first), 'last': name(last), 'running': name(last) == dayRunning},
+              'before': {'first': name(first.subtract(back)), 'last': name(last.subtract(back))},
+              'max_days': 92,
+              'now_ms': clockNow,
+            },
+      );
     }
     if (path.startsWith('/timeclock/') || path == '/settings/time_clock') {
       if (timeClock == null) return json({'detail': 'Not Found'}, 404);

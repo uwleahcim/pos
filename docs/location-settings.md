@@ -15,6 +15,8 @@ screen holds:
   (see `eighty-six.md`). Not a setting: a dish is put on it from the order screen.
 - **The day**, under it, for when service is over: what is still open, the day's sales, the money taken and
   what came off the checks, for any day, with a print (see `day-report.md`). Not a setting either.
+- **Sales**, under that: any days, from one to 92, with every figure beside the same days whole weeks
+  earlier (see `sales-report.md`). Not a setting either.
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

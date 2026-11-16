@@ -19,6 +19,7 @@ import 'phone.dart';
 import 'pricing.dart';
 import 'printers.dart';
 import 'roster.dart';
+import 'sales_report.dart';
 import 'settings.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
@@ -1030,6 +1031,20 @@ class PosApi {
   /// the day of service that is running. 404 from a hub older than the report.
   Future<DayReport> dayReport(String token, {String? day}) async =>
       DayReport.fromJson(await _get('/reports/day', query: {'day': ?day}, headers: _bearer(token)));
+
+  /// The sales of the days [from] to [to] (manager token), each named as the hub names a day
+  /// ("2026-11-16"), and of as many days whole weeks earlier to hold beside them (docs/sales-report.md);
+  /// without either, the day of service that is running. The first reading of many days takes the hub some
+  /// seconds, so this waits far longer than other calls. 404 from a hub older than the report, 422 with a
+  /// `message` for a span the hub will not add up.
+  Future<SalesReport> salesReport(String token, {String? from, String? to}) async => SalesReport.fromJson(
+    await _get(
+      '/reports/sales',
+      query: {'from': ?from, 'to': ?to},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 90),
+    ),
+  );
 
   /// Prints the day's report (manager token) at [printer] (the one this screen keeps for its bills, by id)
   /// or, without one, where the location's bills print. Returns the name of the printer it was sent to.

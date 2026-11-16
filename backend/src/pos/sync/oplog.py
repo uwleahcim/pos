@@ -282,6 +282,7 @@ class OrderState:
     applied: list[str] = field(default_factory=list)  # op ids in replay order
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
+    closed_at: HLC | None = None  # when it was last closed (kept while it is reopened: `status` says which)
 
     def ordered_lines(self) -> list[Line]:
         """The lines as the check shows them: by rank (the order they were added, until a drag moves one)."""
@@ -512,6 +513,8 @@ def apply(state: OrderState, op: Op) -> None:
                 line.fired_at = op.hlc
 
     elif kind == "close":
+        if state.status == "open":
+            state.closed_at = op.hlc  # a second close of a closed check changes nothing, its time neither
         if state.status != "void":
             state.status = "closed"
 

@@ -6,6 +6,7 @@ import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 
 import 'hub.dart';
+import 'location_rows.dart';
 
 /// Location settings: a manager turns coursing on or off and names the courses, as many as the kitchen
 /// serves, and every order screen follows (`GET/PUT /settings/coursing`). Quote times live on the same
@@ -157,6 +158,7 @@ void main() {
 
   testWidgets('the quote times are set from the same screen; a server has no Location button', (tester) async {
     final t = await pumpLocation(tester);
+    await bringUp(tester, 'quote-times');
     expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 min'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
