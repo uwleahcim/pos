@@ -14,6 +14,7 @@ class Settings extends ChangeNotifier {
     this.printRelay = false,
     this.billPrinter = '',
     int lockMinutes = 0,
+    this.signOutAfterSend = false,
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
@@ -37,6 +38,7 @@ class Settings extends ChangeNotifier {
       printRelay: relay,
       billPrinter: prefs.getString('bill_printer') ?? '',
       lockMinutes: prefs.getInt('lock_minutes') ?? 0,
+      signOutAfterSend: prefs.getBool('sign_out_after_send') ?? false,
       phone: phone,
       prefs: prefs,
     );
@@ -64,6 +66,11 @@ class Settings extends ChangeNotifier {
 
   /// A number of minutes as the device keeps it: none below zero, none past a working day.
   static int cleanLockMinutes(int minutes) => minutes.clamp(0, 720);
+
+  /// Back to sign-in after sending: on a screen several people share, leaving a check that dishes were
+  /// just sent from signs the person out, so the next one signs in. Off is how a device starts: leaving a
+  /// check goes back to the tables, still signed in.
+  bool signOutAfterSend;
 
   PhoneSettings _phone;
 
@@ -101,6 +108,16 @@ class Settings extends ChangeNotifier {
       await _prefs?.remove('lock_minutes');
     } else {
       await _prefs?.setInt('lock_minutes', lockMinutes);
+    }
+    notifyListeners();
+  }
+
+  Future<void> saveSignOutAfterSend(bool on) async {
+    signOutAfterSend = on;
+    if (on) {
+      await _prefs?.setBool('sign_out_after_send', true);
+    } else {
+      await _prefs?.remove('sign_out_after_send');
     }
     notifyListeners();
   }
