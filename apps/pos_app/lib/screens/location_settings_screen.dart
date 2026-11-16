@@ -20,6 +20,7 @@ import 'quotes_dialog.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
+import 'ticket_skips_dialog.dart';
 import 'void_rules_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
@@ -122,6 +123,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
   BillSettings? _bill; // the guest's bill as the hub has it; null from an older hub, which prints none
+  TicketSkips? _ticketSkips; // the stations each screen prints no ticket at; null from an older hub
   bool _ticketWordsBusy = false;
   String? _ticketWordsMessage;
 
@@ -221,6 +223,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // nothing answered about the bill: the card shows no row for it
     }
+    try {
+      final skips = await widget.api.ticketSkips();
+      if (mounted) setState(() => _ticketSkips = skips);
+    } on ApiException {
+      // nothing answered about the screens that skip a station: the card shows no row for them
+    }
   }
 
   /// One line on the bill: where it prints and what heads it.
@@ -242,6 +250,23 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (saved == null || !mounted) return;
     setState(() => _bill = saved);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('The bill is saved')));
+  }
+
+  Future<void> _openTicketSkips() async {
+    final saved = await showDialog<TicketSkips>(
+      context: context,
+      builder: (_) => TicketSkipsDialog(
+        api: widget.api,
+        token: widget.token,
+        skips: _ticketSkips!,
+        stations: _stations?.stations ?? const [],
+        devices: _devices,
+        device: widget.device,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _ticketSkips = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved: the next send prints by it')));
   }
 
   Future<void> _saveTicketWords(TicketWords next) async {
@@ -890,6 +915,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               subtitle: Text(_billLine),
               trailing: const Icon(Icons.chevron_right),
               onTap: _openBill,
+            ),
+          ],
+          if (_ticketSkips case final skips?) ...[
+            const Divider(height: 1),
+            ListTile(
+              key: const ValueKey('ticket-skips'),
+              leading: const Icon(Icons.speaker_notes_off_outlined),
+              title: const Text('Screens that skip a station'),
+              subtitle: Text(ticketSkipsLine(skips, _stations)),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openTicketSkips,
             ),
           ],
           if (words != null) ...[

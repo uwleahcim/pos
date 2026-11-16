@@ -73,7 +73,7 @@ Future<Terminal> pumpLocation(WidgetTester tester, {EventCamera? camera, TagRead
   final t = await terminal(tester);
   t.hub.faceStatus = {'enabled': false, 'ready': true, 'active': false, 'enrolled': 1, 'model': 'r50', 'error': null};
   t.hub.staffList = [person('s1', 'Amy', 'server', samples: 5), person('s2', 'Ben', 'bartender')];
-  tester.view.physicalSize = const Size(1100, 2700); // the whole list on one tall screen, nothing to scroll
+  tester.view.physicalSize = const Size(1100, 2900); // the whole list on one tall screen, nothing to scroll
   await tester.pumpWidget(
     MaterialApp(
       home: LocationSettingsScreen(
@@ -248,7 +248,7 @@ void main() {
   testWidgets('an older hub without face sign-in says so', (tester) async {
     final t = await terminal(tester);
     t.hub.faces = false;
-    tester.view.physicalSize = const Size(1100, 2000); // tall enough for the cards above the face card
+    tester.view.physicalSize = const Size(1100, 2200); // tall enough for the cards above the face card
     await tester.pumpWidget(
       MaterialApp(
         home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1', camera: FrameCamera()),

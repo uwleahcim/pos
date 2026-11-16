@@ -121,6 +121,11 @@ order ticket and no void. Each station with dishes sent in the last 45 minutes g
 the table the dishes were sent for, the table they go to now, and the dishes. The fourth switch on the
 Printers card, **Tell the kitchen when a table moves**, turns it off. See `moves.md`.
 
+**A screen that skips a station.** A manager can tell a screen to print no ticket at some stations: what
+is sent or voided from the bar's own screen then prints nothing at the bar, since whoever rings a drink in
+there makes it. The row **Screens that skip a station** on the Printers card; none to start. See
+`ticket-skips.md`.
+
 **Allergies.** An allergy noted on the order prints in a block of its own, white on black, on every
 station's ticket, and again under each dish of the seat it was told for. Told after dishes were sent, each
 station that has some gets an ALLERGY ticket listing them. See `allergies.md`.
@@ -224,6 +229,8 @@ still known as a Star by step 3, without its model.
   ticket says about the other tickets of its send, and `paid`, PAID or NOT PAID on the takeout station's
   ticket (`PrintService.money`, from the order's check), and `moved`, the MOVED slip for dishes already
   sent whose table changed (`table_changes`). Each true or false; one left out of a `PUT` stays as it is.
+- `GET /settings/ticket_skips`, `PUT /settings/ticket_skips` (manager): `screens` as `{device, stations}`,
+  the stations each screen prints no ticket at (`ticket-skips.md`).
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with

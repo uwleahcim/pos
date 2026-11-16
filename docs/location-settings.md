@@ -31,7 +31,9 @@ screen holds:
   tickets of one send** ("Ticket 2 of 3") and **Name the other stations on each ticket** ("Also at: Wok 2,
   Sushi Bar"). A third switch, **Print PAID or NOT PAID on to-go orders**, is for the takeout station's
   ticket, and a fourth, **Tell the kitchen when a table moves**, for the MOVED slip (see `moves.md`). All
-  on to start; a flip is saved at once and the next ticket prints by it.
+  on to start; a flip is saved at once and the next ticket prints by it. The row **Screens that skip a
+  station** says which stations a screen prints no ticket at (the bar's own screen and the bar printer;
+  none to start; see `ticket-skips.md`).
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
   caller's order on that screen (see `desk-phones.md`); the card says how the hub stands with the PBX.
 - **Sign in by face**: the location's switch (off to start), how the hub stands with its face models (and,

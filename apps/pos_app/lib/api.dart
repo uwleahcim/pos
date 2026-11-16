@@ -654,6 +654,29 @@ class PosApi {
     ),
   );
 
+  /// The stations each screen prints no ticket at, as the hub keeps them. Null from a hub older than that,
+  /// where every screen prints everywhere.
+  Future<TicketSkips?> ticketSkips() async {
+    try {
+      return TicketSkips.fromJson(await _get('/settings/ticket_skips'));
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) says which stations each screen prints no ticket at, the whole
+  /// list at once. The next send prints by it.
+  Future<TicketSkips> saveTicketSkips(String token, TicketSkips skips) async => TicketSkips.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/ticket_skips'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(skips.toJson()),
+      ),
+    ),
+  );
+
   /// The guest's bill at this location: where it prints, what stands at its top and foot, and the printers
   /// by name. Null from a hub older than the bill, which prints none.
   Future<BillSettings?> billSettings() async {
