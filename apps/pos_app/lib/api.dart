@@ -8,6 +8,7 @@ import 'allergies.dart';
 import 'cache.dart';
 import 'coursing.dart';
 import 'customers.dart';
+import 'day_report.dart';
 import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
@@ -1002,6 +1003,25 @@ class PosApi {
           ),
         ),
       );
+
+  // The day's report (docs/day-report.md). ------------------------------------------------------------------
+
+  /// The day's report (manager token) for [day], named as the hub names a day ("2026-11-16"); without one,
+  /// the day of service that is running. 404 from a hub older than the report.
+  Future<DayReport> dayReport(String token, {String? day}) async =>
+      DayReport.fromJson(await _get('/reports/day', query: {'day': ?day}, headers: _bearer(token)));
+
+  /// Prints the day's report (manager token) at [printer] (the one this screen keeps for its bills, by id)
+  /// or, without one, where the location's bills print. Returns the name of the printer it was sent to.
+  /// 409 with a `message` when the location has no printer.
+  Future<String> printDay(String token, {String? day, String? printer}) async => _printedAt(
+    await _post(
+      '/reports/day/print',
+      {'day': ?day, 'printer': ?printer},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 6),
+    ),
+  );
 
   /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
   /// no backend works a new check's tax from. Null until a check has been read on this device.

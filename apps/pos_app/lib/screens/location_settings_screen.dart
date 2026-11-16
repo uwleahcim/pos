@@ -14,6 +14,7 @@ import '../timeclock.dart';
 import '../voids.dart';
 import 'adjustments_screen.dart';
 import 'bill_dialog.dart';
+import 'day_report_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
@@ -714,15 +715,35 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         children: [
           // first, above the settings: it is what a manager comes to look at in the middle of service
           Card(
-            child: ListTile(
-              key: const ValueKey('board'),
-              leading: const Icon(Icons.inventory_2_outlined),
-              title: const Text('Sold out and running low'),
-              subtitle: Text(
-                _board == null ? 'The hub has not answered about what is sold out' : EightySixBoard.summary(_board!),
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _openBoard,
+            child: Column(
+              children: [
+                ListTile(
+                  key: const ValueKey('board'),
+                  leading: const Icon(Icons.inventory_2_outlined),
+                  title: const Text('Sold out and running low'),
+                  subtitle: Text(
+                    _board == null
+                        ? 'The hub has not answered about what is sold out'
+                        : EightySixBoard.summary(_board!),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openBoard,
+                ),
+                const Divider(height: 1),
+                // and what a manager comes to look at when service is over
+                ListTile(
+                  key: const ValueKey('day-report'),
+                  leading: const Icon(Icons.summarize_outlined),
+                  title: const Text('The day'),
+                  subtitle: const Text('Sales, the money taken, what came off and what is still open'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DayReportScreen(api: widget.api, token: widget.token, device: widget.device),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

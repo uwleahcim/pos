@@ -44,6 +44,13 @@ def service_day(day: date) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
 
 
+def service_day_of(wall_ms: int) -> date:
+    """The day whose service a wall-clock stamp (milliseconds since the epoch) falls in: the calendar day,
+    or the one before for a stamp earlier than `NIGHT_ENDS` in the morning."""
+    at = datetime.fromtimestamp(wall_ms / 1000, zone())
+    return at.date() if at.time() >= NIGHT_ENDS else at.date() - timedelta(days=1)
+
+
 def night_end(at: datetime | None = None) -> datetime:
     """The next time the location's clock reads `NIGHT_ENDS`: when what was set for tonight clears."""
     at = (at or now()).astimezone(zone())

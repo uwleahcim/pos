@@ -43,6 +43,7 @@ from typing import Any
 from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
 from .bill import Bill, render_bill
+from .day import DayPaper, render_day
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
 from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
@@ -718,15 +719,15 @@ class PrintService:
 
     def queue(
         self,
-        ticket: Ticket | Bill,
+        ticket: Ticket | Bill | DayPaper,
         printer: Printer,
         *,
         job_id: str | None = None,
         delay: float = 0.0,
         printers: list[Printer] | None = None,
     ) -> PrintJob:
-        """Renders the ticket (or a guest's bill) for the printer and for each of its fallbacks (headed with
-        whose it is), and queues it; a hub starts writing it at once."""
+        """Renders the ticket (or a guest's bill, or the day's report) for the printer and for each of its
+        fallbacks (headed with whose it is), and queues it; a hub starts writing it at once."""
         data, fallbacks = self._rendered(ticket, printer, printers)
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if self.direct and delay <= 0:
@@ -734,19 +735,23 @@ class PrintService:
         return job
 
     def _rendered(
-        self, ticket: Ticket | Bill, printer: Printer, printers: list[Printer] | None = None
+        self, ticket: Ticket | Bill | DayPaper, printer: Printer, printers: list[Printer] | None = None
     ) -> tuple[bytes, list[tuple[str, bytes]]]:
         """The ticket as the printer prints it, and as each of its fallbacks does (address, bytes), in order.
-        A fallback's copy says whose it is: the ticket's station, or for a bill the printer it was for."""
+        A fallback's copy says whose it is: the ticket's station, or for a bill or a day's report the printer
+        it was for."""
 
-        def drawn(paper: Ticket | Bill, on: Printer) -> bytes:
-            draw = render_bill if isinstance(paper, Bill) else render
-            return draw(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+        def drawn(paper: Ticket | Bill | DayPaper, on: Printer) -> bytes:
+            if isinstance(paper, Bill):
+                return render_bill(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            if isinstance(paper, DayPaper):
+                return render_day(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            return render(paper, dots=self._dots, font=self._font, dialect=on.dialect)
 
         data = drawn(ticket, printer)
         fallbacks = []
         by_id = {p.id: p for p in (printers if printers is not None else self.printers)}
-        whose = self.head(printer) if isinstance(ticket, Bill) else ticket.station
+        whose = ticket.station if isinstance(ticket, Ticket) else self.head(printer)
         for fallback_id in printer.fallbacks:
             fallback = by_id.get(fallback_id)
             if fallback is None or fallback.address == printer.address:

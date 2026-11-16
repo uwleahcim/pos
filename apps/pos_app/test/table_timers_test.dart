@@ -375,7 +375,9 @@ void main() {
     expect(find.text('Table timers saved'), findsOneWidget);
     expect(find.text('Seated 5/10 · Not sent 5/10 · Held 12/20 · All sent –/– min'), findsOneWidget);
 
-    // off altogether
+    // off altogether (the row is brought up from under the "saved" line at the foot of the screen)
+    await tester.ensureVisible(find.byKey(const ValueKey('table-timers')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('table-timers')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('timers-enabled')));

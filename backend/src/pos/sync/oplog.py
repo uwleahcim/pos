@@ -673,6 +673,17 @@ def phone_digits(raw: object) -> str:
     return digits
 
 
+def promised_ms(raw: Any) -> int | None:
+    """The time an order is wanted for, as the index keeps it: wall-clock ms, None when the order has none
+    or what it carries is no time at all (a screen can send anything: the index has to take it)."""
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not 0 < raw < _NO_SUCH_TIME:
+        return None
+    return int(raw)
+
+
+_NO_SUCH_TIME = 10**14  # wall-clock ms some three thousand years on: well inside what a calendar can say
+
+
 @dataclass(frozen=True)
 class OrderEntry:
     """What the orders index keeps of one order, so a list can pick its orders without replaying the log:
@@ -681,7 +692,9 @@ class OrderEntry:
     two move whenever the order changes and never otherwise, so an order replayed at one (version, tip) is
     good until they move. The tip is there for a hub whose database is rewound after a takeover: a cursor
     alone could come to mean another history. `phone` is the customer's number as digits (`phone_digits`),
-    empty for an order without one: what finds a caller's earlier orders, however old."""
+    empty for an order without one: what finds a caller's earlier orders, however old. `promised_ms` is the
+    time an order is wanted for (its `promised_at`), None for one without: what finds the orders rung on
+    an earlier day for a given one, whatever has happened to them since."""
 
     order_id: str
     status: str
@@ -690,6 +703,7 @@ class OrderEntry:
     version: int
     tip: str
     phone: str = ""
+    promised_ms: int | None = None
 
     @staticmethod
     def of(state: OrderState, version: int, tip: str) -> OrderEntry:
@@ -701,16 +715,24 @@ class OrderEntry:
             version=version,
             tip=tip,
             phone=phone_digits(state.fields.get("phone")),
+            promised_ms=promised_ms(state.fields.get("promised_at")),
         )
 
     def picked(
-        self, status: str | None, opened_since: int | None, active_since: int | None, phone: str | None = None
+        self,
+        status: str | None,
+        opened_since: int | None,
+        active_since: int | None,
+        phone: str | None = None,
+        promised: tuple[int, int] | None = None,
     ) -> bool:
-        """Whether a list asking for this status, opened since then, changed since then and of this number
-        (digits) wants the order."""
+        """Whether a list asking for this status, opened since then, changed since then, of this number
+        (digits) and promised from one moment up to another wants the order."""
         if status is not None and self.status != status:
             return False
         if phone is not None and self.phone != phone:
+            return False
+        if promised is not None and (self.promised_ms is None or not promised[0] <= self.promised_ms < promised[1]):
             return False
         if opened_since is not None and (self.first_ms is None or self.first_ms < opened_since):
             return False
@@ -831,12 +853,14 @@ class OpStore:
         opened_since: int | None = None,
         active_since: int | None = None,
         phone: str | None = None,
+        promised: tuple[int, int] | None = None,
     ) -> list[OrderEntry]:
         """The orders that stand at `status`, were opened at or after `opened_since`, last changed at or
-        after `active_since` (wall-clock ms) and carry the number `phone` (digits, see `phone_digits`),
-        whichever of the four are given, by order id."""
+        after `active_since` (wall-clock ms), carry the number `phone` (digits, see `phone_digits`) and are
+        promised for a time from `promised[0]` up to, not at, `promised[1]`, whichever of the five are
+        given, by order id."""
         entries = (self.entry(order_id) for order_id in sorted(self._by_order))
-        return [e for e in entries if e is not None and e.picked(status, opened_since, active_since, phone)]
+        return [e for e in entries if e is not None and e.picked(status, opened_since, active_since, phone, promised)]
 
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
