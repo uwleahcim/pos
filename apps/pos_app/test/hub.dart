@@ -21,7 +21,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 Map<String, dynamic> fixture(String name) =>
     jsonDecode(File('test/fixtures/$name.json').readAsStringSync()) as Map<String, dynamic>;
 
-http.Response json(Object body, [int status = 200]) => http.Response.bytes(utf8.encode(jsonEncode(body)), status);
+/// An answer as the hub sends it: JSON in UTF-8, said to be JSON, so that a name in Chinese or a "·" reads
+/// in the app as it was written.
+http.Response json(Object body, [int status = 200]) =>
+    http.Response.bytes(utf8.encode(jsonEncode(body)), status, headers: const {'content-type': 'application/json'});
 
 const standard = [
   {'id': 'drinks', 'name': 'Drinks'},
@@ -157,6 +160,17 @@ class Hub {
   String? salesAuth;
   int? refuseSales;
   String salesRefusal = 'sign in with a manager PIN';
+
+  /// Dishes sold over a span of days (docs/dishes-sold.md). [dishes] answers `GET /reports/dishes` by the
+  /// days asked for, written as [sales] writes them; a span it has nothing for lists no dish, and null is a
+  /// hub older than the list. Each ask is in [dishesAsks] and the token of the last one in [dishesAuth].
+  /// [refuseDishes] answers with a status instead. While [dishesHeld] is set no answer goes out until a test
+  /// completes it.
+  Map<String, Map<String, dynamic>>? dishes = {};
+  Completer<void>? dishesHeld;
+  final dishesAsks = <String>[];
+  String? dishesAuth;
+  int? refuseDishes;
 
   /// A check's history (docs/check-history.md). [histories] answers `GET /orders/<id>/history` by the order
   /// asked for; one it has nothing for is `unknown_id`, and null is a hub older than the history. Each ask
@@ -751,6 +765,34 @@ class Hub {
       dayAsks.add(asked);
       final day = asked.isEmpty ? dayRunning : asked;
       return json(days![asked] ?? {'day': day, 'today': day == dayRunning, 'now_ms': clockNow});
+    }
+    if (path == '/reports/dishes') {
+      if (dishes == null) return json({'detail': 'Not Found'}, 404);
+      dishesAuth = request.headers['authorization'];
+      if (refuseDishes != null) {
+        return json({
+          'detail': {'error': refuseDishes == 422 ? 'too_long' : 'sign_in', 'message': salesRefusal},
+        }, refuseDishes!);
+      }
+      final from = request.url.queryParameters['from'], to = request.url.queryParameters['to'];
+      final asked = from == null && to == null ? '' : '${from ?? to}..${to ?? from}';
+      dishesAsks.add(asked);
+      if (dishesHeld != null) await dishesHeld!.future;
+      final first = DateTime.parse('${from ?? to ?? dayRunning}T00:00:00Z');
+      final last = DateTime.parse('${to ?? from ?? dayRunning}T00:00:00Z');
+      final back = Duration(days: 7 * ((last.difference(first).inDays + 7) ~/ 7));
+      String name(DateTime day) => day.toIso8601String().substring(0, 10);
+      return json(
+        dishes![asked] ??
+            {
+              'span': {'first': name(first), 'last': name(last), 'running': name(last) == dayRunning},
+              'before': {'first': name(first.subtract(back)), 'last': name(last.subtract(back))},
+              'dishes': <Object>[],
+              'categories': <Object>[],
+              'max_days': 92,
+              'now_ms': clockNow,
+            },
+      );
     }
     if (path == '/reports/sales') {
       if (sales == null) return json({'detail': 'Not Found'}, 404);

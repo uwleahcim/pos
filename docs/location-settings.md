@@ -17,6 +17,8 @@ screen holds:
   what came off the checks, for any day, with a print (see `day-report.md`). Not a setting either.
 - **Sales**, under that: any days, from one to 92, with every figure beside the same days whole weeks
   earlier (see `sales-report.md`). Not a setting either.
+- **Dishes sold**, under that: every dish of the same days, best to worst or worst first, with its sizes
+  and its options (see `dishes-sold.md`). Not a setting either.
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

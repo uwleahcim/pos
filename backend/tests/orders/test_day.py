@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from pos import localtime
 from pos.api.app import create_app
+from pos.menu.defs import Definitions
 from pos.menu.service import MenuService, load_definitions
 from pos.orders.day import day_report, order_day
 from pos.printing.service import Printer, PrintService
@@ -50,7 +51,13 @@ class Hub:
     """A hub whose clock the test sets, and the screens' calls to it."""
 
     def __init__(
-        self, now: int = at(21), *, clock_on: bool = False, printers: bool = True, postgres: str | None = None
+        self,
+        now: int = at(21),
+        *,
+        clock_on: bool = False,
+        printers: bool = True,
+        postgres: str | None = None,
+        defs: Definitions | None = None,
     ) -> None:
         self.now = now
         settings = SettingStore()
@@ -67,7 +74,7 @@ class Hub:
         self.c = TestClient(
             create_app(
                 self.store,
-                menu=MenuService(load_definitions("restaurant"), now=lambda: DINNER),
+                menu=MenuService(defs or load_definitions("restaurant"), now=lambda: DINNER),
                 taxes=massachusetts(),
                 printing=self.printing,
                 settings=settings,

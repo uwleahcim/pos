@@ -9,13 +9,20 @@
   shifts that began in those days, by how many people, how many shifts nobody clocked out of, and
   `net_per_hour`, the net sales for each hour worked.
 
-Reading it changes nothing and nothing is written down: both are reckoned from the log. What each check
+- `GET /reports/dishes?from=&to=` (manager token), the same days asked the same way: `dishes`, every dish
+  sold in them or on the menu, most sold first, each with how many and for how much, the same for the days
+  before (`before_count`, `before_amount`), its `sizes`, the names `typed` for an off-menu dish and its
+  `options` (each under the `group` it belongs to); `categories`, the same added up by menu and category;
+  and `span` and `before`, the days and what all their dishes come to (`pos.orders.dishes`).
+
+Reading either changes nothing and nothing is written down: both are reckoned from the log. What each check
 comes to is remembered in memory while its log stays as it was (`pos.orders.sales.SaleMemo`), so the first
-reading of a long span takes a few seconds and the next ones do not.
+reading of a long span takes a few seconds and the next ones do not, whichever of the two is read.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -24,7 +31,8 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 from .. import localtime
 from ..identity.tokens import Grant
-from ..orders.sales import MAX_DAYS, SaleMemo, comparison, sales_reports, span_ms
+from ..orders.dishes import dishes_report
+from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, sales_reports, span_ms
 from .auth import manager_from
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
@@ -71,6 +79,19 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
             "net_per_hour": None if each is None else str(each),
         }
 
+    def sold_in(before: tuple[date, date], span: tuple[date, date]) -> Iterator[Sale]:
+        """What each order comes to that can count in either span, or was paid in either."""
+        store = app.state.store
+        since, until = span_ms(before[0], span[1])
+        # Every order changed since the earlier span began (its own and the later span's, an older tab paid
+        # in either), and every order promised for a day from then on (one rung long before counts on its
+        # day), as long as it was opened before the later span ended.
+        entries = {e.order_id: e for e in store.index(active_since=since)}
+        for entry in store.index(promised=(since, until)):
+            entries.setdefault(entry.order_id, entry)
+        picked = [e for e in entries.values() if e.first_ms is not None and e.first_ms < until]
+        return memo.sales(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing)
+
     @app.get("/reports/sales")
     def read_sales(
         first: str | None = Query(None, alias="from", pattern=DAY, description="the first day of service"),
@@ -81,20 +102,25 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
         they come to, the average check and guest, how long a table stood, and the sales by day, by hour,
         by menu and category and by kind of order, with the money taken by how it was paid."""
         manager(authorization)
-        store = app.state.store
-        now_ms = store.now_ms()
+        now_ms = app.state.store.now_ms()
         span = the_span(first, last, now_ms)
         before = comparison(*span)
-        since, until = span_ms(before[0], span[1])
-        # Every order changed since the earlier span began (its own and the later span's, an older tab paid
-        # in either), and every order promised for a day from then on (one rung long before counts on its
-        # day), as long as it was opened before the later span ended.
-        entries = {e.order_id: e for e in store.index(active_since=since)}
-        for entry in store.index(promised=(since, until)):
-            entries.setdefault(entry.order_id, entry)
-        picked = [e for e in entries.values() if e.first_ms is not None and e.first_ms < until]
-        sold = memo.sales(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing)
-        reports = sales_reports(sold, [span, before], defs=app.state.menu.defs, now_ms=now_ms)
+        reports = sales_reports(sold_in(before, span), [span, before], defs=app.state.menu.defs, now_ms=now_ms)
         for report in reports:
             report["clock"] = clock_part(report["since_ms"], report["until_ms"], report["sales"]["net"])
         return {"span": reports[0], "before": reports[1], "max_days": MAX_DAYS, "now_ms": now_ms}
+
+    @app.get("/reports/dishes")
+    def read_dishes(
+        first: str | None = Query(None, alias="from", pattern=DAY, description="the first day of service"),
+        last: str | None = Query(None, alias="to", pattern=DAY, description="the last day of service"),
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """The dishes sold in a span of days and in the days to hold beside it: each dish with how many and
+        for how much, its sizes and its options, and every dish on the menu that sold none."""
+        manager(authorization)
+        now_ms = app.state.store.now_ms()
+        span = the_span(first, last, now_ms)
+        before = comparison(*span)
+        report = dishes_report(sold_in(before, span), span, before, defs=app.state.menu.defs, now_ms=now_ms)
+        return {**report, "max_days": MAX_DAYS, "now_ms": now_ms}

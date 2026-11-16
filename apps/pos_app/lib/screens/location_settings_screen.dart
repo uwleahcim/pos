@@ -15,6 +15,7 @@ import '../voids.dart';
 import 'adjustments_screen.dart';
 import 'bill_dialog.dart';
 import 'day_report_screen.dart';
+import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
@@ -754,6 +755,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => SalesScreen(api: widget.api, token: widget.token),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('dishes-report'),
+                  leading: const Icon(Icons.format_list_numbered),
+                  title: const Text('Dishes sold'),
+                  subtitle: const Text('Best to worst, with their sizes and options'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DishesScreen(api: widget.api, token: widget.token),
                     ),
                   ),
                 ),
