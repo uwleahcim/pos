@@ -16,6 +16,23 @@ class Session extends ChangeNotifier {
 
   bool get signedIn => staff != null;
 
+  /// Who was signed in when the screen locked itself for standing idle ([lock]); null while it is not
+  /// locked. While it is, nobody is signed in, and what that person had open waits under the sign-in pad.
+  Staff? lockedFrom;
+
+  bool get locked => lockedFrom != null;
+
+  /// The screen stood idle too long: nobody is signed in until somebody signs in again, by PIN, face or
+  /// tag, as on the sign-in screen. Unlike a sign-out it closes nothing: the same person finds the screen
+  /// as they left it, and another carries on with the order that was open (docs/idle-lock.md).
+  void lock() {
+    final was = staff;
+    if (was == null) return;
+    lockedFrom = was;
+    staff = null;
+    notifyListeners();
+  }
+
   /// Returns null on success, or the message to show on the PIN pad.
   Future<String?> signInWithPin(String device, String pin) async {
     try {
@@ -32,6 +49,7 @@ class Session extends ChangeNotifier {
   void applySignIn(Map<String, dynamic> json) {
     staff = Staff.fromJson(json);
     prefs = DisplayPrefs.fromJson(json['preferences'] as Map<String, dynamic>?);
+    lockedFrom = null;
     notifyListeners();
   }
 
@@ -52,6 +70,7 @@ class Session extends ChangeNotifier {
 
   void signOut() {
     staff = null;
+    lockedFrom = null;
     prefs = const DisplayPrefs();
     notifyListeners();
   }

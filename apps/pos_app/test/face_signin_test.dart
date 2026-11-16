@@ -472,6 +472,31 @@ void main() {
     await s.done(tester);
   });
 
+  testWidgets('a screen locked for standing idle is looked at as with nobody signed in, the switch off too', (
+    tester,
+  ) async {
+    final s = await pumpSignIn(
+      tester,
+      status: active,
+      answers: [noFace, ben],
+      handsFree: {'switch': false, 'away_seconds': 0},
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+    await tapPin(tester, '1111'); // Amy, by PIN
+    await tester.pump(const Duration(milliseconds: 10));
+    final sent = s.hub.frames.length;
+    await tester.pump(const Duration(seconds: 2));
+    expect(s.hub.frames.length, sent, reason: 'signed in with nothing to watch for: no frames');
+
+    s.session.lock(); // nobody touched the screen for its minutes
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(s.hub.frames.length, sent + 1, reason: 'locked: looking again at once');
+    expect(s.hub.frames.last.containsKey('current'), isFalse, reason: 'as with nobody signed in');
+    expect(s.session.locked, isFalse);
+    expect(s.session.staff?.name, 'Ben', reason: 'the first face the hub knows unlocks it, whoever was there');
+    await s.done(tester);
+  });
+
   testWidgets('with the switch off, a tag while someone is signed in says so', (tester) async {
     final s = await pumpSignIn(tester, status: active, answers: [amy], handsFree: {'switch': false, 'away_seconds': 0});
     s.hub.tags = {'04A2B3C4': Map.of(benTag)};
