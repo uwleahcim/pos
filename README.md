@@ -57,6 +57,9 @@ merges after any disconnect.
   bar's own screen print nothing at the bar): `docs/ticket-skips.md`
 - Off-menu dishes and market prices (Open Food and its like ask what the dish is and its price when rung; any
   dish can be set to ask its price; a report lists every typed price): `docs/off-menu-dish.md`
+- The time clock (off to start; staff clock in and out and take breaks with their PIN at any screen; a
+  shift nobody ended is closed at 4 AM and marked; a manager reads the hours and corrects a shift with a
+  reason the log keeps): `docs/time-clock.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

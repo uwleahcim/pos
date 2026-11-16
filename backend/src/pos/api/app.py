@@ -69,6 +69,7 @@ from ..settings import (
     clean_table_timers,
     clean_ticket_skips,
     clean_tickets,
+    clean_time_clock,
     clean_voids,
     default_settings,
     rush_now,
@@ -77,11 +78,13 @@ from ..settings import (
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
+from ..timeclock import TimeClock, default_clock_store
 from .auth import manager_from
 from .conditional import ConditionalGet
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .menu_admin import add_menu_admin
+from .timeclock import add_time_clock
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -388,6 +391,14 @@ class TicketSkipsIn(BaseModel):
     screens: list[TicketSkipIn] = Field(default_factory=list)
 
 
+class TimeClockIn(BaseModel):
+    """The time clock's setting; a key left out keeps its stored value."""
+
+    enabled: bool | None = None
+    breaks_paid: bool | None = None
+    week_starts: str | None = None
+
+
 class DiscoverIn(BaseModel):
     """Where to look for printers: the addresses the terminal has (its own and the hub's) name the subnets,
     with any given outright; the hub adds its printers' and its own."""
@@ -691,6 +702,7 @@ def create_app(
     relay: PushRelay | None = None,
     feed: ChangeFeed | None = None,
     customers: CustomerNotes | None = None,
+    clock: TimeClock | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -769,6 +781,8 @@ def create_app(
             default_face_store(), app.state.staff.get, enabled=lambda: app.state.settings.get("faces")["enabled"]
         )
     )
+    # The time clock: who is on the clock, their breaks, and the log of every change to them.
+    app.state.clock = clock if clock is not None else TimeClock(default_clock_store())
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
@@ -1218,6 +1232,25 @@ def create_app(
         once. A screen sent with no station is dropped from it. The next send prints by it."""
         manager_from(app.state.tokens, authorization)
         return write_setting("ticket_skips", body.model_dump(), clean_ticket_skips)
+
+    @app.get("/settings/time_clock")
+    def read_time_clock() -> dict[str, Any]:
+        """The time clock: `enabled`, whether the location uses it (off to start: the sign-in pad shows no
+        clock until a manager turns it on); `breaks_paid`, whether a break counts as time worked (off: a
+        break is the meal break, off the clock); `week_starts`, the day the pay week starts on (`mon` or
+        `sun`)."""
+        settings: SettingStore = app.state.settings
+        return settings.get("time_clock")
+
+    @app.put("/settings/time_clock")
+    def write_time_clock(body: TimeClockIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns the clock on or off and says how breaks and the pay week count. A key left out
+        keeps what it was. Hours already on the clock are not touched: `breaks_paid` only changes how they
+        are added up."""
+        manager_from(app.state.tokens, authorization)
+        settings: SettingStore = app.state.settings
+        asked = body.model_dump(exclude_none=True)
+        return write_setting("time_clock", {**settings.get("time_clock"), **asked}, clean_time_clock)
 
     def bill_head(setting: Mapping[str, Any]) -> tuple[str, ...]:
         """The top of the bill: the lines the manager typed, or the location's name until any are."""
@@ -1801,6 +1834,7 @@ def create_app(
 
     add_menu_admin(app)
     add_face_signin(app)
+    add_time_clock(app)
     return app
 
 
