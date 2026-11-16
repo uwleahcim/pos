@@ -79,7 +79,13 @@ def carry_ops(store: OpStore | PgOpStore, ops: list[Op]) -> tuple[list[Op], list
             data = {k: v for k, v in op.data.items() if k not in CARRIED and k != "sent"}
             data.update({name: getattr(line, name) for name in CARRIED})
             table = source.fields.get("table")
-            data["from"] = {"order_id": came[0], "line_id": came[1], **({"table": str(table)} if table else {})}
+            data["from"] = {
+                "order_id": came[0],
+                "line_id": came[1],
+                **({"table": str(table)} if table else {}),
+                # a bar tab has no table: its dishes say whose tab they were rung in on
+                **({"tab": source.tab_name} if source.is_tab else {}),
+            }
             if line.fired_at is not None:
                 data["sent"] = str(line.fired_at)
             arriving.add((op.order_id, str(op.data.get("line_id")), *came))

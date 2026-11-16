@@ -15,7 +15,9 @@ The box takes the place of the row of chips, and the list narrows as the words a
   - digits: the start of the order number (`4` finds #4, #41, #42), or, with three digits or more, any part
     of the phone number, however either was punctuated (`555-1234` finds `(781) 555 1234`);
   - `#42`: the order number and nothing else;
-  - `table`: any check that is at a table (`table b` finds the B tables).
+  - `table`: any check that is at a table (`table b` finds the B tables);
+  - `tab`: any bar tab that has not sat down (`bar-tabs.md`). A tab is also found by the name on it, before
+    and after it is given a table.
 - **What a row says.** Besides what the list always says, a check that is looked for starts with when it
   was opened ("19:42", "yesterday 19:42", "14 Nov 19:42") and ends with its server's name.
 - **Leaving.** The cross at the end of the row, or Escape, closes the box: the list is the open checks

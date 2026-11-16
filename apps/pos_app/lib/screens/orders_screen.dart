@@ -34,6 +34,7 @@ import 'rush.dart';
 import 'server_picker.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
+import 'tab_dialog.dart';
 import 'table_moves.dart';
 import 'theme.dart';
 import 'time_clock_card.dart';
@@ -111,6 +112,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Timer? _clock;
   // The chip the list of checks is narrowed to (Later, Cooking, Ready, Unpaid); null lists every check.
   ToGoChip? _chip;
+  // The list of checks is narrowed to the bar's open tabs, by the name on each (the Tabs chip).
+  bool _tabsOnly = false;
   // Finding a check: the search box is open in the chips' row, the list holds closed checks too and is
   // narrowed to what is typed. A manager can list another day's checks ([_findDay]; null is now).
   bool _finding = false;
@@ -194,6 +197,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     setState(() {
       _floor = floor;
       _moving = null; // a table is moved on the map: leaving it leaves the move
+      _seating = null; // and so is a tab seated there
     });
   }
 
@@ -404,6 +408,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     setState(() {
       _finding = true;
       _chip = null;
+      _tabsOnly = false;
     });
     unawaited(_refresh());
   }
@@ -541,6 +546,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (request.promisedAt != null) 'for_later': true,
       'stage': 'new',
     }, lines: lines);
+  }
+
+  /// A bar tab: a check with a name and no table, rung in and sent like a table's. It is found again in the
+  /// list of checks (the Tabs chip, or its name in the search) and is on no floor map until the party sits
+  /// down and it is given a table ([_seatAt]).
+  Future<void> _newTab() async {
+    final name = await showDialog<String>(context: context, builder: (_) => const TabDialog());
+    if (name == null || !mounted) return;
+    await _create({'order_type': 'dine_in', 'tab': true, 'customer_name': name});
   }
 
   /// Ready sends the customer their text (the hub does, once); picked up closes the check.
@@ -776,7 +790,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       coursing = Coursing.defaults;
     }
     if (!mounted) return;
-    await Navigator.of(context).push(
+    final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
         settings: const RouteSettings(name: SessionWatcher.orderRoute),
         builder: (_) => OrderScreen(
@@ -790,12 +804,153 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ),
       ),
     );
+    // "Seat at a table" on a bar tab: the floor map comes up, and the next table tapped is the party's.
+    if (left is SeatTab && mounted) {
+      setState(() {
+        _seating = left;
+        _moving = null;
+        _floor = true;
+      });
+    }
     _refresh();
     _floorKey.currentState?.refresh();
   }
 
+  /// The bar tab being seated: the next table tapped on the floor map is where the party sits down.
+  SeatTab? _seating;
+
+  /// Seating the tab is over: it sat down, or the person thought better of it. On a device that goes back
+  /// to sign-in after sending, whoever sent drinks from the tab and left it to seat it is signed out now.
+  void _endSeating() {
+    final seating = _seating;
+    if (seating == null) return;
+    setState(() => _seating = null);
+    if (seating.thenSignOut) unawaited(Future.microtask(widget.session.signOut));
+  }
+
+  /// The tab being seated was given a place: [to]. A free table takes it like a party walking in: how many
+  /// guests, and for a host or manager whose table it is; anyone else who seats it takes the check, as
+  /// with a table they open. Every dish keeps saying who rang it in. A seated table asks whether the tab
+  /// joins that table's check or stays a check of its own there; either way it is that table's server's.
+  Future<void> _seatAt(FloorPlan plan, TableSpot to) async {
+    final seating = _seating;
+    if (seating == null) return;
+    final tab = seating.order;
+    final staff = widget.session.staff;
+    final who = {if (staff != null) 'by': staff.name, if (staff != null) 'by_id': staff.staffId};
+    final there = plan.checksAt(to.id);
+    List<OrderOps> queue;
+    var merged = false;
+    if (there.isEmpty) {
+      final roster = await _rosterNow();
+      if (!mounted) return;
+      final assigns = roster.assigns(staff?.staffId);
+      final asked = await showDialog<Seating>(
+        context: context,
+        builder: (_) => _GuestsDialog(
+          table: to,
+          plan: plan,
+          servers: assigns ? roster.servers : const [],
+          me: roster.byId(staff?.staffId),
+          title: 'Seat ${tab.tabLabel} at ${to.label}',
+        ),
+      );
+      if (asked == null || !mounted) return; // still seating: another table can be tapped
+      final server = asked.server;
+      queue = [
+        (
+          tab.orderId,
+          [
+            (
+              'set_field',
+              {
+                'table': to.id,
+                'guests': asked.guests,
+                if (server != null) ...{
+                  'server': server.name,
+                  'server_id': server.staffId,
+                } else if (staff != null) ...{
+                  'server': staff.name,
+                  'server_id': staff.staffId,
+                },
+                ...who,
+              },
+            ),
+          ],
+        ),
+      ];
+    } else {
+      // both as they stand, with what this screen has yet to send: one check means every dish goes over
+      Future<Order> read(String id) async => withLocalOps(await widget.api.order(id), widget.outbox.localOps(id));
+      Order? moving, onto;
+      try {
+        moving = await read(tab.orderId);
+        onto = await read(there.first.orderId);
+      } on ApiException {
+        // nothing to read them from: the tab can still sit at that table as a check of its own
+      }
+      if (!mounted) return;
+      final why = moving == null ? null : cannotMerge(moving);
+      final blocked = moving == null || onto == null
+          ? 'The hub cannot be reached right now, so the two checks cannot be put together.'
+          : !plan.moves
+          ? 'This hub is older than putting two checks together. Update the hub for that.'
+          : why == null
+          ? null
+          : '${tab.tabLabel} $why.';
+      final landing = await showDialog<Landing>(
+        context: context,
+        builder: (_) => LandingDialog.tab(
+          tab.tabLabel,
+          to: to,
+          blocked: blocked,
+          note: moving != null && hasCheckDiscount(moving)
+              ? 'The discount on the whole tab stays behind. '
+                    'Put it on ${to.label}\'s check again if it should count.'
+              : null,
+        ),
+      );
+      if (landing == null || !mounted) return; // still seating: another table can be tapped
+      if (landing == Landing.merge && blocked == null && moving != null && onto != null) {
+        merged = true;
+        queue = mergeOps(from: moving, onto: onto, newId: widget.outbox.newId, by: staff);
+      } else {
+        // a check of its own at that table: the table is its server's, so this check is too
+        final first = there.first;
+        queue = [
+          (
+            tab.orderId,
+            [
+              (
+                'set_field',
+                {
+                  'table': to.id,
+                  if (first.server != null && first.serverId != null) ...{
+                    'server': first.server,
+                    'server_id': first.serverId,
+                  },
+                  ...who,
+                },
+              ),
+            ],
+          ),
+        ];
+      }
+    }
+    for (final (orderId, ops) in queue) {
+      await widget.outbox.addAll(orderId, ops);
+    }
+    if (!mounted) return;
+    _endSeating();
+    _floorKey.currentState?.refresh();
+    unawaited(_refresh());
+    final what = merged ? '${tab.tabLabel} is on ${to.label}\'s check now' : '${tab.tabLabel} sat down at ${to.label}';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(key: const ValueKey('tab-seated'), content: Text(what)));
+  }
+
   /// A free table seats a party; a busy one opens its check, or asks which one when it has several.
   Future<void> _onTable(FloorPlan plan, TableSpot table) async {
+    if (_seating != null) return _seatAt(plan, table);
     if (_moving != null) return _moveTo(plan, table);
     final checks = plan.checksAt(table.id);
     if (checks.length == 1) return _open(checks.single.orderId);
@@ -867,17 +1022,26 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // While a check is being looked for, the row is the search box and the list is what the words find.
     final checks = _listed;
     final finding = _finding;
-    final chip = finding ? null : _chip;
+    final tabsOnly = !finding && _tabsOnly;
+    final chip = finding || tabsOnly ? null : _chip;
     final counts = chipCounts(checks.map((row) => row.$1), now);
+    // The bar's open tabs: Tabs stands first in the row while there is one, and lists them by name.
+    final tabs = [
+      for (final row in checks)
+        if (row.$1.isTab && row.$1.isOpen) row,
+    ];
     final listed = finding
         ? [
             for (final row in checks)
               if (checkMatches(row.$1, _find.text)) row,
           ]
+        : tabsOnly
+        ? tabsByName(tabs, (row) => row.$1)
         : chip == null
         ? checks
         : dueFirst(checks.where((row) => inChip(chip, row.$1, now)), (row) => row.$1);
     final sorts = chip != null || checks.any((row) => row.$1.isTakeout && row.$1.isOpen);
+    final showsTabs = tabsOnly || tabs.isNotEmpty;
     final manages = const {'manager', 'owner'}.contains(widget.session.staff?.role);
     final rush = _quotes?.rush;
     final more = <(String, IconData, VoidCallback)>[
@@ -955,10 +1119,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
               duration: const Duration(milliseconds: 180),
               child: Icon(_floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded, key: ValueKey(_floor)),
             ),
-            onPressed: () => setState(() {
-              _floor = !_floor;
-              _moving = null; // a table is moved on the map: leaving it leaves the move
-            }),
+            onPressed: () {
+              setState(() {
+                _floor = !_floor;
+                _moving = null; // a table is moved on the map: leaving it leaves the move
+              });
+              _endSeating(); // and so is a tab seated there
+            },
           ),
           if (small)
             // a phone: the rest go in one menu, so the title still fits
@@ -998,15 +1165,29 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     )
                   : Row(
                       children: [
-                        FindCheckButton(key: const ValueKey('find-open'), wide: !sorts, onTap: _startFinding),
-                        if (sorts) ...[
+                        FindCheckButton(
+                          key: const ValueKey('find-open'),
+                          wide: !sorts && !showsTabs,
+                          onTap: _startFinding,
+                        ),
+                        if (sorts || showsTabs) ...[
                           const SizedBox(width: 6),
                           Expanded(
                             child: ToGoChips(
                               key: const ValueKey('to-go-chips'),
                               counts: counts,
                               picked: chip,
-                              onPicked: (picked) => setState(() => _chip = picked),
+                              onPicked: (picked) => setState(() {
+                                _chip = picked;
+                                _tabsOnly = false;
+                              }),
+                              toGo: sorts,
+                              tabs: showsTabs ? tabs.length : null,
+                              tabsPicked: tabsOnly,
+                              onTabs: (on) => setState(() {
+                                _tabsOnly = on;
+                                _chip = null;
+                              }),
                             ),
                           ),
                         ],
@@ -1014,6 +1195,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     ),
             ),
           if (_floor && _moving != null) MovingBar(table: _moving!, onCancel: () => setState(() => _moving = null)),
+          if (_floor && _seating != null)
+            MovingBar.words(
+              'Seating ${_seating!.order.tabLabel}. Tap their table.',
+              key: const ValueKey('seating-bar'),
+              onCancel: _endSeating,
+            ),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -1040,6 +1227,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             : 'No check matches.',
                         style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
+                    )
+                  : listed.isEmpty && tabsOnly
+                  ? Center(
+                      key: const ValueKey('empty-chip:tabs'),
+                      child: Text('No tabs are open.', style: TextStyle(color: scheme.onSurfaceVariant)),
                     )
                   : listed.isEmpty && chip != null
                   ? Center(
@@ -1072,6 +1264,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         final lines = order.activeLines;
                         final items = lines.fold<int>(0, (n, l) => n + l.qty);
                         final isTakeout = order.isTakeout;
+                        final isTab = order.isTab;
                         final stage = order.stage;
                         // An order for later is marked as its time to start cooking nears, and when that
                         // time has come and nobody sent it.
@@ -1114,16 +1307,24 @@ class _OrdersScreenState extends State<OrdersScreen> {
                               leading: CircleAvatar(
                                 backgroundColor: order.isFired ? posColors.fired : scheme.primaryContainer,
                                 foregroundColor: order.isFired ? posColors.firedText : scheme.onPrimaryContainer,
-                                child: Text(
-                                  isTakeout ? '${order.orderNo ?? '…'}' : order.table,
-                                  style: const TextStyle(fontWeight: FontWeight.w700),
-                                ),
+                                child: isTab
+                                    // a tab has no table and no number: a glass, and the name beside it
+                                    ? const Icon(Icons.local_bar, size: 20, semanticLabel: 'Bar tab')
+                                    : Text(
+                                        isTakeout ? '${order.orderNo ?? '…'}' : order.table,
+                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                      ),
                               ),
                               title: Text(
                                 isTakeout
                                     ? [
                                         order.customerName.isEmpty ? 'To go' : order.customerName,
                                         if (order.channel.isNotEmpty) channelLabel(order.channel).toLowerCase(),
+                                      ].join(' · ')
+                                    : isTab
+                                    ? [
+                                        if (order.customerName.trim().isNotEmpty) order.customerName.trim(),
+                                        'tab',
                                       ].join(' · ')
                                     : 'Table ${order.table}',
                                 style: theme.textTheme.titleMedium,
@@ -1174,16 +1375,49 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ),
         ],
       ),
-      // With a caller on the phone, or just off it, the button names the caller: the order starts with the number.
-      floatingActionButton: FloatingActionButton.extended(
-        key: const ValueKey('to-go'),
-        onPressed: () => _newOrder(),
-        icon: const Icon(Icons.shopping_bag_outlined),
-        label: Text(switch (widget.phone?.callerForOrder) {
-          null => 'To go',
-          final caller => caller.formatted.isEmpty ? 'To go' : 'To go · ${caller.formatted}',
-        }),
-      ),
+      // Two ways to start a check with no table: a bar tab and a to-go order. With a caller on the phone, or
+      // just off it, To go names the caller (the order starts with the number), and on a phone Tab makes
+      // room for that by being its glass alone. While a tab is being seated the next tap is a table's, so
+      // neither shows. On a phone's floor map the two stand above the words under the map (what the colours
+      // of a table say), where the map leaves room anyway.
+      floatingActionButton: _seating != null
+          ? null
+          : Padding(
+              padding: EdgeInsets.only(bottom: small && _floor ? 44 : 0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (small && (widget.phone?.callerForOrder?.formatted.isNotEmpty ?? false))
+                    FloatingActionButton(
+                      key: const ValueKey('new-tab'),
+                      heroTag: 'new-tab',
+                      tooltip: 'Open a tab',
+                      onPressed: _newTab,
+                      child: const Icon(Icons.local_bar_outlined),
+                    )
+                  else
+                    FloatingActionButton.extended(
+                      key: const ValueKey('new-tab'),
+                      heroTag: 'new-tab',
+                      tooltip: 'Open a tab',
+                      onPressed: _newTab,
+                      icon: const Icon(Icons.local_bar_outlined),
+                      label: const Text('Tab'),
+                    ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton.extended(
+                    key: const ValueKey('to-go'),
+                    heroTag: 'to-go',
+                    onPressed: () => _newOrder(),
+                    icon: const Icon(Icons.shopping_bag_outlined),
+                    label: Text(switch (widget.phone?.callerForOrder) {
+                      null => 'To go',
+                      final caller => caller.formatted.isEmpty ? 'To go' : 'To go · ${caller.formatted}',
+                    }),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -1524,9 +1758,12 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
 /// Seats a party: how many guests and, for a host or manager, whose table it is. A server sees only the
 /// guests: the table is theirs by opening it.
 class _GuestsDialog extends StatefulWidget {
-  const _GuestsDialog({required this.table, required this.plan, this.servers = const [], this.me});
+  const _GuestsDialog({required this.table, required this.plan, this.servers = const [], this.me, this.title});
   final TableSpot table;
   final FloorPlan plan;
+
+  /// What the dialog is headed with when it is not a party walking in ("Seat Linda's tab at A5").
+  final String? title;
 
   /// The people the table can be given to; none when whoever seats it takes it.
   final List<StaffMember> servers;
@@ -1548,7 +1785,7 @@ class _GuestsDialogState extends State<_GuestsDialog> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return AlertDialog(
-      title: Text('Seat ${widget.table.label}'),
+      title: Text(widget.title ?? 'Seat ${widget.table.label}'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,

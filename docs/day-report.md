@@ -55,7 +55,8 @@ other days, and what is **still owed**.
 Then the dishes sold, split four ways. Each list adds up to the "Dishes sold" figure:
 
 - **By category**, under each menu when there are several (Food, Drinks), with how many dishes;
-- **By kind of order**: tables and to-go, with the checks and guests;
+- **By kind of order**: tables, bar tabs that never sat down (`bar-tabs.md`) and to-go, with the checks
+  and guests;
 - **Rung in by**: who rang the dishes in;
 - **By hour**, by the hour each dish was rung in.
 

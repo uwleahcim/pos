@@ -18,14 +18,15 @@ Each step is a dict:
 
 `what` and what comes with it:
 
-- `opened`: `fields`, the order's fields as it was opened (table, guests, order_type, customer_name, ...);
+- `opened`: `fields`, the order's fields as it was opened (table, guests, order_type, customer_name, ...;
+  `tab` true for a bar tab);
 - `table`, `server`, `guests`, `stage`, `promised` (ms), `quoted` (minutes), `split`: `was`, `now`;
 - `merged`: `other` (the check this one's dishes went to) and `other_table`;
 - `field`: `field` (customer_name, phone, note, order_type, channel), `was`, `now`;
 - `added`: `dish`, `options`, `qty`, `seat`, `course` (by its name), `note`, `unit_price`, and `changed`
-  when it took the place of a dish that was edited; `moved_in` the same with `other`, `other_table`,
-  `sent` when the kitchen already had it, and `rung_by`, who rang it in on the check it came from (the
-  step's own `by` is who brought it over);
+  when it took the place of a dish that was edited; `moved_in` the same with `other`, `other_table` (or
+  `other_tab`, the name on the bar tab it came from), `sent` when the kitchen already had it, and
+  `rung_by`, who rang it in on the check it came from (the step's own `by` is who brought it over);
 - `moved_out`: `dish`, `qty`, `other`, `other_table`;
 - `changed`: `dish` and `changes`, each `{field: qty | seat | course | note | checks, was, now}`;
 - `taken_off` (before the kitchen saw it) and `voided` (after): `dish`, `qty`, and for a void `reason`;
@@ -51,6 +52,7 @@ OPENED_WITH = (
     "table",
     "guests",
     "order_type",
+    "tab",
     "customer_name",
     "phone",
     "channel",
@@ -207,7 +209,15 @@ def history(
             if added.moved_from is not None:
                 other = added.moved_from.get("order_id")
                 table = added.moved_from.get("table") or other_table(other)
-                step("moved_in", **said, other=other, other_table=table, sent=added.arrived_sent, rung_by=added.by)
+                step(
+                    "moved_in",
+                    **said,
+                    other=other,
+                    other_table=table,
+                    **({"other_tab": added.moved_from["tab"]} if "tab" in added.moved_from else {}),
+                    sent=added.arrived_sent,
+                    rung_by=added.by,
+                )
             else:
                 step("added", **said, changed=added.replaces is not None)
 

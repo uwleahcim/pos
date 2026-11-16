@@ -24,6 +24,8 @@ The figures add up:
   over those guests: a to-go order has no guests and is left out of it rather than counted as nobody.
 - `turn` is how long a table's check stood, from opened to closed: how many closed table checks there were
   and the middle one of their times (the median: one table forgotten open overnight does not move it).
+- A bar tab that never sat down is a kind of its own in `kinds` (`tab`), apart from the tables, and is no
+  table's turn; one that was given a table is that table's check.
 - `money.taken` is every payment recorded in the span, by how it was paid, whatever check it was for.
 """
 
@@ -41,11 +43,11 @@ from typing import Any, NamedTuple
 
 from .. import localtime
 from ..menu.defs import Definitions
-from ..sync.oplog import OrderEntry, OrderState
+from ..sync.oplog import OrderEntry, OrderState, is_tab
 from ..tax import TaxProfile
 from .adjustments import PricingRules
 from .check import _money, check_for
-from .day import METHODS, ZERO, _guests, _Menu, _most_first, _Tally, order_day
+from .day import METHODS, ZERO, _guests, _Menu, _most_first, _Tally, kind_of, order_day
 
 MAX_DAYS = 92
 """The longest span one reading adds up: a quarter of a year."""
@@ -176,7 +178,7 @@ def sale_of(
     if state.status == "void":
         return Sale(its_day, True, payments)
     check = check_for(state, taxes, rules)
-    kind = check["order_type"]
+    kind = kind_of(state, check)
     charges = gratuity = ZERO
     for charge in check["charges"]:
         if charge["gratuity"]:
@@ -209,7 +211,8 @@ def sale_of(
         sold[0] += Decimal(row["total"])
         sold[1] += row["qty"]
     stood = None
-    if kind == "dine_in" and state.status == "closed" and state.closed_at is not None and state.first is not None:
+    at_table = kind == "dine_in" and not is_tab(state.fields)  # a tab emptied onto a table's check sat nowhere
+    if at_table and state.status == "closed" and state.closed_at is not None and state.first is not None:
         stood = state.closed_at.wall_ms - state.first.wall_ms
     return Sale(
         its_day,

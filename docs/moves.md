@@ -107,6 +107,9 @@ another table.
 The slip has a switch under **Location settings**, on the Printers card: **Tell the kitchen when a table
 moves**, on to start.
 
+A bar tab that is given a table prints the same slip, with `WAS TAB LINDA` where a table's says the table
+it left (`bar-tabs.md`).
+
 ## Without a hub, and on an older hub
 
 - A move or merge made while no hub answers shows on that device's floor map at once and reaches the others
