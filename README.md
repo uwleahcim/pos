@@ -45,6 +45,8 @@ merges after any disconnect.
   comes to and its bill; one order all along): `docs/split.md`
 - Moving a table, merging two checks, moving dishes to another table's check and giving all of a server's
   tables to another (nothing voided, nothing rung in twice, a MOVED slip for the kitchen): `docs/moves.md`
+- When a dish was sent (the check says when the kitchen got each course and how long ago; a dish that went
+  later says its own time): `docs/time-sent.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

@@ -4,6 +4,7 @@ library;
 
 import 'api.dart';
 import 'coursing.dart';
+import 'takeout.dart' show clockTime;
 
 /// A row of the check: a course's header, or a line under one.
 sealed class CheckRow {
@@ -14,7 +15,7 @@ sealed class CheckRow {
 }
 
 class CourseRow extends CheckRow {
-  const CourseRow({required this.id, required this.name, required this.state});
+  const CourseRow({required this.id, required this.name, required this.state, this.sentMs});
 
   @override
   String get rowId => 'course:$id';
@@ -25,10 +26,14 @@ class CourseRow extends CheckRow {
 
   /// held, fired, "N to fire", or empty when nothing is under it.
   final String state;
+
+  /// When the course went to the kitchen: the first of its dishes to be sent ([sentOf]). Null while none
+  /// was, and from a hub that does not say when.
+  final int? sentMs;
 }
 
 class LineRow extends CheckRow {
-  const LineRow(this.line, {required this.course, required this.courseState});
+  const LineRow(this.line, {required this.course, required this.courseState, this.sentMs});
 
   @override
   String get rowId => 'line:${line.lineId}';
@@ -38,6 +43,10 @@ class LineRow extends CheckRow {
   /// The course it is listed under (empty for none) and that course's state.
   final String course;
   final String courseState;
+
+  /// When this dish was sent, for a dish that says so itself: one that went a minute or more after its
+  /// course's header says ([sentApart]). Null for a dish that went when the header says, and one not sent.
+  final int? sentMs;
 }
 
 /// The rows of a check in service order. With coursing on, every course the location serves is listed,
@@ -66,8 +75,12 @@ List<CheckRow> checkRows(Order order, Coursing coursing) {
     ];
     final name = id.isEmpty ? (coursing.enabled ? 'No course' : 'Items') : coursing.nameOf(id);
     final state = _stateOf(lines);
-    rows.add(CourseRow(id: id, name: name, state: state));
-    rows.addAll([for (final l in lines) LineRow(l, course: id, courseState: state)]);
+    final sent = sentOf(lines);
+    rows.add(CourseRow(id: id, name: name, state: state, sentMs: sent));
+    rows.addAll([
+      for (final l in lines)
+        LineRow(l, course: id, courseState: state, sentMs: l.isActive && sentApart(l.sentMs, sent) ? l.sentMs : null),
+    ]);
   }
   return rows;
 }
@@ -83,6 +96,42 @@ String _stateOf(List<Line> lines) {
   final waiting = active.where((l) => !l.fired).length;
   if (waiting == 0) return 'fired';
   return waiting == active.length ? 'held' : '$waiting to fire';
+}
+
+/// When the dishes under one header went to the kitchen: the first of them to be sent, which is the wait
+/// a guest asks about. The dishes still on the check count; a header with only voids under it says when
+/// the first of those went. Null while nothing was sent, and from a hub that does not say when.
+int? sentOf(List<Line> lines) {
+  int? first(Iterable<Line> of) {
+    int? at;
+    for (final line in of) {
+      final sent = line.sentMs;
+      if (sent != null && (at == null || sent < at)) at = sent;
+    }
+    return at;
+  }
+
+  return first(lines.where((l) => l.isActive)) ?? first(lines);
+}
+
+/// Whether a dish sent at [lineMs] says its own time under a header that says [courseMs]: it went a minute
+/// or more later (a dish added after the course was sent), so the header's time is not its own.
+bool sentApart(int? lineMs, int? courseMs) =>
+    lineMs != null && courseMs != null && lineMs - courseMs >= Duration.millisecondsPerMinute;
+
+/// "sent 18:42" for a dish or a course the kitchen got at [sentMs]. With the time it is now ([nowMs], on
+/// an open check) it also says how long ago: "sent 18:42, 23 min ago", "just now" within the first minute,
+/// hours past two of them ("2 h 5 min ago"). The times are whole minutes on the clock: 18:42 seen at 19:05
+/// is 23 minutes, whatever the seconds, so the words add up with the clock on the screen.
+String sentWords(int sentMs, {int? nowMs}) {
+  final at = 'sent ${clockTime(sentMs)}';
+  if (nowMs == null) return at;
+  const minute = Duration.millisecondsPerMinute;
+  final ago = nowMs ~/ minute - sentMs ~/ minute;
+  if (ago < 1) return '$at, just now';
+  if (ago < 120) return '$at, $ago min ago';
+  final (hours, minutes) = (ago ~/ 60, ago % 60);
+  return minutes == 0 ? '$at, $hours h ago' : '$at, $hours h $minutes min ago';
 }
 
 /// Where the lines in hand land: the course they go under, the row the first of them takes, and the lines
