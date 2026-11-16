@@ -36,7 +36,9 @@ Each step is a dict:
   came over with its dish from another check; `discount_removed`: `name`, `dish`;
 - `charge`: `name`, `kind`, `value`; `charge_removed`: `name`;
 - `paid`: `method`, `amount`, `tendered`, `check`, `note`;
-- `allergy`: `seat`, `allergens` (by name), `note`; `allergy_cleared`: `seat`.
+- `allergy`: `seat`, `allergens` (by name), `note`; `allergy_cleared`: `seat`;
+- `tax_exempt` (a manager marked the check exempt from sales tax): `organisation`, `certificate`;
+  `tax_exempt_removed`: `organisation`.
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ from typing import Any
 from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply
 from .adjustments import PricingRules
 from .check import shown_modifiers
+from .exempt import FIELD as EXEMPT
+from .exempt import exemption_of
 
 OPENED_WITH = (
     "table",
@@ -191,6 +195,12 @@ def history(
                     step("merged", other=now, other_table=other_table(now))
                 elif name in PLAIN:
                     step("field", field=name, was=was, now=now)
+                elif name == EXEMPT:
+                    marked, stood = exemption_of({EXEMPT: now}), exemption_of({EXEMPT: was})
+                    if marked is not None:
+                        step("tax_exempt", organisation=marked["organisation"], certificate=marked["certificate"])
+                    elif stood is not None:
+                        step("tax_exempt_removed", organisation=stood["organisation"])
 
         elif kind == "add_line":
             added = state.lines.get(data.get("line_id"))

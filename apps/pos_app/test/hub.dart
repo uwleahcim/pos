@@ -246,8 +246,14 @@ class Hub {
   List<Map<String, dynamic>> board = [];
   final boardChanges = <Map<String, dynamic>>[];
 
-  /// The check it serves for every order (it prices nothing itself), and its pricing rules.
+  /// The check it serves for every order (it prices nothing itself), and its pricing rules. One that says
+  /// `exempts` is a hub that can mark a check tax exempt; [refuseExempt] is a code and the words it refuses
+  /// the next mark with, whatever PIN came.
   Map<String, dynamic>? check;
+  (String, String)? refuseExempt;
+
+  /// Every audit photo a terminal sent (`POST /events/photos`).
+  final photosPut = <Map<String, dynamic>>[];
   Map<String, dynamic>? rules;
 
   /// Face sign-in: how the hub stands (`GET /faces/status`), the location's switch, what it answers to each
@@ -696,7 +702,16 @@ class Hub {
       batches.add(ops);
       _apply(id, ops);
       _moveOnFloor(id, ops);
-      return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
+      final refused = _exempt(id, ops);
+      final left = {for (final r in refused) r['op_id']};
+      return json({
+        'accepted': [
+          for (final op in ops)
+            if (!left.contains(op['op_id'])) op['op_id'],
+        ],
+        if (refused.isNotEmpty) 'refused': refused,
+        'cursor': sent.length,
+      }, 202);
     }
     if (_bill.hasMatch(path)) {
       if (bill == null) return json({'detail': 'Not Found'}, 404);
@@ -1113,6 +1128,11 @@ class Hub {
         return json({'name': "General Tso's Chicken (Quart)", 'unit_price': '26.95'});
       case '/pricing/rules':
         return json(rules ?? {'discounts': [], 'charges': []});
+      case '/events/photos' when request.method == 'POST':
+        // an audit photo: kept as it came (its event and the operation it belongs to), picture and all
+        final photo = jsonDecode(request.body) as Map<String, dynamic>;
+        photosPut.add(photo);
+        return json({'photo_id': photo['photo_id'], 'bytes': 7}, 202);
       case '/approvals':
         // a manager's PIN for a discount on one order: Mike (9999) approves, anyone else is no manager
         final body = jsonDecode(request.body) as Map<String, dynamic>;
@@ -1132,6 +1152,64 @@ class Hub {
         });
     }
     return json({'revision': 0});
+  }
+
+  /// A check marked exempt from sales tax (docs/tax-exempt.md), on the [check] it serves, as the real hub
+  /// does it: the mark needs the token a manager's PIN bought for this order, and is refused in the hub's
+  /// words without one (or with [refuseExempt]); the check then charges no tax and says for whom, by whom
+  /// and how much tax that was. Taking the mark off charges the tax again.
+  List<Map<String, dynamic>> _exempt(String orderId, List<Map<String, dynamic>> ops) {
+    String sum(Object? a, Object? b, int sign) =>
+        (double.parse('${a ?? 0}') + sign * double.parse('${b ?? 0}')).toStringAsFixed(2);
+    final refused = <Map<String, dynamic>>[];
+    for (final op in ops.where((op) => op['kind'] == 'set_field')) {
+      final data = (op['data'] as Map).cast<String, dynamic>();
+      final now = check;
+      if (!data.containsKey('tax_exempt') || now == null) continue;
+      final mark = data['tax_exempt'] as Map?;
+      final stood = now['tax_exempt'] as Map?;
+      if (mark == null) {
+        if (stood == null) continue;
+        check = {
+          ...now,
+          'tax': stood['tax'],
+          'total': sum(now['total'], stood['tax'], 1),
+          if (now['due'] != null) 'due': sum(now['due'], stood['tax'], 1),
+        }..remove('tax_exempt');
+        continue;
+      }
+      final problem =
+          refuseExempt ??
+          (data['approval'] == 'tok-$orderId'
+              ? null
+              : ('needs_approval', "Marking a check tax exempt needs a manager's PIN."));
+      if (problem != null) {
+        refused.add({
+          'op_id': op['op_id'],
+          'error': 'invalid_exemption',
+          'problems': [
+            {'code': problem.$1, 'message': problem.$2},
+          ],
+        });
+        continue;
+      }
+      check = {
+        ...now,
+        'tax_exempt': {
+          'organisation': mark['organisation'],
+          'certificate': mark['certificate'],
+          'approved_by': 'Mike',
+          'approved_by_id': 's3',
+          'by': data['by'] ?? '',
+          'at_ms': 1800000000000,
+          'tax': now['tax'],
+        },
+        'tax': '0.00',
+        'total': sum(now['total'], now['tax'], -1),
+        if (now['due'] != null) 'due': sum(now['due'], now['tax'], -1),
+      };
+    }
+    return refused;
   }
 
   /// A floor a test set up follows its checks: one that moves sits at its new table, one emptied into

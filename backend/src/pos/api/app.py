@@ -42,6 +42,7 @@ from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rul
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
+from ..orders.exempt import exempt_ops
 from ..orders.moves import carried, carry_ops
 from ..orders.numbers import OrderNumbers
 from ..orders.taken_off import by_check, taken_off_rows
@@ -261,12 +262,12 @@ class PriceIn(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    """A manager's PIN on the spot, for one purpose on one order: a discount or a charge (`adjust`), or the
-    void of a dish the kitchen already has (`void`)."""
+    """A manager's PIN on the spot, for one purpose on one order: a discount or a charge (`adjust`), the
+    void of a dish the kitchen already has (`void`), or marking the check tax exempt (`exempt`)."""
 
     device: str
     pin: str
-    purpose: str = Field("adjust", pattern="^(adjust|void)$")
+    purpose: str = Field("adjust", pattern="^(adjust|void|exempt)$")
     order_id: str
 
 
@@ -887,6 +888,9 @@ def create_app(
         fresh, refused = price_lines(app.state.menu, fresh)
         refused = refused_moves + refused
         fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
+        # a check marked tax exempt: a manager's PIN, the organisation and its certificate, before any money
+        fresh, refused_exemptions = exempt_ops(app.state.tokens, store, fresh)
+        refused += refused_exemptions
         # The numbers left on counted dishes: weighed, stored and taken off as one step, so two screens cannot
         # both sell the last one. While no dish has a number nothing is held and nothing is read.
         with app.state.menu.counting():
@@ -1019,8 +1023,9 @@ def create_app(
         state = store.view(order_id)
         if state is None:
             raise HTTPException(404, "no such order")
-        # `moves`: this hub can pass a dish from one check to another (pos.orders.moves), so a screen may offer it
-        return polled({**check_for(state, app.state.taxes, app.state.pricing), "moves": True})
+        # `moves`: this hub can pass a dish from one check to another (pos.orders.moves), so a screen may offer it;
+        # `exempts`: it can mark a check tax exempt (pos.orders.exempt)
+        return polled({**check_for(state, app.state.taxes, app.state.pricing), "moves": True, "exempts": True})
 
     @app.post("/orders/{order_id}/bill", status_code=202)
     def print_bill(order_id: str, body: PrintBillIn | None = None) -> dict[str, Any]:

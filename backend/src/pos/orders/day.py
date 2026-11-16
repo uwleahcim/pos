@@ -177,6 +177,7 @@ def day_report(
     open_now: list[dict[str, Any]] = []
     unpaid: list[dict[str, Any]] = []
     earlier: list[dict[str, Any]] = []
+    exempt: list[dict[str, Any]] = []  # the checks a manager marked tax exempt, each with for whom
 
     for state in states:
         its_day = order_day(state)
@@ -240,6 +241,10 @@ def day_report(
         money["paid_other_days"] += paid - paid_then
         money["due"] += Decimal(check["due"])
         money["over"] += max(paid - total, ZERO)
+        if check.get("tax_exempt"):
+            said = check["tax_exempt"]
+            who = {name: said[name] for name in ("organisation", "certificate", "approved_by", "by", "tax")}
+            exempt.append({**_about(state, check), **who})
 
         kind = kind_of(state, check)
         kinds.add(kind, ZERO, kind=kind, guests=0)
@@ -297,6 +302,14 @@ def day_report(
         "money": {
             "taken": taken.listed(lambda row: (methods.get(row["method"], len(methods)), row["method"])),
             **{name: str(amount) for name, amount in money.items()},
+        },
+        # Checks charged no tax: how many, what they came to, and the tax that was not charged. Their sales
+        # are in every figure above; `sales.tax` is the tax that was charged.
+        "tax_exempt": {
+            "count": len(exempt),
+            "sales": str(sum((Decimal(row["total"]) for row in exempt), ZERO)),
+            "tax": str(sum((Decimal(row["tax"]) for row in exempt), ZERO)),
+            "checks": sorted(exempt, key=_oldest_first),
         },
         "open": sorted(open_now, key=_oldest_first),
         "unpaid": sorted(unpaid, key=_oldest_first),

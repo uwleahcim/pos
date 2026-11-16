@@ -26,6 +26,9 @@ Tap **Discount** on an open check.
    checked by the hub (five misses lock the terminal for a minute, as at sign-in); the check and the
    reports then name the manager. A server's PIN is refused.
 
+At the foot of the sheet, under "Sales tax", **Tax exempt** marks the whole check exempt from sales tax for
+an organisation with a certificate, with a manager's PIN (`tax-exempt.md`).
+
 Every discount and charge is its own row under the subtotal, with who approved it. **Tap a row to take it
 off.** The automatic gratuity comes off only with a manager's PIN; a delivery fee or a charge staff added
 comes off freely.

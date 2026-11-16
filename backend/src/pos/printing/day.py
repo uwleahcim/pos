@@ -93,6 +93,18 @@ def day_paper(
     rows += [(f"{_many(report['checks'], 'check')}, {_many(report['guests'], 'guest')}", "")]
     blocks.append(Block("SALES", tuple(rows), strong=len(rows) - 2))
 
+    exempt = report.get("tax_exempt") or {}
+    if exempt.get("count"):
+        # every check charged no tax, for whom and under which certificate, and who approved
+        rows = [
+            (f"Sales on {_many(exempt['count'], 'check')}", _amount(exempt["sales"])),
+            ("Tax not charged", _amount(exempt["tax"])),
+        ]
+        for row in exempt["checks"]:
+            rows += [(f"{row['organisation']}", _amount(row["total"]))]
+            rows += [(f"  Certificate {row['certificate']}, approved by {row['approved_by'] or 'nobody named'}", "")]
+        blocks.append(Block("TAX EXEMPT", tuple(rows)))
+
     rows = [(f"{PAID_AS.get(t['method'], t['method'])} ({t['count']})", _amount(t["amount"])) for t in money["taken"]]
     rows += [("TAKEN THIS DAY", _amount(money["taken_total"]))]
     strong = len(rows) - 1

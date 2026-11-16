@@ -224,7 +224,10 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
 
   final rates = [for (final t in check?.taxLines ?? const <TaxLine>[]) t.ratePct];
   if (rates.isEmpty && (check?.taxRatePct ?? '').isNotEmpty) rates.add(check!.taxRatePct);
-  final tax = rates.fold(0, (sum, rate) => sum + _percentOf(discounted + taxedCharges, rate));
+  // a check a manager marked tax exempt stays exempt whatever is added to it
+  final tax = check?.exempt != null
+      ? 0
+      : rates.fold(0, (sum, rate) => sum + _percentOf(discounted + taxedCharges, rate));
   final total = discounted + chargeTotal + tax;
   final paid = order.payments.fold(0, (sum, p) => sum + cents(p.amount));
   return Check(
@@ -249,6 +252,8 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
     split: check?.split ?? SplitMode.one,
     splits: check?.splits ?? false,
     moves: check?.moves ?? false,
+    exempt: check?.exempt,
+    exempts: check?.exempts ?? false,
   );
 }
 

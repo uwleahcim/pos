@@ -52,7 +52,8 @@ class Bill:
     who: str = ""  # under it: "Server Amy", "Phone"
     note: str = ""  # under that, on one of a split table's bills: "One of 3 checks at this table"
     head: tuple[str, ...] = ()  # the restaurant's own lines; the first prints big
-    sums: tuple[tuple[str, str], ...] = ()  # between the dishes and the total: subtotal, discounts, charges, tax
+    # between the dishes and the total: subtotal, discounts, charges, tax; a row with no amount is words only
+    sums: tuple[tuple[str, str], ...] = ()
     paid: tuple[tuple[str, str], ...] = ()  # under the total: each payment; a row with no amount is words only
     # One part of a check split evenly: ("Part 2 of 4", "23.46"). It prints big under the total, and what
     # was paid and is due is then this part's.
@@ -131,7 +132,14 @@ def bill_for(
         sums.append((f"{d['name']}, {on}" if on else str(d["name"]), f"-{_amount(d['amount'])}"))
     for c in own.get("charges") or ():
         sums.append((str(c["name"]), _amount(c.get("amount"))))
-    sums.append((f"Sales tax {_rate(check.get('tax_rate_pct'))}%", _amount(own.get("tax"))))
+    exempt = check.get("tax_exempt")
+    if isinstance(exempt, Mapping):
+        # a check a manager marked exempt: no tax, and for whom, under which certificate
+        sums.append(("Tax exempt", _amount(own.get("tax"))))
+        sums.append((f"  {exempt.get('organisation') or ''}", ""))
+        sums.append((f"  Certificate {exempt.get('certificate') or ''}", ""))
+    else:
+        sums.append((f"Sales tax {_rate(check.get('tax_rate_pct'))}%", _amount(own.get("tax"))))
 
     total, paid_so_far = _money(owed.get("total")), _money(owed.get("paid"))
     paid = []
@@ -211,7 +219,7 @@ def render_bill(bill: Bill, *, dots: int = 576, font: str | None = None, dialect
             b.line(f"{'   ' + '  ' * depth}{words}")
     b.rule()
     for label, amount in bill.sums:
-        b.columns(label, amount)
+        b.columns(label, amount) if amount else b.line(label)
     b.rule()
     if bill.share is None:
         b.columns("TOTAL", f"${bill.total}", bold=True, big=True)

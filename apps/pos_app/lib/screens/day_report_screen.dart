@@ -264,7 +264,12 @@ class _DayReportScreenState extends State<DayReportScreen> {
       _Line('Net sales', dollars(report.net), key: const ValueKey('day-net')),
       if (isMoney(report.charges)) _Line('Charges', dollars(report.charges)),
       if (isMoney(report.gratuity)) _Line('Gratuity', dollars(report.gratuity), under: 'Paid over to staff'),
-      _Line('Sales tax', dollars(report.tax), key: const ValueKey('day-tax')),
+      _Line(
+        'Sales tax',
+        dollars(report.tax),
+        under: report.exempt.count > 0 ? report.exempt.words : '',
+        key: const ValueKey('day-tax'),
+      ),
       _Line('Total', dollars(report.total), strong: true, key: const ValueKey('day-total')),
       Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -430,6 +435,27 @@ class _DayReportScreenState extends State<DayReportScreen> {
           child: const Text('Each one, with who and why'),
         ),
       ),
+      if (report.exempt.count > 0) ...[
+        const Divider(height: 28),
+        _Heading('Tax exempt', dollars(report.exempt.sales), key: const ValueKey('day-exempt')),
+        Text(
+          'Checks a manager marked exempt from sales tax. Their sales are in the figures above; '
+          'only the tax was not charged.',
+          style: small,
+        ),
+        _Line('Tax not charged', dollars(report.exempt.tax), key: const ValueKey('day-exempt-tax')),
+        for (final row in report.exempt.checks)
+          _Line(
+            key: ValueKey('day-exempt:${row.check.orderId}'),
+            row.organisation,
+            dollars(row.check.total),
+            under: [
+              row.check.where,
+              if (row.certificate.isNotEmpty) 'Certificate ${row.certificate}',
+              if (row.approvedBy.isNotEmpty) 'approved by ${row.approvedBy}',
+            ].join(' · '),
+          ),
+      ],
       if (report.typed.count > 0 || report.later.count > 0 || clock != null) ...[
         const Divider(height: 28),
         _Heading('Also', '', key: const ValueKey('day-also')),

@@ -40,7 +40,7 @@ step (see `check-history.md`).
 | Net sales | dishes sold less comps and discounts |
 | Charges | service charges that are the restaurant's (only when there were any) |
 | Gratuity | charges paid over to staff (only when there were any) |
-| Sales tax | one line, as a guest sees it |
+| Sales tax | one line, as a guest sees it: the tax that was charged. Under it, how much was not charged on tax-exempt checks, when there were any |
 | Total | what the day's checks come to |
 
 **Money taken** is every payment recorded during the day, by how it was paid: cash, card, and paid
@@ -63,6 +63,10 @@ Then the dishes sold, split four ways. Each list adds up to the "Dishes sold" fi
 **Came off the checks**: each comp and discount by its reason, the dishes voided after the kitchen had them,
 the dishes taken off before sending, and checks voided whole. "Each one, with who and why" opens the Voids
 and comps report.
+
+**Tax exempt** (only when there were any): what the checks a manager marked exempt from sales tax came to,
+the tax that was not charged, and each check with the organisation, its certificate number and who approved
+(`tax-exempt.md`). Their sales are in every figure above.
 
 **Also**: dishes sold at a typed price, orders rung during the day for a later one, and the hours worked
 (a tap opens the Hours).

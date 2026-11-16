@@ -153,6 +153,63 @@ class DayCheck {
   }
 }
 
+/// A check of the day that a manager marked exempt from sales tax, and for whom.
+class DayExempt {
+  const DayExempt({
+    required this.check,
+    required this.organisation,
+    this.certificate = '',
+    this.approvedBy = '',
+    this.by = '',
+    this.tax = '0.00',
+  });
+
+  factory DayExempt.fromJson(Map<String, dynamic> json) => DayExempt(
+    check: DayCheck.fromJson(json),
+    organisation: _s(json['organisation']),
+    certificate: _s(json['certificate']),
+    approvedBy: _s(json['approved_by']),
+    by: _s(json['by']),
+    tax: _s(json['tax'], '0.00'),
+  );
+
+  final DayCheck check;
+  final String organisation;
+  final String certificate;
+
+  /// The manager whose PIN it took.
+  final String approvedBy;
+
+  /// Who marked it.
+  final String by;
+
+  /// The tax the check would have paid.
+  final String tax;
+}
+
+/// The checks charged no sales tax: how many, what they came to, and the tax that was not charged. Their
+/// sales are in every figure of the report; [checks] is filled by the day's report only.
+class TaxExempts {
+  const TaxExempts({this.count = 0, this.sales = '0.00', this.tax = '0.00', this.checks = const []});
+
+  factory TaxExempts.fromJson(Object? json) => json is Map
+      ? TaxExempts(
+          count: _i(json['count']),
+          sales: _s(json['sales'], '0.00'),
+          tax: _s(json['tax'], '0.00'),
+          checks: [for (final row in _rows(json['checks'])) DayExempt.fromJson(row)],
+        )
+      : const TaxExempts();
+
+  final int count;
+  final String sales;
+  final String tax;
+  final List<DayExempt> checks;
+
+  /// What stands under a report's "Sales tax": "Not charged on 2 tax-exempt checks: $5.60".
+  String get words => 'Not charged on $count tax-exempt ${count == 1 ? 'check' : 'checks'}: ${dollars(tax)}';
+}
+
 /// The time clock's part of a day, where the location uses it.
 class DayClock {
   const DayClock({this.workedMs = 0, this.people = 0, this.unended = 0, this.onNow = const []});
@@ -188,6 +245,7 @@ class DayReport {
     this.gratuity = '0.00',
     this.tax = '0.00',
     this.total = '0.00',
+    this.exempt = const TaxExempts(),
     this.menus = const [],
     this.categories = const [],
     this.kinds = const [],
@@ -231,6 +289,7 @@ class DayReport {
       gratuity: of(sales, 'gratuity'),
       tax: of(sales, 'tax'),
       total: of(sales, 'total'),
+      exempt: TaxExempts.fromJson(json['tax_exempt']),
       menus: [for (final row in _rows(json['menus'])) DayRow.fromJson(row)],
       categories: [for (final row in _rows(json['categories'])) DayRow.fromJson(row)],
       kinds: [for (final row in _rows(json['kinds'])) DayRow.fromJson(row, name: 'kind')],
@@ -277,6 +336,9 @@ class DayReport {
 
   /// What the day's checks come to: net + charges + gratuity + tax.
   final String total;
+
+  /// The checks a manager marked tax exempt: in every figure above, with [tax] the tax that was charged.
+  final TaxExempts exempt;
   final List<DayRow> menus;
   final List<DayRow> categories;
   final List<DayRow> kinds;

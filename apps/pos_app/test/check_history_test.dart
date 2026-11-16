@@ -417,6 +417,22 @@ void main() {
       );
     });
 
+    test('a check marked tax exempt says for whom and under which certificate; the tax put back says so', () {
+      expect(words('tax_exempt', {'organisation': 'Winchester PTA', 'certificate': 'E-123-456-789'}), [
+        'Marked tax exempt',
+        'Winchester PTA',
+        'Certificate E-123-456-789',
+      ]);
+      expect(words('tax_exempt_removed', {'organisation': 'Winchester PTA'}), [
+        'Put the sales tax back on',
+        'It was tax exempt for Winchester PTA',
+      ]);
+      // the manager whose PIN it took stands in the line of who did it
+      final step = read('tax_exempt', {'by': 'Amy', 'device': 'mac1', 'approved_by': 'Mike'});
+      expect(whoLine(step), 'Amy · mac1 · approved by Mike');
+      expect((step.cameOff, read('tax_exempt_removed').cameOff), (true, false)); // it took the tax off
+    });
+
     test('what came off a check is told apart, and the check names itself', () {
       expect(
         [

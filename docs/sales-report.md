@@ -54,7 +54,8 @@ letters, because more of those is not simply better.
 | Net sales per hour worked | net sales over those hours |
 
 **Sales:** dishes sold, comps and discounts, net sales, charges, gratuity, the sales tax as one line, and
-the total, exactly as in The day.
+the total, exactly as in The day. When checks of those days were marked tax exempt, a line under the sales
+tax says on how many and how much tax was not charged (`tax-exempt.md`).
 
 **By day** (for more than one day): the net sales of each day as a bar, with the same day of the weeks
 before as a thin bar and a small figure under it.

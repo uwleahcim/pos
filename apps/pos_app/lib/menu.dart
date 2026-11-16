@@ -992,6 +992,44 @@ class CheckPart {
   final String due;
 }
 
+/// A check a manager marked exempt from sales tax: who it is for, under which certificate, who approved,
+/// and the tax that was not charged. Only the hub writes one, after the manager's PIN.
+class TaxExempt {
+  const TaxExempt({
+    required this.organisation,
+    required this.certificate,
+    this.approvedBy = '',
+    this.by = '',
+    this.tax = '0.00',
+  });
+
+  /// The longest name and certificate number the hub takes.
+  static const organisationMax = 60;
+  static const certificateMax = 40;
+
+  /// What the hub says of a check's exemption, or null for a check that pays its tax.
+  static TaxExempt? of(Object? json) {
+    if (json is! Map) return null;
+    final organisation = json['organisation']?.toString() ?? '';
+    if (organisation.isEmpty) return null;
+    return TaxExempt(
+      organisation: organisation,
+      certificate: json['certificate']?.toString() ?? '',
+      approvedBy: json['approved_by']?.toString() ?? '',
+      by: json['by']?.toString() ?? '',
+      tax: json['tax']?.toString() ?? '0.00',
+    );
+  }
+
+  final String organisation;
+  final String certificate;
+  final String approvedBy;
+  final String by;
+
+  /// The tax the check would have paid.
+  final String tax;
+}
+
 /// What the table owes, as the backend adds it up. `taxLines` split the tax by jurisdiction for the back
 /// office; screens and receipts show the single `tax` line.
 class Check {
@@ -1014,6 +1052,8 @@ class Check {
     this.parts = const [],
     this.splits = false,
     this.moves = false,
+    this.exempt,
+    this.exempts = false,
   });
 
   factory Check.fromJson(Map<String, dynamic> json) => Check(
@@ -1043,6 +1083,8 @@ class Check {
     ],
     splits: json.containsKey('checks'),
     moves: json['moves'] == true,
+    exempt: TaxExempt.of(json['tax_exempt']),
+    exempts: json['exempts'] == true,
   );
 
   final List<CheckLine> lines;
@@ -1075,6 +1117,12 @@ class Check {
   /// Whether the hub can pass a dish from this check to another: one older than moving cannot, and the
   /// screen then offers no Move.
   final bool moves;
+
+  /// Set on a check a manager marked exempt from sales tax: [tax] is then nothing, and this says for whom.
+  final TaxExempt? exempt;
+
+  /// Whether the hub can mark a check tax exempt: one older than that cannot, and the screen does not offer it.
+  final bool exempts;
 
   CheckPart? part(int number) {
     for (final p in parts) {
