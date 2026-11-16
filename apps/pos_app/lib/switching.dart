@@ -7,6 +7,10 @@ import 'session.dart';
 /// check), closes whatever sits above it (a sheet, a dialog, a manager's screen) and says hello; with no
 /// order open it goes back to the orders screen. A sign-out, or a sign-in from nobody, closes everything
 /// above the first screen, so nobody lands in the last person's order or settings.
+///
+/// A screen that locks itself for standing idle ([Session.lock]) closes nothing: the sign-in pad lies over
+/// what was open. The person who was there finds it all as they left it; anybody else signing in, by PIN
+/// as well, takes the screen over as in a hands-free switch.
 class SessionWatcher {
   SessionWatcher(this.session, {required this.navigator, required this.messenger}) {
     _staffId = session.staff?.staffId;
@@ -20,14 +24,29 @@ class SessionWatcher {
   final GlobalKey<NavigatorState> navigator;
   final GlobalKey<ScaffoldMessengerState> messenger;
   String? _staffId;
+  String? _lockedId; // who was signed in when the screen locked, while it is locked
 
   void _changed() {
     final staff = session.staff;
     final id = staff?.staffId;
-    if (id == _staffId) return;
-    final before = _staffId;
+    if (session.locked) {
+      // locked for standing idle: everything stays where it is, under the sign-in pad
+      _lockedId ??= session.lockedFrom?.staffId;
+      _staffId = null;
+      return;
+    }
+    final unlocked = _lockedId;
+    _lockedId = null;
+    if (unlocked != null && id == unlocked) {
+      _staffId = id; // back at their own screen: as they left it
+      return;
+    }
+    if (id == _staffId && unlocked == null) return;
+    final before = unlocked ?? _staffId;
     _staffId = id;
-    final hello = before != null && staff != null && (staff.method == 'face' || staff.method == 'tag')
+    // a switch from one person to another: by face or tag while signed in, or by any sign-in at a locked screen
+    final hello =
+        before != null && staff != null && (unlocked != null || staff.method == 'face' || staff.method == 'tag')
         ? staff.name
         : null;
     navigator.currentState?.popUntil((route) => route.isFirst || (hello != null && route.settings.name == orderRoute));

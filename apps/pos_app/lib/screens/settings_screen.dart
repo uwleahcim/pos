@@ -53,6 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _device = TextEditingController(text: widget.settings.device);
   late final TextEditingController _endpoints = TextEditingController(text: widget.settings.endpoints.join('\n'));
   late bool _relay = widget.settings.printRelay;
+  late int _lockMinutes = widget.settings.lockMinutes;
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -109,6 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     await widget.settings.save(device: _device.text, endpoints: _endpoints.text.split('\n'), printRelay: _relay);
+    await widget.settings.saveLockMinutes(_lockMinutes);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -247,6 +249,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ],
                           ),
                         ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // The idle lock: the minutes this screen may go untouched, as buttons; kept with Save.
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.lock_clock_outlined, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text('Lock this screen when idle', style: theme.textTheme.titleMedium)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _lockMinutes == 0
+                            ? 'This screen never locks itself. Pick the minutes it may go untouched before it '
+                                  'asks who is there.'
+                            : 'After ${_lockMinutes == 1 ? '1 minute' : '$_lockMinutes minutes'} without a touch '
+                                  'this screen asks who is there (PIN, face or tag). Nothing is closed: an open '
+                                  'order is still there after signing in.',
+                        key: const ValueKey('lock-line'),
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final minutes in {0, ...Settings.lockChoices, _lockMinutes}.toList()..sort())
+                            ChoiceChip(
+                              key: ValueKey('lock:$minutes'),
+                              label: Text(minutes == 0 ? 'Never' : '$minutes min'),
+                              selected: _lockMinutes == minutes,
+                              onSelected: (_) => setState(() => _lockMinutes = minutes),
+                            ),
+                        ],
+                      ),
                     ],
                   ),
                 ),

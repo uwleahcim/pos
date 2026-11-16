@@ -13,9 +13,11 @@ class Settings extends ChangeNotifier {
     required List<String> endpoints,
     this.printRelay = false,
     this.billPrinter = '',
+    int lockMinutes = 0,
     this._phone = const PhoneSettings(),
     this._prefs,
-  }) : _endpoints = List.of(endpoints);
+  }) : _endpoints = List.of(endpoints),
+       lockMinutes = cleanLockMinutes(lockMinutes);
 
   static Future<Settings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -34,6 +36,7 @@ class Settings extends ChangeNotifier {
       endpoints: endpoints,
       printRelay: relay,
       billPrinter: prefs.getString('bill_printer') ?? '',
+      lockMinutes: prefs.getInt('lock_minutes') ?? 0,
       phone: phone,
       prefs: prefs,
     );
@@ -51,6 +54,16 @@ class Settings extends ChangeNotifier {
   /// The printer this screen's bills come out of, by its id on the hub: the one beside it (the bar's own, the
   /// host stand's). Empty for wherever the location's bills print.
   String billPrinter;
+
+  /// The minutes this screen may go untouched before it locks itself and asks who is there (a PIN, a face,
+  /// a tag); 0 for never, which is how a device starts. What was open stays as it was, under the lock.
+  int lockMinutes;
+
+  /// The minutes offered, from the shortest; a screen can also never lock (0).
+  static const lockChoices = [1, 2, 3, 5, 10, 15, 30];
+
+  /// A number of minutes as the device keeps it: none below zero, none past a working day.
+  static int cleanLockMinutes(int minutes) => minutes.clamp(0, 720);
 
   PhoneSettings _phone;
 
@@ -78,6 +91,16 @@ class Settings extends ChangeNotifier {
       await _prefs?.remove('bill_printer');
     } else {
       await _prefs?.setString('bill_printer', billPrinter);
+    }
+    notifyListeners();
+  }
+
+  Future<void> saveLockMinutes(int minutes) async {
+    lockMinutes = cleanLockMinutes(minutes);
+    if (lockMinutes == 0) {
+      await _prefs?.remove('lock_minutes');
+    } else {
+      await _prefs?.setInt('lock_minutes', lockMinutes);
     }
     notifyListeners();
   }

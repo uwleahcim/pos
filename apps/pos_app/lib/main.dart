@@ -13,6 +13,7 @@ import 'camera.dart';
 import 'desk_phone_watcher.dart';
 import 'face_signin.dart';
 import 'frames.dart';
+import 'idle_lock.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
@@ -20,6 +21,7 @@ import 'print_relay.dart';
 import 'push.dart';
 import 'queue_store.dart';
 import 'ringer.dart';
+import 'screens/lock_layer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
 import 'screens/reader_keys.dart';
@@ -69,6 +71,8 @@ Future<void> main() async {
   final faces = FaceSignIn(api, settings, camera, session);
   if (camera is! NoCamera) faces.start();
   final tags = WedgeTagReader(onTag: faces.tag)..install();
+  // A screen nobody touches for the minutes this device was given locks itself (docs/idle-lock.md).
+  final idleLock = IdleLock(settings, session)..start();
   // The device's own part in calls (docs/push-relay.md): the system's call screen on iOS, the service that
   // keeps the app alive with the screen off on Android, the sleep hold on a Mac.
   final screen = NativeCallScreen.forPlatform();
@@ -109,6 +113,7 @@ Future<void> main() async {
     onResume: () {
       phone.resumed();
       deskPhones.wakeUp();
+      idleLock.check(); // a device that slept through its minutes comes back locked
     },
     // Back from the background (not a Mac window regaining focus): the connection the feed slept on is not
     // trusted, it is opened afresh.
@@ -129,6 +134,7 @@ Future<void> main() async {
       callScreen: screen,
       faces: faces,
       tags: tags,
+      idleLock: idleLock,
     ),
   );
 }
@@ -180,6 +186,7 @@ class PosApp extends StatefulWidget {
     this.callScreen,
     this.faces,
     this.tags,
+    this.idleLock,
   });
 
   final Settings settings;
@@ -199,6 +206,9 @@ class PosApp extends StatefulWidget {
 
   /// The terminal's tag reader, for enrolling tags in Location settings.
   final TagReader? tags;
+
+  /// Locks the screen when nobody has touched it for the device's minutes; it is told of every touch.
+  final IdleLock? idleLock;
 
   @override
   State<PosApp> createState() => _PosAppState();
@@ -256,14 +266,30 @@ class _PosAppState extends State<PosApp> {
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            child: TapTakesFocus(
-              child: ReaderKeysPressNothing(
-                typed: tags is WedgeTagReader ? tags.typed : null,
-                child: ArrowsLeaveTextBoxes(
-                  child: PhoneBar(
-                    client: phone,
-                    onOrder: canOrder ? _orderForCaller : null,
-                    child: child ?? const SizedBox.shrink(),
+            // Every touch tells the idle lock somebody is here. While the screen is locked the sign-in pad
+            // lies over the screens, which stay as they were; the call banner stays above the pad, as it
+            // is above the sign-in screen.
+            child: Touches(
+              lock: widget.idleLock,
+              child: TapTakesFocus(
+                child: ReaderKeysPressNothing(
+                  typed: tags is WedgeTagReader ? tags.typed : null,
+                  child: ArrowsLeaveTextBoxes(
+                    child: PhoneBar(
+                      client: phone,
+                      onOrder: canOrder ? _orderForCaller : null,
+                      child: LockLayer(
+                        session: session,
+                        pad: (context) => SignInScreen(
+                          session: session,
+                          settings: settings,
+                          camera: camera,
+                          faces: widget.faces,
+                          lockedNote: lockedNote(settings.lockMinutes, session.lockedFrom?.name ?? ''),
+                        ),
+                        child: child ?? const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -279,7 +305,8 @@ class _PosAppState extends State<PosApp> {
                   firstRun: true,
                   phone: phone,
                 );
-              } else if (!session.signedIn) {
+              } else if (!session.signedIn && !session.locked) {
+                // (a screen locked for standing idle keeps what was open, under the pad the lock lays over it)
                 screen = SignInScreen(
                   key: const ValueKey('sign-in'),
                   session: session,
