@@ -69,6 +69,9 @@ Orders screen › **Location** › **Voids and comps report**, for today, the la
   who took it off and how long it had been on the check. The list starts with the dish that was on its check
   the longest, because a dish taken off an hour after it was rung in is worth a question and one taken off
   ten seconds later is a slip of the finger.
+- **Typed prices**: off-menu dishes and market prices, whose price was typed by whoever rang them in.
+  What they came to and how many, added up by who rang them in, then every one (see `off-menu-dish.md`).
+  They are sales, not something taken off: the list is there because the menu could not check the price.
 - **Comps and discounts**: the same three totals for what is on the checks (see `discounts.md`).
 
 What counts as taken off: the whole line removed, and fewer of an unsent dish (three teas made one counts

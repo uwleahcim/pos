@@ -80,9 +80,11 @@ What the original POS also had but the menu did not take, and why:
   would be a second size, not a price change (open);
 - duplicates of dishes the export has: K51 to K55 (the J51 to J55 rolls), Y01 Moo Shu Pancake (the export's
   pancake group), Y03 Sweet & Sour Sauce (831), W02, W03, W06, W09 and W019 (R04, R03, R02, R07, R01);
-- the $25 to $100 gift certificates the export has, and the open-price rows (Open Food, Open Soup, Open
-  Sushi, Open Drink, Gift Cert $XX): an open price needs a price typed at the order, which the engine does
-  not take yet (open).
+- the $25 to $100 gift certificates the export has, and Gift Cert $XX, a certificate of any amount (open).
+
+The open rows are on the menu since 16 November 2026: FF Open Food (Extras, Wok 1), 89 Open Soup (Soup),
+SS Open Sushi (Sushi) and DD Open Drink (Mixed Drinks, `alcohol`). Each is an off-menu dish: whoever rings
+it types what it is and its price (`"asks": "name"` on its row; see `off-menu-dish.md`).
 
 ## Prices
 

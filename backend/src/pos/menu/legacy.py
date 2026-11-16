@@ -197,6 +197,9 @@ def import_legacy(defs: Definitions, data: Mapping[str, Any]) -> LegacyReport:
         if label:
             names["kitchen"] = label
         first = defs.categories[cat_code].sort * 1000 + AFTER_THE_EXPORT + item_sort
+        asks = spec.get("asks")
+        if asks not in (None, "price", "name"):
+            raise ValueError(f"original POS: dish {code!r} asks {asks!r}; it can ask its price or its name")
         defs.add(
             Item(
                 code,
@@ -206,7 +209,9 @@ def import_legacy(defs: Definitions, data: Mapping[str, Any]) -> LegacyReport:
                 description={"en": spec["description"]} if spec.get("description") else {},
                 tax_class=spec.get("tax_class"),
                 station=station,
-                attrs={"legacy_pos": True},
+                # typed when the dish is rung: its price (a market price), or what it is and its price (an
+                # off-menu dish, the original POS's OPEN FOOD)
+                attrs={"legacy_pos": True, **({f"asks_{asks}": True} if asks else {})},
                 sort=AFTER_THE_EXPORT + item_sort,
             ),
             Variant(f"{code}:regular", code, "regular", {"en": "Regular"}, money(spec["price"])),

@@ -94,7 +94,7 @@ A test keeps it so: everything on the Drinks menu resolves to `bar` or `soda`, n
   joins the export's category on every menu that category is on.
 - `gloriafood.py` builds one section per (menu, category) and one entry per (menu, dish); `bar.py` adds
   the shelves to the Drinks menu; `legacy.py` adds what the restaurant's original POS knew and the export
-  did not (`legacy_pos.json`: Chinese names and kitchen labels, stations, 89 dishes, the dining room's
+  did not (`legacy_pos.json`: Chinese names and kitchen labels, stations, 89 dishes and the four open ones, the dining room's
   prices, the original POS's modifier groups, `docs/original-pos.md`). A dish added to an export category
   goes on every menu that category is on, so a fountain soda is on Food and Drinks like the export's cans.
 - A hub seeds its database from these files once. From then on the database is the menu and the editor

@@ -154,6 +154,59 @@ class TakenOffRow {
   }
 }
 
+/// A dish sold at a price somebody typed when it was rung: a market price, or an off-menu dish whose name
+/// was typed too. What it was called, how many, at how much each, who rang it in, on which check and when.
+class TypedRow {
+  const TypedRow({
+    required this.item,
+    required this.qty,
+    required this.unitPrice,
+    required this.amount,
+    required this.atMs,
+    this.menuName = '',
+    this.named = false,
+    this.voided = false,
+    this.table,
+    this.orderNo,
+    this.by = '',
+  });
+  factory TypedRow.fromJson(Map<String, dynamic> json) => TypedRow(
+    item: json['item'] as String? ?? '',
+    menuName: json['menu_name'] as String? ?? '',
+    named: json['named'] as bool? ?? false,
+    qty: json['qty'] as int? ?? 1,
+    unitPrice: json['unit_price']?.toString() ?? '0.00',
+    amount: json['amount']?.toString() ?? '0.00',
+    voided: json['voided'] as bool? ?? false,
+    atMs: json['at_ms'] as int? ?? 0,
+    table: json['table']?.toString(),
+    orderNo: json['order_no'] as int?,
+    by: json['by'] as String? ?? '',
+  );
+
+  /// What the check calls it: what was typed for an off-menu dish, the dish's own name for a market price.
+  final String item;
+
+  /// What the menu calls the dish it was rung as ("Open Food"); the same as [item] unless [named].
+  final String menuName;
+
+  /// Its name was typed too: an off-menu dish.
+  final bool named;
+  final int qty;
+  final String unitPrice;
+
+  /// What it came to; nothing once it was voided, which the voids above value.
+  final String amount;
+  final bool voided;
+  final int atMs;
+  final String? table;
+  final int? orderNo;
+  final String by;
+
+  /// Where it is: the table, or the takeout order's number.
+  String get where => checkName(table, orderNo);
+}
+
 /// A check as a report names it: its table, or its takeout number; nothing when it has neither.
 String checkName(String? table, int? orderNo) => table != null && table.isNotEmpty
     ? 'Table $table'
@@ -211,6 +264,10 @@ class AdjustmentsReport {
     this.takenOffByStaff = const [],
     this.takenOffByCheck = const [],
     this.hasTakenOff = true,
+    this.typed = const [],
+    this.typedTotal = '0.00',
+    this.typedByStaff = const [],
+    this.hasTyped = false,
   });
   factory AdjustmentsReport.fromJson(Map<String, dynamic> json) {
     List<ReportTotal> totals(String name) => [
@@ -248,6 +305,10 @@ class AdjustmentsReport {
           ),
       ],
       hasTakenOff: json.containsKey('taken_off'),
+      typed: [for (final t in json['typed'] as List? ?? const []) TypedRow.fromJson(t as Map<String, dynamic>)],
+      typedTotal: json['typed_total']?.toString() ?? '0.00',
+      typedByStaff: totals('typed_by_staff'),
+      hasTyped: json.containsKey('typed'),
     );
   }
 
@@ -274,6 +335,18 @@ class AdjustmentsReport {
 
   /// False from a hub older than that list.
   final bool hasTakenOff;
+
+  /// The dishes sold at a typed price (market prices and off-menu dishes), oldest first, what they came to,
+  /// and the same added up by who rang them in. One voided since is listed and counts for nothing.
+  final List<TypedRow> typed;
+  final String typedTotal;
+  final List<ReportTotal> typedByStaff;
+
+  /// False from a hub older than typed prices: it has no such dish, and the report says nothing of them.
+  final bool hasTyped;
+
+  /// How many dishes stand on checks at a typed price: a row of two is two, a voided row none.
+  int get typedDishes => typed.fold(0, (sum, row) => sum + (row.voided ? 0 : row.qty));
 
   /// How many dishes came off before they were sent: a row of two teas is two.
   int get takenOffDishes => takenOff.fold(0, (sum, row) => sum + row.qty);

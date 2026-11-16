@@ -623,6 +623,34 @@ class ItemEditor extends StatelessWidget {
           ),
         ),
         _heading(context, 'Sizes and prices'),
+        SwitchListTile(
+          key: ValueKey('$itemKey/asks-price'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Its price is typed when it is rung'),
+          subtitle: const Text(
+            'For a market price. The order screen asks for the price each time, and the prices below are not used.',
+          ),
+          value: asksPrice(item),
+          onChanged: (v) {
+            setAsks(item, price: v, name: v && asksName(item));
+            onChanged();
+          },
+        ),
+        SwitchListTile(
+          key: ValueKey('$itemKey/asks-name'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Its name is typed too'),
+          subtitle: const Text(
+            'An off-menu dish, like Open Food. Whoever rings it types what it is and its price: '
+            'that is what the check, the bill and the kitchen ticket say.',
+          ),
+          value: asksName(item),
+          onChanged: (v) {
+            setAsks(item, price: v || asksPrice(item), name: v);
+            onChanged();
+          },
+        ),
+        const SizedBox(height: 10),
         for (final v in sizes)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -1532,6 +1560,24 @@ Widget _names(Map<String, dynamic> row, VoidCallback onChanged, {bool kitchen = 
       ],
     ),
   );
+}
+
+/// Whether a dish's price is typed when it is rung (`attrs.asks_price`; a dish that asks its name asks its
+/// price as well), and whether its name is typed too (`attrs.asks_name`: an off-menu dish).
+bool asksPrice(Map<String, dynamic> item) => _attrs(item)['asks_price'] == true || asksName(item);
+bool asksName(Map<String, dynamic> item) => _attrs(item)['asks_name'] == true;
+
+Map<String, dynamic> _attrs(Map<String, dynamic> item) => (item['attrs'] as Map?)?.cast<String, dynamic>() ?? const {};
+
+/// Sets what a dish asks to be typed, leaving the rest of its `attrs` as they are. A dish that asks nothing
+/// carries neither key, as before there was anything to ask.
+void setAsks(Map<String, dynamic> item, {required bool price, required bool name}) {
+  item['attrs'] = <String, dynamic>{
+    for (final e in _attrs(item).entries)
+      if (e.key != 'asks_price' && e.key != 'asks_name') e.key: e.value,
+    if (price || name) 'asks_price': true,
+    if (name) 'asks_name': true,
+  };
 }
 
 Widget _heading(BuildContext context, String text) {
