@@ -153,6 +153,7 @@ class Sale:
     discounts: tuple[tuple[str, Decimal], ...] = ()  # by the name the location gives each
     guests: int = 0
     kind: str = ""
+    exempt: Decimal | None = None  # a check marked tax exempt: the tax that was not charged
     stood_ms: int | None = None  # a table's check, closed: from opened to closed
     lines: tuple[Sold, ...] = ()
     """The dishes sold, added up by dish, menu entry, hour of the day and the way each was sold."""
@@ -227,6 +228,7 @@ def sale_of(
         discounts=tuple((intern(str(row["name"])), Decimal(row["amount"])) for row in check["discounts"]),
         guests=_guests(state),
         kind=intern(str(kind)),
+        exempt=Decimal(check["tax_exempt"]["tax"]) if check.get("tax_exempt") else None,
         stood_ms=stood,
         lines=tuple(Sold(*key[:3], amount, qty, *key[3:]) for key, (amount, qty) in lines.items()),
     )
@@ -338,6 +340,7 @@ class _Span:
         self.kinds, self.discounts, self.taken = _Tally(), _Tally(), _Tally()
         self.taken_total = ZERO
         self.turns: list[int] = []
+        self.exempt = {"count": 0, "sales": ZERO, "tax": ZERO}  # the checks marked tax exempt
 
     def paid(self, sale: Sale) -> None:
         """The money taken on this order during the span, whatever day the order counts on."""
@@ -359,6 +362,10 @@ class _Span:
         sums["total"] += sale.total
         sums["charges"] += sale.charges
         sums["gratuity"] += sale.gratuity
+        if sale.exempt is not None:
+            self.exempt["count"] += 1
+            self.exempt["sales"] += sale.total
+            self.exempt["tax"] += sale.exempt
         for name, amount in sale.discounts:
             self.discounts.add(name, amount, name=name)
         day = self.days[sale.day]
@@ -412,6 +419,12 @@ class _Span:
                 "gratuity": str(sums["gratuity"]),
                 "tax": str(sums["tax"]),
                 "total": str(sums["total"]),
+            },
+            # checks charged no tax: their sales are in the figures above, `sales.tax` is the tax charged
+            "tax_exempt": {
+                "count": self.exempt["count"],
+                "sales": str(self.exempt["sales"]),
+                "tax": str(self.exempt["tax"]),
             },
             "per_check": _each(net, self.checks),
             "per_guest": _each(self.guest_net, self.guests),

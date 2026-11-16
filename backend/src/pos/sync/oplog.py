@@ -58,7 +58,8 @@ KINDS = frozenset(
 """Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
 (ADR 6, capture-only mode). The replay ignores it; the printer heads the ticket "late" and reports list it.
 A `discount`, `charge`, `remove_charge` or `void_line` may carry `approval`, a manager's token; the hub swaps
-it for `approved_by` (who) before storing (pos.orders.adjustments, pos.orders.voids)."""
+it for `approved_by` (who) before storing (pos.orders.adjustments, pos.orders.voids). So may a `set_field`
+that marks the check tax exempt (pos.orders.exempt)."""
 ORDER_FIELDS = frozenset(
     {
         "table",
@@ -88,6 +89,9 @@ ORDER_FIELDS = frozenset(
         # A bar tab (true): a check opened with a name (`customer_name`) and no table. It is a tab until it is
         # given a table, when it becomes that table's check; the word stays, to say how the check began.
         "tab",
+        # A check a manager marked exempt from sales tax (pos.orders.exempt): the organisation, the number of
+        # its certificate, who marked it and the manager who approved. Only the hub writes it, after the PIN.
+        "tax_exempt",
     }
 )
 ALLERGY_NOTE_MAX = 80

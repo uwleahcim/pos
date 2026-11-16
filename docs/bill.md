@@ -12,7 +12,9 @@ The bill reads, from the top:
   order is headed with its number and the customer's name ("Order #42  Linda") and how it came in.
 - **Each dish** with its quantity and what it comes to. Its choices stand under it, each with what it adds
   ("Brown rice +1.00"); a comp or a discount on the dish is said under it too ("Manager comp -48.00").
-- **Subtotal**, then every discount and charge by name, then **sales tax as one line** ("Sales tax 7%").
+- **Subtotal**, then every discount and charge by name, then **sales tax as one line** ("Sales tax 7%"). A
+  check a manager marked tax exempt says "Tax exempt" there, with the organisation and its certificate
+  number under it (`tax-exempt.md`).
 - **TOTAL**, twice the size of the rest.
 - **What was paid** ("Paid cash -20.00", with what was handed over and the change when that was typed)
   and **DUE**, or **PAID IN FULL**. A check nobody has paid on says nothing about paying.

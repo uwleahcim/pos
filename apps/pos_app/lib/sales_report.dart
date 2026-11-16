@@ -1,4 +1,4 @@
-import 'day_report.dart' show DayRow, dayName, serviceDay;
+import 'day_report.dart' show DayRow, TaxExempts, dayName, serviceDay;
 
 /// Sales over a span of days as the hub reckons them (`GET /reports/sales`, docs/sales-report.md): the days
 /// asked for, and the same figures for as many days whole weeks earlier to hold beside them. The hub does
@@ -77,6 +77,7 @@ class SalesSpan {
     this.gratuity = '0.00',
     this.tax = '0.00',
     this.total = '0.00',
+    this.exempt = const TaxExempts(),
     this.perCheck,
     this.perGuest,
     this.turnTables = 0,
@@ -110,6 +111,7 @@ class SalesSpan {
       gratuity: of(sales, 'gratuity'),
       tax: of(sales, 'tax'),
       total: of(sales, 'total'),
+      exempt: TaxExempts.fromJson(json['tax_exempt']),
       perCheck: _maybe(json['per_check']),
       perGuest: _maybe(json['per_guest']),
       turnTables: _i(turn['tables']),
@@ -145,6 +147,9 @@ class SalesSpan {
 
   /// What the span's checks come to: net + charges + gratuity + tax.
   final String total;
+
+  /// The checks a manager marked tax exempt: in every figure above, with [tax] the tax that was charged.
+  final TaxExempts exempt;
 
   /// Net sales over the checks; null for a span with no check.
   final String? perCheck;

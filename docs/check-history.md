@@ -39,7 +39,8 @@ Each step is one row:
 - the small **picture** taken at that moment, where there is one. A tap shows it large.
 
 What takes something off a check is written in red: a void, a dish taken off before it was sent, a comp or
-a discount, a check voided whole.
+a discount, a check voided whole, and a check marked tax exempt ("Marked tax exempt", with the organisation
+and its certificate number; `tax-exempt.md`).
 
 A dish that **went to another check** or **came from one** says which, and a tap on that row opens the other
 check's history. The same for two tables made one. A dish that came over also says who rang it in on the

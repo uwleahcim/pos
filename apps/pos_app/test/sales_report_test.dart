@@ -413,6 +413,24 @@ void main() {
       expect(row(tester, 'sales-total'), ['Total', r'$15,098.27']);
     });
 
+    testWidgets('checks a manager marked tax exempt are said under the sales tax, and only when there were any', (
+      tester,
+    ) async {
+      await pumpSales(tester);
+      expect(find.textContaining('tax-exempt'), findsNothing);
+
+      final exempt = week();
+      (exempt['span'] as Map<String, dynamic>)['tax_exempt'] = {'count': 3, 'sales': '412.60', 'tax': '28.88'};
+      await pumpSales(tester, sales: {theWeek: exempt, '': today()});
+      expect(row(tester, 'sales-tax'), ['Sales tax', r'$973.02', r'Not charged on 3 tax-exempt checks: $28.88']);
+      expect(row(tester, 'sales-total'), ['Total', r'$15,098.27']); // their sales are in every figure
+
+      // on a small phone the line runs under the figure too, and nothing is cut
+      await pumpSales(tester, sales: {theWeek: exempt, '': today()}, size: const Size(320, 3600));
+      expect(tester.takeException(), isNull);
+      expect(find.text(r'Not charged on 3 tax-exempt checks: $28.88'), findsOneWidget);
+    });
+
     testWidgets('each day beside the same day a week before', (tester) async {
       await pumpSales(tester);
       expect(row(tester, 'sales-by-day'), ['By day', r'$13,900.25']);

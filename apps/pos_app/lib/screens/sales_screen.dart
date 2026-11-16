@@ -252,7 +252,13 @@ class _SalesScreenState extends State<SalesScreen> {
       ReportLine('Net sales', dollars(span.net)),
       if (isMoney(span.charges)) ReportLine('Charges', dollars(span.charges)),
       if (isMoney(span.gratuity)) ReportLine('Gratuity', dollars(span.gratuity), under: 'Paid over to staff'),
-      ReportLine('Sales tax', dollars(span.tax), key: const ValueKey('sales-tax')),
+      ReportLine(
+        'Sales tax',
+        dollars(span.tax),
+        under: span.exempt.count > 0 ? span.exempt.words : '',
+        underWide: true,
+        key: const ValueKey('sales-tax'),
+      ),
       ReportLine('Total', dollars(span.total), strong: true, key: const ValueKey('sales-total')),
       if (span.days.length > 1) ...[
         const Divider(height: 28),

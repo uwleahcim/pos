@@ -411,6 +411,67 @@ void main() {
       expect(find.byType(AdjustmentsScreen), findsOneWidget);
     });
 
+    testWidgets('checks marked tax exempt: the tax not charged, and each one with for whom and who approved', (
+      tester,
+    ) async {
+      await pumpDay(tester);
+      expect(find.byKey(const ValueKey('day-exempt')), findsNothing); // no such check, no such section
+      expect(row(tester, 'day-tax'), ['Sales tax', r'$3.96']);
+
+      final report = evening();
+      report['tax_exempt'] = {
+        'count': 2,
+        'sales': '115.95',
+        'tax': '8.12',
+        'checks': [
+          {
+            ...openCheck('o1', table: '12', status: 'closed'),
+            'total': '15.95',
+            'organisation': 'Winchester PTA',
+            'certificate': 'E-123-456-789',
+            'approved_by': 'Mike',
+            'by': 'Amy',
+            'tax': '1.12',
+          },
+          {
+            ...openCheck('o2', orderNo: 7, name: 'Lee', type: 'takeout'),
+            'total': '100.00',
+            'organisation': 'The Winchester Association of Parents, Teachers and Friends of Music',
+            'certificate': 'E-9',
+            'approved_by': 'Mike',
+            'by': 'Ben',
+            'tax': '7.00',
+          },
+        ],
+      };
+      await pumpDay(tester, days: {'': report});
+      // the tax line is the tax that was charged; what was not is said under it
+      expect(row(tester, 'day-tax'), ['Sales tax', r'Not charged on 2 tax-exempt checks: $8.12', r'$3.96']);
+      expect(row(tester, 'day-total'), ['Total', r'$60.56']); // their sales are in every figure above
+      expect(row(tester, 'day-exempt'), ['Tax exempt', r'$115.95']);
+      expect(row(tester, 'day-exempt-tax'), ['Tax not charged', r'$8.12']);
+      expect(row(tester, 'day-exempt:o1'), [
+        'Winchester PTA',
+        'Table 12 · Certificate E-123-456-789 · approved by Mike',
+        r'$15.95',
+      ]);
+      expect(row(tester, 'day-exempt:o2'), [
+        'The Winchester Association of Parents, Teachers and Friends of Music',
+        '#7 · Lee · Certificate E-9 · approved by Mike',
+        r'$100.00',
+      ]);
+
+      // a small phone: the long name takes a second line, nothing runs off the edge
+      await pumpDay(tester, days: {'': report}, size: const Size(320, 568));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('day-exempt:o2')),
+        200,
+        scrollable: find.descendant(of: find.byKey(const ValueKey('day-list')), matching: find.byType(Scrollable)),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('everything closed and paid: the screen says so', (tester) async {
       await pumpDay(tester, days: {'': closedUp()});
       expect(find.byKey(const ValueKey('day-all-closed')), findsOneWidget);

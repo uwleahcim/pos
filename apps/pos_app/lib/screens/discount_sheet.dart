@@ -9,13 +9,26 @@ import '../pricing.dart';
 /// 9): pick the reason, how much (a percentage, an amount or a comp) and what it is on. The hub's rules say
 /// what each reason allows and whether a manager must put in a PIN first; the sheet shows those limits and
 /// hands back an [Adjustment] for the screen to send, after the PIN when one is needed. Service charges
-/// staff may put on themselves are offered at the bottom.
+/// staff may put on themselves are offered at the bottom, and under them marking the whole check exempt
+/// from sales tax ([taxExempt]; the screen asks for whom, then for the manager's PIN).
 class DiscountSheet extends StatefulWidget {
-  const DiscountSheet({super.key, required this.rules, required this.lines, this.existing = const []});
+  const DiscountSheet({
+    super.key,
+    required this.rules,
+    required this.lines,
+    this.existing = const [],
+    this.taxExempt = false,
+  });
+
+  /// What "Tax exempt" hands back: the screen asks who the check is for and for the manager's PIN.
+  static const exemptOp = 'tax_exempt';
 
   final PricingRules rules;
   final List<CheckLine> lines;
   final List<CheckDiscount> existing;
+
+  /// Whether to offer "Tax exempt": the hub knows of it and the check pays its tax now.
+  final bool taxExempt;
 
   @override
   State<DiscountSheet> createState() => _DiscountSheetState();
@@ -235,23 +248,57 @@ class _DiscountSheetState extends State<DiscountSheet> {
                   ],
                 ),
               ],
+              if (widget.taxExempt) ...[
+                const SizedBox(height: 18),
+                Text('Sales tax', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 6),
+                ActionChip(
+                  key: const ValueKey('tax-exempt'),
+                  avatar: const Icon(Icons.lock_outline, size: 16),
+                  label: const Text('Tax exempt'),
+                  onPressed: () => Navigator.of(context).pop(
+                    const Adjustment(op: DiscountSheet.exemptOp, data: {}, needsManager: true, label: 'Tax exempt'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  if (rule != null && problem != null)
-                    Expanded(
-                      child: Text(problem, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-                    )
-                  else
-                    const Spacer(),
-                  TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-                  const SizedBox(width: 8),
-                  FilledButton(
+              LayoutBuilder(
+                builder: (context, box) {
+                  final why = rule != null && problem != null
+                      ? Text(problem, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant))
+                      : null;
+                  final cancel = TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'));
+                  final apply = FilledButton(
                     key: const ValueKey('discount-apply'),
                     onPressed: problem == null ? _apply : null,
                     child: Text(rule?.needsManager ?? false ? 'Manager PIN' : 'Apply'),
-                  ),
-                ],
+                  );
+                  // a small phone has no room for the reason beside the buttons, nor always for both buttons
+                  if (box.maxWidth < 280) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ?why,
+                        if (why != null) const SizedBox(height: 8),
+                        OverflowBar(
+                          alignment: MainAxisAlignment.end,
+                          overflowAlignment: OverflowBarAlignment.end,
+                          spacing: 8,
+                          overflowSpacing: 4,
+                          children: [cancel, apply],
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      if (why != null) Expanded(child: why) else const Spacer(),
+                      cancel,
+                      const SizedBox(width: 8),
+                      apply,
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -278,8 +325,8 @@ class ApprovalDialog extends StatefulWidget {
   final String orderId;
   final String what;
 
-  /// What the PIN is for on this order: a discount or a charge (`adjust`), or a void of a sent dish (`void`).
-  /// The hub takes an approval for the one thing only.
+  /// What the PIN is for on this order: a discount or a charge (`adjust`), a void of a sent dish (`void`), or
+  /// marking the check tax exempt (`exempt`). The hub takes an approval for the one thing only.
   final String purpose;
 
   @override

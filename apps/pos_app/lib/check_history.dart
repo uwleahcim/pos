@@ -68,8 +68,8 @@ class HistoryStep {
   /// The other check of a dish moved or of two tables made one: its history is a tap away.
   String? get other => said['other'] as String?;
 
-  /// Whether it took something off the check: a void, a dish taken off, a comp or a discount.
-  bool get cameOff => const {'voided', 'taken_off', 'voided_check', 'discount'}.contains(what);
+  /// Whether it took something off the check: a void, a dish taken off, a comp, a discount, or its tax.
+  bool get cameOff => const {'voided', 'taken_off', 'voided_check', 'discount', 'tax_exempt'}.contains(what);
 }
 
 /// The check a history is of.
@@ -436,6 +436,21 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
           if (allergens.isNotEmpty) allergens.join(', '),
           if (_text(said['note']).isNotEmpty) _text(said['note']),
         ],
+      );
+    case 'tax_exempt':
+      final certificate = _text(said['certificate']);
+      return (
+        title: 'Marked tax exempt',
+        under: [
+          if (_text(said['organisation']).isNotEmpty) _text(said['organisation']),
+          if (certificate.isNotEmpty) 'Certificate $certificate',
+        ],
+      );
+    case 'tax_exempt_removed':
+      final organisation = _text(said['organisation']);
+      return (
+        title: 'Put the sales tax back on',
+        under: [if (organisation.isNotEmpty) 'It was tax exempt for $organisation'],
       );
     default:
       return (title: step.what, under: const []);

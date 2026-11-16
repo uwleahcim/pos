@@ -5,7 +5,9 @@ is always reflected. Lines carry the price they were sold at (`priced`, set by t
 added); a line without one (the phase 0 demo screen) counts as zero and is flagged.
 
 Order of operations (architecture section 9): line discounts, then check discounts spread over the lines
-in proportion, then charges on the discounted subtotal, then tax on whatever each class taxes.
+in proportion, then charges on the discounted subtotal, then tax on whatever each class taxes. A check a
+manager marked tax exempt (pos.orders.exempt) is charged no tax: `tax_exempt` says for whom, and how much
+tax that was.
 
 A table that pays on several checks is still one order and one check here: `checks` then says what each
 of them comes to (pos.orders.split), and they add up to this check to the cent.
@@ -13,6 +15,7 @@ of them comes to (pos.orders.split), and they add up to this check to the cent.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -20,6 +23,7 @@ from typing import Any
 from ..sync.oplog import Discount, OrderState
 from ..tax import TaxableLine, TaxProfile
 from .adjustments import ChargeRule, PricingRules
+from .exempt import exemption_of
 from .split import split_checks, split_of
 
 ZERO = Decimal(0)
@@ -35,6 +39,7 @@ def check_for(
 ) -> dict[str, Any]:
     order_type = str(state.fields.get("order_type") or "dine_in")
     rules = rules or PricingRules()
+    exempt = exemption_of(state.fields)
     lines: list[dict[str, Any]] = []
     net: dict[str, Decimal] = {}  # what each line is worth after discounts
     tax_classes: dict[str, str] = {}
@@ -133,7 +138,7 @@ def check_for(
         charge_total += amount
         taxable.append(TaxableLine(f"charge:{rule.code}", rule.tax_class, amount))
         row = _charge_row(rule.code, rule.name, rule.kind, str(rule.value), amount, rule.gratuity, True)
-        row["taxed"] = _taxed(taxes, rule.tax_class, order_type, on)
+        row["taxed"] = exempt is None and _taxed(taxes, rule.tax_class, order_type, on)
         charge_rows.append(row)
         charge_classes.append(rule.tax_class)
     for charge in state.charges.values():
@@ -143,13 +148,18 @@ def check_for(
         charge_total += amount
         taxable.append(TaxableLine(f"charge:{charge.charge_id}", charge.tax_class, amount))
         row = _charge_row(charge.charge_id, charge.name, charge.kind, charge.value, amount, charge.gratuity, False)
-        row["taxed"] = _taxed(taxes, charge.tax_class, order_type, on)
+        row["taxed"] = exempt is None and _taxed(taxes, charge.tax_class, order_type, on)
         row["applied_by"] = charge.applied_by
         charge_rows.append(row)
         charge_classes.append(charge.tax_class)
 
     # An empty check still names its tax lines (at 0.00), so a terminal knows the rates for its own estimate.
     tax_lines = taxes.compute(taxable or [TaxableLine("", "default", ZERO)], order_type, on)
+    if exempt is not None:
+        # The lines stay, at nothing, so a terminal still knows the rates; what the tax would have been is
+        # kept beside who the check is for, for the reports.
+        exempt["tax"] = str(cents(sum((t.amount for t in tax_lines), ZERO)))
+        tax_lines = [replace(t, base=cents(ZERO), amount=cents(ZERO)) for t in tax_lines]
     tax = sum((t.amount for t in tax_lines), ZERO)
     total = cents(discounted + charge_total + tax)
     paid = sum((Decimal(p.amount or "0") for p in state.payments.values()), ZERO)
@@ -179,6 +189,9 @@ def check_for(
         "charge_total": str(cents(charge_total)),
         "tax_lines": [t.as_json() for t in tax_lines],
         "tax": str(cents(tax)),
+        # only on a check a manager marked exempt: organisation, certificate, approved_by, by, at_ms, and
+        # `tax`, what was not charged
+        **({"tax_exempt": exempt} if exempt is not None else {}),
         # customers see one tax line; the split by jurisdiction is for the back office
         "tax_rate_pct": str(sum((t.rate_pct for t in tax_lines), ZERO)),
         "total": str(total),

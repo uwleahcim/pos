@@ -39,6 +39,7 @@ import 'split_screen.dart';
 import 'status_bar.dart';
 import 'tab_dialog.dart';
 import 'table_moves.dart';
+import 'tax_exempt_dialog.dart';
 import 'theme.dart';
 import 'void_dialog.dart';
 
@@ -389,8 +390,16 @@ class _OrderScreenState extends State<OrderScreen> {
           (kind, data),
     ];
     final ids = await widget.outbox.addAll(widget.orderId, ops);
-    final i = ops.indexWhere((op) => _photographed.contains(op.$1));
-    if (i >= 0) unawaited(widget.photos.capture(ops[i].$1, opId: ids[i]));
+    final i = ops.indexWhere((op) => _photoOf(op) != null);
+    if (i >= 0) unawaited(widget.photos.capture(_photoOf(ops[i])!, opId: ids[i]));
+  }
+
+  /// What the silent photo of an operation is filed under, or null for one that takes none. A check marked
+  /// tax exempt is a field like its table, so it is told apart by what it sets.
+  static String? _photoOf((String, Map<String, dynamic>) op) {
+    if (_photographed.contains(op.$1)) return op.$1;
+    if (op.$1 == 'set_field' && op.$2['tax_exempt'] != null) return 'tax_exempt';
+    return null;
   }
 
   /// The `add_line` for a dish, priced on this screen until the hub answers. [replaces] names the line an
@@ -458,8 +467,13 @@ class _OrderScreenState extends State<OrderScreen> {
     final check = _readCheck;
     final choice = await showDialog<Adjustment>(
       context: context,
-      builder: (_) =>
-          DiscountSheet(rules: rules, lines: check?.lines ?? const [], existing: check?.discounts ?? const []),
+      builder: (_) => DiscountSheet(
+        rules: rules,
+        lines: check?.lines ?? const [],
+        existing: check?.discounts ?? const [],
+        // offered by a hub that knows of it, on a check that pays its tax now
+        taxExempt: (check?.exempts ?? false) && check?.exempt == null,
+      ),
     );
     if (choice == null || !mounted) return;
     await _apply(choice);
@@ -500,6 +514,7 @@ class _OrderScreenState extends State<OrderScreen> {
   /// reason needs one; a removal goes as it is.
   Future<void> _apply(Adjustment choice) async {
     if (choice.op == 'remove_discount') return _append(choice.op, choice.data);
+    if (choice.op == DiscountSheet.exemptOp) return _markExempt();
     String? approval;
     if (choice.needsManager) {
       approval = await _approve(choice.label);
@@ -529,6 +544,60 @@ class _OrderScreenState extends State<OrderScreen> {
 
   Future<void> _removeDiscount(CheckDiscount discount) =>
       _append('remove_discount', {'discount_id': discount.discountId});
+
+  /// Marks the check exempt from sales tax (docs/tax-exempt.md): who it is for and the number of their
+  /// certificate, typed, then a manager's PIN. The hub keeps all three with the check and takes the tax
+  /// off; the sale stays in every report. What was paid was paid with the tax in it, so it comes first.
+  Future<void> _markExempt() async {
+    if (_order?.payments.isNotEmpty ?? false) {
+      _say('Money has been taken on this check. A check is marked tax exempt before it is paid.');
+      return;
+    }
+    final who = await showDialog<({String organisation, String certificate})>(
+      context: context,
+      builder: (_) => const TaxExemptDialog(),
+    );
+    if (who == null || !mounted) return;
+    final approval = await _approve('Marking this check tax exempt', purpose: 'exempt');
+    if (approval == null) return;
+    await _append('set_field', {
+      'tax_exempt': {'organisation': who.organisation, 'certificate': who.certificate},
+      'approval': approval,
+      'by': ?_staffName,
+      'by_id': ?_staffId,
+    });
+  }
+
+  /// Puts the sales tax back on a check marked exempt, after a word that it will be charged again. Anyone
+  /// with the check open may: it only ever adds tax, and the check's history keeps who.
+  Future<void> _removeExempt() async {
+    final exempt = _readCheck?.exempt;
+    if (exempt == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Charge sales tax again?'),
+        content: Text(
+          'This check is tax exempt for ${exempt.organisation}. Taking that off puts the sales tax back on it. '
+          'Marking it exempt again needs a manager.',
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep it exempt'),
+          ),
+          FilledButton(
+            key: const ValueKey('exempt-remove'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Charge tax'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _append('set_field', {'tax_exempt': null, 'by': ?_staffName, 'by_id': ?_staffId});
+  }
 
   /// An automatic charge (the gratuity on a large party) comes off only with a manager when the rules say
   /// so; one that staff put on comes off freely.
@@ -1225,6 +1294,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onComp: _compLine,
       onRemoveDiscount: _removeDiscount,
       onRemoveCharge: _removeCharge,
+      onRemoveExempt: _removeExempt,
       onMove: _move,
       onLot: _lot,
       onBill: _billing ? null : _printBill,
@@ -1385,6 +1455,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onComp,
     required this.onRemoveDiscount,
     required this.onRemoveCharge,
+    required this.onRemoveExempt,
     required this.onMove,
     required this.onLot,
     required this.onBill,
@@ -1413,6 +1484,9 @@ class _TicketPanel extends StatefulWidget {
   final void Function(Line line, BuildContext anchor) onComp;
   final ValueChanged<CheckDiscount> onRemoveDiscount;
   final ValueChanged<CheckCharge> onRemoveCharge;
+
+  /// Puts the tax back on a check a manager marked tax exempt.
+  final VoidCallback onRemoveExempt;
 
   /// Lines let go at another place or course on the check.
   final Future<void> Function(Drop drop) onMove;
@@ -1630,7 +1704,16 @@ class _TicketPanelState extends State<_TicketPanel> {
                       onTap: open ? () => widget.onRemoveCharge(c) : null,
                     ),
                   const SizedBox(height: 2),
-                  _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
+                  // a check a manager marked tax exempt says for whom where its tax was; a tap charges it again
+                  if (check.exempt case final exempt?)
+                    _TotalRow(
+                      'Tax exempt · ${exempt.organisation}',
+                      check.tax,
+                      key: const ValueKey('tax-exempt-row'),
+                      onTap: open ? widget.onRemoveExempt : null,
+                    )
+                  else
+                    _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
                   _TotalFoot(
                     label: check.estimated ? 'Total (updating)' : 'Total',

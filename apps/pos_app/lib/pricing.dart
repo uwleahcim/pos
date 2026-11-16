@@ -121,7 +121,7 @@ class PricingRules {
 class Adjustment {
   const Adjustment({required this.op, required this.data, required this.needsManager, required this.label});
 
-  final String op; // discount | charge
+  final String op; // discount | charge | remove_discount | tax_exempt (the screen asks for whom)
   final Map<String, dynamic> data;
   final bool needsManager;
   final String label;
