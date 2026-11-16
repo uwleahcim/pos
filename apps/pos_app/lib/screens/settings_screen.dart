@@ -55,6 +55,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _relay = widget.settings.printRelay;
   late int _lockMinutes = widget.settings.lockMinutes;
   late bool _signOutAfterSend = widget.settings.signOutAfterSend;
+  late String _opensOn = widget.settings.opensOn;
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -113,6 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.save(device: _device.text, endpoints: _endpoints.text.split('\n'), printRelay: _relay);
     await widget.settings.saveLockMinutes(_lockMinutes);
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
+    await widget.settings.saveOpensOn(_opensOn);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -251,6 +253,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ],
                           ),
                         ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // What this screen shows first when somebody signs in, as buttons; kept with Save.
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.start_rounded, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text('This screen opens on', style: theme.textTheme.titleMedium)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _opensOn == Settings.listOfChecks
+                            ? 'Whoever signs in here starts on the list of checks, where the to-go orders are by '
+                                  'stage. The floor map is one tap away.'
+                            : 'Whoever signs in here starts on the floor map. The list of checks, with the to-go '
+                                  'orders, is one tap away.',
+                        key: const ValueKey('opens-on-line'),
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final MapEntry(key: value, value: label) in Settings.opensOnChoices.entries)
+                            ChoiceChip(
+                              key: ValueKey('opens-on:$value'),
+                              label: Text(label),
+                              selected: _opensOn == value,
+                              onSelected: (_) => setState(() => _opensOn = value),
+                            ),
+                        ],
+                      ),
                     ],
                   ),
                 ),

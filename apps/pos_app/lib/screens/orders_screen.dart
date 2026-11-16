@@ -80,7 +80,12 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> {
   List<Order> _orders = const [];
   bool _showClosed = false;
+  // The floor map or the list of checks. It starts on what the device opens on (Settings.opensOn) with
+  // each sign-in, and goes back to that when another person takes the screen over or the device's choice
+  // changes. The button in the bar switches between the two.
   bool _floor = true;
+  String _opensOn = Settings.floorMap;
+  String? _staffId; // who was last signed in on this screen
   final _floorKey = GlobalKey<FloorViewState>();
   Timer? _timer;
   // The hub tells this screen when an order changed; the timer only asks while it cannot, and now and then.
@@ -117,6 +122,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
+    _opensOn = widget.settings.opensOn;
+    _floor = widget.settings.opensOnFloor;
+    _staffId = widget.session.staff?.staffId;
     _rosterRead = _readRoster();
     _orderRequests = widget.phone?.orderRequests ?? 0;
     _answers = widget.phone?.answers ?? 0;
@@ -130,6 +138,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (_inFront && change.anyOrder) _reader();
     });
     widget.outbox.addListener(_onOutbox);
+    widget.settings.addListener(_onOpensOn);
+    widget.session.addListener(_onOpensOn);
     widget.phone?.addListener(_onPhone);
     widget.deskPhones?.addListener(_onDeskPhone);
     // A desk phone picked up just before someone signed in: its call is still waiting, if it is fresh.
@@ -154,6 +164,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
+    widget.settings.removeListener(_onOpensOn);
+    widget.session.removeListener(_onOpensOn);
     widget.phone?.removeListener(_onPhone);
     widget.deskPhones?.removeListener(_onDeskPhone);
     super.dispose();
@@ -161,6 +173,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   void _onOutbox() {
     if (mounted) setState(() {});
+  }
+
+  /// The device was given another screen to open on, or another person took this screen over (a hands-free
+  /// switch, or signing in on a locked screen): it shows what the device opens on. The same person coming
+  /// back to a locked screen finds it as they left it, and a lock by itself changes nothing.
+  void _onOpensOn() {
+    if (!mounted) return;
+    final opensOn = widget.settings.opensOn;
+    final staffId = widget.session.staff?.staffId;
+    final another = staffId != null && staffId != _staffId;
+    if (staffId != null) _staffId = staffId;
+    if (opensOn == _opensOn && !another) return;
+    _opensOn = opensOn;
+    final floor = widget.settings.opensOnFloor;
+    if (floor == _floor) return;
+    setState(() {
+      _floor = floor;
+      _moving = null; // a table is moved on the map: leaving it leaves the move
+    });
   }
 
   /// The caller changed, a call was picked up, or To go was tapped on the call strip: the caller's order

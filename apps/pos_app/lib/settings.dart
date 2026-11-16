@@ -15,10 +15,12 @@ class Settings extends ChangeNotifier {
     this.billPrinter = '',
     int lockMinutes = 0,
     this.signOutAfterSend = false,
+    String opensOn = floorMap,
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
-       lockMinutes = cleanLockMinutes(lockMinutes);
+       lockMinutes = cleanLockMinutes(lockMinutes),
+       opensOn = cleanOpensOn(opensOn);
 
   static Future<Settings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -39,6 +41,7 @@ class Settings extends ChangeNotifier {
       billPrinter: prefs.getString('bill_printer') ?? '',
       lockMinutes: prefs.getInt('lock_minutes') ?? 0,
       signOutAfterSend: prefs.getBool('sign_out_after_send') ?? false,
+      opensOn: prefs.getString('opens_on') ?? floorMap,
       phone: phone,
       prefs: prefs,
     );
@@ -71,6 +74,22 @@ class Settings extends ChangeNotifier {
   /// just sent from signs the person out, so the next one signs in. Off is how a device starts: leaving a
   /// check goes back to the tables, still signed in.
   bool signOutAfterSend;
+
+  /// What this screen shows first when somebody signs in: [floorMap], how a device starts (a host stand, a
+  /// server station), or [listOfChecks], where the to-go orders are by stage (the counter).
+  String opensOn;
+
+  static const floorMap = 'floor';
+  static const listOfChecks = 'checks';
+
+  /// The screens a device can open on, with the words its Settings say for each.
+  static const opensOnChoices = {floorMap: 'Floor map', listOfChecks: 'List of checks'};
+
+  /// A choice as the device keeps it: one of [opensOnChoices], the floor map for anything else.
+  static String cleanOpensOn(String? value) => opensOnChoices.containsKey(value) ? value! : floorMap;
+
+  /// Whether this screen opens on the floor map (not on the list of checks).
+  bool get opensOnFloor => opensOn == floorMap;
 
   PhoneSettings _phone;
 
@@ -118,6 +137,16 @@ class Settings extends ChangeNotifier {
       await _prefs?.setBool('sign_out_after_send', true);
     } else {
       await _prefs?.remove('sign_out_after_send');
+    }
+    notifyListeners();
+  }
+
+  Future<void> saveOpensOn(String value) async {
+    opensOn = cleanOpensOn(value);
+    if (opensOn == floorMap) {
+      await _prefs?.remove('opens_on');
+    } else {
+      await _prefs?.setString('opens_on', opensOn);
     }
     notifyListeners();
   }
