@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../voids.dart';
+import 'check_history_screen.dart';
 import 'theme.dart';
 
 /// What came off the checks and why, for a manager: the dishes voided after the kitchen had them, and the
@@ -10,9 +11,13 @@ import 'theme.dart';
 /// by who took them off and by check, the one longest on its check first. For today, the last 7 days or the
 /// last 30. One column, so it reads the same on a phone.
 class AdjustmentsScreen extends StatefulWidget {
-  const AdjustmentsScreen({super.key, required this.api, this.now = DateTime.now});
+  const AdjustmentsScreen({super.key, required this.api, this.token, this.now = DateTime.now});
 
   final PosApi api;
+
+  /// The manager's session, where the screen was opened with one: a tap on a void or on a dish taken off
+  /// then opens the history of its check (docs/check-history.md).
+  final String? token;
 
   /// The time on this device, to count the days back from.
   final DateTime Function() now;
@@ -50,6 +55,17 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
     } on ApiException catch (err) {
       if (mounted && ask == _asked) setState(() => _error = err.message);
     }
+  }
+
+  /// What a tap on a row does: the history of its check, where a manager opened this screen.
+  VoidCallback? _history(String orderId) {
+    final token = widget.token;
+    if (token == null || orderId.isEmpty) return null;
+    return () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheckHistoryScreen(api: widget.api, token: token, orderId: orderId),
+      ),
+    );
   }
 
   void _span(int days) {
@@ -99,12 +115,16 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
             _Totals('By who voided', report.voidsByStaff, blank: 'Not recorded'),
             _Totals('By manager', report.voidsByApprover, blank: 'No manager'),
             const SizedBox(height: 6),
-            Text('Each void', style: theme.textTheme.labelLarge?.copyWith(color: scheme.primary)),
+            Text(
+              widget.token == null ? 'Each void' : "Each void (tap one for its check's history)",
+              style: theme.textTheme.labelLarge?.copyWith(color: scheme.primary),
+            ),
             for (final (i, v) in report.voids.indexed)
               ListTile(
                 key: ValueKey('void-row:$i'),
                 dense: true,
                 contentPadding: EdgeInsets.zero,
+                onTap: _history(v.orderId),
                 title: Text('${v.qty} × ${v.item}'),
                 subtitle: Text(
                   [
@@ -149,6 +169,7 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                 key: ValueKey('taken-off-row:$i'),
                 dense: true,
                 contentPadding: EdgeInsets.zero,
+                onTap: _history(t.orderId),
                 title: Text('${t.qty} × ${t.item}'),
                 subtitle: Text(
                   [_when(t.atMs), if (t.where.isNotEmpty) t.where, if (t.who.isNotEmpty) t.who, t.onCheck].join(' · '),

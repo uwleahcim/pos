@@ -145,6 +145,16 @@ class Hub {
   String? dayPrinter = 'Takeout';
   int? refuseDay;
 
+  /// A check's history (docs/check-history.md). [histories] answers `GET /orders/<id>/history` by the order
+  /// asked for; one it has nothing for is `unknown_id`, and null is a hub older than the history. Each ask
+  /// is in [historyAsks] and the token of the last one in [historyAuth]; [refuseHistory] answers with a
+  /// status instead. [eventPhotos] answers `GET /events/photos/<id>` with a picture's bytes, 404 otherwise.
+  Map<String, Map<String, dynamic>>? histories = {};
+  final historyAsks = <String>[];
+  String? historyAuth;
+  int? refuseHistory;
+  final eventPhotos = <String, List<int>>{};
+
   /// Unreachable: every call fails, as with the hub's cable pulled.
   bool down = false;
 
@@ -292,6 +302,8 @@ class Hub {
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
+  static final _history = RegExp(r'^/orders/([^/]+)/history$');
+  static final _photo = RegExp(r'^/events/photos/([^/]+)$');
   static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
 
   /// A shift as the hub answers it, with what it comes to counted at [clockNow].
@@ -679,6 +691,26 @@ class Hub {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
       return order == null ? json({'detail': 'not found'}, 404) : json(order);
+    }
+    if (_history.hasMatch(path)) {
+      if (histories == null) return json({'detail': 'Not Found'}, 404);
+      historyAuth = request.headers['authorization'];
+      if (refuseHistory != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseHistory!);
+      }
+      final id = _history.firstMatch(path)!.group(1)!;
+      historyAsks.add(id);
+      final history = histories![id];
+      if (history != null) return json(history);
+      return json({
+        'detail': {'error': 'unknown_id', 'message': 'There is no such check.'},
+      }, 404);
+    }
+    if (_photo.hasMatch(path) && request.method == 'GET') {
+      final picture = eventPhotos[_photo.firstMatch(path)!.group(1)!];
+      return picture == null ? json({'detail': 'no such photo'}, 404) : http.Response.bytes(picture, 200);
     }
     if (path == '/reports/day' || path == '/reports/day/print') {
       if (days == null) return json({'detail': 'Not Found'}, 404);

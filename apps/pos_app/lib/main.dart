@@ -47,9 +47,15 @@ Future<void> main() async {
   // however many are waiting. What an older build left in the preference store is taken over on the way.
   final prefs = await SharedPreferences.getInstance();
   final support = (await getApplicationSupportDirectory()).path;
-  final outbox = Outbox(api, settings, store: JournalStore(File('$support/outbox.log'), id: Outbox.idField));
-  await outbox.restore(legacy: prefs);
   final session = Session(api);
+  // Every step taken on a check says who was signed in when it was taken: a check's history names them.
+  final outbox = Outbox(
+    api,
+    settings,
+    store: JournalStore(File('$support/outbox.log'), id: Outbox.idField),
+    who: () => session.staff,
+  );
+  await outbox.restore(legacy: prefs);
   final camera = EventCamera.forPlatform();
   final photos = PhotoQueue(
     api,

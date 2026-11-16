@@ -63,6 +63,9 @@ merges after any disconnect.
 - The day's report (what is still open, the sales, the money taken by how it was paid, the sales by category,
   kind of order, person and hour, what came off the checks; on the screen for any day, and on paper):
   `docs/day-report.md`
+- A check's history (every step of one check, oldest first: who did it, at which screen and when, who
+  approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
+  `docs/check-history.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

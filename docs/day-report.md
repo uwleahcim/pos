@@ -26,7 +26,8 @@ midnight belongs to the evening before.
 - for the running day, checks from earlier days that are still open;
 - where the time clock is used, who is still on the clock, and shifts nobody clocked out of.
 
-When there is nothing, it says so with a green tick.
+When there is nothing, it says so with a green tick. A tap on a check opens its whole history, step by
+step (see `check-history.md`).
 
 **Sales**, the day's checks added up:
 

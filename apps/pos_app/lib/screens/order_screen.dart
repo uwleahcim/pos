@@ -26,11 +26,13 @@ import '../split.dart';
 import '../takeout.dart';
 import '../voids.dart';
 import 'allergy_dialog.dart';
+import 'check_history_screen.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'lot_comp_dialog.dart';
+import 'menu_editor.dart' show ManagerPinDialog;
 import 'menu_panel.dart';
 import 'pay_dialog.dart';
 import 'split_screen.dart';
@@ -405,6 +407,26 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
+
+  /// The check's whole history, for a manager (docs/check-history.md): every step, who did it, at which
+  /// screen and when. Anyone may ask; the hub tells it to a manager's PIN only.
+  Future<void> _history() async {
+    final token = await showDialog<String>(
+      context: context,
+      builder: (_) => ManagerPinDialog(
+        api: widget.api,
+        device: widget.api.settings.device,
+        action: 'Show the history',
+        what: "read a check's history",
+      ),
+    );
+    if (token == null || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheckHistoryScreen(api: widget.api, token: token, orderId: widget.orderId),
+      ),
+    );
+  }
 
   /// A discount or a charge from the location's rules. The hub refuses what its rules do not allow, so the
   /// sheet shows them first; a reason that needs a manager asks for the PIN before anything is sent.
@@ -1227,12 +1249,18 @@ class _OrderScreenState extends State<OrderScreen> {
       onPopInvokedWithResult: (didPop, _) => _left(didPop),
       child: Scaffold(
         appBar: AppBar(
-          title: Text(
-            order == null
-                ? 'Order'
-                : order.isTakeout
-                ? _takeoutTitle(order, _readyAt(order))
-                : 'Table ${order.table} · ${order.status}',
+          // The title held opens the check's history: a phone's bar has no room for one more button, and
+          // would cut the check's name short to fit one.
+          title: GestureDetector(
+            key: const ValueKey('order-title'),
+            onLongPress: order == null ? null : _history,
+            child: Text(
+              order == null
+                  ? 'Order'
+                  : order.isTakeout
+                  ? _takeoutTitle(order, _readyAt(order))
+                  : 'Table ${order.table} · ${order.status}',
+            ),
           ),
           actions: [
             StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
@@ -1251,6 +1279,8 @@ class _OrderScreenState extends State<OrderScreen> {
             if (order != null && open) _Action('Discount', Icons.percent, _discount),
             if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
             if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
+            // Where the bar has room for it: a phone holds the title instead.
+            if (order != null && !compact(context)) _Action('History', Icons.history, _history),
           ],
         ),
         body: Column(

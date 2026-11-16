@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'queue_store.dart';
+import 'session.dart' show Staff;
 import 'settings.dart';
 
 /// A hybrid logical clock stamp, written the way the backend reads it: `wall_ms-counter-node`.
@@ -41,7 +42,7 @@ class Hlc {
 /// The disk is [store]: on a device a [JournalStore], where a tap costs the same whether three operations
 /// are waiting or three thousand (a service taken with no backend at all, ADR 6).
 class Outbox extends ChangeNotifier {
-  Outbox(this.api, this.settings, {required this.store, Random? random, int Function()? now})
+  Outbox(this.api, this.settings, {required this.store, this.who, Random? random, int Function()? now})
     : _random = random ?? Random(),
       _clock = Hlc.lazy(node: () => settings.device, now: now);
 
@@ -52,6 +53,11 @@ class Outbox extends ChangeNotifier {
   final PosApi api;
   final Settings settings;
   final QueueStore store;
+
+  /// Who is signed in at this screen, or null when nobody is. Every operation says who did it (`by`,
+  /// `by_id`), so a check's history can name them (docs/check-history.md); one that already names somebody
+  /// keeps its own word.
+  final Staff? Function()? who;
   final Random _random;
   final Hlc _clock;
   final List<Map<String, dynamic>> _pending = [];
@@ -86,14 +92,22 @@ class Outbox extends ChangeNotifier {
     // Taken while no backend answered (ADR 6): the backend heads the kitchen ticket "late" and the day's
     // report lists it.
     final offline = api.connection.value.capturing;
+    final staff = who?.call();
     for (final (kind, data) in ops) {
+      // A discount names who put it on as `applied_by`; everything else as `by`.
+      final named = data.containsKey('by') || data.containsKey('applied_by');
       added.add({
         'op_id': newId(),
         'order_id': orderId,
         'hlc': _clock.next(),
         'device': settings.device,
         'kind': kind,
-        'data': offline ? {...data, 'offline': true} : data,
+        'data': {
+          ...data,
+          if (staff != null && !named) 'by': staff.name,
+          if (staff != null && !named && !data.containsKey('by_id')) 'by_id': staff.staffId,
+          if (offline) 'offline': true,
+        },
       });
     }
     final ids = [for (final op in added) op['op_id'] as String];

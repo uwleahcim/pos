@@ -4,6 +4,7 @@ import '../api.dart';
 import '../day_report.dart';
 import '../timeclock.dart' show hoursMinutes;
 import 'adjustments_screen.dart';
+import 'check_history_screen.dart';
 import 'theme.dart';
 import 'time_clock_screen.dart';
 
@@ -131,16 +132,24 @@ class _DayReportScreenState extends State<DayReportScreen> {
   String _time(int? atMs) =>
       atMs == null ? '' : TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(atMs)).format(context);
 
-  Widget _check(DayCheck check, {String? note}) => _Line(
+  /// A check that still needs something: a tap opens its whole history (docs/check-history.md).
+  Widget _check(DayCheck check, {String? note}) => InkWell(
     key: ValueKey('day-check:${check.orderId}'),
-    check.where,
-    dollars(check.due),
-    under: [
-      ?note,
-      if (check.server.isNotEmpty) check.server,
-      if (check.openedMs != null) 'opened ${_time(check.openedMs)}',
-      if (check.unsent > 0) '${check.unsent} ${check.unsent == 1 ? 'dish' : 'dishes'} not sent',
-    ].join(' · '),
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheckHistoryScreen(api: widget.api, token: widget.token, orderId: check.orderId),
+      ),
+    ),
+    child: _Line(
+      check.where,
+      dollars(check.due),
+      under: [
+        ?note,
+        if (check.server.isNotEmpty) check.server,
+        if (check.openedMs != null) 'opened ${_time(check.openedMs)}',
+        if (check.unsent > 0) '${check.unsent} ${check.unsent == 1 ? 'dish' : 'dishes'} not sent',
+      ].join(' · '),
+    ),
   );
 
   List<Widget> _stillOpen(BuildContext context, DayReport report) {
@@ -183,6 +192,14 @@ class _DayReportScreenState extends State<DayReportScreen> {
           for (final check in report.earlier)
             _check(check, note: local.formatShortMonthDay(DateTime.tryParse(check.day) ?? report.day)),
         ],
+        if (report.open.isNotEmpty || report.unpaid.isNotEmpty || report.earlier.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'Tap a check to read its history.',
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
         if (report.unsent > 0)
           Padding(
             key: const ValueKey('day-unsent'),
@@ -405,8 +422,11 @@ class _DayReportScreenState extends State<DayReportScreen> {
         alignment: Alignment.centerLeft,
         child: TextButton(
           key: const ValueKey('day-adjustments'),
-          onPressed: () =>
-              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => AdjustmentsScreen(api: widget.api))),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => AdjustmentsScreen(api: widget.api, token: widget.token),
+            ),
+          ),
           child: const Text('Each one, with who and why'),
         ),
       ),

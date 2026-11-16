@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'allergies.dart';
 import 'cache.dart';
+import 'check_history.dart';
 import 'coursing.dart';
 import 'customers.dart';
 import 'day_report.dart';
@@ -1003,6 +1004,25 @@ class PosApi {
           ),
         ),
       );
+
+  // A check's history (docs/check-history.md). ---------------------------------------------------------------
+
+  /// Everything that happened to one check, oldest first (manager token): who did what, at which screen and
+  /// when. 404 with `unknown_id` for a check the hub has never heard of, and a plain 404 from a hub older
+  /// than the history.
+  Future<CheckHistory> checkHistory(String token, String orderId) async =>
+      CheckHistory.fromJson(await _get('/orders/$orderId/history', headers: _bearer(token)));
+
+  /// The picture taken with a step (a JPEG), as long as the hub keeps it; null once it is gone, or while no
+  /// hub answers.
+  Future<Uint8List?> eventPhoto(String photoId) async {
+    try {
+      final response = await _send((base) => _client.get(Uri.parse('$base/events/photos/$photoId')));
+      return response.statusCode == 200 && response.bodyBytes.isNotEmpty ? response.bodyBytes : null;
+    } on ApiException {
+      return null;
+    }
+  }
 
   // The day's report (docs/day-report.md). ------------------------------------------------------------------
 
