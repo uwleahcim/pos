@@ -51,6 +51,8 @@ merges after any disconnect.
   nothing is closed): `docs/idle-lock.md`
 - Back to sign-in after sending (a switch per device, for a screen several people share: leaving a check
   after a send signs out): `docs/sign-in-after-sending.md`
+- The screen a device opens on (the floor map or the list of checks, picked per device: the host stand on the
+  tables, the counter on the to-go orders): `docs/opening-screen.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;
