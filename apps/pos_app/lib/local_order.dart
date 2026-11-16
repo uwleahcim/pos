@@ -58,6 +58,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           replaces: data['replaces'] as String?,
           by: data['by'] as String? ?? '',
           byId: data['by_id'] as String?,
+          // an edit voids a dish and adds the changed one: it stays on the checks the dish was put on
+          checks: checkNumbers(data['checks']) ?? lines[data['replaces']]?.checks,
           pending: true,
         );
       case 'set_line':
@@ -70,6 +72,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
             course: data['course'] as String?,
             clearCourse: data.containsKey('course') && data['course'] == null,
             rank: (data['rank'] as num?)?.toDouble(),
+            checks: checkNumbers(data['checks']),
+            clearChecks: data.containsKey('checks') && checkNumbers(data['checks']) == null,
             pending: true,
           );
         }
@@ -230,6 +234,9 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
     paid: money(paid),
     due: money(total - paid < 0 ? 0 : total - paid),
     estimated: true,
+    // what each check of a split table comes to is the hub's to say: none here until it answers
+    split: check?.split ?? SplitMode.one,
+    splits: check?.splits ?? false,
   );
 }
 

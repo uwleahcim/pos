@@ -11,6 +11,11 @@ due, and the location's closing lines.
 Only the right-hand column adds up: a choice's own price ("+1.00") and a comp on a dish ("-48.00") stand in
 the words under the dish, since the dish's amount already holds its choices and the comp is taken off below
 the subtotal, where the screen takes it off too.
+
+A table that pays on several checks (`pos.orders.split`) gets a bill for each: the check's own dishes (a
+shared dish with this check's part of it, "1/3 of 18.00"), its part of every discount, charge and the tax,
+and its own total. A table that splits evenly gets the whole bill once for each part, with the part under
+the total.
 """
 
 from __future__ import annotations
@@ -44,9 +49,13 @@ class Bill:
     total: str
     detail: str = ""  # beside `where`: "4 guests", the name on a to-go order
     who: str = ""  # under it: "Server Amy", "Phone"
+    note: str = ""  # under that, on one of a split table's bills: "One of 3 checks at this table"
     head: tuple[str, ...] = ()  # the restaurant's own lines; the first prints big
     sums: tuple[tuple[str, str], ...] = ()  # between the dishes and the total: subtotal, discounts, charges, tax
     paid: tuple[tuple[str, str], ...] = ()  # under the total: each payment; a row with no amount is words only
+    # One part of a check split evenly: ("Part 2 of 4", "23.46"). It prints big under the total, and what
+    # was paid and is due is then this part's.
+    share: tuple[str, str] | None = None
     due: str | None = None  # what is still owed once something was paid; None while nothing was
     foot: tuple[str, ...] = ()
     at: datetime = field(default_factory=datetime.now)
@@ -85,16 +94,28 @@ def bill_for(
     head: tuple[str, ...] = (),
     foot: tuple[str, ...] = (),
     at: datetime | None = None,
+    number: int | None = None,
 ) -> Bill:
     """The bill for an order: `check` is its check as the hub reckons it, `fields` what the order says of
-    itself (table, guests, server, the number and name of a to-go order)."""
-    discounts = [d for d in check.get("discounts") or () if _money(d.get("amount")) > ZERO]
+    itself (table, guests, server, the number and name of a to-go order). `number` asks for one of a split
+    table's checks (`check["checks"]`) instead of the whole table's; a number the table has no check for
+    gives the whole."""
+    parts = list(check.get("checks") or ())
+    part = next((p for p in parts if p.get("check") == number), None) if number is not None else None
+    even = (check.get("split") or {}).get("by") == "even"
+    own = check if part is None or even else part  # whose dishes and sums the paper lists
+    owed = check if part is None else part  # whose payments and what is due
+
+    discounts = [d for d in own.get("discounts") or () if _money(d.get("amount")) > ZERO]
     names = {row["line_id"]: str(row["name"]) for row in check.get("lines") or ()}
     lines = []
-    for row in check.get("lines") or ():
+    for row in own.get("lines") or ():
         notes = []
+        shared = len(row.get("shared") or ())
+        if shared:  # this check's part of a dish: the choices' own prices are the whole dish's, so not said
+            notes.append((f"1/{shared + 1} of {_amount(row.get('of'))}", 0))
         for m in row.get("modifiers") or ():
-            price = _money(m.get("amount"))
+            price = ZERO if shared else _money(m.get("amount"))
             change = f" {'+' if price > ZERO else '-'}{_amount(abs(price))}" if price != ZERO else ""
             notes.append((f"{m['label']}{change}", int(m.get("depth") or 0)))
         # a comp or a discount on this dish: said here so the guest sees which dish, taken off below
@@ -103,17 +124,17 @@ def bill_for(
                 notes.append((f"{d['name']} -{_amount(d['amount'])}", 0))
         lines.append(BillLine(int(row.get("qty") or 1), str(row["name"]), _amount(row.get("total")), tuple(notes)))
 
-    sums = [("Subtotal", _amount(check.get("subtotal")))]
+    sums = [("Subtotal", _amount(own.get("subtotal")))]
     for d in discounts:
         on = names.get(d.get("line_id"))
         sums.append((f"{d['name']}, {on}" if on else str(d["name"]), f"-{_amount(d['amount'])}"))
-    for c in check.get("charges") or ():
+    for c in own.get("charges") or ():
         sums.append((str(c["name"]), _amount(c.get("amount"))))
-    sums.append((f"Sales tax {_rate(check.get('tax_rate_pct'))}%", _amount(check.get("tax"))))
+    sums.append((f"Sales tax {_rate(check.get('tax_rate_pct'))}%", _amount(own.get("tax"))))
 
-    total, paid_so_far = _money(check.get("total")), _money(check.get("paid"))
+    total, paid_so_far = _money(owed.get("total")), _money(owed.get("paid"))
     paid = []
-    for p in check.get("payments") or ():
+    for p in owed.get("payments") or ():
         paid.append((PAID_AS.get(str(p.get("method")), "Paid"), f"-{_amount(p.get('amount'))}"))
         handed, took = _money(p.get("tendered")), _money(p.get("amount"))
         if p.get("tendered") not in (None, "") and handed > took:
@@ -122,7 +143,7 @@ def bill_for(
         paid.append((f"Paid {_amount(paid_so_far - total)} more than the total", ""))
 
     table = str(fields.get("table") or "")
-    guests, number = fields.get("guests"), fields.get("order_no")
+    guests, number_of_day = fields.get("guests"), fields.get("order_no")
     channel = str(fields.get("channel") or "").replace("_", " ").capitalize()
     server = f"Server {fields['server']}" if fields.get("server") else ""
     if table:
@@ -130,20 +151,32 @@ def bill_for(
         detail = f"{guests} guest{'' if guests == 1 else 's'}" if isinstance(guests, int) and guests > 0 else ""
         who = server
     else:
-        where = f"Order #{number}" if isinstance(number, int) else (f"{channel} order" if channel else "Order")
+        where = (
+            f"Order #{number_of_day}"
+            if isinstance(number_of_day, int)
+            else (f"{channel} order" if channel else "Order")
+        )
         detail = str(fields.get("customer_name") or "")
-        who = "  ".join(part for part in (channel if isinstance(number, int) else "", server) if part)
+        who = "  ".join(part for part in (channel if isinstance(number_of_day, int) else "", server) if part)
+    note, share = "", None
+    if part is not None and even:
+        share = (f"Part {part['check']} of {len(parts)}", _amount(part.get("total")))
+    elif part is not None:
+        detail = f"Check {part['check']}"
+        note = f"One of {len(parts)} checks {'at this table' if table else 'on this order'}"
     return Bill(
         order_id=str(check.get("order_id") or ""),
         where=where,
         detail=detail,
         who=who,
+        note=note,
         lines=tuple(lines),
-        total=_amount(total),
+        total=_amount(check.get("total") if even else total),
         head=tuple(head),
         sums=tuple(sums),
         paid=tuple(paid),
-        due=_amount(check.get("due")) if paid else None,
+        share=share,
+        due=_amount(owed.get("due")) if paid else None,
         foot=tuple(foot),
         at=at or datetime.now(),
     )
@@ -163,6 +196,8 @@ def render_bill(bill: Bill, *, dots: int = 576, font: str | None = None, dialect
         b.rule()
     b.columns("  ".join(part for part in (bill.where, bill.detail) if part), _clock(bill.at), bold=True)
     b.columns(bill.who, _day(bill.at))
+    if bill.note:
+        b.line(bill.note)
     b.rule()
     for line in bill.lines:
         b.columns(f"{line.qty} ".ljust(3) + line.name, line.amount, hang="   ")
@@ -172,7 +207,11 @@ def render_bill(bill: Bill, *, dots: int = 576, font: str | None = None, dialect
     for label, amount in bill.sums:
         b.columns(label, amount)
     b.rule()
-    b.columns("TOTAL", f"${bill.total}", bold=True, big=True)
+    if bill.share is None:
+        b.columns("TOTAL", f"${bill.total}", bold=True, big=True)
+    else:  # the table's total, then this guest's part of it, which is the figure to pay
+        b.columns("TOTAL", f"${bill.total}", bold=True)
+        b.columns(bill.share[0].upper(), f"${bill.share[1]}", bold=True, big=True)
     for label, amount in bill.paid:
         b.columns(label, amount) if amount else b.line(label)
     if bill.due is not None:

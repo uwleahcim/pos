@@ -42,7 +42,8 @@ KINDS = frozenset(
         "remove_discount",  # data: discount_id
         "charge",  # data: charge_id, code (a charge rule), + the rule's snapshot the hub fills in
         "remove_charge",  # data: charge_id (a rule's code takes off the automatic charge it applies)
-        "pay",  # data: payment_id, method (cash|elsewhere|card), amount, tendered?, note?, by?
+        # `check` names the one of a split table's checks the money was for (pos.orders.split)
+        "pay",  # data: payment_id, method (cash|elsewhere|card), amount, tendered?, note?, by?, check?
         # An allergy a guest told the server of, for one seat or (no seat) the whole table: the allergens by
         # the menu's codes and whatever else was said, in words. One with neither takes the allergy off.
         "allergy",  # data: seat?, allergens?, note?, by?, by_id?
@@ -72,11 +73,18 @@ ORDER_FIELDS = frozenset(
         "for_later",  # the customer named the time: a big order or a rush starts it sooner, never moves it
         "stage",  # new | ready | picked_up
         "locale",  # the customer's language for texts
+        # How the table pays (pos.orders.split): {by: seat} a check for each seat, {by: dish} the dishes
+        # put on checks by hand, {by: even, ways: n} the total in n equal parts; anything else is one check.
+        "split",
     }
 )
 ALLERGY_NOTE_MAX = 80
 """How long the words of an allergy may be: a line of a kitchen ticket and a little more."""
-LINE_FIELDS = frozenset({"qty", "seat", "course", "note", "rank"})
+LINE_FIELDS = frozenset({"qty", "seat", "course", "note", "rank", "checks"})
+"""`checks` is which of a split table's checks a dish is on (several: shared between them in equal parts).
+Like `rank` it is the check's business alone: the kitchen hears nothing when a sent dish changes checks."""
+MAX_CHECKS = 20
+"""The most checks one table splits into: a check's number, and the ways of an even split, stop here."""
 KITCHEN_FIELDS = frozenset({"qty", "seat", "course", "note"})
 """The line fields the kitchen cares about. Changing the quantity, seat or note of a line it has marks the
 line modified; a line not sent yet counts as a late addition while its course has already gone. A line's
@@ -130,6 +138,9 @@ class Line:
     replaces: str | None = None  # the line this one took the place of: an edit voids a line and adds the changed one
     by: str = ""  # who added it (name) and their staff id: several people can work one check, hands-free
     by_id: str | None = None
+    # The checks of a split table this dish was put on by hand, by number; None while nobody did, and
+    # the split's own rule places it (its seat's check, or the first).
+    checks: list[int] | None = None
     added_at: HLC | None = None  # when it came onto the check: what a floor map times an unsent dish from
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
@@ -210,6 +221,7 @@ class Payment:
     tendered: str | None = None  # cash handed over; the change is tendered - amount
     note: str = ""
     by: str = ""
+    check: int | None = None  # the check of a split table it was for; None: for the table
     stamp: HLC | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -219,6 +231,8 @@ class Payment:
             "tendered": self.tendered,
             "note": self.note,
             "by": self.by,
+            # only on a payment that names one of a split table's checks: every other reads as it always did
+            **({} if self.check is None else {"check": self.check}),
         }
 
 
@@ -304,6 +318,7 @@ class OrderState:
                     "replaces": line.replaces,
                     "by": line.by,
                     "by_id": line.by_id,
+                    "checks": line.checks,
                     "allergy": self.allergy_conflicts(line),
                 }
                 for line in self.ordered_lines()
@@ -353,7 +368,11 @@ def apply(state: OrderState, op: Op) -> None:
             replaces=data.get("replaces") if isinstance(data.get("replaces"), str) else None,
             by=str(data.get("by") or ""),
             by_id=data.get("by_id") if isinstance(data.get("by_id"), str) else None,
+            checks=_checks(data.get("checks")),
         )
+        if line.checks is None and line.replaces in state.lines:
+            # an edit voids a dish and adds the changed one: it stays on the checks the dish was put on
+            line.checks = state.lines[line.replaces].checks
         rank = _rank(data.get("rank"))
         if rank is None:  # after everything on the check so far
             rank = max((other.rank for other in state.lines.values()), default=0.0) + 1
@@ -370,6 +389,8 @@ def apply(state: OrderState, op: Op) -> None:
         for name in LINE_FIELDS:
             if name in data and line.stamps.get(name, _MIN) <= op.hlc:
                 value = _rank(data[name]) if name == "rank" else data[name]
+                if name == "checks":
+                    value = _checks(value)  # nothing usable puts the dish back where the split places it
                 if value is None and name == "rank":
                     continue  # not a number: the line keeps its place
                 if name == "qty" and line.fired_at is None:
@@ -505,6 +526,7 @@ def apply(state: OrderState, op: Op) -> None:
                 tendered=None if data.get("tendered") is None else str(data["tendered"]),
                 note=str(data.get("note", "")),
                 by=str(data.get("by", "")),
+                check=(_checks(data.get("check")) or [None])[0],
                 stamp=op.hlc,
             )
 
@@ -531,6 +553,14 @@ def _who(op: Op) -> dict[str, Any]:
 def _count(value: Any) -> int:
     """How many of a dish, as a terminal sent it; 0 for anything that is not a whole number."""
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _checks(value: Any) -> list[int] | None:
+    """The checks a terminal put a dish on, as numbers from 1 to `MAX_CHECKS`, each once, lowest first; one
+    number alone counts as a list of one. None for anything else, and for none at all."""
+    listed = value if isinstance(value, list | tuple) else [value]
+    numbers = {n for n in listed if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= MAX_CHECKS}
+    return sorted(numbers) or None
 
 
 def _rank(value: Any) -> float | None:

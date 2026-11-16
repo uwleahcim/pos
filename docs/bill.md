@@ -22,6 +22,8 @@ Only the right-hand column adds up. A choice's own price and a comp on a dish ar
 because the dish's amount already holds its choices and the comp comes off under the subtotal, where the
 screen takes it off too. So nobody reading the paper counts anything twice.
 
+A table that pays on several checks gets a bill for each: see [split.md](split.md).
+
 A check with nothing on it has no Bill button. A closed check still has one: the paper then says PAID IN
 FULL and serves as the guest's copy.
 
@@ -59,7 +61,7 @@ Up to 8 lines each, 64 characters a line; a line longer than the paper is wide g
 
 - A logo, and the size of the type.
 - A tip line or suggested tips (payments are parked).
-- Dishes grouped by seat, and a bill for part of a check: that is splitting a check, row 2 of the list.
+- Dishes grouped by seat on the bill of a table that pays on one check.
 - A record in the order's log that a bill was printed, and by whom.
 - Printing a bill from the floor map without opening the check.
 
@@ -77,9 +79,9 @@ Up to 8 lines each, 64 characters a line; a line longer than the paper is wide g
   cuts at a line's own indent.
 - The setting `bill` (`pos/settings.py`, `clean_bill`): `{printer, header, footer}`.
   `GET /settings/bill` adds `printers` (`{id, name}`), `prints_at` and `usual`; `PUT /settings/bill`
-  (manager) takes any of the three and leaves the rest. `POST /orders/{id}/bill` (`{printer?}`) answers 202
-  with the job and `printed_at` (`{id, name}`), 404 for no such order, 409 `nothing_on_check` or
-  `no_printer`. `POST /print/bill-sample` (manager) prints `SAMPLE` under the lines sent.
+  (manager) takes any of the three and leaves the rest. `POST /orders/{id}/bill` (`{printer?, check?}`) answers 202
+  with the job, `bills` (how many went: one for each check of a split table), `jobs` and `printed_at`
+  (`{id, name}`), 404 for no such order, 409 `nothing_on_check`, `no_such_check` or `no_printer`. `POST /print/bill-sample` (manager) prints `SAMPLE` under the lines sent.
 - The app: `BillSettings` in `lib/printers.dart`, `billSettings`, `saveBillSettings`, `printBill`,
   `printBillSample` in `lib/api.dart`, `Settings.billPrinter` (the screen's own printer),
   `screens/bill_dialog.dart`, the `_BillButton` on the total's row in `screens/order_screen.dart`.

@@ -55,6 +55,7 @@ class Line {
     this.byId,
     this.voidReason = '',
     this.allergy = const [],
+    this.checks,
     this.pending = false,
   });
 
@@ -80,6 +81,7 @@ class Line {
       for (final code in json['allergy'] as List? ?? const [])
         if (code is String) code,
     ],
+    checks: checkNumbers(json['checks']),
   );
 
   final String lineId;
@@ -121,6 +123,10 @@ class Line {
   /// kitchen is told of the allergy either way.
   final List<String> allergy;
 
+  /// The checks of a split table this dish was put on by hand, by number (several: shared between them);
+  /// null while nobody did, and the split's own rule places it (its seat's check, or the first).
+  final List<int>? checks;
+
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
 
@@ -131,7 +137,8 @@ class Line {
   /// Shown from this device's own operations; the backend has not confirmed it yet.
   final bool pending;
 
-  /// The same line with some fields changed; [clearCourse] takes the course off.
+  /// The same line with some fields changed; [clearCourse] takes the course off and [clearChecks] puts the
+  /// dish back where the split places it.
   Line copyWith({
     String? status,
     bool? fired,
@@ -142,6 +149,8 @@ class Line {
     String? course,
     bool clearCourse = false,
     double? rank,
+    List<int>? checks,
+    bool clearChecks = false,
   }) => Line(
     lineId: lineId,
     item: item,
@@ -161,8 +170,19 @@ class Line {
     byId: byId,
     voidReason: voidReason,
     allergy: allergy,
+    checks: clearChecks ? null : checks ?? this.checks,
     pending: pending ?? this.pending,
   );
+}
+
+/// The checks a dish was put on, as the hub keeps them: numbers from 1 to [maxChecks], each once, lowest
+/// first; one number alone counts as a list of one. Null for anything else, and for none at all.
+List<int>? checkNumbers(Object? said) {
+  final numbers = <int>{
+    for (final n in said is List ? said : [said])
+      if (n is int && n >= 1 && n <= maxChecks) n,
+  }.toList()..sort();
+  return numbers.isEmpty ? null : numbers;
 }
 
 /// An order as the backend replays it. A screen only lays its own unconfirmed operations over it
@@ -644,10 +664,16 @@ class PosApi {
 
   /// Prints the guest's bill for [orderId] as the hub reckons its check at this moment: at [printer] (the one
   /// this screen keeps for its bills, by id) or, without one, where the location's bills print. Returns the
-  /// name of the printer it was sent to. 409 with a `message` when the check is empty or the location has
-  /// no printer.
-  Future<String> printBill(String orderId, {String? printer}) async =>
-      _printedAt(await _post('/orders/$orderId/bill', {'printer': ?printer}, timeout: const Duration(seconds: 6)));
+  /// name of the printer it was sent to and how many bills went: a table that pays on several checks gets
+  /// one for each, or the one of [check] alone. 409 with a `message` when the check is empty, the table has
+  /// no such check or the location has no printer.
+  Future<({String at, int bills})> printBill(String orderId, {String? printer, int? check}) async {
+    final answer = await _post('/orders/$orderId/bill', {
+      'printer': ?printer,
+      'check': ?check,
+    }, timeout: const Duration(seconds: 6));
+    return (at: _printedAt(answer), bills: (answer['bills'] as num?)?.toInt() ?? 1);
+  }
 
   /// A made-up bill under the lines being tried, at the printer being tried (null for the usual one), before
   /// any of it is saved (manager token). Returns the name of the printer it was sent to.
