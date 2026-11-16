@@ -865,6 +865,11 @@ class OpStore:
         entries = (self.entry(order_id) for order_id in sorted(self._by_order))
         return [e for e in entries if e is not None and e.picked(status, opened_since, active_since, phone, promised)]
 
+    def with_phone(self) -> list[OrderEntry]:
+        """Every order that carries a customer's number, however old, by order id: what a list of the
+        customers is read from."""
+        return [entry for entry in self.index() if entry.phone]
+
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
         last read. Shared: read them, never change them."""

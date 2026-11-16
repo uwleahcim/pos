@@ -16,6 +16,8 @@ import 'location_rows.dart';
 Future<Terminal> pumpLocation(WidgetTester tester, {void Function(Hub hub)? setUp}) async {
   final t = await terminal(tester);
   setUp?.call(t.hub);
+  // tall enough for the courses, which stand under the manager's reports
+  tester.view.physicalSize = const Size(1100, 1500);
   await tester.pumpWidget(
     MaterialApp(
       home: OrdersScreen(

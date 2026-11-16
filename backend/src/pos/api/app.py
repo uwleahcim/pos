@@ -84,6 +84,7 @@ from .conditional import ConditionalGet
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
+from .guests import add_guest_list
 from .history import add_history
 from .menu_admin import add_menu_admin
 from .sales import add_sales_report
@@ -1843,6 +1844,7 @@ def create_app(
     add_time_clock(app)
     add_day_report(app)
     add_sales_report(app)
+    add_guest_list(app)
     add_history(app)
     return app
 

@@ -69,6 +69,9 @@ merges after any disconnect.
 - Dishes sold, best to worst (every dish over the same days, how many and for how much beside the days
   before, best or worst first, with the sizes it went out in and every choice made on it; a dish on the menu
   that sold none is listed too): `docs/dishes-sold.md`
+- The guest list (every customer who ordered with a phone number in the last 12 months: visits, what they
+  spent, the last visit and favourite dishes; the regulars, the guests who stopped coming and the new ones
+  each a list; for a manager): `docs/guest-list.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`
