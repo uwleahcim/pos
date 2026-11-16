@@ -340,6 +340,9 @@ class OrderState:
                     "voided": line.voided,
                     "modified_after_fire": line.modified_after_fire,
                     "fired": line.fired_at is not None,
+                    # when the kitchen got it: the clock of the screen that sent it. A dish that came over
+                    # from another check already sent keeps the time it was sent there.
+                    "sent_ms": line.fired_at.wall_ms if line.fired_at is not None else None,
                     "request": line.request,
                     "priced": line.priced,
                     "replaces": line.replaces,

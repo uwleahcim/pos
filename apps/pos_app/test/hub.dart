@@ -38,19 +38,25 @@ Map<String, dynamic> table(String id, Map<String, dynamic> lines) => {
   'fired': {},
 };
 
-Map<String, dynamic> line(String item, {String? course, bool fired = false, double? rank}) => {
+/// A line as the hub lists it. [sentMs] is when the kitchen got it, as a hub that tells the time says;
+/// with it the line is sent whatever [fired] says. A line that is `fired` with no time is an older hub's.
+Map<String, dynamic> line(String item, {String? course, bool fired = false, int? sentMs, double? rank}) => {
   'item': item,
   'qty': 1,
   'seat': 1,
   'course': ?course,
   'status': 'active',
-  'fired': fired,
+  'fired': fired || sentMs != null,
+  'sent_ms': ?sentMs,
   'rank': ?rank,
 };
 
 /// A pretend hub: its orders, the coursing and quote settings it keeps, and what the terminal sends it.
 class Hub {
   final orders = <Map<String, dynamic>>[];
+
+  /// Whether a line says when it was sent (`sent_ms`); false for a hub from before the check showed it.
+  bool tellsSent = true;
   final sent = <(String, Map<String, dynamic>)>[];
 
   /// The operations of each call that brought some, as they came: what was sent together is one change.
@@ -675,6 +681,7 @@ class Hub {
             'by_id': data['by_id'],
             'status': 'active',
             'fired': source?['fired'] == true,
+            'sent_ms': ?source?['sent_ms'], // it keeps the time it was sent at its old table
             'moved_from': ?from,
             'rank': data['rank'] ?? (ranks.isEmpty ? 1.0 : ranks.reduce(max) + 1),
           };
@@ -702,8 +709,11 @@ class Hub {
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';
         case 'fire':
+          // what was waiting is sent now, by the stamp of the screen that sent it; a hub that [tellsSent]
+          final at = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
           for (final line in lines.values.cast<Map>()) {
             if (line['status'] == 'active' && (data['course'] == '*' || line['course'] == data['course'])) {
+              if (line['fired'] != true && tellsSent) line['sent_ms'] = at;
               line['fired'] = true;
             }
           }

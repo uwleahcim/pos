@@ -62,6 +62,8 @@ def test_a_dish_that_came_already_sent_is_not_sent_again_and_keeps_the_time_it_w
     assert carried.moved_from == {"order_id": "o1", "line_id": "L2", "table": "12"}
     assert not own.arrived_sent and own.fired_at.wall_ms == T0 + 12  # the fire sent what was the check's own
     assert state.snapshot()["lines"]["M1"]["moved_from"]["table"] == "12"
+    # and the check it is on now says when the kitchen got it: at its old table, not when it came over
+    assert [state.snapshot()["lines"][line]["sent_ms"] for line in ("M1", "M2")] == [T0 + 3, T0 + 12]
 
 
 def test_sent_means_nothing_on_a_dish_that_names_no_check_it_came_from():

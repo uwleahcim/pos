@@ -97,9 +97,11 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         if (!told.isEmpty) allergies.add(told);
       case 'fire':
         final course = data['course'] as String? ?? '*';
+        // sent when this screen stamped it, as the hub will say once it has it
+        final at = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
         for (final line in lines.values.toList()) {
           if (line.isActive && !line.fired && (course == '*' || line.course == course)) {
-            lines[line.lineId] = line.copyWith(fired: true, pending: true);
+            lines[line.lineId] = line.copyWith(fired: true, sentMs: at, pending: true);
           }
         }
       case 'close':

@@ -47,6 +47,7 @@ class Line {
     this.rank = 0,
     this.modifiedAfterFire = false,
     this.fired = false,
+    this.sentMs,
     this.request,
     this.itemId,
     this.entryId,
@@ -70,6 +71,7 @@ class Line {
     rank: (json['rank'] as num?)?.toDouble() ?? 0,
     modifiedAfterFire: json['modified_after_fire'] as bool? ?? false,
     fired: json['fired'] as bool? ?? false,
+    sentMs: (json['sent_ms'] as num?)?.toInt(),
     request: json['request'] == null ? null : LineRequest.fromJson(json['request'] as Map<String, dynamic>),
     itemId: (json['priced'] as Map?)?['item'] as String?,
     entryId: (json['priced'] as Map?)?['entry_id'] as String?,
@@ -99,6 +101,10 @@ class Line {
 
   /// Sent to the kitchen. Until then a line can simply come off; after, taking it off is a void.
   final bool fired;
+
+  /// When the kitchen got it, on the clock of the screen that sent it; null until it is sent, and from a
+  /// hub that does not say yet. A dish that came over from another table keeps the time it was sent there.
+  final int? sentMs;
 
   /// What was chosen, so the options sheet can reopen with it; null on a phase 0 typed line.
   final LineRequest? request;
@@ -142,6 +148,7 @@ class Line {
   Line copyWith({
     String? status,
     bool? fired,
+    int? sentMs,
     bool? pending,
     int? qty,
     String? note,
@@ -162,6 +169,7 @@ class Line {
     rank: rank ?? this.rank,
     modifiedAfterFire: modifiedAfterFire,
     fired: fired ?? this.fired,
+    sentMs: sentMs ?? this.sentMs,
     request: request,
     itemId: itemId,
     entryId: entryId,

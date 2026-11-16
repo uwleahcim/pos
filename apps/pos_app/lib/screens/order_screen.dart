@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -50,12 +51,18 @@ class OrderScreen extends StatefulWidget {
     this.staffName,
     this.session,
     this.phone,
+    this.now,
   });
 
   final PosApi api;
   final Outbox outbox;
   final PhotoQueue photos;
   final String orderId;
+
+  /// What time it is, for how long ago a dish was sent; the device's own clock unless a test names one.
+  /// It is the clock that stamps what this screen sends and the one in the corner of the device, so "sent
+  /// 18:42, 23 min ago" adds up with what the server sees.
+  final int Function()? now;
 
   /// The terminal's phone, when it is one, for the status icon.
   final PhoneClient? phone;
@@ -1145,6 +1152,7 @@ class _OrderScreenState extends State<OrderScreen> {
       allergenNames: _allergenNames,
       coursing: widget.coursing,
       lastAdded: _lastAdded,
+      now: widget.now ?? _deviceNow,
       onEdit: _edit,
       onQty: _setQty,
       onTypeQty: _typeQty,
@@ -1267,6 +1275,8 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 }
 
+int _deviceNow() => DateTime.now().millisecondsSinceEpoch;
+
 /// The lines on the check with their prices, and the totals the backend computed. The line added last
 /// scrolls into view, so the operator sees what the last tap did.
 class _TicketPanel extends StatefulWidget {
@@ -1276,6 +1286,7 @@ class _TicketPanel extends StatefulWidget {
     required this.open,
     required this.coursing,
     required this.lastAdded,
+    required this.now,
     this.allergenNames = const {},
     required this.onEdit,
     required this.onQty,
@@ -1295,6 +1306,9 @@ class _TicketPanel extends StatefulWidget {
   final bool open;
   final Coursing coursing;
   final String? lastAdded;
+
+  /// What time it is, in milliseconds: an open check says how long ago its dishes were sent.
+  final int Function() now;
 
   /// The menu's allergens by code, to name what a marked dish contains.
   final Map<String, String> allergenNames;
@@ -1334,8 +1348,17 @@ class _TicketPanelState extends State<_TicketPanel> {
   List<CheckRow> _built = const []; // the rows as last laid out
   Placed _placed = Placed.none; // which check each dish is on, while the table pays on several
 
+  // The minute it is now, for "23 min ago" beside a sent time. Only the words that say it listen, and they
+  // hear of it once a minute: the check itself is not rebuilt as time passes.
+  late final ValueNotifier<int> _minute = ValueNotifier(_minuteNow());
+  Timer? _minuteTimer;
+
+  int _minuteNow() => widget.now() ~/ Duration.millisecondsPerMinute * Duration.millisecondsPerMinute;
+
   @override
   void dispose() {
+    _minuteTimer?.cancel();
+    _minute.dispose();
     for (final node in _focus.values) {
       node.dispose();
     }
@@ -1389,6 +1412,7 @@ class _TicketPanelState extends State<_TicketPanel> {
   @override
   void initState() {
     super.initState();
+    _minuteTimer = Timer.periodic(const Duration(seconds: 5), (_) => _minute.value = _minuteNow());
     _showLastAdded(); // the phone's Check tab opens on it too
   }
 
@@ -1475,10 +1499,13 @@ class _TicketPanelState extends State<_TicketPanel> {
                 targets: open ? (inHand) => _lotTargets(inHand, moves: check?.moves ?? false) : null,
                 onTarget: (target, lines) => unawaited(widget.onLot(target, lines)),
                 rowBuilder: (context, i, row, drag) => switch (row) {
-                  CourseRow(:final id, :final name, :final state) => _CourseHeader(
+                  CourseRow(:final id, :final name, :final state, :final sentMs) => _CourseHeader(
                     key: ValueKey('course-row:$id'),
+                    id: id,
                     name: name,
                     state: state,
+                    sentMs: sentMs,
+                    minute: open ? _minute : null,
                   ),
                   final LineRow row => _lineTile(context, i, row, drag),
                 },
@@ -1562,16 +1589,19 @@ class _TicketPanelState extends State<_TicketPanel> {
           )
         : child;
     final on = _placed.isSplit && line.isActive ? _placed.on[line.lineId] : null;
-    final words = [
+    final sentAt = row.sentMs; // a dish that went later than its course's header says: it says its own time
+    List<String> wordsAt(int? now) => [
       // on a split table: the check the dish is on, or the checks it is shared between
       if (on != null) on.length == 1 ? 'check ${on.single}' : 'shared by checks ${on.join(', ')}',
       if (line.isVoid) line.voidReason.isEmpty ? 'void' : 'void · ${line.voidReason}',
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
+      if (sentAt != null) sentWords(sentAt, nowMs: now),
       if (line.isActive && line.modifiedAfterFire) 'added after fire',
       if (line.note.isNotEmpty) line.note,
       // a dish someone other than the order's server added, with hands-free switching
       if (line.by.isNotEmpty && line.byId != widget.order?.fields['server_id']) 'by ${line.by}',
     ];
+    final words = wordsAt(null);
     final below = <Widget>[
       // first, in red: the menu says the dish has in it what its seat (or the table) cannot have
       if (line.isActive && line.allergy.isNotEmpty)
@@ -1585,7 +1615,14 @@ class _TicketPanelState extends State<_TicketPanel> {
         _SubLine(m.label, amount: m.charged ? priceChange(m.amount) : null, depth: m.depth),
       // then each comp or discount on the line (they come off after every choice), with what it took off
       for (final d in comps) _SubLine(compLabel(d), amount: inParens(d.amount)),
-      if (words.isNotEmpty) _SubLine(words.join(' · ')),
+      if (sentAt != null && widget.open)
+        // how long ago moves on with the minute: these words alone are built again
+        ValueListenableBuilder<int>(
+          valueListenable: _minute,
+          builder: (context, now, _) => _SubLine(wordsAt(now).join(' · '), key: ValueKey('sent:${line.lineId}')),
+        )
+      else if (words.isNotEmpty)
+        _SubLine(words.join(' · '), key: sentAt == null ? null : ValueKey('sent:${line.lineId}')),
     ];
     final tile = ListTile(
       key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
@@ -1928,11 +1965,15 @@ class _QtyDialogState extends State<_QtyDialog> {
 }
 
 /// A course on the check: its name and state, or the name alone, dimmed, while nothing is under it (a
-/// line can be dragged there).
+/// line can be dragged there). Once the kitchen has dishes of it, it says when the first of them went,
+/// before the state: "sent 18:42", and on an open check ([minute], the time it is now) how long ago.
 class _CourseHeader extends StatelessWidget {
-  const _CourseHeader({super.key, required this.name, required this.state});
+  const _CourseHeader({super.key, this.id = '', required this.name, required this.state, this.sentMs, this.minute});
+  final String id;
   final String name;
   final String state;
+  final int? sentMs;
+  final ValueListenable<int>? minute;
 
   @override
   Widget build(BuildContext context) {
@@ -1943,6 +1984,17 @@ class _CourseHeader extends StatelessWidget {
     final badgeBg = fired ? posColors.fired : posColors.waiting;
     final badgeFg = fired ? posColors.firedText : posColors.waitingText;
     final badgeBorder = fired ? posColors.firedBorder : posColors.waitingBorder;
+    final sentMs = this.sentMs;
+    final minute = this.minute;
+    // in the type of the words under a dish ("not sent yet"), which it reads along with
+    Widget sentText(String words) => Text(
+      words,
+      key: ValueKey('course-sent:$id'),
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        fontFeatures: PosTheme.tabular,
+      ),
+    );
     return Container(
       decoration: BoxDecoration(
         color: posColors.checkHeader,
@@ -1951,14 +2003,34 @@ class _CourseHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [
-          Text(
-            name,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: empty ? theme.colorScheme.onSurfaceVariant : null,
+          // The name, and beside it when the course went. Where the check is too narrow for both on one
+          // line (a phone, a long name, large type) the time goes under the name, whole and no smaller.
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: empty ? theme.colorScheme.onSurfaceVariant : null,
+                  ),
+                ),
+                if (sentMs != null && !empty)
+                  if (minute != null)
+                    ValueListenableBuilder<int>(
+                      valueListenable: minute,
+                      builder: (context, now, _) => sentText(sentWords(sentMs, nowMs: now)),
+                    )
+                  else
+                    sentText(sentWords(sentMs)),
+              ],
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           if (empty)
             const SizedBox(height: 20) // the row keeps the height of the state it will show
           else

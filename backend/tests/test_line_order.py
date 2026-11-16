@@ -8,6 +8,7 @@ import math
 from pos.printing.service import Printer, PrintService, ticket_for_fire
 from pos.sync.oplog import replay
 
+from .conftest import T0
 from .orders.test_menu_orders import GTC_QUART, client, payload
 
 EGGROLL = {"variant_id": "EGGROLL:regular"}
@@ -86,6 +87,32 @@ def test_a_line_not_yet_sent_is_a_late_addition_only_while_it_sits_under_a_cours
     assert more.lines["L2"].modified_after_fire is False  # the entrees have not gone: nothing is late
     back = replay(ops + [to_entrees, op("set_line", at=5, line_id="L2", course="1")])
     assert back.lines["L2"].modified_after_fire is True
+
+
+def test_a_line_says_when_the_kitchen_got_it(op):
+    """The check shows it ("sent 18:42"): each line carries the time of the fire that sent it, on the clock
+    of the screen that sent it, and nothing until then. A later fire sends only what was waiting."""
+    ops = [
+        op("create", at=0),
+        op("add_line", at=1, line_id="L1", item="Egg roll", course="1"),
+        op("add_line", at=2, line_id="L2", item="Duck", course="2"),
+        op("fire", at=60_000, course="1"),
+        op("add_line", at=70_000, line_id="L3", item="Soup", course="1"),  # after the appetizers went
+    ]
+    lines = replay(ops).snapshot()["lines"]
+    assert (lines["L1"]["fired"], lines["L1"]["sent_ms"]) == (True, T0 + 60_000)
+    assert (lines["L2"]["fired"], lines["L2"]["sent_ms"]) == (False, None)
+    assert (lines["L3"]["fired"], lines["L3"]["sent_ms"]) == (False, None)
+
+    lines = replay(ops + [op("fire", at=900_000, course="*")]).snapshot()["lines"]
+    assert lines["L1"]["sent_ms"] == T0 + 60_000  # sent once: the second fire does not send it again
+    assert lines["L2"]["sent_ms"] == lines["L3"]["sent_ms"] == T0 + 900_000
+
+    # a void keeps the time it had gone at, and moving a sent dish under another course does not change it
+    after = ops + [op("void_line", at=80_000, line_id="L1"), op("set_line", at=90_000, line_id="L1", course="2")]
+    assert replay(after).snapshot()["lines"]["L1"]["sent_ms"] == T0 + 60_000
+    moved = replay(ops + [op("set_line", at=90_000, line_id="L1", course="2", rank=9)]).snapshot()["lines"]["L1"]
+    assert (moved["course"], moved["sent_ms"]) == ("2", T0 + 60_000)
 
 
 def test_the_ticket_the_check_and_the_order_follow_the_arranged_order():
