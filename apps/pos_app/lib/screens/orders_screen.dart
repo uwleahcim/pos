@@ -36,6 +36,7 @@ import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'table_moves.dart';
 import 'theme.dart';
+import 'time_clock_card.dart';
 import 'to_go_chips.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
@@ -102,6 +103,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // The quote times as the hub last gave them: a rush shows above the checks, for everyone taking orders.
   Quotes? _quotes;
   bool _quotesStale = true; // the hub said a setting changed, or nothing was read yet
+  // Whether the location uses the time clock: read with the quotes, for the Time clock entry of the menu.
+  bool _clockOn = false;
   DateTime _quotesRead = DateTime.fromMillisecondsSinceEpoch(0);
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
@@ -285,6 +288,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!_quotesStale && now.difference(_quotesRead) < const Duration(seconds: 30)) return;
     _quotesStale = false;
     _quotesRead = now;
+    unawaited(_readClockSetting());
     try {
       final quotes = await widget.api.quotes();
       if (!mounted || identical(quotes, _quotes)) return;
@@ -294,6 +298,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // nothing answers, or a hub with no quotes: the strip keeps what it showed
     }
   }
+
+  Future<void> _readClockSetting() async {
+    try {
+      final on = (await widget.api.clockSetting())?.enabled ?? false;
+      if (mounted && on != _clockOn) setState(() => _clockOn = on);
+    } on ApiException {
+      // nothing answers: the menu keeps the entry it had
+    }
+  }
+
+  /// The time clock for whoever is at the screen: it asks for their own PIN, signed in or not.
+  Future<void> _timeClock() => showDialog<void>(
+    context: context,
+    builder: (_) => TimeClockDialog(api: widget.api, device: widget.settings.device),
+  );
 
   /// Sets [_clock] for the next moment the clock alone changes this screen: the rush running out, or an
   /// order for later nearing or reaching its time to start.
@@ -871,6 +890,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _refresh();
         }),
       ),
+      if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role) && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))

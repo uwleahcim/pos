@@ -39,6 +39,10 @@
 - `ticket_skips`: the stations each screen prints no ticket at (`screens`, a list of `{device, stations}`):
   dishes sent or voided from that screen print nothing there, since whoever rings them in makes them (the
   bar's own screen and the bar printer). Empty to start: every screen prints everywhere.
+- `time_clock`: the time clock (`pos/timeclock.py`): `enabled`, whether the location uses it (off to start);
+  `breaks_paid`, whether a break counts as time worked (off: a break is off the clock); `week_starts`, the
+  day the pay week starts on (`mon` or `sun`). The hours themselves are not a setting: they are in the
+  clock's own tables.
 - `bill`: the guest's bill on paper (`pos/printing/bill.py`): `printer`, the id of the printer the location's
   bills print at (null: the takeout station's printer, else the first; a screen may ask for another),
   `header`, the restaurant's own lines at the top (name, address, phone; the first prints big), and `footer`,
@@ -106,7 +110,11 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True},
     "ticket_skips": {"screens": []},
     "bill": {"printer": None, "header": [], "footer": ["Thank you!"]},
+    # Off until a manager turns it on: a clock changes what every person does when they come in. A break
+    # is the meal break, off the clock, unless the location pays for breaks. The pay week starts on Monday.
+    "time_clock": {"enabled": False, "breaks_paid": False, "week_starts": "mon"},
 }
+WEEK_STARTS = ("mon", "sun")
 RUSH_MAX = 120
 """The most minutes a rush can add to a quote: past two hours the kitchen is closed, not busy."""
 BIG_ORDER_DISHES_MAX = 500
@@ -365,6 +373,23 @@ def clean_ticket_skips(data: Mapping[str, Any]) -> dict[str, Any]:
         if stations:
             screens.append({"device": device, "stations": stations})
     return {"screens": screens}
+
+
+def clean_time_clock(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The time clock's setting as the app may set it, checked: whether the location uses the clock
+    (`enabled`), whether a break counts as time worked (`breaks_paid`) and the day the pay week starts on
+    (`week_starts`: `mon` or `sun`). Raises ValueError on a bad value."""
+    out: dict[str, Any] = {}
+    for name in ("enabled", "breaks_paid"):
+        value = data.get(name, DEFAULTS["time_clock"][name])
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false")
+        out[name] = value
+    week = str(data.get("week_starts") or DEFAULTS["time_clock"]["week_starts"]).strip().lower()
+    if week not in WEEK_STARTS:
+        raise ValueError("week_starts must be mon or sun")
+    out["week_starts"] = week
+    return out
 
 
 def skipped_stations(setting: Mapping[str, Any], device: str) -> frozenset[str]:

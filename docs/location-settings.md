@@ -24,6 +24,9 @@ screen holds:
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick
   from; under it, the **Voids and comps report**, which also lists the dishes taken off a check before they
   were sent (see `voids.md`).
+- **Time clock**: whether the location uses it (off to start), whether a break counts as time worked, and
+  the day the pay week starts on; under them **Hours**: who is on the clock, what each person worked, and
+  a manager's corrections (see `time-clock.md`).
 - **Printers**: its own screen: each printer with the station it prints for, its address and language, its
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
@@ -160,6 +163,9 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   enrollment calls are in `face-signin.md`.
 - `GET /settings/presence` and `PUT /settings/presence` (the manager Bearer token): `{"switch": true,
   "away_seconds": 60}`, the seconds 0 (never) to 3600; the tag calls are in `face-signin.md`.
+- `GET /settings/time_clock` and `PUT /settings/time_clock` (the manager Bearer token): `{"enabled":
+  false, "breaks_paid": false, "week_starts": "mon"}`, the week's first day `mon` or `sun`; a key left out
+  of a `PUT` keeps what it was. The clock's own calls are in `time-clock.md`.
 - A line carries `rank`, its place on the check: `GET /orders/{id}` lists the lines in rank order and each
   carries its `rank`. An `add_line` without one goes after everything on the check; a drag is a `set_line`
   with `rank` (and `course` when the course changes, `null` taking the course off), halfway between the

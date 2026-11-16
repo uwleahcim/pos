@@ -10,6 +10,7 @@ import '../printers.dart';
 import '../table_timers.dart';
 import '../tags.dart';
 import '../takeout.dart';
+import '../timeclock.dart';
 import '../voids.dart';
 import 'adjustments_screen.dart';
 import 'bill_dialog.dart';
@@ -21,6 +22,7 @@ import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
 import 'ticket_skips_dialog.dart';
+import 'time_clock_screen.dart';
 import 'void_rules_dialog.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
@@ -28,9 +30,10 @@ import 'void_rules_dialog.dart';
 /// the countdown on each table of the floor map, what voiding a sent dish takes (a manager's PIN or not, and
 /// the reasons to pick from), the kitchen printers (on their own screen) and what their tickets say about
 /// each other ("Ticket 2 of 3", "Also at: Wok 2"), which screen each desk phone is
-/// linked to, face sign-in with each staff member's enrollment and tag, and the hands-free switching between
-/// people. The hub keeps them; a terminal reads them when it opens an order. The report of voids and comps
-/// opens from here too. Behind the manager PIN.
+/// linked to, face sign-in with each staff member's enrollment and tag, the hands-free switching between
+/// people, and the time clock: whether the location uses it and how it counts the hours. The hub keeps them;
+/// a terminal reads them when it opens an order. The report of voids and comps and the hours of the time
+/// clock open from here too. Behind the manager PIN.
 class LocationSettingsScreen extends StatefulWidget {
   const LocationSettingsScreen({
     super.key,
@@ -126,6 +129,9 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   TicketSkips? _ticketSkips; // the stations each screen prints no ticket at; null from an older hub
   bool _ticketWordsBusy = false;
   String? _ticketWordsMessage;
+  ClockSetting? _clock; // the time clock as the hub has it; null from an older hub, which has none
+  bool _clockBusy = false;
+  String? _clockMessage;
 
   @override
   void initState() {
@@ -195,8 +201,36 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // nothing answered about the 86 board: the card says so
     }
+    try {
+      final clock = await widget.api.clockSetting();
+      if (mounted) setState(() => _clock = clock);
+    } on ApiException {
+      // nothing answered about the time clock: the card says so
+    }
     await _loadFaces();
     await _loadPrinters();
+  }
+
+  /// The time clock's switches save as they are flipped: on or off, breaks counted or not, the week's first day.
+  Future<void> _saveClock(ClockSetting next) async {
+    final was = _clock;
+    setState(() {
+      _clock = next;
+      _clockBusy = true;
+      _clockMessage = null;
+    });
+    try {
+      final saved = await widget.api.saveClockSetting(widget.token, next);
+      if (mounted) setState(() => _clock = saved);
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _clock = was;
+        _clockMessage = 'Not saved: ${err.detail?['message'] ?? err.message}';
+      });
+    } finally {
+      if (mounted) setState(() => _clockBusy = false);
+    }
   }
 
   Future<void> _loadPrinters() async {
@@ -809,6 +843,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          _clockCard(context),
+          const SizedBox(height: 12),
           _printersCard(context),
           const SizedBox(height: 12),
           Card(
@@ -881,6 +917,91 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       appBar: AppBar(title: const Text('Location settings')),
       body: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
+      ),
+    );
+  }
+
+  /// The time clock: whether the location uses it (off until a manager turns it on), whether a break counts
+  /// as time worked, the day the pay week starts on, and the way to the hours. Each saves as it is changed. A
+  /// hub older than the clock has none of it.
+  Widget _clockCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final clock = _clock;
+    if (clock == null) {
+      return const Card(
+        child: ListTile(
+          key: ValueKey('time-clock-none'),
+          leading: Icon(Icons.punch_clock_outlined),
+          title: Text('Time clock'),
+          subtitle: Text('The hub has not answered about the time clock (an older hub: update it)'),
+        ),
+      );
+    }
+    return Card(
+      child: Column(
+        children: [
+          SwitchListTile(
+            key: const ValueKey('time-clock-enabled'),
+            secondary: const Icon(Icons.punch_clock_outlined),
+            value: clock.enabled,
+            onChanged: _clockBusy ? null : (on) => _saveClock(clock.copyWith(enabled: on)),
+            title: const Text('Time clock'),
+            subtitle: Text(
+              clock.enabled
+                  ? 'Staff clock in and out and take breaks with their own PIN: Time clock on the sign-in '
+                        'screen, or in the menu once signed in'
+                  : 'Off: nobody is asked to clock in',
+            ),
+          ),
+          if (clock.enabled) ...[
+            SwitchListTile(
+              key: const ValueKey('time-clock-breaks-paid'),
+              value: clock.breaksPaid,
+              onChanged: _clockBusy ? null : (on) => _saveClock(clock.copyWith(breaksPaid: on)),
+              title: const Text('Breaks count as time worked'),
+              subtitle: Text(
+                clock.breaksPaid ? 'A break stays in the hours' : 'Off: a break is taken out of the hours',
+              ),
+            ),
+            ListTile(
+              title: const Text('The pay week starts on'),
+              trailing: SegmentedButton<String>(
+                key: const ValueKey('time-clock-week'),
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'mon', label: Text('Monday')),
+                  ButtonSegment(value: 'sun', label: Text('Sunday')),
+                ],
+                selected: {clock.weekStarts},
+                onSelectionChanged: _clockBusy
+                    ? null
+                    : (picked) => _saveClock(clock.copyWith(weekStarts: picked.first)),
+              ),
+            ),
+          ],
+          if (_clockMessage != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(_clockMessage!, style: TextStyle(color: scheme.error)),
+              ),
+            ),
+          const Divider(height: 1),
+          ListTile(
+            key: const ValueKey('time-clock-hours'),
+            leading: const Icon(Icons.schedule),
+            title: const Text('Hours'),
+            subtitle: const Text('Who is on the clock, what each person worked, and corrections'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => TimeClockScreen(api: widget.api, token: widget.token, device: widget.device),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

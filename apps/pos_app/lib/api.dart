@@ -19,6 +19,7 @@ import 'printers.dart';
 import 'roster.dart';
 import 'settings.dart';
 import 'takeout.dart';
+import 'timeclock.dart';
 import 'voids.dart';
 
 /// Worker: the `/menu/items` answer split into one JSON text per dish, under the name [PosApi.item] reads
@@ -897,6 +898,110 @@ class PosApi {
   /// and comps, with totals by reason, by who did it and by who approved it.
   Future<AdjustmentsReport> adjustmentsReport({required int sinceMs}) async =>
       AdjustmentsReport.fromJson(await _get('/reports/adjustments', query: {'since': '$sinceMs'}));
+
+  // The time clock (docs/time-clock.md). --------------------------------------------------------------------
+
+  /// Whether the location uses the time clock and how it counts the hours. The last answer read when
+  /// nothing answers, so the pad keeps its Time clock button. Null from a hub older than the clock.
+  Future<ClockSetting?> clockSetting() async {
+    try {
+      return await _repeated('/settings/time_clock', ClockSetting.fromJson, remember: 'time_clock');
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) turns the clock on or off, or changes how it counts.
+  Future<ClockSetting> saveClockSetting(String token, ClockSetting setting) async => ClockSetting.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/time_clock'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(setting.toJson()),
+      ),
+    ),
+  );
+
+  /// A person at the clock, known by their own [pin] exactly as at sign-in. [action] is `state` (only look),
+  /// `in`, `out`, `break_start` or `break_end`; the hub stamps the time. [punchId] names the punch, so one
+  /// sent again after no answer counts once. 401 for a wrong PIN, 423 after too many, 409 when the punch
+  /// does not fit where they stand (`already_in`, `not_in`, `on_break`, `not_on_break`) or the clock is `off`.
+  Future<ClockStand> clockPunch({
+    required String device,
+    required String pin,
+    String action = 'state',
+    String? punchId,
+  }) async => ClockStand.fromJson(
+    await _post('/timeclock/punch', {'device': device, 'pin': pin, 'action': action, 'punch_id': ?punchId}),
+  );
+
+  /// The hours of the shifts that began from [sinceMs] up to [untilMs] (manager token): who is on the clock
+  /// now, what each person worked, and each shift with its log.
+  Future<ClockReport> clockReport(String token, {required int sinceMs, required int untilMs}) async =>
+      ClockReport.fromJson(
+        await _get('/timeclock/report', query: {'since': '$sinceMs', 'until': '$untilMs'}, headers: _bearer(token)),
+      );
+
+  /// A manager writes a shift in for somebody who never clocked in. With no [outMs] they are on the clock
+  /// from [inMs]. The hub wants the [reason] and keeps it in the log.
+  Future<ClockShift> addShift(
+    String token, {
+    required String staffId,
+    required int inMs,
+    int? outMs,
+    List<ClockBreak> breaks = const [],
+    required String reason,
+    String? device,
+  }) async => ClockShift.fromJson(
+    await _post('/timeclock/shifts', {
+      'staff_id': staffId,
+      'in_ms': inMs,
+      'out_ms': outMs,
+      'breaks': [for (final b in breaks) b.toJson()],
+      'reason': reason,
+      'device': device ?? '',
+    }, headers: _bearer(token)),
+  );
+
+  /// A manager's correction: the whole of the shift's times as they should be, and why. The log keeps what
+  /// they were.
+  Future<ClockShift> editShift(
+    String token,
+    String shiftId, {
+    required int inMs,
+    int? outMs,
+    List<ClockBreak> breaks = const [],
+    required String reason,
+    String? device,
+  }) async => ClockShift.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/timeclock/shifts/$shiftId'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({
+          'in_ms': inMs,
+          'out_ms': outMs,
+          'breaks': [for (final b in breaks) b.toJson()],
+          'reason': reason,
+          'device': device ?? '',
+        }),
+      ),
+    ),
+  );
+
+  /// A manager takes a shift off (a punch made by mistake): it stays in the report, marked, and counts for
+  /// nothing.
+  Future<ClockShift> removeShift(String token, String shiftId, {required String reason, String? device}) async =>
+      ClockShift.fromJson(
+        await _withFailover(
+          (base) => _client.delete(
+            Uri.parse('$base/timeclock/shifts/$shiftId')
+                .replace(queryParameters: {'reason': reason, 'device': device ?? ''}),
+            headers: _bearer(token),
+          ),
+        ),
+      );
 
   /// The tax rates from the last check any backend priced, as an empty estimated check: what a screen with
   /// no backend works a new check's tax from. Null until a check has been read on this device.

@@ -109,8 +109,34 @@ class Hub {
     {'code': 'sesame', 'name': 'Sesame'},
   ];
 
+  /// The time clock (docs/time-clock.md). [timeClock] is the setting it keeps (`GET/PUT /settings/time_clock`;
+  /// null for a hub older than the clock) and [timeClockAuth] the token its last save carried. A PIN at the
+  /// clock (`POST /timeclock/punch`) is Amy's 1111 or Ben's 2222; each punch that came is in [punches], and
+  /// the hub's own clock is [clockNow], which a test moves. [shifts] are the shifts it holds, as the report
+  /// lists them (`GET /timeclock/report`, whose asks are in [clockAsks]); [unended] is what a person's answer
+  /// carries as the shift nobody clocked them out of. A manager's add, correction or removal is kept in
+  /// [shiftChanges] as (method, path, body), and refused with [refuseShift] (an error code and its message).
+  Map<String, dynamic>? timeClock;
+  String? timeClockAuth;
+  final punches = <Map<String, dynamic>>[];
+  int clockNow = DateTime(2026, 11, 16, 16, 2).millisecondsSinceEpoch;
+  final shifts = <Map<String, dynamic>>[];
+  final unended = <String, Map<String, dynamic>>{};
+  final clockAsks = <Map<String, String>>[];
+  final shiftChanges = <(String, String, Map<String, dynamic>)>[];
+  (String, String)? refuseShift;
+  String? clockAuth;
+  final _punched = <String, String>{}; // punch id -> staff id
+  static const _atClock = {
+    '1111': {'staff_id': 's1', 'name': 'Amy', 'role': 'server'},
+    '2222': {'staff_id': 's2', 'name': 'Ben', 'role': 'bartender'},
+  };
+
   /// Unreachable: every call fails, as with the hub's cable pulled.
   bool down = false;
+
+  /// It takes what it is sent and the answer never arrives: the cable pulled after the request left.
+  bool deaf = false;
 
   /// The staff by name and role (`GET /staff`): who a table can be given to and who gives tables out. Null
   /// for a hub older than the list.
@@ -253,6 +279,230 @@ class Hub {
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
+  static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
+
+  /// A shift as the hub answers it, with what it comes to counted at [clockNow].
+  Map<String, dynamic> _counted(Map<String, dynamic> shift) {
+    final paid = timeClock?['breaks_paid'] == true;
+    final inMs = shift['in_ms'] as int;
+    final outMs = shift['out_ms'] as int?;
+    final end = outMs ?? clockNow;
+    final breaks = (shift['breaks'] as List? ?? const []).cast<Map<String, dynamic>>();
+    final breakMs = breaks.fold<int>(0, (sum, b) => sum + ((b['end_ms'] as int?) ?? end) - (b['start_ms'] as int));
+    final removed = shift['removed'] == true;
+    final onBreak = outMs == null && breaks.isNotEmpty && breaks.last['end_ms'] == null;
+    return {
+      'closed_by': '',
+      'edited': false,
+      'removed': false,
+      ...shift,
+      'breaks': breaks,
+      'state': removed
+          ? 'removed'
+          : onBreak
+          ? 'break'
+          : outMs == null
+          ? 'in'
+          : 'out',
+      'unended': shift['closed_by'] == 'system' && !removed,
+      'span_ms': end - inMs,
+      'break_ms': breakMs,
+      'worked_ms': end - inMs - (paid ? 0 : breakMs),
+    };
+  }
+
+  Map<String, dynamic>? _openOf(String staffId) =>
+      shifts.where((s) => s['staff_id'] == staffId && s['out_ms'] == null && s['removed'] != true).firstOrNull;
+
+  /// `POST /timeclock/punch`: who the PIN is, and where they stand after what they asked.
+  http.Response _punch(Map<String, dynamic> body) {
+    punches.add(body);
+    if (timeClock?['enabled'] != true) {
+      return json({
+        'detail': {'error': 'off', 'message': 'This location does not use the time clock'},
+      }, 409);
+    }
+    final who = _atClock[body['pin']];
+    pins.add(body['pin'] as String? ?? '');
+    if (who == null) {
+      return json({
+        'detail': {'error': 'unknown_credential'},
+      }, 401);
+    }
+    final id = who['staff_id']!;
+    final action = body['action'] as String? ?? 'state';
+    final punchId = body['punch_id'] as String?;
+    var shown = _openOf(id);
+    http.Response refused(String code, String message) => json({
+      'detail': {'error': code, 'message': message},
+    }, 409);
+    if (action != 'state' && (punchId == null || !_punched.containsKey(punchId))) {
+      final open = _openOf(id);
+      switch (action) {
+        case 'in':
+          if (open != null) return refused('already_in', '${who['name']} is already on the clock');
+          shown = {'shift_id': 'sh${shifts.length + 1}', ...who, 'in_ms': clockNow, 'out_ms': null, 'breaks': []};
+          shifts.add(shown);
+        case 'out':
+          if (open == null) return refused('not_in', '${who['name']} is not on the clock');
+          final breaks = (open['breaks'] as List).cast<Map<String, dynamic>>();
+          if (breaks.isNotEmpty && breaks.last['end_ms'] == null) breaks.last['end_ms'] = clockNow;
+          open['out_ms'] = clockNow;
+          open['closed_by'] = 'self';
+        case 'break_start':
+          if (open == null) return refused('not_in', '${who['name']} is not on the clock');
+          (open['breaks'] as List).add(<String, dynamic>{'start_ms': clockNow, 'end_ms': null});
+        case 'break_end':
+          if (open == null) return refused('not_in', '${who['name']} is not on the clock');
+          final breaks = (open['breaks'] as List).cast<Map<String, dynamic>>();
+          if (breaks.isEmpty || breaks.last['end_ms'] != null) {
+            return refused('not_on_break', '${who['name']} is not on a break');
+          }
+          breaks.last['end_ms'] = clockNow;
+      }
+      if (punchId != null) _punched[punchId] = id;
+    }
+    final current = _openOf(id);
+    final counted = current == null ? null : _counted(current);
+    final breaks = (current?['breaks'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+    return json({
+      'staff': {...who, 'method': 'pin', 'preferences': <String, dynamic>{}},
+      'breaks_paid': timeClock?['breaks_paid'] == true,
+      'state': counted?['state'] ?? 'out',
+      'since_ms': counted == null
+          ? null
+          : counted['state'] == 'break'
+          ? breaks.last['start_ms']
+          : current!['in_ms'],
+      'now_ms': clockNow,
+      'shift': counted ?? (shown == null ? null : _counted(shown)),
+      'unended': unended[id] == null ? null : _counted(unended[id]!),
+      'punched': action == 'state' ? null : action,
+    });
+  }
+
+  /// `GET /timeclock/report`: the shifts that began in the time asked for, and what they come to.
+  http.Response _clockReport(Uri url) {
+    clockAsks.add(url.queryParameters);
+    final since = int.parse(url.queryParameters['since']!), until = int.parse(url.queryParameters['until']!);
+    final listed = [
+      for (final s in shifts)
+        if ((s['in_ms'] as int) >= since && (s['in_ms'] as int) < until) _counted(s),
+    ];
+    final people = <String, Map<String, dynamic>>{};
+    for (final s in listed.where((s) => s['removed'] != true)) {
+      final person = people.putIfAbsent(
+        s['staff_id'] as String,
+        () => {
+          'staff_id': s['staff_id'],
+          'name': s['name'],
+          'role': s['role'],
+          'worked_ms': 0,
+          'break_ms': 0,
+          'shifts': 0,
+          'unended': 0,
+          'open': 0,
+        },
+      );
+      person['worked_ms'] = (person['worked_ms'] as int) + (s['worked_ms'] as int);
+      person['break_ms'] = (person['break_ms'] as int) + (s['break_ms'] as int);
+      person['shifts'] = (person['shifts'] as int) + 1;
+      person['unended'] = (person['unended'] as int) + (s['unended'] == true ? 1 : 0);
+      person['open'] = (person['open'] as int) + (s['out_ms'] == null ? 1 : 0);
+    }
+    return json({
+      'since_ms': since,
+      'until_ms': until,
+      'now_ms': clockNow,
+      'breaks_paid': timeClock?['breaks_paid'] == true,
+      'on_now': [
+        for (final s in shifts)
+          if (s['out_ms'] == null && s['removed'] != true) _counted(s),
+      ],
+      'people': people.values.toList(),
+      'worked_ms': people.values.fold<int>(0, (sum, p) => sum + (p['worked_ms'] as int)),
+      'break_ms': people.values.fold<int>(0, (sum, p) => sum + (p['break_ms'] as int)),
+      'unended': people.values.fold<int>(0, (sum, p) => sum + (p['unended'] as int)),
+      'shifts': listed,
+      'enabled': timeClock?['enabled'] == true,
+      'week_starts': timeClock?['week_starts'] ?? 'mon',
+    });
+  }
+
+  /// A manager's add (`POST /timeclock/shifts`), correction (`PUT`) or removal (`DELETE`) of a shift.
+  http.Response _changeShift(http.Request request, String? shiftId) {
+    clockAuth = request.headers['authorization'];
+    final body = request.method == 'DELETE'
+        ? <String, dynamic>{...request.url.queryParameters}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+    shiftChanges.add((request.method, request.url.path, body));
+    final refusal = refuseShift;
+    if (refusal != null) {
+      return json({
+        'detail': {'error': refusal.$1, 'message': refusal.$2},
+      }, refusal.$1.startsWith('bad_') ? 422 : 409);
+    }
+    if ((body['reason'] as String? ?? '').trim().isEmpty) {
+      return json({
+        'detail': {'error': 'reason_needed', 'message': 'Say why: the log keeps it with the change'},
+      }, 409);
+    }
+    final entry = {
+      'entry_id': 'e${shiftChanges.length}',
+      'at_ms': clockNow,
+      'by_id': 's3',
+      'by': 'Mike',
+      'device': body['device'] ?? '',
+      'reason': body['reason'],
+    };
+    Map<String, dynamic> times(Map<String, dynamic> of) => {
+      'in_ms': of['in_ms'],
+      'out_ms': of['out_ms'],
+      'breaks': of['breaks'] ?? [],
+    };
+    if (shiftId == null) {
+      final who = (roster ?? const []).where((s) => s['staff_id'] == body['staff_id']).firstOrNull;
+      if (who == null) {
+        return json({
+          'detail': {'error': 'unknown_staff', 'message': 'Nobody on the staff has that id'},
+        }, 404);
+      }
+      final shift = <String, dynamic>{
+        'shift_id': 'sh${shifts.length + 1}',
+        'staff_id': who['staff_id'],
+        'name': who['name'],
+        'role': who['role'],
+        ...times(body),
+        'closed_by': body['out_ms'] == null ? '' : 'manager',
+        'edited': true,
+        'log': [
+          {...entry, 'action': 'add', 'before': null, 'after': times(body)},
+        ],
+      };
+      shifts.add(shift);
+      return json(_counted(shift));
+    }
+    final shift = shifts.where((s) => s['shift_id'] == shiftId).firstOrNull;
+    if (shift == null) {
+      return json({
+        'detail': {'error': 'unknown_shift', 'message': 'No such shift'},
+      }, 404);
+    }
+    final before = times(shift);
+    final log = [...(shift['log'] as List? ?? const [])];
+    if (request.method == 'DELETE') {
+      shift['removed'] = true;
+      shift['out_ms'] ??= clockNow;
+      log.add({...entry, 'action': 'remove', 'before': before, 'after': null});
+    } else {
+      shift.addAll(times(body));
+      shift['closed_by'] = body['out_ms'] == null ? '' : 'manager';
+      log.add({...entry, 'action': 'edit', 'before': before, 'after': times(body)});
+    }
+    shift['edited'] = true;
+    shift['log'] = log;
+    return json(_counted(shift));
+  }
 
   /// Every request that reached the hub, as `METHOD path?query`, and how many of its reads it answered with
   /// "nothing new" (304).
@@ -268,6 +518,7 @@ class Hub {
     if (down) throw http.ClientException('connection refused', request.url);
     requests.add('${request.method} ${request.url.path}${request.url.hasQuery ? '?${request.url.query}' : ''}');
     final response = await answer(request);
+    if (deaf) throw http.ClientException('no answer came back', request.url);
     if (!namesAnswers || request.method != 'GET' || response.statusCode != 200) return response;
     final etag = 'W/"${base64Encode(response.bodyBytes).hashCode}-${response.bodyBytes.length}"';
     if (request.headers['if-none-match'] == etag) {
@@ -415,6 +666,24 @@ class Hub {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
       return order == null ? json({'detail': 'not found'}, 404) : json(order);
+    }
+    if (path.startsWith('/timeclock/') || path == '/settings/time_clock') {
+      if (timeClock == null) return json({'detail': 'Not Found'}, 404);
+      if (path == '/settings/time_clock') {
+        if (request.method == 'PUT') {
+          timeClockAuth = request.headers['authorization'];
+          timeClock = {...timeClock!, ...jsonDecode(request.body) as Map<String, dynamic>};
+        }
+        return json(timeClock!);
+      }
+      if (path == '/timeclock/punch') return _punch(jsonDecode(request.body) as Map<String, dynamic>);
+      if (path == '/timeclock/report') {
+        clockAuth = request.headers['authorization'];
+        return _clockReport(request.url);
+      }
+      if (path == '/timeclock/shifts') return _changeShift(request, null);
+      final shift = _shift.firstMatch(path);
+      if (shift != null) return _changeShift(request, shift.group(1));
     }
     switch (path) {
       case '/settings/coursing':
