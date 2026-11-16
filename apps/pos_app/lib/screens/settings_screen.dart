@@ -54,6 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _endpoints = TextEditingController(text: widget.settings.endpoints.join('\n'));
   late bool _relay = widget.settings.printRelay;
   late int _lockMinutes = widget.settings.lockMinutes;
+  late bool _signOutAfterSend = widget.settings.signOutAfterSend;
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -111,6 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await widget.settings.save(device: _device.text, endpoints: _endpoints.text.split('\n'), printRelay: _relay);
     await widget.settings.saveLockMinutes(_lockMinutes);
+    await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -294,6 +296,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                     ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // A screen several people share: after a send, leaving the check signs out.
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: SwitchListTile(
+                    key: const ValueKey('sign-out-after-send'),
+                    value: _signOutAfterSend,
+                    onChanged: (v) => setState(() => _signOutAfterSend = v),
+                    secondary: const Icon(Icons.logout),
+                    title: const Text('Back to sign-in after sending'),
+                    subtitle: Text(
+                      _signOutAfterSend
+                          ? 'Once dishes are sent from a check, leaving that check signs out, so the next person '
+                                'signs in. For a screen several people share.'
+                          : 'Leaving a check goes back to the tables, still signed in. Turn on for a screen '
+                                'several people share.',
+                    ),
                   ),
                 ),
               ),

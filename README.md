@@ -49,6 +49,8 @@ merges after any disconnect.
   later says its own time): `docs/time-sent.md`
 - Locking an idle screen (minutes per device, off to start; the sign-in pad comes over what was open and
   nothing is closed): `docs/idle-lock.md`
+- Back to sign-in after sending (a switch per device, for a screen several people share: leaving a check
+  after a send signs out): `docs/sign-in-after-sending.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

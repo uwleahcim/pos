@@ -104,6 +104,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
   bool _billing = false; // a bill is on its way to the printer: the button waits
+  bool _sentHere = false; // dishes were sent to the kitchen from this screen since it opened
   final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
@@ -519,12 +520,28 @@ class _OrderScreenState extends State<OrderScreen> {
   /// Sends a held course (or everything) to the kitchen. Sending has two forms: stay on the check for the
   /// next round, or leave it for the next table.
   Future<void> _fire(String course, {bool leave = false}) async {
+    _sentHere = true;
     await _append('fire', {'course': course});
     if (leave && mounted) Navigator.of(context).pop();
   }
 
+  /// Whether leaving this check signs the person out: the device goes back to sign-in after sending
+  /// ([Settings.signOutAfterSend], for a screen several people share) and dishes were sent from here.
+  bool get _signsOutOnLeaving =>
+      _sentHere && widget.api.settings.signOutAfterSend && (widget.session?.signedIn ?? false);
+
+  /// The check was left, by whatever way (the back arrow, a send that leaves, closing it). After a send on a
+  /// device that goes back to sign-in, the person is signed out: once the screen is on its way out, since
+  /// signing out closes whatever is open and the navigator is busy with this very leaving.
+  void _left(bool didPop) {
+    if (!didPop || !_signsOutOnLeaving) return;
+    final session = widget.session;
+    unawaited(Future.microtask(() => session?.signOut()));
+  }
+
   /// A to-go order with nothing due goes to the kitchen: its time is settled first if it is a big one.
   Future<void> _sendToGo(Order order) async {
+    _sentHere = true;
     await _appendAll([
       ..._settleQuote(order),
       ('fire', {'course': '*'}),
@@ -548,6 +565,7 @@ class _OrderScreenState extends State<OrderScreen> {
       builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup),
     );
     if (choice == null || !mounted) return;
+    _sentHere = true;
     await _appendAll([
       if (choice.takesMoney)
         (
@@ -1204,72 +1222,81 @@ class _OrderScreenState extends State<OrderScreen> {
               ],
             ),
           );
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          order == null
-              ? 'Order'
-              : order.isTakeout
-              ? _takeoutTitle(order, _readyAt(order))
-              : 'Table ${order.table} · ${order.status}',
-        ),
-        actions: [
-          StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
-          if (order != null && open && !order.isTakeout)
-            _FireMenu(order: order, coursing: widget.coursing, onFire: _fire),
-          // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
-          if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
-            check != null && cents(check.due) > 0
-                ? _Action('Pay & send', Icons.point_of_sale, () => _payAndSend(order, check))
-                : _Action('Send', Icons.send, () => _sendToGo(order)),
-          if (order != null && open) _Action('Discount', Icons.percent, _discount),
-          if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
-          if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
-        ],
-      ),
-      body: Column(
-        children: [
-          CaptureBanner(api: widget.api, outbox: widget.outbox),
-          // what the guests cannot have, over the check and the menu alike: on a phone they are two tabs
-          if (order != null && told.isNotEmpty)
-            _AllergyStrip(
-              words: allergySummary(told, _allergenNames, seated: !order.isTakeout),
-              onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
-            ),
-          if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth >= 720) {
-                  // Mac and iPad: the check on the left, the menu on the right.
-                  return Row(
-                    children: [
-                      SizedBox(width: constraints.maxWidth * 0.38, child: ticket),
-                      const VerticalDivider(width: 1),
-                      Expanded(child: menu),
-                    ],
-                  );
-                }
-                // iPhone: the check and the menu as two tabs.
-                return DefaultTabController(
-                  length: 2,
-                  initialIndex: 1,
-                  child: Column(
-                    children: [
-                      TabBar(
-                        tabs: [
-                          Tab(text: 'Check ${check == null ? '' : '\$${check.total}'}'),
-                          const Tab(text: 'Menu'),
-                        ],
-                      ),
-                      Expanded(child: TabBarView(children: [ticket, menu])),
-                    ],
-                  ),
-                );
-              },
-            ),
+    // Leaving is noticed whichever way it happens, for a device that goes back to sign-in after sending.
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) => _left(didPop),
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            order == null
+                ? 'Order'
+                : order.isTakeout
+                ? _takeoutTitle(order, _readyAt(order))
+                : 'Table ${order.table} · ${order.status}',
           ),
-        ],
+          actions: [
+            StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
+            if (order != null && open && !order.isTakeout)
+              _FireMenu(
+                order: order,
+                coursing: widget.coursing,
+                onFire: _fire,
+                signsOut: widget.api.settings.signOutAfterSend && (widget.session?.signedIn ?? false),
+              ),
+            // Counter mode: pay first, then everything goes to the kitchen at once and the screen comes back.
+            if (order != null && open && order.isTakeout && order.heldCourses.isNotEmpty)
+              check != null && cents(check.due) > 0
+                  ? _Action('Pay & send', Icons.point_of_sale, () => _payAndSend(order, check))
+                  : _Action('Send', Icons.send, () => _sendToGo(order)),
+            if (order != null && open) _Action('Discount', Icons.percent, _discount),
+            if (order != null && open) _Action('Close', Icons.check, () => _append('close')),
+            if (order != null && order.status == 'closed') _Action('Reopen', Icons.undo, () => _append('reopen')),
+          ],
+        ),
+        body: Column(
+          children: [
+            CaptureBanner(api: widget.api, outbox: widget.outbox),
+            // what the guests cannot have, over the check and the menu alike: on a phone they are two tabs
+            if (order != null && told.isNotEmpty)
+              _AllergyStrip(
+                words: allergySummary(told, _allergenNames, seated: !order.isTakeout),
+                onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
+              ),
+            if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth >= 720) {
+                    // Mac and iPad: the check on the left, the menu on the right.
+                    return Row(
+                      children: [
+                        SizedBox(width: constraints.maxWidth * 0.38, child: ticket),
+                        const VerticalDivider(width: 1),
+                        Expanded(child: menu),
+                      ],
+                    );
+                  }
+                  // iPhone: the check and the menu as two tabs.
+                  return DefaultTabController(
+                    length: 2,
+                    initialIndex: 1,
+                    child: Column(
+                      children: [
+                        TabBar(
+                          tabs: [
+                            Tab(text: 'Check ${check == null ? '' : '\$${check.total}'}'),
+                            const Tab(text: 'Menu'),
+                          ],
+                        ),
+                        Expanded(child: TabBarView(children: [ticket, menu])),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2264,11 +2291,14 @@ class _CustomerStrip extends StatelessWidget {
 /// Fire one held course, or everything at once: and stay on the check, or leave it. With coursing off
 /// (or dishes not coursed) only everything can go, and the button counts the dishes still to send.
 class _FireMenu extends StatelessWidget {
-  const _FireMenu({required this.order, required this.coursing, required this.onFire});
+  const _FireMenu({required this.order, required this.coursing, required this.onFire, this.signsOut = false});
 
   final Order order;
   final Coursing coursing;
   final void Function(String course, {bool leave}) onFire;
+
+  /// Whether leaving after a send signs the person out here (a shared screen): the last choice says so.
+  final bool signsOut;
 
   @override
   Widget build(BuildContext context) {
@@ -2302,14 +2332,19 @@ class _FireMenu extends StatelessWidget {
           ),
         if (held.isNotEmpty) const PopupMenuDivider(),
         const PopupMenuItem(value: ('*', false), child: Text('Fire everything')),
-        const PopupMenuItem(
-          key: ValueKey('fire-and-leave'),
+        PopupMenuItem(
+          key: const ValueKey('fire-and-leave'),
           value: ('*', true),
           child: Row(
             children: [
-              Icon(Icons.logout, size: 18),
-              SizedBox(width: 8),
-              Flexible(child: Text('Fire everything and leave', overflow: TextOverflow.ellipsis)),
+              const Icon(Icons.logout, size: 18),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  signsOut ? 'Fire everything and sign out' : 'Fire everything and leave',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
         ),
