@@ -41,6 +41,8 @@ merges after any disconnect.
   "Ticket 2 of 3" and name the other stations cooking): `docs/printing.md`
 - The guest's bill (the Bill button beside the total, what the paper says, which printer it comes out of, a
   screen's own printer, the restaurant's lines at the top and the foot): `docs/bill.md`
+- Splitting a check (by seat in one tap, dishes moved or shared between checks, evenly; what each check
+  comes to and its bill; one order all along): `docs/split.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

@@ -6,6 +6,9 @@ added); a line without one (the phase 0 demo screen) counts as zero and is flagg
 
 Order of operations (architecture section 9): line discounts, then check discounts spread over the lines
 in proportion, then charges on the discounted subtotal, then tax on whatever each class taxes.
+
+A table that pays on several checks is still one order and one check here: `checks` then says what each
+of them comes to (pos.orders.split), and they add up to this check to the cent.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from typing import Any
 from ..sync.oplog import Discount, OrderState
 from ..tax import TaxableLine, TaxProfile
 from .adjustments import ChargeRule, PricingRules
+from .split import split_checks, split_of
 
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
@@ -77,6 +81,7 @@ def check_for(
     # off the check with the dish when it is removed or voided with nothing in its place: no row, nothing
     # off the total. The log keeps the discount as it was approved either way.
     discount_rows: list[dict[str, Any]] = []
+    taken: list[dict[str, Decimal]] = []  # beside each row: what it took off each line
     discount_total = ZERO
     active = sorted((d for d in state.discounts.values() if d.active), key=lambda d: (d.line_id is None, d.stamp or ""))
     for discount in active:
@@ -90,8 +95,9 @@ def check_for(
                 for row in lines:
                     if row["line_id"] == line_id:
                         row["discount"] = str(Decimal(row["discount"]) + amount)
+            taken.append({line_id: amount})
         else:
-            _spread(amount, net)
+            taken.append(_spread(amount, net))
         discount_total += amount
         discount_rows.append(
             {
@@ -113,6 +119,7 @@ def check_for(
 
     # Charges on the discounted subtotal: the rules' automatic ones unless taken off, plus the ones staff put on.
     charge_rows: list[dict[str, Any]] = []
+    charge_classes: list[str] = []  # beside each row: the class it is taxed as
     charge_total = ZERO
     taxable = [TaxableLine(line_id, tax_classes[line_id], amount) for line_id, amount in net.items()]
     guests = state.fields.get("guests")
@@ -128,6 +135,7 @@ def check_for(
         row = _charge_row(rule.code, rule.name, rule.kind, str(rule.value), amount, rule.gratuity, True)
         row["taxed"] = _taxed(taxes, rule.tax_class, order_type, on)
         charge_rows.append(row)
+        charge_classes.append(rule.tax_class)
     for charge in state.charges.values():
         if not charge.active or charge.charge_id in rules.charges:
             continue
@@ -138,12 +146,27 @@ def check_for(
         row["taxed"] = _taxed(taxes, charge.tax_class, order_type, on)
         row["applied_by"] = charge.applied_by
         charge_rows.append(row)
+        charge_classes.append(charge.tax_class)
 
     # An empty check still names its tax lines (at 0.00), so a terminal knows the rates for its own estimate.
     tax_lines = taxes.compute(taxable or [TaxableLine("", "default", ZERO)], order_type, on)
     tax = sum((t.amount for t in tax_lines), ZERO)
     total = cents(discounted + charge_total + tax)
     paid = sum((Decimal(p.amount or "0") for p in state.payments.values()), ZERO)
+    split = split_of(state.fields)
+    checks = split_checks(
+        state,
+        split,
+        lines=lines,
+        taken=list(zip(discount_rows, taken, strict=True)),
+        charges=list(zip(charge_rows, charge_classes, strict=True)),
+        tax_classes=tax_classes,
+        tax_lines=tax_lines,
+        taxes=taxes,
+        order_type=order_type,
+        on=on,
+        total=total,
+    )
     return {
         "order_id": state.order_id,
         "status": state.status,
@@ -167,6 +190,11 @@ def check_for(
         "paid": str(cents(paid)),
         "due": str(cents(max(total - paid, ZERO))),
         "unpriced": unpriced,
+        # A table that pays on several checks: how it is split, and what each check comes to. They add up
+        # to the totals above. `checks` is empty while the table is one check, whatever `split` asks for
+        # (by seat with every dish on one seat is still one check).
+        "split": split.as_json() if checks else None,
+        "checks": checks,
     }
 
 
@@ -215,12 +243,12 @@ def _discount_amount(discount: Discount, net: dict[str, Decimal], line_id: str |
     return min(max(amount, ZERO), base)
 
 
-def _spread(amount: Decimal, net: dict[str, Decimal]) -> None:
+def _spread(amount: Decimal, net: dict[str, Decimal]) -> dict[str, Decimal]:
     """Takes a check discount off every line in proportion to what it is worth, so each line's tax base is
-    right; the odd cent lands on the largest line."""
+    right; the odd cent lands on the largest line. Returns what came off each line."""
     base = sum(net.values(), ZERO)
     if amount <= ZERO or base <= ZERO:
-        return
+        return {}
     shares = {line_id: cents(amount * worth / base) for line_id, worth in net.items()}
     off_by = amount - sum(shares.values(), ZERO)
     if off_by:
@@ -228,6 +256,7 @@ def _spread(amount: Decimal, net: dict[str, Decimal]) -> None:
         shares[largest] += off_by
     for line_id, share in shares.items():
         net[line_id] -= share
+    return shares
 
 
 def _charge_amount(kind: str, value: Decimal, discounted: Decimal) -> Decimal:

@@ -214,9 +214,11 @@ class TestPrintIn(BaseModel):
 
 class PrintBillIn(BaseModel):
     """A guest's bill for an order. `printer` is the one this screen keeps for its bills, by id; without it
-    the bill prints where the location's bills do."""
+    the bill prints where the location's bills do. `check` asks for one of a split table's bills, by the
+    check's number; without it every check of the table prints."""
 
     printer: str | None = Field(None, max_length=64)
+    check: int | None = Field(None, ge=1)
 
 
 class BillIn(BaseModel):
@@ -937,8 +939,10 @@ def create_app(
         """Prints the guest's bill for the order: its check as `GET /orders/{id}/check` reckons it at this
         moment, under the location's own lines. It prints at the printer asked for, else where the location's
         bills print; `printed_at` says which (its id and name). An order of any status prints (a closed one
-        is a copy for the guest). 409 `nothing_on_check` for a check with no dish, `no_printer` when the
-        location has none."""
+        is a copy for the guest). A table that pays on several checks gets a bill for each (`bills` says how
+        many, `jobs` lists them), or the one asked for by `check`. 409 `nothing_on_check` for a check with
+        no dish, `no_such_check` for a number the table has no check for, `no_printer` when the location
+        has none."""
         store: OpStore | PgOpStore = app.state.store
         state = store.view(order_id)
         if state is None:
@@ -950,9 +954,17 @@ def create_app(
         printer = printing.bill_printer(body.printer if body is not None else None)
         if printer is None:
             raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
+        numbers: list[int | None] = [part["check"] for part in check["checks"]]
+        asked = body.check if body is not None else None
+        if asked is not None and asked not in numbers:
+            raise HTTPException(409, {"error": "no_such_check", "message": f"There is no check {asked} here."})
         setting = app.state.settings.get("bill")
-        bill = bill_for(check, state.fields, head=bill_head(setting), foot=tuple(setting["footer"]), at=localtime.now())
-        return {**job_out(printing.queue(bill, printer)), "printed_at": printer_out(printer)}
+        head, foot, at = bill_head(setting), tuple(setting["footer"]), localtime.now()
+        jobs = [
+            job_out(printing.queue(bill_for(check, state.fields, head=head, foot=foot, at=at, number=n), printer))
+            for n in ([asked] if asked is not None else numbers or [None])
+        ]
+        return {**jobs[0], "jobs": jobs, "bills": len(jobs), "printed_at": printer_out(printer)}
 
     @app.get("/floor")
     def read_floor() -> Response:

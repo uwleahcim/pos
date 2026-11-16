@@ -855,6 +855,83 @@ class CheckPayment {
   final String by;
 }
 
+/// The most checks one table splits into, as the hub has it.
+const maxChecks = 20;
+
+/// How a table pays (the order's `split`, as the hub reads it): `seat` a check for each seat, `dish` the
+/// dishes put on checks by hand, `even` the total in [ways] equal parts; empty for one check.
+class SplitMode {
+  const SplitMode(this.by, [this.ways = 0]);
+
+  /// What an order's `split` field or a check's `split` says; whatever cannot be read is one check.
+  factory SplitMode.of(Object? said) {
+    if (said is! Map) return one;
+    final by = said['by'];
+    if (by == 'seat' || by == 'dish') return SplitMode(by as String);
+    final ways = said['ways'];
+    if (by == 'even' && ways is int && ways >= 2 && ways <= maxChecks) return SplitMode('even', ways);
+    return one;
+  }
+
+  static const one = SplitMode('');
+
+  final String by;
+  final int ways;
+
+  bool get isOne => by.isEmpty;
+  bool get isEven => by == 'even';
+
+  /// By seat or by hand: the dishes themselves are on separate checks.
+  bool get byDishes => by == 'seat' || by == 'dish';
+
+  Map<String, dynamic>? toJson() => isOne ? null : {'by': by, if (isEven) 'ways': ways};
+
+  @override
+  bool operator ==(Object other) => other is SplitMode && other.by == by && other.ways == ways;
+
+  @override
+  int get hashCode => Object.hash(by, ways);
+}
+
+/// One check of a split table as the hub reckons it: its dishes (a shared dish with this check's part of
+/// it) and what it comes to with its part of every discount, charge and the tax.
+class CheckPart {
+  const CheckPart({
+    required this.number,
+    required this.total,
+    this.lines = const [],
+    this.paid = '0.00',
+    this.due = '0.00',
+  });
+
+  factory CheckPart.fromJson(Map<String, dynamic> json) => CheckPart(
+    number: (json['check'] as num?)?.toInt() ?? 0,
+    total: json['total'] as String? ?? '0.00',
+    lines: [
+      for (final line in json['lines'] as List? ?? const [])
+        if (line is Map<String, dynamic>)
+          (
+            lineId: line['line_id'] as String? ?? '',
+            shared: [
+              for (final n in line['shared'] as List? ?? const [])
+                if (n is int) n,
+            ],
+            total: line['total'] as String? ?? '0.00',
+          ),
+    ],
+    paid: json['paid'] as String? ?? '0.00',
+    due: json['due'] as String? ?? json['total'] as String? ?? '0.00',
+  );
+
+  final int number;
+  final String total;
+
+  /// Each dish on this check: the other checks it is shared with, and this check's part of it.
+  final List<({String lineId, List<int> shared, String total})> lines;
+  final String paid;
+  final String due;
+}
+
 /// What the table owes, as the backend adds it up. `taxLines` split the tax by jurisdiction for the back
 /// office; screens and receipts show the single `tax` line.
 class Check {
@@ -873,6 +950,9 @@ class Check {
     this.paid = '0.00',
     this.due = '0.00',
     this.estimated = false,
+    this.split = SplitMode.one,
+    this.parts = const [],
+    this.splits = false,
   });
 
   factory Check.fromJson(Map<String, dynamic> json) => Check(
@@ -895,6 +975,12 @@ class Check {
         .toList(),
     paid: json['paid'] as String? ?? '0.00',
     due: json['due'] as String? ?? json['total'] as String? ?? '0.00',
+    split: SplitMode.of(json['split']),
+    parts: [
+      for (final part in json['checks'] as List? ?? const [])
+        if (part is Map<String, dynamic>) CheckPart.fromJson(part),
+    ],
+    splits: json.containsKey('checks'),
   );
 
   final List<CheckLine> lines;
@@ -915,6 +1001,21 @@ class Check {
 
   /// Worked out on this device for lines the backend has not priced yet; replaced by its next answer.
   final bool estimated;
+
+  /// A table that pays on several checks: how it is split and what each check comes to, as the hub
+  /// reckons it. [parts] is empty while the table is one check, and on this device's own estimate.
+  final SplitMode split;
+  final List<CheckPart> parts;
+
+  /// Whether the hub knows of splitting at all: one older than it sends no `checks`.
+  final bool splits;
+
+  CheckPart? part(int number) {
+    for (final p in parts) {
+      if (p.number == number) return p;
+    }
+    return null;
+  }
 
   CheckLine? line(String lineId) {
     for (final l in lines) {

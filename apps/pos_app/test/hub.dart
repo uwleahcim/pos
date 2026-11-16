@@ -187,7 +187,9 @@ class Hub {
 
   /// The guest's bill (`GET/PUT /settings/bill`): the setting with the printers by name; null is a hub older
   /// than the bill (404). The token the last save or sample carried, a reason to refuse the next one with,
-  /// the bills asked for (order id, the printer the screen asked for or null) and the samples tried.
+  /// the bills asked for (order id, the printer the screen asked for or null) and the samples tried. A
+  /// bill may be asked for one check of a split table ([billChecks], null for the whole table), and the
+  /// hub answers how many bills went: one for each check its [check] lists, when none was asked for.
   Map<String, dynamic>? bill = {
     'printer': null,
     'header': <String>[],
@@ -202,6 +204,7 @@ class Hub {
   String? billAuth;
   String? refuseBill;
   final bills = <(String, String?)>[];
+  final billChecks = <int?>[];
   final billSamples = <Map<String, dynamic>>[];
 
   /// The name of the printer a bill comes out of: the one asked for when it is there, else the location's.
@@ -362,9 +365,17 @@ class Hub {
           'detail': {'error': 'no_printer', 'message': refuseBill},
         }, 409);
       }
-      final asked = (jsonDecode(request.body) as Map)['printer'] as String?;
+      final body = jsonDecode(request.body) as Map;
+      final asked = body['printer'] as String?;
       bills.add((_bill.firstMatch(path)!.group(1)!, asked));
-      return json({'job_id': 'bill-${bills.length}', 'status': 'queued', 'printed_at': _billAt(asked)}, 202);
+      billChecks.add(body['check'] as int?);
+      final checks = (check?['checks'] as List?)?.length ?? 0;
+      return json({
+        'job_id': 'bill-${bills.length}',
+        'status': 'queued',
+        'bills': body['check'] != null || checks == 0 ? 1 : checks,
+        'printed_at': _billAt(asked),
+      }, 202);
     }
     if (_check.hasMatch(path)) {
       return json(check ?? {'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
@@ -633,9 +644,12 @@ class Hub {
           };
         case 'set_line':
           final line = lines[data['line_id']] as Map?;
-          for (final field in const ['qty', 'seat', 'course', 'note', 'rank']) {
+          for (final field in const ['qty', 'seat', 'course', 'note', 'rank', 'checks']) {
             if (line != null && data.containsKey(field)) line[field] = data[field];
           }
+        case 'set_field' when data.containsKey('split'):
+          // how the table pays: the one field of an order these tests read back
+          (order['fields'] as Map)['split'] = data['split'];
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';

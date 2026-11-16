@@ -144,8 +144,10 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
     if kind == "create":
         return replica.emit(order_id, kind, table=rng.randint(1, 30), guests=rng.randint(1, 8), **flag)
     if kind == "set_field":
-        name = rng.choice(["table", "guests", "note", "server"])
-        value = rng.randint(1, 30) if name in ("table", "guests") else f"{name}-{rng.randint(1, 9)}"
+        name = rng.choice(["table", "guests", "note", "server", "split"])
+        value: Any = rng.randint(1, 30) if name in ("table", "guests") else f"{name}-{rng.randint(1, 9)}"
+        if name == "split":  # the table pays on several checks, or on one again
+            value = rng.choice([None, {"by": "seat"}, {"by": "dish"}, {"by": "even", "ways": rng.randint(2, 4)}])
         return replica.emit(order_id, kind, **{name: value}, **flag)
     if kind == "add_line":
         return replica.emit(
@@ -159,9 +161,10 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
             **flag,
         )
     if kind == "set_line":
-        name = rng.choice(["qty", "seat", "note", "course", "rank"])
-        value: Any
-        if name == "note":
+        name = rng.choice(["qty", "seat", "note", "course", "rank", "checks"])
+        if name == "checks":  # moved to another check of a split table, shared between some, or put back
+            value = rng.choice([None, [rng.randint(1, 4)], rng.sample(range(1, 5), 2)])
+        elif name == "note":
             value = rng.choice(["extra spicy", "no MSG", ""])
         elif name == "course":
             value = rng.choice(COURSES)

@@ -19,6 +19,7 @@ import '../photos.dart';
 import '../pricing.dart';
 import '../printers.dart';
 import '../session.dart';
+import '../split.dart';
 import '../takeout.dart';
 import '../voids.dart';
 import 'allergy_dialog.dart';
@@ -29,6 +30,7 @@ import 'discount_sheet.dart';
 import 'lot_comp_dialog.dart';
 import 'menu_panel.dart';
 import 'pay_dialog.dart';
+import 'split_screen.dart';
 import 'status_bar.dart';
 import 'theme.dart';
 import 'void_dialog.dart';
@@ -92,6 +94,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
   bool _billing = false; // a bill is on its way to the printer: the button waits
+  final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
@@ -212,6 +215,7 @@ class _OrderScreenState extends State<OrderScreen> {
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
+    _changes.dispose();
     super.dispose();
   }
 
@@ -244,6 +248,7 @@ class _OrderScreenState extends State<OrderScreen> {
           _read = order;
           _readCheck = check;
         });
+        _changes.tell();
         _sayAllergic(order, quiet: first);
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
@@ -568,10 +573,12 @@ class _OrderScreenState extends State<OrderScreen> {
 
   /// Prints the guest's bill: the check as the hub has it, so whatever was just rung in goes there first. It
   /// comes out of the printer this screen keeps for its bills, or where the location's bills print. [kept]
-  /// is what to add when the screen's printer was just picked.
-  Future<void> _printBill({String kept = ''}) async {
+  /// is what to add when the screen's printer was just picked. A table that pays on several checks gets a
+  /// bill for each, or the one of [check] alone.
+  Future<void> _printBill({String kept = '', int? check}) async {
     if (_billing) return;
     setState(() => _billing = true);
+    _changes.tell();
     try {
       await widget.outbox.flush();
       if (widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId)) {
@@ -579,8 +586,15 @@ class _OrderScreenState extends State<OrderScreen> {
         return;
       }
       final own = widget.api.settings.billPrinter;
-      final at = await widget.api.printBill(widget.orderId, printer: own.isEmpty ? null : own);
-      if (mounted) _say('${at.isEmpty ? 'The bill is printing' : 'The bill is printing at $at'}$kept');
+      final (:at, :bills) = await widget.api.printBill(widget.orderId, printer: own.isEmpty ? null : own, check: check);
+      if (!mounted) return;
+      final order = _order;
+      final what = check != null
+          ? "${order != null && splitOf(order).isEven ? 'Part' : 'Check'} $check's bill is"
+          : bills > 1
+          ? '$bills bills are'
+          : 'The bill is';
+      _say('$what printing${at.isEmpty ? '' : ' at $at'}$kept');
     } on ApiException catch (err) {
       if (!mounted) return;
       final told = err.detail?['message'] as String?;
@@ -591,9 +605,37 @@ class _OrderScreenState extends State<OrderScreen> {
                 : 'The bill did not print: nothing answered'),
       );
     } finally {
-      if (mounted) setState(() => _billing = false);
+      if (mounted) {
+        setState(() => _billing = false);
+        _changes.tell();
+      }
     }
   }
+
+  /// The order and its check as this screen shows them, for the split screen standing over it.
+  SplitView? _view() {
+    final order = _order;
+    if (order == null) return null;
+    return SplitView(
+      order: order,
+      check: estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local),
+      billing: _billing,
+    );
+  }
+
+  /// The Split button beside the total: how the table pays. The screen that opens works on this order
+  /// through this one, so what it changes goes out and is photographed like anything else done here.
+  Future<void> _openSplit() => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) => SplitScreen(
+        changes: Listenable.merge([widget.outbox, _changes]),
+        read: _view,
+        onOps: _appendAll,
+        onBill: (check) => _printBill(check: check),
+      ),
+    ),
+  );
 
   /// The Bill button held: this bill at another printer, which the screen then keeps for its bills (on the
   /// device). The bar's screen prints at the bar, the host stand's at the front, whatever the location's
@@ -1050,6 +1092,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onLot: _lot,
       onBill: _billing ? null : _printBill,
       onBillPlace: _billPlace,
+      onSplit: _openSplit,
     );
     final menu = open
         ? Column(
@@ -1181,6 +1224,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onLot,
     required this.onBill,
     required this.onBillPlace,
+    required this.onSplit,
   });
 
   final Order? order;
@@ -1213,6 +1257,9 @@ class _TicketPanel extends StatefulWidget {
   final VoidCallback? onBill;
   final VoidCallback onBillPlace;
 
+  /// Opens the split screen: how the table pays.
+  final VoidCallback onSplit;
+
   @override
   State<_TicketPanel> createState() => _TicketPanelState();
 }
@@ -1222,6 +1269,7 @@ class _TicketPanelState extends State<_TicketPanel> {
   final _focus = <String, FocusNode>{}; // each line's own: which line a key was pressed on, and where to next
   List<CheckRow>? _rows; // where lines let go show until their move lands
   List<CheckRow> _built = const []; // the rows as last laid out
+  Placed _placed = Placed.none; // which check each dish is on, while the table pays on several
 
   @override
   void dispose() {
@@ -1341,6 +1389,8 @@ class _TicketPanelState extends State<_TicketPanel> {
     }
     final check = widget.check;
     final rows = _built = _rows ?? checkRows(order, widget.coursing);
+    _placed = placedOn(order);
+    final checks = checksOf(order);
     return Material(
       color: posColors.checkPaper,
       child: Column(
@@ -1401,12 +1451,15 @@ class _TicketPanelState extends State<_TicketPanel> {
                   const SizedBox(height: 2),
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
-                  _TotalRow(
-                    check.estimated ? 'Total (updating)' : 'Total',
-                    check.total,
-                    strong: true,
-                    // the bill is the total on paper, so its button stands beside it: no row of its own
-                    action: check.lines.isEmpty ? null : _BillButton(onTap: widget.onBill, onHold: widget.onBillPlace),
+                  _TotalFoot(
+                    label: check.estimated ? 'Total (updating)' : 'Total',
+                    amount: check.total,
+                    // how the table pays, once the hub knows of splitting; then the bill
+                    checks: checks,
+                    onSplit: check.splits && (open || checks > 1) ? widget.onSplit : null,
+                    onBill: widget.onBill,
+                    onBillPlace: widget.onBillPlace,
+                    buttons: check.lines.isNotEmpty,
                   ),
                   for (final p in order.payments)
                     _TotalRow(_paymentLabel(p), '−${p.amount}', key: ValueKey('paid-${p.paymentId}')),
@@ -1445,7 +1498,10 @@ class _TicketPanelState extends State<_TicketPanel> {
             child: SizedBox(width: double.infinity, child: child),
           )
         : child;
+    final on = _placed.isSplit && line.isActive ? _placed.on[line.lineId] : null;
     final words = [
+      // on a split table: the check the dish is on, or the checks it is shared between
+      if (on != null) on.length == 1 ? 'check ${on.single}' : 'shared by checks ${on.join(', ')}',
       if (line.isVoid) line.voidReason.isEmpty ? 'void' : 'void · ${line.voidReason}',
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
       if (line.isActive && line.modifiedAfterFire) 'added after fire',
@@ -2181,20 +2237,28 @@ String _rate(String pct) {
 /// The Bill button beside the total: a tap prints the guest's bill, a hold picks the printer this screen's
 /// bills come out of. Greyed while a bill is on its way.
 class _BillButton extends StatelessWidget {
-  const _BillButton({required this.onTap, required this.onHold});
+  const _BillButton({required this.onTap, required this.onHold, this.bills = 1, this.tight = false});
 
   final VoidCallback? onTap;
   final VoidCallback onHold;
 
+  /// How many bills a tap prints: one for each check of a table that pays on several.
+  final int bills;
+
+  /// On a narrow check: the word alone, no icon.
+  final bool tight;
+
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Print the bill. Hold to pick the printer for this screen',
+      message: bills > 1
+          ? 'Print the $bills bills. Hold to pick the printer for this screen'
+          : 'Print the bill. Hold to pick the printer for this screen',
       child: OutlinedButton.icon(
         key: const ValueKey('bill'),
         onPressed: onTap,
         onLongPress: onTap == null ? null : onHold,
-        icon: const Icon(Icons.receipt_long_outlined, size: 18),
+        icon: tight ? null : const Icon(Icons.receipt_long_outlined, size: 18),
         label: const Text('Bill'),
         style: OutlinedButton.styleFrom(
           // as tall as a finger needs and no taller: the foot of the check is always on the screen
@@ -2206,6 +2270,117 @@ class _BillButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The Split button beside the total: how the table pays. It says how many checks once there are several.
+class _SplitButton extends StatelessWidget {
+  const _SplitButton({required this.checks, required this.onTap, this.tight = false});
+
+  final int checks;
+  final VoidCallback onTap;
+
+  /// On a narrow check: the word alone, no icon.
+  final bool tight;
+
+  /// What the button says: how many checks, once there are several.
+  static String words(int checks) => checks > 1 ? 'Split $checks' : 'Split';
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: checks > 1 ? 'This table pays on $checks checks' : 'Split the check',
+      child: OutlinedButton.icon(
+        key: const ValueKey('split'),
+        onPressed: onTap,
+        icon: tight ? null : const Icon(Icons.call_split, size: 18),
+        label: Text(words(checks)),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.standard,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          minimumSize: const Size(0, 38),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+      ),
+    );
+  }
+}
+
+/// The total at the foot of the check, with its buttons: Split (how the table pays) and Bill. The bill is
+/// the total on paper, so the buttons stand beside the total and cost no row. They never run off a narrow
+/// check: where they do not fit with their icons they are words alone (a small tablet shows the check on a
+/// third of its width), and where the words do not fit either they take the row above the total.
+class _TotalFoot extends StatelessWidget {
+  const _TotalFoot({
+    required this.label,
+    required this.amount,
+    required this.checks,
+    required this.onSplit,
+    required this.onBill,
+    required this.onBillPlace,
+    required this.buttons,
+  });
+
+  final String label;
+  final String amount;
+  final int checks;
+
+  /// Null where there is no Split button: a hub older than splitting, a closed check that was never split.
+  final VoidCallback? onSplit;
+  final VoidCallback? onBill;
+  final VoidCallback onBillPlace;
+
+  /// False for a check with no dish: nothing to bill or split.
+  final bool buttons;
+
+  static const _gap = 6.0;
+  static const _around = 10.0; // on either side of the buttons, between the label and the amount
+  static const _labelRoom = 44.0; // what "Total" needs to stay a word
+
+  @override
+  Widget build(BuildContext context) {
+    if (!buttons) return _TotalRow(label, amount, strong: true);
+    final theme = Theme.of(context);
+    final scaler = MediaQuery.textScalerOf(context);
+    double wide(String text, TextStyle? style) => (TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout()).width;
+    final split = onSplit;
+    final words = [if (split != null) _SplitButton.words(checks), 'Bill'];
+    final written = words.fold(0.0, (sum, word) => sum + wide(word, theme.textTheme.labelLarge));
+    // each button: its word, its padding and, with an icon, the icon and the space after it
+    final plain = written + words.length * 2 * 12 + (words.length - 1) * _gap;
+    final iconed = plain + words.length * (18 + 8);
+    final total = wide(amount, theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800));
+    Widget row({required bool tight}) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (split != null) ...[_SplitButton(checks: checks, onTap: split, tight: tight), const SizedBox(width: _gap)],
+        _BillButton(onTap: onBill, onHold: onBillPlace, bills: checks, tight: tight),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final room = constraints.maxWidth - total - _labelRoom - 2 * _around;
+        if (plain <= room) return _TotalRow(label, amount, strong: true, action: row(tight: iconed > room));
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            row(tight: iconed > constraints.maxWidth),
+            const SizedBox(height: 6),
+            _TotalRow(label, amount, strong: true),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Tells whoever listens that this screen read something new.
+class _Changes extends ChangeNotifier {
+  void tell() => notifyListeners();
 }
 
 class _TotalRow extends StatelessWidget {
