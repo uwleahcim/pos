@@ -272,8 +272,18 @@ class Order {
 
   String get table => fields['table']?.toString() ?? '';
 
+  /// A bar tab that has not sat down: a check opened with a name and no table. It is rung in and sent like
+  /// a table's check, and is on no floor map; given a table, it is that table's check from then on.
+  bool get isTab => table.isEmpty && fields['tab'] == true && (fields['order_type'] ?? 'dine_in') == 'dine_in';
+
+  /// At a table: with seats to ring a dish in for, and on the floor map.
+  bool get hasTable => table.isNotEmpty;
+
+  /// "Linda's tab", or "A tab" when nobody named it.
+  String get tabLabel => customerName.trim().isEmpty ? 'A tab' : "${customerName.trim()}'s tab";
+
   // Counter mode and takeout (architecture section 12): numbered by the hub, named by the operator.
-  bool get isTakeout => table.isEmpty;
+  bool get isTakeout => table.isEmpty && !isTab;
   int? get orderNo => fields['order_no'] as int?;
   String get customerName => fields['customer_name']?.toString() ?? '';
   String get phone => fields['phone']?.toString() ?? '';

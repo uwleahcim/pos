@@ -1146,7 +1146,23 @@ class Hub {
     for (final op in ops.where((op) => op['kind'] == 'set_field')) {
       final data = (op['data'] as Map).cast<String, dynamic>();
       final at = status.keys.where((t) => status[t]!.any((c) => c['order_id'] == orderId)).firstOrNull;
-      if (at == null) return;
+      if (at == null) {
+        // a bar tab the hub lists is at no table until it is given one: then it is that table's check
+        final tab = orders.where((o) => o['order_id'] == orderId && (o['fields'] as Map)['tab'] == true).firstOrNull;
+        if (tab == null || data['table'] == null) return;
+        status.putIfAbsent(data['table'] as String, () => []).add({
+          'order_id': orderId,
+          'guests': data['guests'],
+          'server': data['server'] ?? (tab['fields'] as Map)['server'],
+          'server_id': data['server_id'] ?? (tab['fields'] as Map)['server_id'],
+          'opened_ms': 1800000000000,
+          'items': (tab['lines'] as Map).length,
+          'fired': <String>[],
+          'held': <String>[],
+          'total': '0.00',
+        });
+        continue;
+      }
       final check = status[at]!.firstWhere((c) => c['order_id'] == orderId);
       if (data.containsKey('server')) {
         check['server'] = data['server'];
@@ -1213,6 +1229,9 @@ class Hub {
           for (final field in const ['table', 'merged_into']) {
             if (data.containsKey(field)) (order['fields'] as Map)[field] = data[field];
           }
+        case 'set_field' when data.containsKey('customer_name'):
+          // the name on a bar tab, changed
+          (order['fields'] as Map)['customer_name'] = data['customer_name'];
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';

@@ -94,7 +94,15 @@ class _SplitScreenState extends State<SplitScreen> {
         final seated = !order.isTakeout && order.activeLines.any((l) => l.seat != null);
         final count = checksOf(order);
         return Scaffold(
-          appBar: AppBar(title: Text(order.isTakeout ? 'Split the check' : 'Split · Table ${order.table}')),
+          appBar: AppBar(
+            title: Text(
+              order.isTakeout
+                  ? 'Split the check'
+                  : order.isTab
+                  ? 'Split · ${order.tabLabel}'
+                  : 'Split · Table ${order.table}',
+            ),
+          ),
           body: Column(
             children: [
               Padding(

@@ -37,9 +37,21 @@ import 'menu_panel.dart';
 import 'pay_dialog.dart';
 import 'split_screen.dart';
 import 'status_bar.dart';
+import 'tab_dialog.dart';
 import 'table_moves.dart';
 import 'theme.dart';
 import 'void_dialog.dart';
+
+/// What the order screen closes with when "Seat at a table" was tapped on a bar tab: the tab as this screen
+/// had it. The list of checks takes it from there: the floor map comes up, and the next table tapped is
+/// where the party sits down. [thenSignOut] says this device goes back to sign-in after sending and drinks
+/// were sent from here, so the person is signed out once the tab is seated rather than on the way there.
+class SeatTab {
+  const SeatTab(this.order, {this.thenSignOut = false});
+
+  final Order order;
+  final bool thenSignOut;
+}
 
 /// One order: its check as the backend prices it, and the menu whose taps append to it.
 class OrderScreen extends StatefulWidget {
@@ -331,7 +343,7 @@ class _OrderScreenState extends State<OrderScreen> {
       builder: (_) => AllergyDialog(
         allergens: _allergens ?? const [],
         told: order.allergies,
-        seated: !order.isTakeout,
+        seated: order.hasTable,
         seats: _seats(order),
         seat: _seat,
       ),
@@ -555,10 +567,24 @@ class _OrderScreenState extends State<OrderScreen> {
   /// The check was left, by whatever way (the back arrow, a send that leaves, closing it). After a send on a
   /// device that goes back to sign-in, the person is signed out: once the screen is on its way out, since
   /// signing out closes whatever is open and the navigator is busy with this very leaving.
-  void _left(bool didPop) {
-    if (!didPop || !_signsOutOnLeaving) return;
+  void _left(bool didPop, [Object? result]) {
+    // left to seat a tab: the person is still at it, and is signed out once it sat down ([SeatTab])
+    if (!didPop || result is SeatTab || !_signsOutOnLeaving) return;
     final session = widget.session;
     unawaited(Future.microtask(() => session?.signOut()));
+  }
+
+  /// "Seat at a table" on a bar tab: this screen closes, and the floor map comes up for the table.
+  void _seatTab(Order order) => Navigator.of(context).pop(SeatTab(order, thenSignOut: _signsOutOnLeaving));
+
+  /// The name on a bar tab, changed: the title tapped. The check's history keeps who changed it.
+  Future<void> _renameTab(Order order) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => TabDialog(name: order.customerName.trim()),
+    );
+    if (name == null || name == order.customerName || !mounted) return;
+    await _append('set_field', {'customer_name': name, 'by': ?_staffName, 'by_id': ?_staffId});
   }
 
   /// A to-go order with nothing due goes to the kitchen: its time is settled first if it is a big one.
@@ -1208,10 +1234,12 @@ class _OrderScreenState extends State<OrderScreen> {
     final menu = open
         ? Column(
             children: [
-              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip alone
+              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip alone;
+              // a bar tab has courses and no seats yet, and the way to a table instead
               if (order?.isTakeout != true || allergyChip != null)
                 _SeatCourseBar(
                   seated: order?.isTakeout != true,
+                  onSeatTab: order != null && order.isTab ? () => _seatTab(order) : null,
                   allergy: allergyChip,
                   allergic: {for (final a in told) a.seat ?? 0},
                   seats: seats,
@@ -1246,19 +1274,25 @@ class _OrderScreenState extends State<OrderScreen> {
           );
     // Leaving is noticed whichever way it happens, for a device that goes back to sign-in after sending.
     return PopScope(
-      onPopInvokedWithResult: (didPop, _) => _left(didPop),
+      onPopInvokedWithResult: (didPop, result) => _left(didPop, result),
       child: Scaffold(
         appBar: AppBar(
           // The title held opens the check's history: a phone's bar has no room for one more button, and
           // would cut the check's name short to fit one.
+          // A bar tab's title tapped changes the name on it.
           title: GestureDetector(
             key: const ValueKey('order-title'),
+            onTap: order != null && open && order.isTab ? () => _renameTab(order) : null,
             onLongPress: order == null ? null : _history,
             child: Text(
               order == null
                   ? 'Order'
                   : order.isTakeout
                   ? _takeoutTitle(order, _readyAt(order))
+                  : order.isTab
+                  // an open tab is its name alone: a phone's bar cuts a long title short, and the name is
+                  // what the tab is known by
+                  ? (open ? order.tabLabel : '${order.tabLabel} · ${order.status}')
                   : 'Table ${order.table} · ${order.status}',
             ),
           ),
@@ -1289,7 +1323,7 @@ class _OrderScreenState extends State<OrderScreen> {
             // what the guests cannot have, over the check and the menu alike: on a phone they are two tabs
             if (order != null && told.isNotEmpty)
               _AllergyStrip(
-                words: allergySummary(told, _allergenNames, seated: !order.isTakeout),
+                words: allergySummary(told, _allergenNames, seated: order.hasTable),
                 onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
               ),
             if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
@@ -2124,6 +2158,7 @@ class _CourseHeader extends StatelessWidget {
 class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
     this.seated = true,
+    this.onSeatTab,
     this.allergy,
     this.allergic = const {},
     required this.seats,
@@ -2137,6 +2172,10 @@ class _SeatCourseBar extends StatelessWidget {
   });
 
   final bool seated;
+
+  /// A bar tab, which has no seats yet: the bar starts with "Seat at a table" in their place, and this is
+  /// what it does. Null for any other check.
+  final VoidCallback? onSeatTab;
 
   /// The Allergy chip, when the hub takes allergies.
   final Widget? allergy;
@@ -2175,6 +2214,21 @@ class _SeatCourseBar extends StatelessWidget {
     );
     final seatChips = !seated
         ? [?allergy]
+        : onSeatTab != null
+        ? [
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: ActionChip(
+                key: const ValueKey('seat-tab'),
+                avatar: const Icon(Icons.table_restaurant_outlined, size: 18),
+                label: const Text('Seat at a table'),
+                tooltip: 'The party sits down: pick their table on the floor map',
+                visualDensity: VisualDensity.compact,
+                onPressed: onSeatTab,
+              ),
+            ),
+            if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
+          ]
         : [
             if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
             const Text('Seat  '),

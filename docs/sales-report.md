@@ -62,8 +62,8 @@ before as a thin bar and a small figure under it.
 **By hour:** the dishes sold by the hour of the day they were rung in, every day of the span added up, in
 the order a night runs (4 AM round to 3 AM), again with the days before as the thin bar.
 
-**By category** under each menu, and **by kind of order** (tables, to go, delivery), each with the days
-before. Under the categories, **Each dish of these days, best to worst** opens the list of dishes sold for
+**By category** under each menu, and **by kind of order** (tables, bar tabs that never sat down, to go,
+delivery; `bar-tabs.md`), each with the days before. Under the categories, **Each dish of these days, best to worst** opens the list of dishes sold for
 the same days (`dishes-sold.md`).
 
 **Money taken:** every payment recorded in those days, by how it was paid, whatever check it was for.

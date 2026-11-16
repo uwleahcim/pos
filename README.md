@@ -45,6 +45,9 @@ merges after any disconnect.
   comes to and its bill; one order all along): `docs/split.md`
 - Moving a table, merging two checks, moving dishes to another table's check and giving all of a server's
   tables to another (nothing voided, nothing rung in twice, a MOVED slip for the kitchen): `docs/moves.md`
+- Bar tabs (a check with a name and no table, opened with the Tab button; found again under Tabs or by its
+  name; on no floor map; given a table when the party sits down, onto that table's check or beside it):
+  `docs/bar-tabs.md`
 - When a dish was sent (the check says when the kitchen got each course and how long ago; a dish that went
   later says its own time): `docs/time-sent.md`
 - Locking an idle screen (minutes per device, off to start; the sign-in pad comes over what was open and

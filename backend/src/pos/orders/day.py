@@ -82,6 +82,17 @@ def _oldest_first(row: dict[str, Any]) -> Any:
     return (row["opened_ms"] or 0, row["order_id"])
 
 
+TAB = "tab"
+"""The kind a sale counts under when its check is a bar tab that never sat down: neither a table nor to go."""
+
+
+def kind_of(state: OrderState, check: Mapping[str, Any]) -> str:
+    """The kind of order a check's sales count under: how it was eaten (`order_type`), with the bar's tabs
+    apart from the tables. A tab that was given a table is that table's check, and counts with the tables;
+    so does one whose drinks all went onto a table's check (`merged_into`), which is left empty."""
+    return TAB if state.is_tab and not state.fields.get("merged_into") else str(check["order_type"])
+
+
 def _guests(state: OrderState) -> int:
     guests = state.fields.get("guests")
     return guests if isinstance(guests, int) and not isinstance(guests, bool) and guests > 0 else 0
@@ -95,6 +106,7 @@ def _about(state: OrderState, check: Mapping[str, Any]) -> dict[str, Any]:
         "table": state.fields.get("table"),
         "order_no": state.fields.get("order_no"),
         "customer_name": state.fields.get("customer_name"),
+        **({"tab": True} if state.is_tab else {}),  # a bar tab, called by its name
         "server": state.fields.get("server"),
         "order_type": check["order_type"],
         "status": state.status,
@@ -229,7 +241,7 @@ def day_report(
         money["due"] += Decimal(check["due"])
         money["over"] += max(paid - total, ZERO)
 
-        kind = check["order_type"]
+        kind = kind_of(state, check)
         kinds.add(kind, ZERO, kind=kind, guests=0)
         kinds.rows[kind]["guests"] += _guests(state)
         for row in check["lines"]:

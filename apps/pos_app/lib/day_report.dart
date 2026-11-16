@@ -33,6 +33,7 @@ String methodLabel(String method) => switch (method) {
 /// A kind of order, as the report says it.
 String kindLabel(String kind) => switch (kind) {
   'dine_in' => 'Tables',
+  'tab' => 'Bar tabs',
   'takeout' => 'To go',
   'delivery' => 'Delivery',
   _ => kind,
@@ -97,6 +98,7 @@ class DayCheck {
     this.customerName = '',
     this.server = '',
     this.orderType = 'dine_in',
+    this.tab = false,
     this.status = 'open',
     this.unsent = 0,
     this.openedMs,
@@ -112,6 +114,7 @@ class DayCheck {
     customerName: _s(json['customer_name']),
     server: _s(json['server']),
     orderType: _s(json['order_type'], 'dine_in'),
+    tab: json['tab'] == true,
     status: _s(json['status'], 'open'),
     unsent: _i(json['unsent']),
     openedMs: json['opened_ms'] is num ? (json['opened_ms'] as num).toInt() : null,
@@ -126,6 +129,9 @@ class DayCheck {
   final String customerName;
   final String server;
   final String orderType;
+
+  /// A bar tab that has not sat down: called by the name on it.
+  final bool tab;
   final String status;
 
   /// Dishes on it the kitchen was never sent.
@@ -135,10 +141,14 @@ class DayCheck {
   /// For a check from an earlier day: that day, as the hub writes it ("2026-11-15").
   final String day;
 
-  /// "Table 12", "#7 · Lee", or what kind of order it is when it has neither.
+  /// "Table 12", "#7 · Lee", "Tab · Linda", or what kind of order it is when it has none of these.
   String get where {
     final named = checkName(table, orderNo);
-    final base = named.isEmpty ? kindLabel(orderType) : named;
+    final base = named.isNotEmpty
+        ? named
+        : tab
+        ? 'Tab'
+        : kindLabel(orderType);
     return customerName.isEmpty ? base : '$base · $customerName';
   }
 }

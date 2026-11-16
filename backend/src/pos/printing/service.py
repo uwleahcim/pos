@@ -170,14 +170,9 @@ def table_changes(before: OrderState, after: OrderState, now_ms: int) -> list[tu
     table = after.fields.get("table")
     if after.status != "open" or table in (None, ""):
         return []
-    fresh = [
-        line
-        for line in after.ordered_lines()
-        if line.active and line.fired_at is not None and now_ms - line.fired_at.wall_ms <= MOVED_SLIP_MS
-    ]
     out: dict[str, list[Line]] = {}
     was = before.fields.get("table")
-    for line in fresh:
+    for line in _still_cooking(after, now_ms):
         if line.line_id in before.lines:
             sent_for = was  # on the check before: its ticket names the table the check stood at
         else:
@@ -185,6 +180,32 @@ def table_changes(before: OrderState, after: OrderState, now_ms: int) -> list[tu
         if sent_for not in (None, "") and str(sent_for) != str(table):
             out.setdefault(str(sent_for), []).append(line)
     return list(out.items())
+
+
+def tab_changes(before: OrderState, after: OrderState, now_ms: int) -> list[tuple[str, list[Line]]]:
+    """The same for a bar tab that sat down: the drinks and dishes sent in the last `MOVED_SLIP_MS` whose
+    tickets are headed with the name on a tab and that now go to a table, by that name. The tab was given a
+    table, or its dishes went onto a table's check. Nothing for a check that is not open or has no table."""
+    if after.status != "open" or after.fields.get("table") in (None, ""):
+        return []
+    out: dict[str, list[Line]] = {}
+    for line in _still_cooking(after, now_ms):
+        if line.line_id in before.lines:
+            name = before.tab_name if before.is_tab else None  # the check itself was the tab
+        else:
+            name = (line.moved_from or {}).get("tab") if line.arrived_sent else None
+        if name is not None:
+            out.setdefault(str(name), []).append(line)
+    return list(out.items())
+
+
+def _still_cooking(state: OrderState, now_ms: int) -> list[Line]:
+    """The dishes on the check sent so lately that a station is likely still making them."""
+    return [
+        line
+        for line in state.ordered_lines()
+        if line.active and line.fired_at is not None and now_ms - line.fired_at.wall_ms <= MOVED_SLIP_MS
+    ]
 
 
 def taken_offline(ops: Iterable[Op], now_ms: int, late_after_ms: int = LATE_AFTER_MS) -> datetime | None:
@@ -251,8 +272,8 @@ def allergy_words(told: Mapping[str, Any], names: Mapping[str, str]) -> str:
 
 def allergy_lines(state: OrderState, names: Mapping[str, str]) -> tuple[str, ...]:
     """The allergies told on the order, one a line, the whole table's first ("Table: Peanuts", "Seat 2:
-    Sesame"; "Order:" on an order with no table)."""
-    whole = "Table" if state.fields.get("table") else "Order"
+    Sesame"; "Tab:" on a bar tab, "Order:" on any other order with no table)."""
+    whole = "Table" if state.fields.get("table") else "Tab" if state.is_tab else "Order"
     return tuple(
         f"{f'Seat {told["seat"]}' if told.get('seat') else whole}: {allergy_words(told, names)}"
         for told in state.allergy_list()
@@ -272,6 +293,7 @@ def ticket_for(
     allergens: Mapping[str, str] | None = None,
     kind: str | None = None,
     was_at: str = "",
+    was_tab: str | None = None,
 ) -> Ticket | None:
     """One station's ticket: voided lines first, printed in reverse, then the lines being sent.
     `routes(station)` says whether a kitchen line cooked at that station belongs on this ticket; without it,
@@ -279,7 +301,8 @@ def ticket_for(
     `allergens` names the menu's allergens by code, for the allergies told on the order: they head every
     station's ticket, and a seat's own stands under each of its dishes. `kind` says what the ticket is when it
     is not for dishes sent or voided (`allergy`: an allergy told after `sent` had gone to the kitchen;
-    `moved`: `sent` went to the kitchen for table `was_at` and now goes to this order's table)."""
+    `moved`: `sent` went to the kitchen for table `was_at`, or for the bar tab called `was_tab`, and now goes
+    to this order's table)."""
     names = allergens or {}
     by_seat = {told["seat"]: allergy_words(told, names) for told in state.allergy_list() if told.get("seat")}
     lines = [
@@ -312,6 +335,8 @@ def ticket_for(
         promised=_when(fields.get("promised_at")),
         allergies=allergy_lines(state, names),
         was_at=was_at,
+        tab=state.is_tab,
+        was_tab=was_tab,
     )
 
 
@@ -540,7 +565,9 @@ class PrintService:
 
         Food on its way that changes table (the check moved, or its dishes went onto a check at another
         table) prints a slip headed MOVED at every station that has some of it, with the table on the cooks'
-        tickets and the table it goes to now (`table_changes`; the location's `tickets.moved` turns it off)."""
+        tickets and the table it goes to now (`table_changes`; the location's `tickets.moved` turns it off).
+        A bar tab that sits down is the same: the slip says whose tab the drinks were made for and the table
+        they go to now (`tab_changes`)."""
         if not self.printers:
             return []
         jobs: list[PrintJob] = []
@@ -579,6 +606,9 @@ class PrintService:
                 for was_at, lines in table_changes(before, after, self._now()):
                     slip = f"{batch[0].op_id}:moved:{was_at}"
                     jobs.extend(self.send(after, lines, [], key=slip, kind="moved", was_at=was_at))
+                for name, lines in tab_changes(before, after, self._now()):
+                    slip = f"{batch[0].op_id}:moved:tab:{name}"
+                    jobs.extend(self.send(after, lines, [], key=slip, kind="moved", was_tab=name))
         return jobs
 
     def send(
@@ -592,6 +622,7 @@ class PrintService:
         delay: float = 0.0,
         kind: str | None = None,
         was_at: str = "",
+        was_tab: str | None = None,
         skip: frozenset[str] = frozenset(),
     ) -> list[PrintJob]:
         """One ticket per printer that has lines in this change. `skip` is the stations the screen that sent
@@ -600,7 +631,8 @@ class PrintService:
         tickets back (a future order's lead time); the hub's retry loop and the relays pick them up when they
         are due.
         `kind` is `allergy` for the notice that follows dishes already sent, which lists them again, and
-        `moved` for the slip that says they now go to another table than `was_at`, the one they were sent for.
+        `moved` for the slip that says they now go to another table than `was_at`, the one they were sent for
+        (or than the bar, when they were sent for the tab called `was_tab`).
 
         When the change has more than one station cooking, each ticket can say so (the `tickets` setting):
         "Ticket 2 of 3" numbers the tickets that have something to cook, in the order the printers stand, and
@@ -627,6 +659,7 @@ class PrintService:
                 allergens=allergens,
                 kind=kind,
                 was_at=was_at,
+                was_tab=was_tab,
             )
             if ticket is None:
                 continue

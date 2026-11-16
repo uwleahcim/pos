@@ -3,10 +3,22 @@ import 'package:flutter/material.dart';
 import '../to_go_stages.dart';
 
 /// One row above the list of checks: Later, Cooking, Ready and Unpaid, each with how many to-go orders it
-/// holds. Tapping one lists only those, due first; tapping it again brings every check back. The four
-/// share the width, so the row is the same on the narrowest phone and never scrolls.
+/// holds. Tapping one lists only those, due first; tapping it again brings every check back. They share the
+/// width, so the row is the same on the narrowest phone and never scrolls.
+///
+/// With a bar tab open, **Tabs** stands first in the row, with how many are open: tapping it lists only the
+/// tabs, by the name on each. With tabs and no to-go order ([toGo] false) it stands there alone.
 class ToGoChips extends StatelessWidget {
-  const ToGoChips({super.key, required this.counts, required this.picked, required this.onPicked});
+  const ToGoChips({
+    super.key,
+    required this.counts,
+    required this.picked,
+    required this.onPicked,
+    this.toGo = true,
+    this.tabs,
+    this.tabsPicked = false,
+    this.onTabs,
+  });
 
   final Map<ToGoChip, int> counts;
 
@@ -16,7 +28,22 @@ class ToGoChips extends StatelessWidget {
   /// The chip tapped, or null when the picked one was tapped again.
   final ValueChanged<ToGoChip?> onPicked;
 
+  /// Whether the four chips of the to-go orders show.
+  final bool toGo;
+
+  /// How many bar tabs are open; null leaves the Tabs chip out.
+  final int? tabs;
+
+  /// The list is narrowed to the tabs.
+  final bool tabsPicked;
+
+  /// Tabs was tapped: on, or off again.
+  final ValueChanged<bool>? onTabs;
+
   static const _gap = 6.0;
+
+  /// How wide Tabs is when it stands alone: a button, not a bar across the screen.
+  static const _alone = 104.0;
 
   @override
   Widget build(BuildContext context) {
@@ -28,31 +55,43 @@ class ToGoChips extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 520), // a tablet does not stretch them across the room
         child: LayoutBuilder(
           builder: (context, box) {
-            // All four in one size of letters, whichever fits the longest of them on this screen.
-            final each = (box.maxWidth - _gap * (ToGoChip.values.length - 1)) / ToGoChip.values.length;
+            final many = (toGo ? ToGoChip.values.length : 0) + (tabs == null ? 0 : 1);
+            if (many == 0) return const SizedBox.shrink();
+            // All in one size of letters, whichever fits the longest of them on this screen.
+            final each = many == 1 ? _alone : (box.maxWidth - _gap * (many - 1)) / many;
             final style = each >= 80
                 ? theme.textTheme.labelLarge
                 : each >= 62
                 ? theme.textTheme.labelMedium
                 : theme.textTheme.labelSmall;
+            Widget chip(Key key, String label, int count, bool on, VoidCallback onTap) => _Chip(
+              key: key,
+              label: label,
+              count: count,
+              on: on,
+              fill: on ? scheme.secondaryContainer : scheme.surfaceContainerHigh,
+              ink: on ? scheme.onSecondaryContainer : scheme.onSurface,
+              border: on ? scheme.secondary : scheme.outlineVariant,
+              style: style,
+              onTap: onTap,
+            );
+            final chips = [
+              if (tabs != null)
+                chip(const ValueKey('chip:tabs'), 'Tabs', tabs!, tabsPicked, () => onTabs?.call(!tabsPicked)),
+              if (toGo)
+                for (final one in ToGoChip.values)
+                  chip(
+                    ValueKey('chip:${one.name}'),
+                    one.label,
+                    counts[one] ?? 0,
+                    one == picked,
+                    () => onPicked(one == picked ? null : one),
+                  ),
+            ];
+            if (chips.length == 1) return SizedBox(width: _alone, child: chips.single);
             return Row(
               children: [
-                for (final chip in ToGoChip.values) ...[
-                  if (chip != ToGoChip.values.first) const SizedBox(width: _gap),
-                  Expanded(
-                    child: _Chip(
-                      key: ValueKey('chip:${chip.name}'),
-                      label: chip.label,
-                      count: counts[chip] ?? 0,
-                      on: chip == picked,
-                      fill: chip == picked ? scheme.secondaryContainer : scheme.surfaceContainerHigh,
-                      ink: chip == picked ? scheme.onSecondaryContainer : scheme.onSurface,
-                      border: chip == picked ? scheme.secondary : scheme.outlineVariant,
-                      style: style,
-                      onTap: () => onPicked(chip == picked ? null : chip),
-                    ),
-                  ),
-                ],
+                for (final (i, one) in chips.indexed) ...[if (i > 0) const SizedBox(width: _gap), Expanded(child: one)],
               ],
             );
           },

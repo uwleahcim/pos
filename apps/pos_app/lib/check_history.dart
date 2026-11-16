@@ -81,6 +81,7 @@ class HistoryOrder {
     this.orderNo,
     this.customerName = '',
     this.orderType = 'dine_in',
+    this.tab = false,
     this.server = '',
     this.guests,
     this.openedMs,
@@ -94,6 +95,7 @@ class HistoryOrder {
     orderNo: _n(json['order_no']),
     customerName: _s(json['customer_name']),
     orderType: _s(json['order_type'], 'dine_in'),
+    tab: json['tab'] == true,
     server: _s(json['server']),
     guests: _n(json['guests']),
     openedMs: _n(json['opened_ms']),
@@ -106,15 +108,22 @@ class HistoryOrder {
   final int? orderNo;
   final String customerName;
   final String orderType;
+
+  /// A bar tab that has not sat down: called by the name on it.
+  final bool tab;
   final String server;
   final int? guests;
   final int? openedMs;
   final String? mergedInto;
 
-  /// "Table 12", "#7 · Lee", or what kind of order it is when it has neither.
+  /// "Table 12", "#7 · Lee", "Tab · Linda", or what kind of order it is when it has none of these.
   String get where {
     final named = checkName(table, orderNo);
-    final base = named.isEmpty ? kindLabel(orderType) : named;
+    final base = named.isNotEmpty
+        ? named
+        : tab
+        ? 'Tab'
+        : kindLabel(orderType);
     return customerName.isEmpty ? base : '$base · $customerName';
   }
 
@@ -158,7 +167,11 @@ String _dish(Map<String, dynamic> said) {
 /// "Table 14", or "another check" when the hub no longer knows where that check stood.
 String _otherCheck(Map<String, dynamic> said) {
   final table = _text(said['other_table']);
-  return table.isEmpty ? 'another check' : 'Table $table';
+  if (table.isNotEmpty) return 'Table $table';
+  // a bar tab has no table: it is called by the name on it
+  final tab = said['other_tab'];
+  if (tab is! String) return 'another check';
+  return tab.trim().isEmpty ? 'a bar tab' : "${tab.trim()}'s tab";
 }
 
 /// "Name set to Wang", "Name changed from Wang to Wong", "Name taken off (was Wang)".
@@ -234,6 +247,7 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
         under: [
           [
             if (named.isNotEmpty) named,
+            if (named.isEmpty && fields['tab'] == true) 'Bar tab',
             if (kind != 'dine_in') kindLabel(kind),
             if (_text(fields['customer_name']).isNotEmpty) _text(fields['customer_name']),
             if (_text(fields['phone']).isNotEmpty) _text(fields['phone']),

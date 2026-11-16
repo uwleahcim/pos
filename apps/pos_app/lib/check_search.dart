@@ -13,7 +13,7 @@ import 'customers.dart';
 /// - digits: at the start of the order number, or (three digits or more) anywhere in the phone number,
 ///   however either was punctuated (`555-1234` finds `(781) 555 1234`);
 /// - `#42`: the order number only;
-/// - `table`: any check that is at a table.
+/// - `table`: any check that is at a table; `tab`: any bar tab.
 ///
 /// Nothing typed finds every check.
 bool checkMatches(Order order, String query) {
@@ -32,6 +32,7 @@ bool checkMatches(Order order, String query) {
     }
     if (name.contains(word) || server.contains(word)) return true;
     if (table.isNotEmpty && (table.contains(word) || word == 'table')) return true;
+    if (order.isTab && (word == 'tab' || word == 'tabs')) return true;
     // A number, however it was typed: 42, 781-555-1234, (781).
     if (!_numberLike.hasMatch(word)) return false;
     final digits = word.replaceAll(RegExp(r'\D'), '');

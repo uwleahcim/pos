@@ -59,3 +59,17 @@ List<T> dueFirst<T>(Iterable<T> rows, Order Function(T row) order) {
     });
   return [for (final (_, row) in placed) row];
 }
+
+/// The bar's tabs by the name on each, whatever its case: what a bartender looks down for "Linda". Two of
+/// one name keep the order they were opened in.
+List<T> tabsByName<T>(Iterable<T> rows, Order Function(T row) order) {
+  final placed = rows.indexed.toList()
+    ..sort((a, b) {
+      final byName = order(a.$2).customerName
+          .trim()
+          .toLowerCase()
+          .compareTo(order(b.$2).customerName.trim().toLowerCase());
+      return byName != 0 ? byName : a.$1.compareTo(b.$1);
+    });
+  return [for (final (_, row) in placed) row];
+}

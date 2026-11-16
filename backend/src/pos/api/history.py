@@ -63,6 +63,7 @@ def add_history(app: FastAPI) -> None:
                 "table": fields.get("table"),
                 "order_no": fields.get("order_no"),
                 "customer_name": fields.get("customer_name") or "",
+                **({"tab": True} if state.is_tab else {}),  # a bar tab, called by its name
                 "order_type": fields.get("order_type") or "dine_in",
                 "server": fields.get("server") or "",
                 "guests": fields.get("guests"),

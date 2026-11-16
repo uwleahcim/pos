@@ -26,6 +26,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..sync.oplog import is_tab
 from .ticket import DIALECTS
 
 ZERO = Decimal(0)
@@ -44,10 +45,10 @@ class BillLine:
 @dataclass(frozen=True)
 class Bill:
     order_id: str
-    where: str  # "Table 12", "Order #7"
+    where: str  # "Table 12", "Order #7", "Bar tab"
     lines: tuple[BillLine, ...]
     total: str
-    detail: str = ""  # beside `where`: "4 guests", the name on a to-go order
+    detail: str = ""  # beside `where`: "4 guests", the name on a to-go order or on a tab
     who: str = ""  # under it: "Server Amy", "Phone"
     note: str = ""  # under that, on one of a split table's bills: "One of 3 checks at this table"
     head: tuple[str, ...] = ()  # the restaurant's own lines; the first prints big
@@ -150,6 +151,10 @@ def bill_for(
         where = f"Table {table}"
         detail = f"{guests} guest{'' if guests == 1 else 's'}" if isinstance(guests, int) and guests > 0 else ""
         who = server
+    elif is_tab(fields):  # a bar tab that has not sat down: called by the name on it
+        where = "Bar tab"
+        detail = str(fields.get("customer_name") or "")
+        who = server
     else:
         where = (
             f"Order #{number_of_day}"
@@ -163,7 +168,8 @@ def bill_for(
         share = (f"Part {part['check']} of {len(parts)}", _amount(part.get("total")))
     elif part is not None:
         detail = f"Check {part['check']}"
-        note = f"One of {len(parts)} checks {'at this table' if table else 'on this order'}"
+        on = "at this table" if table else "on this tab" if is_tab(fields) else "on this order"
+        note = f"One of {len(parts)} checks {on}"
     return Bill(
         order_id=str(check.get("order_id") or ""),
         where=where,

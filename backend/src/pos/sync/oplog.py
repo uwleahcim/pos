@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +85,9 @@ ORDER_FIELDS = frozenset(
         # The check every dish of this one went to when its table joined another's (an order id): this
         # check was closed empty, and its history says where to look.
         "merged_into",
+        # A bar tab (true): a check opened with a name (`customer_name`) and no table. It is a tab until it is
+        # given a table, when it becomes that table's check; the word stays, to say how the check began.
+        "tab",
     }
 )
 ALLERGY_NOTE_MAX = 80
@@ -263,6 +266,14 @@ class Payment:
         }
 
 
+def is_tab(fields: Mapping[str, Any]) -> bool:
+    """Whether an order with these fields is a bar tab that has not sat down: opened as a tab, eaten in, and
+    at no table. Called by the name on it (`customer_name`), it is on no floor map; given a table, it is that
+    table's check from then on."""
+    eaten_in = str(fields.get("order_type") or "dine_in") == "dine_in"
+    return fields.get("tab") is True and eaten_in and not fields.get("table")
+
+
 @dataclass
 class OrderState:
     order_id: str
@@ -283,6 +294,16 @@ class OrderState:
     first: HLC | None = None  # when the order was opened
     last: HLC | None = None
     closed_at: HLC | None = None  # when it was last closed (kept while it is reopened: `status` says which)
+
+    @property
+    def is_tab(self) -> bool:
+        """A bar tab that has not sat down (`is_tab`)."""
+        return is_tab(self.fields)
+
+    @property
+    def tab_name(self) -> str:
+        """The name on the tab while this check is one, in one line; empty for any other check."""
+        return " ".join(str(self.fields.get("customer_name") or "").split()) if self.is_tab else ""
 
     def ordered_lines(self) -> list[Line]:
         """The lines as the check shows them: by rank (the order they were added, until a drag moves one)."""
@@ -413,7 +434,7 @@ def apply(state: OrderState, op: Op) -> None:
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
         line.added_at = op.hlc
         line.modified_after_fire = state._fired_before(line.course)
-        line.moved_from = _other(data.get("from"), "table")
+        line.moved_from = _other(data.get("from"), "table", "tab")
         sent = _stamp(data.get("sent")) if line.moved_from is not None else None
         if sent is not None:
             # it came from another check already sent: the kitchen has it, on that check's ticket, so no

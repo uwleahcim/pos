@@ -101,10 +101,15 @@ class _HeldSheetState extends State<HeldSheet> {
 }
 
 /// The strip above the floor map while a table is being moved: the next table tapped is where it goes.
+/// The same strip seats a bar tab ([MovingBar.words]): the next table tapped is where the party sits down.
 class MovingBar extends StatelessWidget {
-  const MovingBar({super.key, required this.table, required this.onCancel});
+  MovingBar({super.key, required TableSpot table, required this.onCancel})
+    : words = 'Moving ${table.label}. Tap the table it goes to.';
 
-  final TableSpot table;
+  const MovingBar.words(this.words, {super.key, required this.onCancel});
+
+  /// What the strip says is going on.
+  final String words;
   final VoidCallback onCancel;
 
   @override
@@ -122,7 +127,7 @@ class MovingBar extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Moving ${table.label}. Tap the table it goes to.',
+                words,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: scheme.onPrimaryContainer,
                   fontWeight: FontWeight.w600,
@@ -144,9 +149,14 @@ enum Landing { merge, apart }
 /// [blocked] says why the two cannot become one, when they cannot; [note] is anything else worth knowing
 /// before choosing (a discount that stays behind).
 class LandingDialog extends StatelessWidget {
-  const LandingDialog({super.key, required this.from, required this.to, this.blocked, this.note});
+  LandingDialog({super.key, required TableSpot from, required this.to, this.blocked, this.note}) : from = from.label;
 
-  final TableSpot from, to;
+  /// A bar tab sits down at a seated table: [tab] is what the tab is called ("Linda's tab").
+  const LandingDialog.tab(String tab, {super.key, required this.to, this.blocked, this.note}) : from = tab;
+
+  /// What is landing, by name: a table's label, or a tab.
+  final String from;
+  final TableSpot to;
   final String? blocked;
   final String? note;
 
@@ -163,7 +173,7 @@ class LandingDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Put ${from.label} and ${to.label} on one check, or keep two checks at ${to.label}?'),
+            Text('Put $from and ${to.label} on one check, or keep two checks at ${to.label}?'),
             if (blocked != null) ...[const SizedBox(height: 10), Text(blocked!, style: small)],
             if (note != null && blocked == null) ...[const SizedBox(height: 10), Text(note!, style: small)],
           ],

@@ -19,7 +19,7 @@ from .ticket import DIALECTS
 
 ZERO = Decimal(0)
 PAID_AS = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
-KINDS = {"dine_in": "Tables", "takeout": "To go", "delivery": "Delivery"}
+KINDS = {"dine_in": "Tables", "tab": "Bar tabs", "takeout": "To go", "delivery": "Delivery"}
 
 
 @dataclass(frozen=True)

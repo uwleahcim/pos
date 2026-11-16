@@ -66,6 +66,8 @@ class Ticket:
     allergies: tuple[str, ...] = ()  # the allergies told at the table, one a line ("Table: Peanuts", "Seat 2: Sesame")
     money: Money | None = None  # the takeout counter's copy of a to-go order: paid, or what is still owed
     was_at: str = ""  # on a `moved` slip: the table the dishes were sent for, which the cooks' tickets name
+    tab: bool = False  # a bar tab: no table, called by the name on it (`customer`)
+    was_tab: str | None = None  # on a `moved` slip for a tab that sat down: the name its tickets were headed with
 
 
 def render(
@@ -98,8 +100,12 @@ def render(
         # A fallback printer's copy: whoever stands here carries it to the station it is for.
         b.line(f"{ticket.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))
-    if ticket.order_no is not None or ticket.customer:
+    if ticket.tab:
+        # A bar tab has no table: the name on it is where its drinks go, so it is the biggest thing on it.
+        b.line(f"TAB {ticket.customer}".strip().upper(), big=True, bold=True)
+    elif ticket.order_no is not None or (ticket.customer and not ticket.table):
         # A takeout order is called by number and name at the shelf, so they are the biggest thing on it.
+        # (A table's check that began as a tab keeps its name, and is called by its table.)
         number = f"#{ticket.order_no}  " if ticket.order_no is not None else ""
         b.line(f"{number}{ticket.customer}".strip().upper(), big=True, bold=True)
     if ticket.promised is not None:
@@ -115,7 +121,7 @@ def render(
         b.line(f"Table {ticket.table}{guests}", bold=True)
     elif ticket.channel:
         b.line(ticket.channel.replace("_", " ").capitalize(), bold=True)
-    else:
+    elif not ticket.tab:
         b.line("No table", bold=True)
     if ticket.server:
         b.line(f"Server {ticket.server}")
@@ -143,7 +149,8 @@ def render(
     if ticket.kind == "moved":
         # The cooks' tickets name the table the food was sent for: this one says where it goes now, as big as
         # a dish, so whoever runs the plate reads it from the pass.
-        b.line(f"WAS TABLE {ticket.was_at}".upper(), big=True, bold=True, center=True)
+        was = f"TAB {ticket.was_tab}".strip() if ticket.was_tab is not None else f"TABLE {ticket.was_at}"
+        b.line(f"WAS {was}".upper(), big=True, bold=True, center=True)
         b.line(f"NOW TABLE {ticket.table}".upper(), big=True, bold=True, center=True, invert=True)
         b.line("These dishes go to the new table:")
         b.rule()
