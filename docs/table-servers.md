@@ -28,10 +28,17 @@ guests: **Server**, a button for everyone who takes tables, each with what they 
 A host, manager or owner **holds a busy table down** on the floor map. "Who serves A7?" lists the same
 buttons, the present server marked. A tap on someone else hands the table over: every check on the table
 becomes theirs, the name tag changes on every screen, and the history keeps who handed it over. A tap on
-the present server changes nothing. A server who holds a table down gets nothing: tables are given out by
-the host or a manager.
+the present server changes nothing. A server who holds a table down hands nothing over: tables are given
+out by the host or a manager. (What a server gets is moving the table: see [moves.md](moves.md).)
 
 The dishes already on the check keep the name of whoever rang them in; only the check's server changes.
+
+**A whole section at once.** When the present server has more than one table, a chip under the names reads
+"All 3 of Amy's tables". Ticked, the name tapped next takes every check Amy has on the floor: a shift
+change in two taps.
+
+The same sheet starts with **Move A7 to another table**: moving a table, and merging it with another, is in
+[moves.md](moves.md).
 
 ## Mine: picking out your own tables
 

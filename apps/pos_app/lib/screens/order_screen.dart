@@ -19,6 +19,8 @@ import '../photos.dart';
 import '../pricing.dart';
 import '../printers.dart';
 import '../session.dart';
+import '../floor.dart';
+import '../moves.dart';
 import '../split.dart';
 import '../takeout.dart';
 import '../voids.dart';
@@ -32,6 +34,7 @@ import 'menu_panel.dart';
 import 'pay_dialog.dart';
 import 'split_screen.dart';
 import 'status_bar.dart';
+import 'table_moves.dart';
 import 'theme.dart';
 import 'void_dialog.dart';
 
@@ -780,6 +783,66 @@ class _OrderScreenState extends State<OrderScreen> {
     if (lines.isEmpty || !(_order?.isOpen ?? false)) return;
     if (target == 'comp') return _compLot(lines);
     if (target == 'void') return _voidLot(lines);
+    if (target == 'move') return _moveLot(lines);
+  }
+
+  /// The lot goes to another table's check: asked which, then each dish goes over as it is, with its
+  /// choices, its price and its comp, sent or not. Nothing is voided and the kitchen cooks nothing twice.
+  /// Walking away from the question keeps every dish here.
+  Future<void> _moveLot(List<Line> lines) async {
+    final FloorPlan plan;
+    try {
+      plan = await widget.api.floor();
+    } on ApiException {
+      _say('The tables cannot be read right now, so the dishes stay here.');
+      return;
+    }
+    final order = _order;
+    if (!mounted || order == null) return;
+    if (CheckPicker.places(plan, widget.orderId).isEmpty) {
+      _say('No other table has a check to move them to.');
+      return;
+    }
+    final what = lines.length == 1 ? lines.single.item : dishes(lines.length);
+    final to = await showModalBottomSheet<(TableSpot, TableCheck)>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.7),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Move $what to', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 10),
+                CheckPicker(
+                  plan: plan,
+                  except: widget.orderId,
+                  onPicked: (table, check) => Navigator.of(context).pop((table, check)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (to == null || !mounted) return;
+    final (table, check) = to;
+    final ops = moveLinesOps(
+      from: order,
+      onto: check.orderId,
+      lines: lines,
+      newId: widget.outbox.newId,
+      by: widget.session?.staff,
+    );
+    for (final (orderId, batch) in ops) {
+      await widget.outbox.addAll(orderId, batch);
+    }
+    if (mounted) _say('$what moved to table ${table.label}');
   }
 
   /// Voids the lot. The dishes the kitchen has take the operator's word, once for all of them; the ones it
@@ -1409,7 +1472,7 @@ class _TicketPanelState extends State<_TicketPanel> {
                 rows: rows,
                 paper: posColors.checkPaper,
                 onDrop: _dropped,
-                targets: open ? _lotTargets : null,
+                targets: open ? (inHand) => _lotTargets(inHand, moves: check?.moves ?? false) : null,
                 onTarget: (target, lines) => unawaited(widget.onLot(target, lines)),
                 rowBuilder: (context, i, row, drag) => switch (row) {
                   CourseRow(:final id, :final name, :final state) => _CourseHeader(
@@ -1651,12 +1714,14 @@ class _TicketPanelState extends State<_TicketPanel> {
     );
   }
 
-  /// Where the dishes in hand can be let go instead of put back down: over Comp, or over Void ("Take off"
-  /// while the kitchen has seen none of them). With several in hand each says how many it takes.
-  static List<LotTarget> _lotTargets(List<Line> inHand) {
+  /// Where the dishes in hand can be let go instead of put back down: over Move (to another table's check,
+  /// on a hub that [moves] dishes), over Comp, or over Void ("Take off" while the kitchen has seen none of
+  /// them). With several in hand each says how many it takes.
+  static List<LotTarget> _lotTargets(List<Line> inHand, {bool moves = false}) {
     final count = inHand.length == 1 ? '' : ' ${inHand.length}';
     final sent = inHand.any((line) => line.fired);
     return [
+      if (moves) LotTarget(id: 'move', label: 'Move$count', icon: Icons.open_with_rounded, plain: true),
       LotTarget(id: 'comp', label: 'Comp$count', icon: Icons.card_giftcard_outlined),
       LotTarget(
         id: 'void',

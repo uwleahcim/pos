@@ -41,6 +41,7 @@ class FloorView extends StatefulWidget {
     this.me,
     this.mine = false,
     this.onMine,
+    this.moving,
   });
 
   final PosApi api;
@@ -62,6 +63,9 @@ class FloorView extends StatefulWidget {
 
   /// "Mine" was tapped: what it is to be now.
   final ValueChanged<bool>? onMine;
+
+  /// The table being moved, by id: it stands out until the table it goes to is tapped. Null for none.
+  final String? moving;
 
   @override
   State<FloorView> createState() => FloorViewState();
@@ -202,7 +206,10 @@ class FloorViewState extends State<FloorView> {
   @override
   Widget build(BuildContext context) {
     final outbox = widget.outbox;
-    final plan = outbox == null ? _plan : _plan?.withChecks(queuedChecks(outbox)).withServers(queuedServers(outbox));
+    final (movedTo, merged) = outbox == null ? (const <String, String>{}, const <String>{}) : queuedTables(outbox);
+    final plan = outbox == null
+        ? _plan
+        : _plan?.withChecks(queuedChecks(outbox)).withServers(queuedServers(outbox)).withTables(movedTo, merged);
     if (plan == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -358,6 +365,7 @@ class FloorViewState extends State<FloorView> {
                                       clock: _clock,
                                       ringed: rings.has(t.id),
                                       faded: faded(t.id),
+                                      moving: t.id == widget.moving,
                                       onTap: () => widget.onTable(plan, t),
                                       onHeld: widget.onTableHeld == null ? null : () => widget.onTableHeld!(plan, t),
                                     ),
@@ -914,12 +922,16 @@ class _TablePositioned extends StatelessWidget {
     required this.ringed,
     required this.onTap,
     this.faded = false,
+    this.moving = false,
     this.onHeld,
   });
 
   final TableSpot table;
   final double left, top;
   final List<TableCheck> checks;
+
+  /// The table is being moved: it is outlined until the table it goes to is tapped.
+  final bool moving;
 
   /// Another server's table while "Mine" is on: it stays where it is and opens on a tap, only fainter.
   final bool faded;
@@ -945,7 +957,9 @@ class _TablePositioned extends StatelessWidget {
     final server = shortName(check?.server);
     final (fill, border, textColor) = _stageStyle(posColors, check?.stage);
     final radius = BorderRadius.circular(table.kind == 'booth' ? 12 : 8);
-    final side = BorderSide(color: ringed ? border.withValues(alpha: 0.28) : border, width: check == null ? 1.5 : 2.2);
+    final side = moving
+        ? BorderSide(color: Theme.of(context).colorScheme.primary, width: 4)
+        : BorderSide(color: ringed ? border.withValues(alpha: 0.28) : border, width: check == null ? 1.5 : 2.2);
     final shape = table.round ? CircleBorder(side: side) : RoundedRectangleBorder(borderRadius: radius, side: side);
 
     return Positioned(

@@ -19,7 +19,8 @@ it was. An operation that asks for more than is left (a new line, a larger quant
 reported like a line the menu refuses; the rest of the batch goes through.
 
 A void gives the dish back even when the kitchen had already made it: if that one went in the bin, the
-number is typed again. And a count is one number on one hub: two screens cannot both sell the last one
+number is typed again. A dish that goes to another check (`pos.orders.moves`) was sold once: neither
+check's move counts. And a count is one number on one hub: two screens cannot both sell the last one
 (`MenuService.counting`), while a terminal taking orders with no hub to ask sells from the number it last
 saw and hears about it when its orders arrive.
 """
@@ -31,6 +32,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from ..sync.oplog import Line, Op, OpStore, OrderState, apply
+from .moves import carried
 
 if TYPE_CHECKING:
     from ..menu.service import MenuService
@@ -95,6 +97,13 @@ def count_ops(
         if state is None:
             state = states[op.order_id] = store.state(op.order_id)
             held[op.order_id] = holds(state, counts)
+        if carried(op):
+            # a dish changing checks was sold once: the check it leaves gives nothing back and the one it
+            # comes onto takes nothing, so the last one of a dish can still change tables
+            apply(state, op)
+            held[op.order_id] = holds(state, counts)
+            kept.append(op)
+            continue
         together = [op, partner[op.op_id]] if op.op_id in partner else [op]
         was = held[op.order_id]
         after = deepcopy(state) if any(o.kind in RAISES for o in together) else state

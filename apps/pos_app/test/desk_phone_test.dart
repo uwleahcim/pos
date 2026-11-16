@@ -286,7 +286,7 @@ void main() {
   group('Location settings', () {
     /// The whole screen in view, so the Desk phones card at the bottom needs no scrolling.
     Future<void> tall(WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1100, 1900);
+      tester.view.physicalSize = const Size(1100, 2000);
       await tester.pumpAndSettle();
     }
 

@@ -230,32 +230,44 @@ class FoundPrinter {
 /// (`GET/PUT /settings/tickets`; a manager sets it under Location settings): [numbered] for "Ticket 2 of 3"
 /// when more than one station is cooking, [alsoAt] for the other stations by name ("Also at: Wok 2, Sushi
 /// Bar"). And [paid]: whether the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
-/// is still to collect; null from a hub that does not print it yet, which gets no word about it back.
+/// is still to collect; null from a hub that does not print it yet, which gets no word about it back. And
+/// [moved]: whether the stations cooking for a table get a MOVED slip when it changes tables; null the same
+/// way from a hub that does not move tables yet.
 @immutable
 class TicketWords {
-  const TicketWords({this.numbered = true, this.alsoAt = true, this.paid});
+  const TicketWords({this.numbered = true, this.alsoAt = true, this.paid, this.moved});
 
   factory TicketWords.fromJson(Map<String, dynamic> json) => TicketWords(
     numbered: json['numbered'] as bool? ?? true,
     alsoAt: json['also_at'] as bool? ?? true,
     paid: json['paid'] as bool?,
+    moved: json['moved'] as bool?,
   );
 
   final bool numbered;
   final bool alsoAt;
   final bool? paid;
+  final bool? moved;
 
-  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt, 'paid': ?paid};
+  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt, 'paid': ?paid, 'moved': ?moved};
 
-  TicketWords copyWith({bool? numbered, bool? alsoAt, bool? paid}) =>
-      TicketWords(numbered: numbered ?? this.numbered, alsoAt: alsoAt ?? this.alsoAt, paid: paid ?? this.paid);
+  TicketWords copyWith({bool? numbered, bool? alsoAt, bool? paid, bool? moved}) => TicketWords(
+    numbered: numbered ?? this.numbered,
+    alsoAt: alsoAt ?? this.alsoAt,
+    paid: paid ?? this.paid,
+    moved: moved ?? this.moved,
+  );
 
   @override
   bool operator ==(Object other) =>
-      other is TicketWords && other.numbered == numbered && other.alsoAt == alsoAt && other.paid == paid;
+      other is TicketWords &&
+      other.numbered == numbered &&
+      other.alsoAt == alsoAt &&
+      other.paid == paid &&
+      other.moved == moved;
 
   @override
-  int get hashCode => Object.hash(numbered, alsoAt, paid);
+  int get hashCode => Object.hash(numbered, alsoAt, paid, moved);
 }
 
 /// A printer as the bill's settings name it: its id and the name that heads its tickets ("Takeout").

@@ -34,7 +34,7 @@ def taken_off_rows(state: OrderState, since: int = 0) -> list[dict[str, Any]]:
             continue  # a removal that reached the log before its dish, or without one: nothing was rung in
         for cut in line.cuts:
             _row(rows, state, line, int(cut.get("qty") or 0), cut, since)
-        if line.status == "removed":
+        if line.status == "removed" and not line.moved:  # gone to another check is not taken off
             again = replaced_by.get(line.line_id)
             _row(rows, state, line, line.qty - (again.qty if again is not None else 0), line.removed or {}, since)
     return rows

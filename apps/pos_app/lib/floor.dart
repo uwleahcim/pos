@@ -142,6 +142,7 @@ class FloorPlan {
     required this.status,
     this.courses = Course.defaults,
     this.timers = TableTimers.off,
+    this.moves = false,
   });
   factory FloorPlan.fromJson(Map<String, dynamic> json) => FloorPlan(
     width: (json['width'] as num).toDouble(),
@@ -155,6 +156,7 @@ class FloorPlan {
       for (final e in (json['status'] as Map<String, dynamic>? ?? const {}).entries)
         e.key: (e.value as List).map((c) => TableCheck.fromJson(c as Map<String, dynamic>)).toList(),
     },
+    moves: json['moves'] == true,
   );
   final double width, height;
   final List<Room> rooms;
@@ -168,6 +170,16 @@ class FloorPlan {
   /// gets a countdown ring and the times of each stage. Off from a hub older than the timers.
   final TableTimers timers;
   final Map<String, List<TableCheck>> status;
+
+  /// Whether a table's check can move to another table and merge with its check: the hub says so, and one
+  /// older than moving does not.
+  final bool moves;
+
+  /// The table each open check is at, by order id.
+  Map<String, String> get tableOf => {
+    for (final MapEntry(key: table, value: checks) in status.entries)
+      for (final check in checks) check.orderId: table,
+  };
 
   /// Where the table's countdown stands at [nowMs]: the most pressing of its checks', or null with no ring.
   Countdown? countdownAt(String tableId, int nowMs) =>
@@ -201,6 +213,25 @@ class FloorPlan {
     });
   }
 
+  /// The plan with the checks in [moved] (order id -> table id) at those tables and the checks in [gone]
+  /// off the floor: a table moved or merged on this device shows where it went before a hub has heard.
+  FloorPlan withTables(Map<String, String> moved, Set<String> gone) {
+    if (moved.isEmpty && gone.isEmpty) return this;
+    final next = <String, List<TableCheck>>{};
+    final landing = <String, List<TableCheck>>{};
+    for (final MapEntry(key: table, value: checks) in status.entries) {
+      for (final check in checks) {
+        if (gone.contains(check.orderId)) continue;
+        final to = moved[check.orderId];
+        (to == null || to == table ? next : landing).putIfAbsent(to ?? table, () => []).add(check);
+      }
+    }
+    for (final MapEntry(key: table, value: checks) in landing.entries) {
+      next.putIfAbsent(table, () => []).addAll(checks);
+    }
+    return _with(next);
+  }
+
   FloorPlan _with(Map<String, List<TableCheck>> status) => FloorPlan(
     width: width,
     height: height,
@@ -209,5 +240,6 @@ class FloorPlan {
     status: status,
     courses: courses,
     timers: timers,
+    moves: moves,
   );
 }

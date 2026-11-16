@@ -34,7 +34,8 @@
 - `tickets`: what a kitchen ticket says about the other tickets of the same send (`PrintService.send`), each on
   to start: `numbered`, "Ticket 2 of 3" when more than one station is cooking, and `also_at`, the names of the
   other stations cooking ("Also at: Wok 2, Sushi Bar"). And `paid`: the takeout station's ticket of a to-go
-  order says PAID, or NOT PAID with what is still to collect.
+  order says PAID, or NOT PAID with what is still to collect. And `moved`: food on its way that changes table
+  prints a MOVED slip at its stations, with the table it was sent for and the table it goes to now.
 - `bill`: the guest's bill on paper (`pos/printing/bill.py`): `printer`, the id of the printer the location's
   bills print at (null: the takeout station's printer, else the first; a screen may ask for another),
   `header`, the restaurant's own lines at the top (name, address, phone; the first prints big), and `footer`,
@@ -99,7 +100,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
-    "tickets": {"numbered": True, "also_at": True, "paid": True},
+    "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True},
     "bill": {"printer": None, "header": [], "footer": ["Thank you!"]},
 }
 RUSH_MAX = 120
@@ -312,8 +313,9 @@ def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
     """What the tickets of one send say about each other, as the app may set it: `numbered` and `also_at`; and
-    `paid`, whether the takeout counter's copy of a to-go order says PAID or NOT PAID. Each true or false; one
-    left out keeps its default. Raises ValueError on a bad value."""
+    `paid`, whether the takeout counter's copy of a to-go order says PAID or NOT PAID; and `moved`, whether a
+    station gets a slip when food it is cooking changes table. Each true or false; one left out keeps its
+    default. Raises ValueError on a bad value."""
     out = {}
     for name, default in DEFAULTS["tickets"].items():
         value = data.get(name, default)

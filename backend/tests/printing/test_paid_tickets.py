@@ -152,14 +152,14 @@ def test_a_manager_turns_it_off():
     c = kitchen("wok", "takeout")
     assert c.get("/settings/tickets").json()["paid"] is True
     headers = manager(c)
-    saved = c.put("/settings/tickets", json={"paid": False}, headers=headers).json()
-    assert saved == {"numbered": True, "also_at": True, "paid": False}
+    saved = c.put("/settings/tickets", json={"paid": False, "moved": True}, headers=headers).json()
+    assert saved == {"numbered": True, "also_at": True, "paid": False, "moved": True}
     key = send(c, "o1", CHICKEN, **PHONE)
     assert money(c, key) == [] and "#1  LINDA" in ticket(c, key).text
     # an app from before the switch saves the other two and leaves this one as it is
     saved = c.put("/settings/tickets", json={"numbered": False, "also_at": True}, headers=headers).json()
-    assert saved == {"numbered": False, "also_at": True, "paid": False}
-    assert clean_tickets({}) == {"numbered": True, "also_at": True, "paid": True}
+    assert saved == {"numbered": False, "also_at": True, "paid": False, "moved": True}
+    assert clean_tickets({}) == {"numbered": True, "also_at": True, "paid": True, "moved": True}
     with pytest.raises(ValueError, match="paid must be true or false"):
         clean_tickets({"paid": 1})
 

@@ -60,6 +60,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           byId: data['by_id'] as String?,
           // an edit voids a dish and adds the changed one: it stays on the checks the dish was put on
           checks: checkNumbers(data['checks']) ?? lines[data['replaces']]?.checks,
+          // a dish that came from another check already sent: the kitchen has it
+          fired: data['from'] is Map && data['sent'] != null,
           pending: true,
         );
       case 'set_line':
@@ -81,6 +83,12 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
         final line = lines[data['line_id']];
         if (line != null && line.isActive) {
           lines[line.lineId] = line.copyWith(status: line.fired ? 'void' : 'removed', pending: true);
+        }
+      case 'move_line':
+        // gone to another check: off this one, sent or not, and no void
+        final line = lines[data['line_id']];
+        if (line != null && line.isActive && data['to'] is Map) {
+          lines[line.lineId] = line.copyWith(status: 'removed', pending: true);
         }
       case 'allergy':
         // the latest word on a seat stands; one with nothing in it takes the seat's allergy off
@@ -125,6 +133,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     fired: order.fired,
     payments: payments,
     allergies: allergies..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
+    discounts: order.discounts,
     openedMs: order.openedMs,
   );
 }
@@ -237,6 +246,7 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
     // what each check of a split table comes to is the hub's to say: none here until it answers
     split: check?.split ?? SplitMode.one,
     splits: check?.splits ?? false,
+    moves: check?.moves ?? false,
   );
 }
 
@@ -342,6 +352,23 @@ Map<String, (String?, String?)> queuedServers(Outbox outbox) => {
       if (op['data'] case {'server': final String? name, 'server_id': final String? id})
         op['order_id'] as String: (name, id),
 };
+
+/// The checks this device moved to another table that no backend has heard of yet (order id -> table id,
+/// the last move winning), and the ones it emptied into another check and closed.
+(Map<String, String>, Set<String>) queuedTables(Outbox outbox) {
+  final moved = <String, String>{};
+  final gone = <String>{};
+  final created = <String>{};
+  for (final op in outbox.pendingOps) {
+    final id = op['order_id'] as String;
+    final data = (op['data'] as Map?) ?? const {};
+    if (op['kind'] == 'create') created.add(id); // a check opened here: `queuedChecks` puts it on the map
+    if (op['kind'] != 'set_field') continue;
+    if (data['table'] != null && !created.contains(id)) moved[id] = data['table'].toString();
+    if (data['merged_into'] != null) gone.add(id);
+  }
+  return (moved, gone);
+}
 
 /// What a choice changes on a line, with its sign: "+0.50"; a choice that takes something off reads the
 /// accounting way, "(2.00)"; one that changes nothing reads as nothing.

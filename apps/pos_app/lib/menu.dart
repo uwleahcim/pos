@@ -953,6 +953,7 @@ class Check {
     this.split = SplitMode.one,
     this.parts = const [],
     this.splits = false,
+    this.moves = false,
   });
 
   factory Check.fromJson(Map<String, dynamic> json) => Check(
@@ -981,6 +982,7 @@ class Check {
         if (part is Map<String, dynamic>) CheckPart.fromJson(part),
     ],
     splits: json.containsKey('checks'),
+    moves: json['moves'] == true,
   );
 
   final List<CheckLine> lines;
@@ -1009,6 +1011,10 @@ class Check {
 
   /// Whether the hub knows of splitting at all: one older than it sends no `checks`.
   final bool splits;
+
+  /// Whether the hub can pass a dish from this check to another: one older than moving cannot, and the
+  /// screen then offers no Move.
+  final bool moves;
 
   CheckPart? part(int number) {
     for (final p in parts) {
