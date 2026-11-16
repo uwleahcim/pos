@@ -25,7 +25,13 @@ KINDS = frozenset(
     {
         "create",  # data: any order fields
         "set_field",  # data: any order fields
+        # A dish that came from another check also names where from (`from`: order_id, line_id; the hub adds
+        # that check's table) and, when the kitchen already has it, when it was sent (`sent`, a stamp).
         "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?
+        # A dish going to another check (pos.orders.moves): this check lets it go, the other takes it with an
+        # `add_line` that names where it came from. No void: the kitchen has cooked it or will, and it is
+        # still to be paid for, over there.
+        "move_line",  # data: line_id, to (order_id, line_id), by?, by_id?
         # data: line_id + any line fields (a drag on the check: course and rank), by?, by_id? (who, when it
         # changes how many: fewer of a dish the kitchen has not seen is in the report of dishes taken off)
         "set_line",
@@ -76,6 +82,9 @@ ORDER_FIELDS = frozenset(
         # How the table pays (pos.orders.split): {by: seat} a check for each seat, {by: dish} the dishes
         # put on checks by hand, {by: even, ways: n} the total in n equal parts; anything else is one check.
         "split",
+        # The check every dish of this one went to when its table joined another's (an order id): this
+        # check was closed empty, and its history says where to look.
+        "merged_into",
     }
 )
 ALLERGY_NOTE_MAX = 80
@@ -121,7 +130,9 @@ class Line:
     course: str | None = None
     note: str = ""
     rank: float = 0.0  # its place on the check: lines show, print and are charged in rank order
-    status: str = "active"  # active | removed (taken off before the kitchen saw it) | void (after)
+    # active | removed (taken off before the kitchen saw it, or gone to another check: `moved_to`) | void
+    # (taken off after the kitchen had it)
+    status: str = "active"
     void_reason: str | None = None
     # For a line voided after the kitchen had it: why (the reason's id and the name it had then), who
     # (`by`, `by_id`), the manager who approved it (`approved_by`, or None) and when (`at_ms`).
@@ -141,6 +152,13 @@ class Line:
     # The checks of a split table this dish was put on by hand, by number; None while nobody did, and
     # the split's own rule places it (its seat's check, or the first).
     checks: list[int] | None = None
+    # For a dish that went to another check: where (`order_id`, `line_id` there), with who moved it, on
+    # which screen and when. It is off this check like a removed one, whether the kitchen had it or not,
+    # and it is no void and no dish taken off: it is on the other check, to be paid for there.
+    moved_to: dict[str, Any] | None = None
+    # For a dish that came from another check: `order_id`, `line_id` and the `table` that check stood at.
+    moved_from: dict[str, Any] | None = None
+    arrived_sent: bool = False  # it came already sent: the kitchen has it on a ticket of the other check
     added_at: HLC | None = None  # when it came onto the check: what a floor map times an unsent dish from
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
@@ -148,6 +166,11 @@ class Line:
     @property
     def active(self) -> bool:
         return self.status == "active"
+
+    @property
+    def moved(self) -> bool:
+        """Whether the dish went to another check (it is `removed` here, and neither voided nor taken off)."""
+        return self.moved_to is not None
 
 
 @dataclass
@@ -164,6 +187,8 @@ class Discount:
     applied_by: str = ""
     approved_by: dict[str, Any] | None = None
     active: bool = True
+    # For a discount that came along with its dish from another check: `order_id`, `discount_id` there.
+    carried_from: dict[str, Any] | None = None
     stamp: HLC | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -176,6 +201,8 @@ class Discount:
             "applied_by": self.applied_by,
             "approved_by": self.approved_by,
             "active": self.active,
+            # only on a discount that came from another check: every other reads as it always did
+            **({} if self.carried_from is None else {"from": self.carried_from}),
         }
 
 
@@ -319,6 +346,8 @@ class OrderState:
                     "by": line.by,
                     "by_id": line.by_id,
                     "checks": line.checks,
+                    "moved_to": line.moved_to,
+                    "moved_from": line.moved_from,
                     "allergy": self.allergy_conflicts(line),
                 }
                 for line in self.ordered_lines()
@@ -380,6 +409,12 @@ def apply(state: OrderState, op: Op) -> None:
         line.stamps = dict.fromkeys(LINE_FIELDS, op.hlc)
         line.added_at = op.hlc
         line.modified_after_fire = state._fired_before(line.course)
+        line.moved_from = _other(data.get("from"), "table")
+        sent = _stamp(data.get("sent")) if line.moved_from is not None else None
+        if sent is not None:
+            # it came from another check already sent: the kitchen has it, on that check's ticket, so no
+            # fire here sends it again and nothing about it is late
+            line.fired_at, line.arrived_sent, line.modified_after_fire = sent, True, False
         state.lines[line_id] = line
 
     elif kind == "set_line":
@@ -435,6 +470,17 @@ def apply(state: OrderState, op: Op) -> None:
             else:
                 line.removed = _who(op)
 
+    elif kind == "move_line":
+        line_id = data["line_id"]
+        line = state.lines.get(line_id)
+        if line is None:  # the move reached the log before its dish: the dish is gone when it comes
+            line = Line(line_id=line_id, item=str(data.get("item") or ""))
+            state.lines[line_id] = line
+        to = _other(data.get("to"))
+        if line.active and to is not None:
+            line.status = "removed"
+            line.moved_to = {**to, **_who(op)}
+
     elif kind == "allergy":
         seat = data.get("seat")
         key = seat if isinstance(seat, int) and not isinstance(seat, bool) and seat > 0 else 0
@@ -485,6 +531,7 @@ def apply(state: OrderState, op: Op) -> None:
                 note=str(data.get("note", "")),
                 applied_by=str(data.get("applied_by", "")),
                 approved_by=data.get("approved_by"),
+                carried_from=_other(data.get("from"), id_field="discount_id"),
                 stamp=op.hlc,
             )
 
@@ -548,6 +595,31 @@ def _who(op: Op) -> dict[str, Any]:
         "device": op.device,
         "at_ms": op.hlc.wall_ms,
     }
+
+
+def _other(value: Any, *also: str, id_field: str = "line_id") -> dict[str, Any] | None:
+    """Where on another check a dish (or with `id_field` a discount) is or was, as an operation names it:
+    `order_id` and its id there, with whichever of `also` it says in words. None for anything else."""
+    if not isinstance(value, dict):
+        return None
+    order_id, ident = value.get("order_id"), value.get(id_field)
+    if not isinstance(order_id, str) or not order_id or not isinstance(ident, str) or not ident:
+        return None
+    out: dict[str, Any] = {"order_id": order_id, id_field: ident}
+    for name in also:
+        if isinstance(value.get(name), str):
+            out[name] = value[name]
+    return out
+
+
+def _stamp(value: Any) -> HLC | None:
+    """A stamp as an operation carries it in words, or None when it is not one."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return HLC.parse(value)
+    except ValueError:
+        return None
 
 
 def _count(value: Any) -> int:

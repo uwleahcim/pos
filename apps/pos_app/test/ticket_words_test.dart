@@ -29,6 +29,13 @@ void main() {
     expect(newer.copyWith(paid: false).toJson(), {'numbered': true, 'also_at': true, 'paid': false});
     expect(newer.copyWith(numbered: false).paid, isTrue);
     expect(newer == const TicketWords(), isFalse);
+
+    // and the same for the MOVED slip: kept and said back only when the hub has it
+    expect(newer.moved, isNull);
+    final newest = TicketWords.fromJson(const {'numbered': true, 'also_at': true, 'paid': true, 'moved': true});
+    expect(newest.copyWith(moved: false).toJson(), {'numbered': true, 'also_at': true, 'paid': true, 'moved': false});
+    expect(newest.copyWith(paid: false).moved, isTrue);
+    expect(newest == newer, isFalse);
   });
 
   testWidgets('a manager flips either line under the printers, and it is saved at once', (tester) async {
@@ -48,13 +55,13 @@ void main() {
 
     await tester.tap(numbered);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': true, 'paid': true});
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': true, 'paid': true, 'moved': true});
     expect(t.hub.ticketWordsAuth, 'Bearer tok-admin');
     expect(tester.widget<SwitchListTile>(numbered).value, isFalse);
 
     await tester.tap(alsoAt);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': true});
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': true, 'moved': true});
 
     // the third switch: PAID or NOT PAID on the takeout station's ticket
     final paid = find.byKey(const ValueKey('tickets-paid'));
@@ -63,8 +70,18 @@ void main() {
     expect(find.text('Print PAID or NOT PAID on to-go orders'), findsOneWidget);
     await tester.tap(paid);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false});
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false, 'moved': true});
     expect(tester.widget<SwitchListTile>(paid).value, isFalse);
+
+    // the fourth: a MOVED slip for the stations cooking for a table that changes tables
+    final moved = find.byKey(const ValueKey('tickets-moved'));
+    await show(tester, moved);
+    expect(tester.widget<SwitchListTile>(moved).value, isTrue);
+    expect(find.text('Tell the kitchen when a table moves'), findsOneWidget);
+    await tester.tap(moved);
+    await tester.pumpAndSettle();
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false, 'moved': false});
+    expect(tester.widget<SwitchListTile>(moved).value, isFalse);
     await show(tester, numbered);
 
     // what the hub refuses is said in its words, and the switch stays where the hub has it
@@ -90,6 +107,7 @@ void main() {
     expect(find.byKey(const ValueKey('tickets-numbered')), findsNothing);
     expect(find.byKey(const ValueKey('tickets-also-at')), findsNothing);
     expect(find.byKey(const ValueKey('tickets-paid')), findsNothing);
+    expect(find.byKey(const ValueKey('tickets-moved')), findsNothing);
     await stop(tester);
   });
 
@@ -107,9 +125,30 @@ void main() {
     final alsoAt = find.byKey(const ValueKey('tickets-also-at'));
     await show(tester, alsoAt);
     expect(find.byKey(const ValueKey('tickets-paid')), findsNothing);
+    expect(find.byKey(const ValueKey('tickets-moved')), findsNothing);
     await tester.tap(alsoAt);
     await tester.pumpAndSettle();
     expect(t.hub.ticketWords, {'numbered': true, 'also_at': false});
+    await stop(tester);
+  });
+
+  testWidgets('a hub older than the MOVED slip shows the three it has, and saving them says nothing of it', (
+    tester,
+  ) async {
+    final t = await terminal(tester);
+    t.hub.ticketWords = {'numbered': true, 'also_at': true, 'paid': true};
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final paid = find.byKey(const ValueKey('tickets-paid'));
+    await show(tester, paid);
+    expect(find.byKey(const ValueKey('tickets-moved')), findsNothing);
+    await tester.tap(paid);
+    await tester.pumpAndSettle();
+    expect(t.hub.ticketWords, {'numbered': true, 'also_at': true, 'paid': false});
     await stop(tester);
   });
 
@@ -128,6 +167,9 @@ void main() {
     await show(tester, find.byKey(const ValueKey('tickets-paid')));
     expect(tester.takeException(), isNull);
     expect(find.text("On the takeout station's ticket, with what is still to collect"), findsOneWidget);
+    await show(tester, find.byKey(const ValueKey('tickets-moved')));
+    expect(tester.takeException(), isNull);
+    expect(find.text('A MOVED slip at each station still cooking for it, with the new table'), findsOneWidget);
     await stop(tester);
   });
 }

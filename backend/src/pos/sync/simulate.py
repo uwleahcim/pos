@@ -135,7 +135,7 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
     live = [line_id for line_id, line in state.lines.items() if line.status == "active"]
     kinds = ["add_line"] * 4 + ["set_field"] * 2 + ["fire"]
     if live:
-        kinds += ["set_line"] * 3 + ["void_line", "allergy"]
+        kinds += ["set_line"] * 3 + ["void_line", "allergy", "move_line"]
     if state.applied:
         kinds += ["close", "reopen", "void_order"] if rng.random() < 0.08 else ["close"]
     else:
@@ -150,6 +150,11 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
             value = rng.choice([None, {"by": "seat"}, {"by": "dish"}, {"by": "even", "ways": rng.randint(2, 4)}])
         return replica.emit(order_id, kind, **{name: value}, **flag)
     if kind == "add_line":
+        came: dict[str, Any] = {}
+        if rng.random() < 0.15:  # a dish from another check, sometimes one the kitchen already has
+            came = {"from": {"order_id": f"other-{rng.randint(1, 3)}", "line_id": f"L{rng.randint(1, 12)}"}}
+            if rng.random() < 0.5:
+                came["sent"] = str(replica.clock.last)
         return replica.emit(
             order_id,
             kind,
@@ -158,6 +163,7 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
             qty=rng.randint(1, 3),
             seat=rng.randint(1, 4),
             course=rng.choice(COURSES),
+            **came,
             **flag,
         )
     if kind == "set_line":
@@ -175,6 +181,9 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
         return replica.emit(order_id, kind, line_id=rng.choice(live), **{name: value}, **flag)
     if kind == "void_line":
         return replica.emit(order_id, kind, line_id=rng.choice(live), reason="guest changed mind", **flag)
+    if kind == "move_line":  # the dish goes to another check
+        to = {"order_id": f"other-{rng.randint(1, 3)}", "line_id": f"M{rng.randint(1, 12)}"}
+        return replica.emit(order_id, kind, line_id=rng.choice(live), to=to, **flag)
     if kind == "fire":
         return replica.emit(order_id, kind, course=rng.choice(COURSES + ["*"]), **flag)
     if kind == "allergy":  # told for a seat or the table, changed, or taken off again

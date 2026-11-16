@@ -38,7 +38,7 @@ typedef CheckRowBuilder = Widget Function(BuildContext context, int index, Check
 /// A place at the foot of the check to drop the dishes in hand on, instead of putting them back down.
 @immutable
 class LotTarget {
-  const LotTarget({required this.id, required this.label, required this.icon, this.danger = false});
+  const LotTarget({required this.id, required this.label, required this.icon, this.danger = false, this.plain = false});
 
   final String id;
 
@@ -48,6 +48,9 @@ class LotTarget {
 
   /// It takes dishes off the check: drawn in the colour of a void.
   final bool danger;
+
+  /// It gives nothing away and takes nothing off (the dishes go to another check): drawn in a quiet colour.
+  final bool plain;
 }
 
 class CheckList extends StatefulWidget {
@@ -646,6 +649,8 @@ class _TargetBar extends StatelessWidget {
     // a place that takes dishes off is the red of a void; the other is the theme's green, so the two are
     // told apart at a glance and by more than their words
     final (fill, ink) = switch ((target.danger, on)) {
+      _ when target.plain && on => (scheme.secondary, scheme.onSecondary),
+      _ when target.plain => (scheme.secondaryContainer, scheme.onSecondaryContainer),
       (true, true) => (scheme.error, scheme.onError),
       (true, false) => (scheme.errorContainer, scheme.onErrorContainer),
       (false, true) => (scheme.tertiary, scheme.onTertiary),

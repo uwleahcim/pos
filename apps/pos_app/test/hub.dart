@@ -180,8 +180,9 @@ class Hub {
 
   /// What the tickets say beyond their dishes (`GET/PUT /settings/tickets`), the token the last save carried
   /// and a reason to refuse the next save with. Null is a hub older than the setting (404); one with no `paid`
-  /// is a hub older than PAID / NOT PAID on the takeout ticket.
-  Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true, 'paid': true};
+  /// is a hub older than PAID / NOT PAID on the takeout ticket, and one with no `moved` is older than the
+  /// MOVED slip a kitchen gets when a table moves.
+  Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true, 'paid': true, 'moved': true};
   String? ticketWordsAuth;
   String? refuseTicketWords;
 
@@ -356,6 +357,7 @@ class Hub {
       sent.addAll(ops.map((op) => (id, op)));
       batches.add(ops);
       _apply(id, ops);
+      _moveOnFloor(id, ops);
       return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
     }
     if (_bill.hasMatch(path)) {
@@ -618,6 +620,34 @@ class Hub {
     return json({'revision': 0});
   }
 
+  /// A floor a test set up follows its checks: one that moves sits at its new table, one emptied into
+  /// another check is off the map, and one handed over is its new server's.
+  void _moveOnFloor(String orderId, List<Map<String, dynamic>> ops) {
+    final plan = floor;
+    if (plan == null) return;
+    final status = <String, List<Map<String, dynamic>>>{
+      for (final MapEntry(:key, :value) in (plan['status'] as Map? ?? const {}).entries)
+        key as String: [...(value as List).cast<Map<String, dynamic>>()],
+    };
+    for (final op in ops.where((op) => op['kind'] == 'set_field')) {
+      final data = (op['data'] as Map).cast<String, dynamic>();
+      final at = status.keys.where((t) => status[t]!.any((c) => c['order_id'] == orderId)).firstOrNull;
+      if (at == null) return;
+      final check = status[at]!.firstWhere((c) => c['order_id'] == orderId);
+      if (data.containsKey('server')) {
+        check['server'] = data['server'];
+        check['server_id'] = data['server_id'];
+      }
+      if (data.containsKey('guests')) check['guests'] = data['guests'];
+      if (data['table'] != null || data['merged_into'] != null) {
+        status[at]!.remove(check);
+        if (status[at]!.isEmpty) status.remove(at);
+      }
+      if (data['table'] != null) status.putIfAbsent(data['table'] as String, () => []).add(check);
+    }
+    floor = {...plan, 'status': status};
+  }
+
   /// The hub's replay, as far as these tests need it: an order read back shows what the terminal sent.
   void _apply(String orderId, List<Map<String, dynamic>> ops) {
     final order = orders.where((o) => o['order_id'] == orderId).firstOrNull;
@@ -628,9 +658,14 @@ class Hub {
       switch (op['kind']) {
         case 'add_line':
           final ranks = [for (final l in lines.values) ((l as Map)['rank'] as num? ?? 0).toDouble()];
+          // a dish that comes from another check is filled in from there: what it is, and whether it was sent
+          final from = data['from'] as Map?;
+          final source =
+              (orders.where((o) => o['order_id'] == from?['order_id']).firstOrNull?['lines'] as Map?)?[from?['line_id']]
+                  as Map?;
           lines[data['line_id'] as String] = {
-            'item': data['item'],
-            'qty': data['qty'] ?? 1,
+            'item': source?['item'] ?? data['item'],
+            'qty': source?['qty'] ?? data['qty'] ?? 1,
             'seat': data['seat'],
             'course': data['course'],
             'note': data['note'] ?? '',
@@ -639,9 +674,17 @@ class Hub {
             'by': data['by'] ?? '',
             'by_id': data['by_id'],
             'status': 'active',
-            'fired': false,
+            'fired': source?['fired'] == true,
+            'moved_from': ?from,
             'rank': data['rank'] ?? (ranks.isEmpty ? 1.0 : ranks.reduce(max) + 1),
           };
+        case 'move_line':
+          // gone to another check: off this one with no void, sent or not
+          final line = lines[data['line_id']] as Map?;
+          if (line != null && line['status'] == 'active') {
+            line['status'] = 'removed';
+            line['moved_to'] = data['to'];
+          }
         case 'set_line':
           final line = lines[data['line_id']] as Map?;
           for (final field in const ['qty', 'seat', 'course', 'note', 'rank', 'checks']) {
@@ -650,6 +693,11 @@ class Hub {
         case 'set_field' when data.containsKey('split'):
           // how the table pays: the one field of an order these tests read back
           (order['fields'] as Map)['split'] = data['split'];
+        case 'set_field' when data.containsKey('table') || data.containsKey('merged_into'):
+          // the check moved to another table, or was emptied into another check
+          for (final field in const ['table', 'merged_into']) {
+            if (data.containsKey(field)) (order['fields'] as Map)[field] = data[field];
+          }
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';

@@ -10,6 +10,7 @@ import '../desk_phone_watcher.dart';
 import '../floor.dart';
 import '../live.dart';
 import '../local_order.dart';
+import '../moves.dart';
 import '../outbox.dart';
 import '../phone.dart';
 import '../photos.dart';
@@ -33,6 +34,7 @@ import 'rush.dart';
 import 'server_picker.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
+import 'table_moves.dart';
 import 'theme.dart';
 import 'to_go_chips.dart';
 
@@ -601,41 +603,40 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return _roster;
   }
 
-  /// A host or manager held a seated table down: they hand it to another server. Every check on the table
-  /// goes, since the table is the server's; the log keeps who handed it over.
+  /// The table whose checks are being moved: the next table tapped is where they go.
+  TableSpot? _moving;
+
+  /// A seated table was held down. Whoever it is can move it to another table; a host or manager can also
+  /// hand it to another server, alone or with every other table its server has (a shift change). Every
+  /// check on the table goes, since the table is the server's; the log keeps who handed it over.
   Future<void> _onTableHeld(FloorPlan plan, TableSpot table) async {
     final staff = widget.session.staff;
     final checks = plan.checksAt(table.id);
     if (checks.isEmpty) return;
     final roster = await _rosterNow();
-    if (!mounted || !roster.assigns(staff?.staffId)) return;
+    if (!mounted) return;
+    if (!roster.assigns(staff?.staffId)) {
+      // a server has one thing to do with a table held down: move it
+      if (plan.moves) setState(() => _moving = table);
+      return;
+    }
     final current = roster.servers.where(checks.first.isServedBy).firstOrNull;
-    final picked = await showModalBottomSheet<StaffMember>(
+    final held = await showModalBottomSheet<Held>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Who serves ${table.label}?', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 10),
-              ServerPicker(
-                servers: roster.servers,
-                plan: plan,
-                picked: current,
-                onPicked: (server) => Navigator.of(context).pop(server),
-              ),
-            ],
-          ),
-        ),
-      ),
+      builder: (context) =>
+          HeldSheet(table: table, plan: plan, servers: roster.servers, current: current, moves: plan.moves),
     );
-    if (picked == null || picked.staffId == current?.staffId || !mounted) return;
-    for (final check in checks) {
+    if (held == null || !mounted) return;
+    final picked = held.server;
+    if (picked == null) return setState(() => _moving = table);
+    if (picked.staffId == current?.staffId) return;
+    // every table of the server who has this one, when asked: their checks wherever they are on the floor
+    final going = held.all && current != null
+        ? [for (final here in plan.status.values) ...here.where((check) => check.isServedBy(current))]
+        : checks;
+    for (final check in going) {
       await widget.outbox.add(check.orderId, 'set_field', {
         'server': picked.name,
         'server_id': picked.staffId,
@@ -645,7 +646,74 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     if (!mounted) return;
     _floorKey.currentState?.refresh();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${table.label} is ${picked.name}\'s now')));
+    final tables = {for (final check in going) plan.tableOf[check.orderId]}.length;
+    final what = held.all && current != null && tables > 1
+        ? '${current.name}\'s $tables tables are ${picked.name}\'s now'
+        : '${table.label} is ${picked.name}\'s now';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(what)));
+  }
+
+  /// The table being moved was given a place: [to]. A free table takes its checks as they are. A seated one
+  /// asks whether the two become one check or stay two checks at one table.
+  Future<void> _moveTo(FloorPlan plan, TableSpot to) async {
+    final from = _moving;
+    if (from == null) return;
+    final checks = plan.checksAt(from.id);
+    if (to.id == from.id || checks.isEmpty) return setState(() => _moving = null);
+    final staff = widget.session.staff;
+    final there = plan.checksAt(to.id);
+    var queue = moveTableOps(checks.map((check) => check.orderId), to.id, by: staff);
+    var merged = false;
+    if (there.isNotEmpty) {
+      // both sides as they stand, with what this screen has yet to send: one check means every dish moves
+      Future<Order> read(String id) async => withLocalOps(await widget.api.order(id), widget.outbox.localOps(id));
+      List<Order>? moving;
+      Order? onto;
+      try {
+        moving = [for (final check in checks) await read(check.orderId)];
+        onto = await read(there.first.orderId);
+      } on ApiException {
+        // nothing to read them from: they can still sit at one table as two checks
+      }
+      if (!mounted) return;
+      final blocked = moving == null
+          ? 'The hub cannot be reached right now, so the two checks cannot be put together.'
+          : moving.map(cannotMerge).nonNulls.map((why) => '${from.label}\'s check $why.').firstOrNull;
+      final landing = await showDialog<Landing>(
+        context: context,
+        builder: (_) => LandingDialog(
+          from: from,
+          to: to,
+          blocked: blocked,
+          note: moving != null && moving.any(hasCheckDiscount)
+              ? 'The discount on ${from.label}\'s whole check stays behind. '
+                    'Put it on ${to.label}\'s check again if it should count.'
+              : null,
+        ),
+      );
+      if (landing == null || !mounted) return; // still moving: another table can be tapped
+      if (landing == Landing.merge && moving != null && onto != null) {
+        merged = true;
+        queue = [];
+        for (final check in moving) {
+          final ops = mergeOps(from: check, onto: onto!, newId: widget.outbox.newId, by: staff);
+          queue.addAll(ops);
+          // the next check that joins sits after the guests this one brought
+          final taken = ops.where((entry) => entry.$1 == onto!.orderId).expand((entry) => entry.$2);
+          onto = withLocalOps(onto, [
+            for (final (kind, data) in taken) {'kind': kind, 'data': data},
+          ]);
+        }
+      }
+    }
+    for (final (orderId, ops) in queue) {
+      await widget.outbox.addAll(orderId, ops);
+    }
+    if (!mounted) return;
+    setState(() => _moving = null);
+    _floorKey.currentState?.refresh();
+    final what = merged ? '${from.label} is on ${to.label}\'s check now' : '${from.label} moved to ${to.label}';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(what)));
   }
 
   Future<void> _open(String orderId) async {
@@ -678,6 +746,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// A free table seats a party; a busy one opens its check, or asks which one when it has several.
   Future<void> _onTable(FloorPlan plan, TableSpot table) async {
+    if (_moving != null) return _moveTo(plan, table);
     final checks = plan.checksAt(table.id);
     if (checks.length == 1) return _open(checks.single.orderId);
     if (checks.length > 1) {
@@ -835,7 +904,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
               duration: const Duration(milliseconds: 180),
               child: Icon(_floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded, key: ValueKey(_floor)),
             ),
-            onPressed: () => setState(() => _floor = !_floor),
+            onPressed: () => setState(() {
+              _floor = !_floor;
+              _moving = null; // a table is moved on the map: leaving it leaves the move
+            }),
           ),
           if (small)
             // a phone: the rest go in one menu, so the title still fits
@@ -890,6 +962,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ],
                     ),
             ),
+          if (_floor && _moving != null) MovingBar(table: _moving!, onCancel: () => setState(() => _moving = null)),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
@@ -902,6 +975,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       outbox: widget.outbox,
                       onTable: _onTable,
                       onTableHeld: _onTableHeld,
+                      moving: _moving?.id,
                       me: _me,
                       mine: widget.session.prefs.myTables,
                       onMine: _setMine,

@@ -43,6 +43,8 @@ merges after any disconnect.
   screen's own printer, the restaurant's lines at the top and the foot): `docs/bill.md`
 - Splitting a check (by seat in one tap, dishes moved or shared between checks, evenly; what each check
   comes to and its bill; one order all along): `docs/split.md`
+- Moving a table, merging two checks, moving dishes to another table's check and giving all of a server's
+  tables to another (nothing voided, nothing rung in twice, a MOVED slip for the kitchen): `docs/moves.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

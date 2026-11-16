@@ -43,7 +43,9 @@ class Money:
 @dataclass(frozen=True)
 class Ticket:
     station: str  # "Wok"
-    kind: str  # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent)
+    # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent) | moved
+    # (dishes already sent now go to another table than the one on their ticket: `was_at`)
+    kind: str
     order_id: str
     ticket_no: int
     table: str
@@ -63,6 +65,7 @@ class Ticket:
     also_at: tuple[str, ...] = ()  # the other stations cooking for the same send, by name ("Wok 2", "Sushi Bar")
     allergies: tuple[str, ...] = ()  # the allergies told at the table, one a line ("Table: Peanuts", "Seat 2: Sesame")
     money: Money | None = None  # the takeout counter's copy of a to-go order: paid, or what is still owed
+    was_at: str = ""  # on a `moved` slip: the table the dishes were sent for, which the cooks' tickets name
 
 
 def render(
@@ -71,13 +74,14 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void", "allergy") or ticket.late else 1)
+        b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
         "void": f"*** VOID *** {ticket.station}",
         "reprint": f"REPRINT {ticket.station}",
         "allergy": f"*** ALLERGY *** {ticket.station}",
+        "moved": f"*** MOVED *** {ticket.station}",
     }
     if ticket.late:
         # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
@@ -135,6 +139,13 @@ def render(
     if ticket.kind == "allergy":
         b.line("For the dishes you already have:")
     if ticket.allergies or ticket.kind == "allergy":
+        b.rule()
+    if ticket.kind == "moved":
+        # The cooks' tickets name the table the food was sent for: this one says where it goes now, as big as
+        # a dish, so whoever runs the plate reads it from the pass.
+        b.line(f"WAS TABLE {ticket.was_at}".upper(), big=True, bold=True, center=True)
+        b.line(f"NOW TABLE {ticket.table}".upper(), big=True, bold=True, center=True, invert=True)
+        b.line("These dishes go to the new table:")
         b.rule()
     for line in ticket.lines:
         # A void is printed white on black, the dish and its choices, so nobody cooks it by mistake.

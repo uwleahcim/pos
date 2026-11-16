@@ -916,6 +916,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 title: const Text('Print PAID or NOT PAID on to-go orders'),
                 subtitle: const Text("On the takeout station's ticket, with what is still to collect"),
               ),
+            if (words.moved case final moved?)
+              SwitchListTile(
+                key: const ValueKey('tickets-moved'),
+                value: moved,
+                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(moved: on)),
+                title: const Text('Tell the kitchen when a table moves'),
+                subtitle: const Text('A MOVED slip at each station still cooking for it, with the new table'),
+              ),
             if (_ticketWordsMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

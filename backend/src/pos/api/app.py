@@ -42,6 +42,7 @@ from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rul
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
+from ..orders.moves import carried, carry_ops
 from ..orders.numbers import OrderNumbers
 from ..orders.taken_off import by_check, taken_off_rows
 from ..orders.voids import void_ops, void_rows
@@ -71,7 +72,7 @@ from ..settings import (
     rush_now,
 )
 from ..sync.hlc import HLC
-from ..sync.oplog import KINDS, ClockDriftError, Op, OpStore, OrderState, apply
+from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
 from .auth import manager_from
 from .conditional import ConditionalGet
@@ -368,6 +369,7 @@ class TicketsIn(BaseModel):
     numbered: bool | None = Field(None, description='"Ticket 2 of 3" when more than one station is cooking')
     also_at: bool | None = Field(None, description='"Also at: Wok 2, Sushi Bar": the other stations cooking')
     paid: bool | None = Field(None, description="PAID or NOT PAID on the takeout station's ticket of a to-go order")
+    moved: bool | None = Field(None, description="a MOVED slip at the stations when food on its way changes table")
 
 
 class DiscoverIn(BaseModel):
@@ -438,11 +440,12 @@ def price_lines(menu: MenuService, ops: list[Op]) -> tuple[list[Op], list[dict[s
     """Price every new `add_line` that carries a menu request. The terminal's own `priced`, if any, is
     dropped: prices come from the hub's menu, never from a screen. A line the menu refuses (a required
     choice missing, an 86'd dish, an unknown id) is left out and reported with its problems; the rest of
-    the batch is kept, so a terminal's outbox never loses good operations behind a bad one."""
+    the batch is kept, so a terminal's outbox never loses good operations behind a bad one. A dish that came
+    from another check (`pos.orders.moves`) keeps the price it was sold at there, whatever the menu says now."""
     out: list[Op] = []
     refused: list[dict[str, Any]] = []
     for op in ops:
-        if op.kind == "add_line" and isinstance(op.data.get("request"), dict):
+        if op.kind == "add_line" and isinstance(op.data.get("request"), dict) and not carried(op):
             data = {k: v for k, v in op.data.items() if k != "priced"}
             priced, blocking = sellable(menu, data["request"], counted_out=False)
             if priced is None:
@@ -533,6 +536,17 @@ def adjust_ops(
         live = active[op.order_id]
         if op.kind == "remove_discount":
             live.pop(ident, None)
+        elif op.kind == "discount" and "from" in op.data:
+            # the discount of a dish that came from another check: it was judged when it was given there, and
+            # comes along as it is (its reason, what it takes off, who approved it), on that dish alone
+            source = _came_along(store, state, data)
+            if source is None:
+                problems = [{"code": "unknown_source", "message": "That discount is not on the dish as it came over."}]
+                refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
+                continue
+            data = {"discount_id": ident, "line_id": data["line_id"], "from": data["from"], **source}
+            live[ident] = {"reason": data["reason"], "line_id": data["line_id"]}
+            state.discounts[ident] = Discount(discount_id=ident, line_id=data["line_id"], carried_from=data["from"])
         else:
             judged = {**data, "line_id": _current(state, data.get("line_id"))}
             # a dish voided earlier in this batch takes its discount out of the stacking too
@@ -547,6 +561,37 @@ def adjust_ops(
                 data.update(charge_snapshot(rules.charges[str(data["code"])]))
         out.append(replace(op, data=data))
     return out, refused
+
+
+def _came_along(store: OpStore | PgOpStore, state: OrderState, data: dict[str, Any]) -> dict[str, Any] | None:
+    """What the discount a `discount` operation says it continues (`from`: order_id, discount_id) reads on the
+    check it comes from, to be written on this one: None unless that discount stands there on the very dish
+    this operation's line came from, and has not been brought over already."""
+    came = data.get("from")
+    line = state.lines.get(data.get("line_id")) if isinstance(data.get("line_id"), str) else None
+    if not isinstance(came, dict) or line is None or not line.active or line.moved_from is None:
+        return None
+    order_id, discount_id = came.get("order_id"), came.get("discount_id")
+    if not isinstance(order_id, str) or not isinstance(discount_id, str) or order_id != line.moved_from["order_id"]:
+        return None
+    source = store.view(order_id)
+    there = source.discounts.get(discount_id) if source is not None else None
+    if source is None or there is None or not there.active or not there.line_id:
+        return None
+    if source.current_line(there.line_id) != line.moved_from["line_id"]:
+        return None
+    again = {"order_id": order_id, "discount_id": discount_id}
+    if any(d.active and d.carried_from == again for d in state.discounts.values()):
+        return None
+    data["from"] = again
+    return {
+        "reason": there.reason,
+        "kind": there.kind,
+        "value": there.value,
+        "note": there.note,
+        "applied_by": there.applied_by,
+        "approved_by": there.approved_by,
+    }
 
 
 def _current(state: OrderState, line_id: Any) -> str | None:
@@ -798,7 +843,10 @@ def create_app(
             if not op.device or not op.hlc.endswith(f"-{op.device}"):
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         app.state.menu.refresh()
-        fresh, refused = price_lines(app.state.menu, [op.to_op() for op in ops if op.op_id not in store])
+        # a dish changing checks first: it is filled in from the check it comes from, and keeps its price
+        fresh, refused_moves = carry_ops(store, [op.to_op() for op in ops if op.op_id not in store])
+        fresh, refused = price_lines(app.state.menu, fresh)
+        refused = refused_moves + refused
         fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
         # The numbers left on counted dishes: weighed, stored and taken off as one step, so two screens cannot
         # both sell the last one. While no dish has a number nothing is held and nothing is read.
@@ -932,7 +980,8 @@ def create_app(
         state = store.view(order_id)
         if state is None:
             raise HTTPException(404, "no such order")
-        return polled(check_for(state, app.state.taxes, app.state.pricing))
+        # `moves`: this hub can pass a dish from one check to another (pos.orders.moves), so a screen may offer it
+        return polled({**check_for(state, app.state.taxes, app.state.pricing), "moves": True})
 
     @app.post("/orders/{order_id}/bill", status_code=202)
     def print_bill(order_id: str, body: PrintBillIn | None = None) -> dict[str, Any]:
@@ -984,6 +1033,7 @@ def create_app(
                 "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
                 "timers": app.state.settings.get("table_timers"),
                 "status": table_status(open_states, totals, [c["id"] for c in coursing["courses"]]),
+                "moves": True,  # a table's check can move and merge here (pos.orders.moves)
                 "cursor": store.cursor,
             }
         )
@@ -1121,7 +1171,8 @@ def create_app(
         """What a kitchen ticket says about the other tickets of the same send: `numbered` ("Ticket 2 of 3",
         when more than one station is cooking) and `also_at` ("Also at: Wok 2, Sushi Bar", the other stations
         cooking). And `paid`: the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
-        is still to collect."""
+        is still to collect. And `moved`: food on its way that changes table prints a MOVED slip at its
+        stations."""
         settings: SettingStore = app.state.settings
         return settings.get("tickets")
 

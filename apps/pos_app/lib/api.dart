@@ -196,6 +196,7 @@ class Order {
     required this.fired,
     this.payments = const [],
     this.allergies = const [],
+    this.discounts = const [],
     this.openedMs,
   });
 
@@ -207,6 +208,7 @@ class Order {
       fired = const {},
       payments = const [],
       allergies = const [],
+      discounts = const [],
       openedMs = null;
 
   factory Order.fromJson(Map<String, dynamic> json) {
@@ -226,6 +228,11 @@ class Order {
         for (final told in json['allergies'] as List? ?? const [])
           if (told is Map<String, dynamic>) Allergy.fromJson(told),
       ],
+      discounts: [
+        for (final MapEntry(:key, :value) in (json['discounts'] as Map<String, dynamic>? ?? const {}).entries)
+          if (value is Map<String, dynamic> && value['active'] != false)
+            (discountId: key, lineId: value['line_id'] as String?),
+      ],
       openedMs: (json['opened_ms'] as num?)?.toInt(),
     );
   }
@@ -243,6 +250,11 @@ class Order {
 
   /// The allergies told at the table: the whole table's first (its seat is null), then each seat's.
   final List<Allergy> allergies;
+
+  /// The discounts that stand on the order: each one's id and the dish it is on (null: the whole check).
+  /// What they take off is the hub's to say (the check); this is for a dish that changes checks, whose
+  /// discounts go with it.
+  final List<({String discountId, String? lineId})> discounts;
 
   String get table => fields['table']?.toString() ?? '';
 

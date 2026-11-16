@@ -116,6 +116,11 @@ it waits, and it prints with the money as it stands then.
 
 The switch is the third on the Printers card, **Print PAID or NOT PAID on to-go orders**, on to start.
 
+**A table that moves.** Moving a table, merging two, or moving dishes to another table's check prints no
+order ticket and no void. Each station with dishes sent in the last 45 minutes gets a MOVED slip instead:
+the table the dishes were sent for, the table they go to now, and the dishes. The fourth switch on the
+Printers card, **Tell the kitchen when a table moves**, turns it off. See `moves.md`.
+
 **Allergies.** An allergy noted on the order prints in a block of its own, white on black, on every
 station's ticket, and again under each dish of the seat it was told for. Told after dishes were sent, each
 station that has some gets an ALLERGY ticket listing them. See `allergies.md`.
@@ -217,8 +222,8 @@ still known as a Star by step 3, without its model.
   is null. Two printers with one address are refused: one printer prints for several stations.
 - `GET /settings/tickets`, `PUT /settings/tickets` (manager): `numbered` and `also_at`, the two lines a
   ticket says about the other tickets of its send, and `paid`, PAID or NOT PAID on the takeout station's
-  ticket (`PrintService.money`, from the order's check). Each true or false; one left out of a `PUT` stays
-  as it is.
+  ticket (`PrintService.money`, from the order's check), and `moved`, the MOVED slip for dishes already
+  sent whose table changed (`table_changes`). Each true or false; one left out of a `PUT` stays as it is.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with
