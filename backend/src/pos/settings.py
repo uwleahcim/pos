@@ -36,6 +36,9 @@
   other stations cooking ("Also at: Wok 2, Sushi Bar"). And `paid`: the takeout station's ticket of a to-go
   order says PAID, or NOT PAID with what is still to collect. And `moved`: food on its way that changes table
   prints a MOVED slip at its stations, with the table it was sent for and the table it goes to now.
+- `ticket_skips`: the stations each screen prints no ticket at (`screens`, a list of `{device, stations}`):
+  dishes sent or voided from that screen print nothing there, since whoever rings them in makes them (the
+  bar's own screen and the bar printer). Empty to start: every screen prints everywhere.
 - `bill`: the guest's bill on paper (`pos/printing/bill.py`): `printer`, the id of the printer the location's
   bills print at (null: the takeout station's printer, else the first; a screen may ask for another),
   `header`, the restaurant's own lines at the top (name, address, phone; the first prints big), and `footer`,
@@ -101,6 +104,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
     "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True},
+    "ticket_skips": {"screens": []},
     "bill": {"printer": None, "header": [], "footer": ["Thank you!"]},
 }
 RUSH_MAX = 120
@@ -323,6 +327,54 @@ def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{name} must be true or false")
         out[name] = value
     return out
+
+
+TICKET_SKIP_SCREENS_MAX = 200
+"""More screens than a location has: the list is a manager's, typed by hand."""
+
+
+def clean_ticket_skips(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The stations each screen prints no ticket at, as the app may set them, checked: `screens`, a list of
+    `{device, stations}`, each screen once (whatever the case of its name), its stations by code, each once. A
+    screen left with no station is dropped: it prints everywhere, like a screen that is not listed. Raises
+    ValueError on a bad value."""
+    raw = data.get("screens") or []
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("screens must be a list of {device, stations}")
+    if len(raw) > TICKET_SKIP_SCREENS_MAX:
+        raise ValueError(f"at most {TICKET_SKIP_SCREENS_MAX} screens")
+    screens: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in raw:
+        device = str(entry.get("device") or "").strip()
+        if not device:
+            raise ValueError("every entry needs the screen's device name")
+        if not DEVICE.match(device):
+            raise ValueError(f"a device name is letters and digits, as the app shows it, not {device!r}")
+        if device.casefold() in seen:
+            raise ValueError(f"the screen {device} is listed twice")
+        seen.add(device.casefold())
+        listed = entry.get("stations") or []
+        if not isinstance(listed, list | tuple):
+            raise ValueError(f"the stations {device} does not print at are a list of station codes")
+        stations = list(dict.fromkeys(str(code or "").strip() for code in listed))
+        stations = [code for code in stations if code]
+        for code in stations:
+            if not STATION.match(code):
+                raise ValueError(f"a station is a short code of letters, digits, - or _, not {code!r}")
+        if stations:
+            screens.append({"device": device, "stations": stations})
+    return {"screens": screens}
+
+
+def skipped_stations(setting: Mapping[str, Any], device: str) -> frozenset[str]:
+    """The stations the screen named `device` prints no ticket at, by the `ticket_skips` setting; none for a
+    screen that is not listed."""
+    name = device.strip().casefold()
+    for entry in setting.get("screens") or ():
+        if str(entry.get("device") or "").casefold() == name:
+            return frozenset(str(code) for code in entry.get("stations") or ())
+    return frozenset()
 
 
 def _bill_lines(value: Any, what: str) -> list[str]:

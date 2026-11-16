@@ -15,6 +15,10 @@ station's ticket leaves off the choices the menu hides from it (`Group.hidden_at
 rice or the soup a dish comes with); the dish prints there all the same, and the bag's ticket reads what the
 takeout station reads.
 
+A screen can be told to print no ticket at some stations (`ticket_skips`, a manager's setting): what is sent
+or voided from it prints nothing there, because the person ringing it in is the one who makes it (the bar's
+own screen and the bar printer). The rest of the order prints where it always does.
+
 A guest's bill (`pos.printing.bill`) is no kitchen ticket and is not routed by station: it prints where it
 is asked for (`bill_printer`), on the same queue, with the same fallbacks.
 
@@ -315,14 +319,18 @@ class Takes:
     """What one printer prints: called with the station a kitchen line is cooked at, it says whether the line
     belongs on this printer's ticket. `own` is the stations it serves, `first` whether it also stands in for
     every station with no printer (`served` is the stations that have one), and `whole` the takeout station
-    when it takes this order whole for the bag."""
+    when it takes this order whole for the bag. `skip` is the stations the screen that sent this prints no
+    ticket at: a line cooked there is on no printer's ticket of its own (the bag's still lists it)."""
 
     own: frozenset[str] = frozenset()
     first: bool = False
     served: frozenset[str] = frozenset()
     whole: str | None = None
+    skip: frozenset[str] = frozenset()
 
     def cooks(self, station: str | None) -> bool:
+        if station in self.skip:
+            return False
         return station in self.own or (self.first and station not in self.served)
 
     def __call__(self, station: str | None) -> bool:
@@ -461,6 +469,9 @@ class PrintService:
         self.check_of: Callable[[OrderState], Mapping[str, Any]] | None = None
         """An order's check as the hub reckons it (`total`, `paid`, `due`, `unpriced`), for the takeout
         counter's PAID or NOT PAID. The API wires it in; without it no ticket speaks of money."""
+        self.skips: Callable[[str], frozenset[str]] = lambda device: frozenset()
+        """The stations a screen prints no ticket at, by its device name (the `ticket_skips` setting): what is
+        sent or voided from it prints nothing there. None for any screen until the API wires the setting in."""
         self.bill_place: Callable[[], str | None] = lambda: None
         """The printer the location's bills print at, by id (the `bill` setting); None when the location has
         not said, and for a printer that is no longer there."""
@@ -523,6 +534,9 @@ class PrintService:
         every station that has some of them, headed ALLERGY and listing those dishes: the tickets the cooks
         are working from were printed without it.
 
+        A screen told to print no ticket at some stations (`skips`) sends and voids without one there. The
+        ALLERGY notice and the MOVED slip print at every station all the same, whoever's screen they come from.
+
         Food on its way that changes table (the check moved, or its dishes went onto a check at another
         table) prints a slip headed MOVED at every station that has some of it, with the table on the cooks'
         tickets and the table it goes to now (`table_changes`; the location's `tickets.moved` turns it off)."""
@@ -544,7 +558,8 @@ class PrintService:
                 now = self._now()
                 late = taken_offline(batch, now, self._late_after_ms)
                 delay = lead_delay(after, now) if not voided else 0.0  # a void prints at once
-                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, delay=delay))
+                skip = self.skips(key.device)
+                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, delay=delay, skip=skip))
             if _told(before) != _told(after):
                 gone = {line.line_id for line in sent}
                 had = [
@@ -576,9 +591,13 @@ class PrintService:
         delay: float = 0.0,
         kind: str | None = None,
         was_at: str = "",
+        skip: frozenset[str] = frozenset(),
     ) -> list[PrintJob]:
-        """One ticket per printer that has lines in this change. `delay` seconds holds the tickets back (a
-        future order's lead time); the hub's retry loop and the relays pick them up when they are due.
+        """One ticket per printer that has lines in this change. `skip` is the stations the screen that sent
+        it prints no ticket at: their lines are on nobody's ticket but the bag's, and such a station is neither
+        counted nor named on the other tickets, since no ticket of it is on its way. `delay` seconds holds the
+        tickets back (a future order's lead time); the hub's retry loop and the relays pick them up when they
+        are due.
         `kind` is `allergy` for the notice that follows dishes already sent, which lists them again, and
         `moved` for the slip that says they now go to another table than `was_at`, the one they were sent for.
 
@@ -595,7 +614,7 @@ class PrintService:
         words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         money = self.money(state) if kind is None else None
         made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
-        for printer, routes in self.routing(printers, to_go=is_to_go(state)):
+        for printer, routes in self.routing(printers, to_go=is_to_go(state), skip=skip):
             ticket = ticket_for(
                 state,
                 sent,
@@ -673,22 +692,28 @@ class PrintService:
                     names.setdefault(self.station_name(station) if station else self.head(printer))
         return tuple(names)
 
-    def routing(self, printers: list[Printer], *, to_go: bool) -> list[tuple[Printer, Takes]]:
+    def routing(
+        self, printers: list[Printer], *, to_go: bool, skip: frozenset[str] = frozenset()
+    ) -> list[tuple[Printer, Takes]]:
         """Which lines each printer takes, by station: a printer takes its own stations (the first printer on
         a station, when two list one); the first printer in the list also takes every station without a
         printer and lines with none, so nothing fired is left unprinted; and the takeout station's printer
         takes every line of a to-go order, whole, for the bag. Each `Takes` also says for which stations a
-        line prints there, which decides the choices it lists (`Group.hidden_at`)."""
+        line prints there, which decides the choices it lists (`Group.hidden_at`). `skip` is the stations the
+        sending screen prints no ticket at: nobody takes their lines, the first printer included, and the bag's
+        copy is left out too when the takeout station itself is skipped."""
         served: dict[str, Printer] = {}
         for printer in printers:
             for station in printer.stations:
                 served.setdefault(station, printer)
         takeout = self.takeout_station() if to_go else None
+        if takeout in skip:
+            takeout = None
         out = []
         for i, printer in enumerate(printers):
             own = frozenset(station for station in printer.stations if served[station] is printer)
             whole = takeout if takeout is not None and printer is served.get(takeout) else None
-            out.append((printer, Takes(own, first=i == 0, served=frozenset(served), whole=whole)))
+            out.append((printer, Takes(own, first=i == 0, served=frozenset(served), whole=whole, skip=skip)))
         return out
 
     def queue(

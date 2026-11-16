@@ -192,6 +192,13 @@ class Hub {
   String? ticketWordsAuth;
   String? refuseTicketWords;
 
+  /// The stations each screen prints no ticket at (`GET/PUT /settings/ticket_skips`), the token the last save
+  /// carried and a reason to refuse the next save with. Null is a hub older than the setting (404). Like the
+  /// hub, it drops a screen saved with no station.
+  Map<String, dynamic>? ticketSkips = {'screens': <Map<String, dynamic>>[]};
+  String? ticketSkipsAuth;
+  String? refuseTicketSkips;
+
   /// The guest's bill (`GET/PUT /settings/bill`): the setting with the printers by name; null is a hub older
   /// than the bill (404). The token the last save or sample carried, a reason to refuse the next one with,
   /// the bills asked for (order id, the printer the screen asked for or null) and the samples tried. A
@@ -475,6 +482,24 @@ class Hub {
           ticketWords = {...ticketWords!, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
         return json(ticketWords!);
+      case '/settings/ticket_skips':
+        if (ticketSkips == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          ticketSkipsAuth = request.headers['authorization'];
+          if (refuseTicketSkips != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseTicketSkips},
+            }, 422);
+          }
+          final asked = jsonDecode(request.body) as Map<String, dynamic>;
+          ticketSkips = {
+            'screens': [
+              for (final screen in (asked['screens'] as List).cast<Map<String, dynamic>>())
+                if ((screen['stations'] as List).isNotEmpty) screen,
+            ],
+          };
+        }
+        return json(ticketSkips!);
       case '/settings/bill':
         if (bill == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

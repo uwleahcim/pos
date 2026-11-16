@@ -66,10 +66,12 @@ from ..settings import (
     clean_quotes,
     clean_rush,
     clean_table_timers,
+    clean_ticket_skips,
     clean_tickets,
     clean_voids,
     default_settings,
     rush_now,
+    skipped_stations,
 )
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
@@ -370,6 +372,17 @@ class TicketsIn(BaseModel):
     also_at: bool | None = Field(None, description='"Also at: Wok 2, Sushi Bar": the other stations cooking')
     paid: bool | None = Field(None, description="PAID or NOT PAID on the takeout station's ticket of a to-go order")
     moved: bool | None = Field(None, description="a MOVED slip at the stations when food on its way changes table")
+
+
+class TicketSkipIn(BaseModel):
+    device: str = Field(description="the device name the app shows under Settings")
+    stations: list[str] = Field(default_factory=list, description="the stations it prints no ticket at, by code")
+
+
+class TicketSkipsIn(BaseModel):
+    """The stations each screen prints no ticket at. A screen with none listed prints everywhere."""
+
+    screens: list[TicketSkipIn] = Field(default_factory=list)
 
 
 class DiscoverIn(BaseModel):
@@ -776,6 +789,8 @@ def create_app(
     }
     # Whether a ticket says "Ticket 2 of 3" and "Also at: Wok 2, Sushi Bar" is the manager's to say.
     app.state.printing.ticket_words = lambda: app.state.settings.get("tickets")
+    # A screen can be told to print no ticket at some stations: the bar's own screen and the bar printer.
+    app.state.printing.skips = lambda device: skipped_stations(app.state.settings.get("ticket_skips"), device)
     # The takeout counter's copy of a to-go order says PAID or NOT PAID, by the check as the hub reckons it.
     app.state.printing.check_of = lambda state: check_for(state, app.state.taxes, app.state.pricing)
     # A guest's bill prints at the printer the manager chose for bills, unless the screen asks for its own.
@@ -1184,6 +1199,22 @@ def create_app(
         settings: SettingStore = app.state.settings
         asked = body.model_dump(exclude_none=True)
         return write_setting("tickets", {**settings.get("tickets"), **asked}, clean_tickets)
+
+    @app.get("/settings/ticket_skips")
+    def read_ticket_skips() -> dict[str, Any]:
+        """The stations each screen prints no ticket at: `screens`, a list of `{device, stations}`. Dishes sent
+        or voided from such a screen print nothing at those stations (the person ringing them in makes them:
+        the bar's own screen and the bar printer); the rest of the order prints where it always does. A screen
+        that is not listed prints everywhere."""
+        settings: SettingStore = app.state.settings
+        return settings.get("ticket_skips")
+
+    @app.put("/settings/ticket_skips")
+    def write_ticket_skips(body: TicketSkipsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager says which stations each screen prints no ticket at; the whole list at once, each screen
+        once. A screen sent with no station is dropped from it. The next send prints by it."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("ticket_skips", body.model_dump(), clean_ticket_skips)
 
     def bill_head(setting: Mapping[str, Any]) -> tuple[str, ...]:
         """The top of the bill: the lines the manager typed, or the location's name until any are."""

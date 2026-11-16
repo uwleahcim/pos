@@ -270,6 +270,39 @@ class TicketWords {
   int get hashCode => Object.hash(numbered, alsoAt, paid, moved);
 }
 
+/// The stations each screen prints no ticket at, as a manager set them for the location: what is sent or
+/// voided from the bar's own screen prints nothing at the bar, since whoever rings a drink in there makes it.
+/// A screen that is not listed prints everywhere.
+@immutable
+class TicketSkips {
+  const TicketSkips([this.screens = const {}]);
+
+  factory TicketSkips.fromJson(Map<String, dynamic> json) => TicketSkips({
+    for (final entry in json['screens'] as List? ?? const [])
+      if ((entry as Map)['device'] case final String device when device.isNotEmpty)
+        device: [for (final code in entry['stations'] as List? ?? const []) code as String],
+  });
+
+  /// The stations each screen skips, by its device name, in the order the hub listed them.
+  final Map<String, List<String>> screens;
+
+  /// The stations the screen named [device] prints no ticket at (whatever the case of the name).
+  List<String> of(String device) {
+    final name = device.trim().toLowerCase();
+    for (final MapEntry(:key, :value) in screens.entries) {
+      if (key.toLowerCase() == name) return value;
+    }
+    return const [];
+  }
+
+  Map<String, dynamic> toJson() => {
+    'screens': [
+      for (final MapEntry(:key, :value) in screens.entries)
+        if (value.isNotEmpty) {'device': key, 'stations': value},
+    ],
+  };
+}
+
 /// A printer as the bill's settings name it: its id and the name that heads its tickets ("Takeout").
 @immutable
 class BillPrinter {
