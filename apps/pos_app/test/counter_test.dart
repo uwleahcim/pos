@@ -23,6 +23,8 @@ import 'package:pos_app/settings.dart';
 import 'package:pos_app/takeout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'location_rows.dart';
+
 /// Counter mode and takeout (architecture section 12): a to-go order is named and numbered, paid before the
 /// kitchen sees it with the change worked out, marked ready from the list, and quoted by the hub's times.
 
@@ -665,6 +667,7 @@ void main() {
     expect(t.hub.pins, ['1111', '9999']);
     expect(find.text('Location settings'), findsOneWidget);
 
+    await bringUp(tester, 'quote-times');
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
     expect(find.text('Quote times'), findsNWidgets(2)); // the row and the dialog

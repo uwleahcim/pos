@@ -4,6 +4,7 @@ What a manager reads when service is over: what is still open, what the day sold
 for it, and what came off the checks. It is on the screen for any day and prints where the bills print.
 
 Since 16 November 2026 (the Toast comparison, row 6). It counts no cash drawer: see "Not built".
+For more than one day at a time, held beside the days before, see `sales-report.md`.
 
 ## Opening it
 

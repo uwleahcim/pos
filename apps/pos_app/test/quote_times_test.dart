@@ -5,6 +5,7 @@ import 'package:pos_app/screens/rush.dart';
 import 'package:pos_app/takeout.dart';
 
 import 'counter_test.dart';
+import 'location_rows.dart';
 
 /// Quote times that follow the kitchen (the Toast comparison, 2026-11-15): a manager's rush adds minutes to
 /// every new quote on every screen until the night is over, a big order is promised later (settled as it is
@@ -347,6 +348,7 @@ void main() {
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
+    await bringUp(tester, 'quote-times');
     expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 min'), findsOneWidget); // not the rush
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
@@ -379,6 +381,7 @@ void main() {
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
+    await bringUp(tester, 'quote-times');
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('quote:counter')), findsOneWidget);

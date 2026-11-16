@@ -63,6 +63,9 @@ merges after any disconnect.
 - The day's report (what is still open, the sales, the money taken by how it was paid, the sales by category,
   kind of order, person and hour, what came off the checks; on the screen for any day, and on paper):
   `docs/day-report.md`
+- Sales over any days (one day, the 7 or 28 just gone, or any days up to 92, each figure beside the same
+  days whole weeks earlier: net sales, checks, guests, the averages, a table's time, and the sales by day,
+  hour, category and kind of order): `docs/sales-report.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`
