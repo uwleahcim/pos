@@ -28,6 +28,7 @@ class EventPhoto:
 class PhotoStore:
     def __init__(self, *, keep: int = KEEP) -> None:
         self._photos: OrderedDict[str, EventPhoto] = OrderedDict()
+        self._by_op: dict[str, str] = {}  # the operation a photo belongs to -> the photo's id
         self._keep = keep
 
     def put(self, photo: EventPhoto) -> EventPhoto:
@@ -36,12 +37,22 @@ class PhotoStore:
         if photo.photo_id in self._photos:
             return self._photos[photo.photo_id]  # the same photo sent twice is one photo
         self._photos[photo.photo_id] = photo
+        if photo.op_id:
+            self._by_op.setdefault(photo.op_id, photo.photo_id)
         while len(self._photos) > self._keep:
-            self._photos.popitem(last=False)
+            _, gone = self._photos.popitem(last=False)
+            if gone.op_id and self._by_op.get(gone.op_id) == gone.photo_id:
+                del self._by_op[gone.op_id]
         return photo
 
     def get(self, photo_id: str) -> EventPhoto | None:
         return self._photos.get(photo_id)
+
+    def for_op(self, op_id: str) -> EventPhoto | None:
+        """The photo taken with this order operation, while the store still has it: what a check's history
+        shows beside the step."""
+        photo_id = self._by_op.get(op_id)
+        return self._photos.get(photo_id) if photo_id is not None else None
 
     def recent(self, limit: int = 50) -> list[EventPhoto]:
         return list(self._photos.values())[-limit:][::-1]

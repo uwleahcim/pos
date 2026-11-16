@@ -73,6 +73,9 @@ List<OrderOps> moveLinesOps({
         if (line.fired) 'sent': 'sent',
         if (line.by.isNotEmpty) 'by': line.by,
         if (line.byId != null) 'by_id': line.byId,
+        // who rang the dish in stays who rang it; who brings it over is said beside, for the check's history
+        if (by != null) 'moved_by': by.name,
+        if (by != null) 'moved_by_id': by.staffId,
       },
     ));
     for (final discount in from.discounts) {
@@ -84,6 +87,7 @@ List<OrderOps> moveLinesOps({
           'discount_id': newId(),
           'line_id': id,
           'from': {'order_id': from.orderId, 'discount_id': discount.discountId},
+          ..._by(by),
         },
       ));
     }

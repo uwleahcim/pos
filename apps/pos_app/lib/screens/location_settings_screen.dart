@@ -856,9 +856,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   title: const Text('Voids and comps report'),
                   subtitle: const Text('What came off the checks: by reason, by person and by manager'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () =>
-                      Navigator.of(context)
-                          .push(MaterialPageRoute<void>(builder: (_) => AdjustmentsScreen(api: widget.api))),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AdjustmentsScreen(api: widget.api, token: widget.token),
+                    ),
+                  ),
                 ),
               ],
             ),

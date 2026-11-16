@@ -84,6 +84,7 @@ from .conditional import ConditionalGet
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
+from .history import add_history
 from .menu_admin import add_menu_admin
 from .timeclock import add_time_clock
 
@@ -572,7 +573,10 @@ def adjust_ops(
                 problems = [{"code": "unknown_source", "message": "That discount is not on the dish as it came over."}]
                 refused.append({"op_id": op.op_id, "error": "invalid_adjustment", "problems": problems})
                 continue
-            data = {"discount_id": ident, "line_id": data["line_id"], "from": data["from"], **source}
+            # who brought it over and whether a hub answered then are the terminal's to say (a check's history
+            # tells them); the rest is read from where it comes from
+            told = {k: data[k] for k in ("by", "by_id", "offline") if k in data}
+            data = {"discount_id": ident, "line_id": data["line_id"], "from": data["from"], **told, **source}
             live[ident] = {"reason": data["reason"], "line_id": data["line_id"]}
             state.discounts[ident] = Discount(discount_id=ident, line_id=data["line_id"], carried_from=data["from"])
         else:
@@ -1837,6 +1841,7 @@ def create_app(
     add_face_signin(app)
     add_time_clock(app)
     add_day_report(app)
+    add_history(app)
     return app
 
 

@@ -74,6 +74,9 @@ Orders screen › **Location** › **Voids and comps report**, for today, the la
   They are sales, not something taken off: the list is there because the menu could not check the price.
 - **Comps and discounts**: the same three totals for what is on the checks (see `discounts.md`).
 
+A tap on a void, or on a dish taken off, opens the whole history of its check: what else happened to it,
+before and after (see `check-history.md`).
+
 What counts as taken off: the whole line removed, and fewer of an unsent dish (three teas made one counts
 two). What does not: a dish changed for the same dish with other choices, and more of a dish. Nothing new is
 asked on the order screen: the app says who is signed in when a dish comes off, no more. A dish taken off by

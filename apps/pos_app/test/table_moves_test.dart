@@ -201,6 +201,8 @@ void main() {
           'sent': 'sent', // the kitchen has it: the hub says since when
           'by': 'Ben', // whoever rang it in still did
           'by_id': 's2',
+          'moved_by': 'Mike', // and who brought it over is said beside, for the check's history
+          'moved_by_id': 's3',
         },
       ],
       [
@@ -211,6 +213,7 @@ void main() {
           'discount_id': 'N2',
           'line_id': 'N1',
           'from': {'order_id': 'o1', 'discount_id': 'D1'},
+          ...byMike,
         },
       ],
       [
@@ -222,6 +225,8 @@ void main() {
           'qty': 1,
           'seat': null,
           'from': {'order_id': 'o1', 'line_id': 'L4'},
+          'moved_by': 'Mike',
+          'moved_by_id': 's3',
         },
       ],
       [
