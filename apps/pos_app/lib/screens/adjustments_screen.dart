@@ -156,6 +156,47 @@ class _AdjustmentsScreenState extends State<AdjustmentsScreen> {
                 trailing: Text('\$${t.amount}', style: const TextStyle(fontFeatures: PosTheme.tabular)),
               ),
           ],
+          if (report.hasTyped) ...[
+            const Divider(height: 28),
+            _Heading(
+              'Typed prices',
+              report.typedTotal,
+              '${report.typedDishes} ${report.typedDishes == 1 ? 'dish' : 'dishes'}',
+            ),
+            if (report.typed.isEmpty)
+              const Text('No off-menu dish and no market price was rung.')
+            else ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  'Off-menu dishes and market prices: the price was typed by whoever rang the dish in, so '
+                  'the menu could not check it. Each is on its check and in the sales like any dish.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ),
+              _Totals('By who rang it in', report.typedByStaff, blank: 'Not recorded'),
+              const SizedBox(height: 6),
+              Text('Each one', style: theme.textTheme.labelLarge?.copyWith(color: scheme.primary)),
+              for (final (i, t) in report.typed.indexed)
+                ListTile(
+                  key: ValueKey('typed-row:$i'),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${t.qty} × ${t.item}'),
+                  subtitle: Text(
+                    [
+                      _when(t.atMs),
+                      if (t.where.isNotEmpty) t.where,
+                      if (t.named && t.menuName.isNotEmpty) 'rung as ${t.menuName}',
+                      if (t.qty > 1) '\$${t.unitPrice} each',
+                      if (t.by.isNotEmpty) 'by ${t.by}',
+                      if (t.voided) 'voided since',
+                    ].join(' · '),
+                  ),
+                  trailing: Text('\$${t.amount}', style: const TextStyle(fontFeatures: PosTheme.tabular)),
+                ),
+            ],
+          ],
           const Divider(height: 28),
           _Heading(
             'Comps and discounts',

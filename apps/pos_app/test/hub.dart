@@ -143,6 +143,12 @@ class Hub {
   Map<String, dynamic>? menu;
   int revision = 0;
 
+  /// The dishes it describes that have no fixture (`GET /menu/items/<code>`), by code, and every line it was
+  /// asked to price (`POST /menu/price`). Like the real hub, it prices a dish that came with a typed price
+  /// at that price and calls it what was typed for it.
+  final items = <String, Map<String, dynamic>>{};
+  final priced = <Map<String, dynamic>>[];
+
   /// The 86 board it lists (`GET /menu/86`) and every change a terminal asked for (`POST /menu/86`), which
   /// also takes the row off the board when it brings the dish back with no number.
   List<Map<String, dynamic>> board = [];
@@ -395,7 +401,10 @@ class Hub {
     if (_check.hasMatch(path)) {
       return json(check ?? {'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
     }
-    if (path.startsWith('/menu/items/')) return json(fixture('item_${path.split('/').last.toLowerCase()}'));
+    if (path.startsWith('/menu/items/')) {
+      final code = path.split('/').last;
+      return json(items[code] ?? fixture('item_${code.toLowerCase()}'));
+    }
     if (_prefs.hasMatch(path) && request.method == 'PUT') {
       final id = _prefs.firstMatch(path)!.group(1)!;
       final saved = jsonDecode(request.body) as Map<String, dynamic>;
@@ -627,6 +636,11 @@ class Hub {
       case '/menu/allergens':
         return allergens == null ? json({'detail': 'Not Found'}, 404) : json({'allergens': allergens});
       case '/menu/price':
+        final asked = jsonDecode(request.body) as Map<String, dynamic>;
+        priced.add(asked);
+        if (asked['price'] != null) {
+          return json({'name': asked['name'] ?? 'Market fish', 'unit_price': asked['price']});
+        }
         return json({'name': "General Tso's Chicken (Quart)", 'unit_price': '26.95'});
       case '/pricing/rules':
         return json(rules ?? {'discounts': [], 'charges': []});

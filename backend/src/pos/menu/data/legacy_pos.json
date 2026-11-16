@@ -1,5 +1,5 @@
 {
-  "_about": "What the restaurant's original POS knew and the GloriaFood export did not, from the merged sheet of 2026-11-10 (legacy.py adds it after the export and the bar). categories: Chinese names for the export's categories, and a new category with its menu, station and sort. items: for a dish the export has, its Chinese name, the label the original POS printed for the kitchen (the ticket shows both, Chinese first), and the station it printed at when that is not the category's. prices: the dining room's price where it differs from the online one (online kept for the record; a running hub moves a price only while it is still the export's). new: dishes and drinks only the original POS sold, numbered as it numbered them, each with its price in one regular size, its category, and the groups it offers beyond its category's. groups: the original POS's modifier groups, every option with the kitchen label it printed; a price is what the option adds. attachments: which categories (by name) and dishes (by code) offer which group. Edit and run `hubctl update`; a running hub takes additions, names it lacks and the prices with `hubctl menu import --apply`, leaving everything the menu editor changed as it is.",
+  "_about": "What the restaurant's original POS knew and the GloriaFood export did not, from the merged sheet of 2026-11-10 (legacy.py adds it after the export and the bar). categories: Chinese names for the export's categories, and a new category with its menu, station and sort. items: for a dish the export has, its Chinese name, the label the original POS printed for the kitchen (the ticket shows both, Chinese first), and the station it printed at when that is not the category's. prices: the dining room's price where it differs from the online one (online kept for the record; a running hub moves a price only while it is still the export's). new: dishes and drinks only the original POS sold, numbered as it numbered them, each with its price in one regular size, its category, and the groups it offers beyond its category's; one with \"asks\": \"name\" is an off-menu dish (the original POS's OPEN FOOD, OPEN SOUP, OPEN SUSHI and OPEN DRINK): whoever rings it types what it is and its price, and \"asks\": \"price\" asks the price alone. groups: the original POS's modifier groups, every option with the kitchen label it printed; a price is what the option adds. attachments: which categories (by name) and dishes (by code) offer which group. Edit and run `hubctl update`; a running hub takes additions, names it lacks and the prices with `hubctl menu import --apply`, leaving everything the menu editor changed as it is.",
   "categories": {
     "Lunch Specials": {
       "zh": "午特"
@@ -1785,6 +1785,36 @@
       "name": "Tsing Tao (can)",
       "price": 8.0,
       "tax_class": "alcohol"
+    },
+    {
+      "code": "FF",
+      "category": "Extras",
+      "name": "Open Food",
+      "price": 0,
+      "station": "wok1",
+      "asks": "name"
+    },
+    {
+      "code": "89",
+      "category": "Soup",
+      "name": "Open Soup",
+      "price": 0,
+      "asks": "name"
+    },
+    {
+      "code": "SS",
+      "category": "Sushi",
+      "name": "Open Sushi",
+      "price": 0,
+      "asks": "name"
+    },
+    {
+      "code": "DD",
+      "category": "Mixed Drinks",
+      "name": "Open Drink",
+      "price": 0,
+      "tax_class": "alcohol",
+      "asks": "name"
     }
   ],
   "groups": {

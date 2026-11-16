@@ -107,7 +107,8 @@ def test_the_printed_cocktails_and_beer_prices_join_the_export_s_own_categories(
     mixed = next(s for s in drinks.sections if s.name == "Mixed Drinks")
     names = [e.name for e in mixed.entries]
     assert names[:4] == ["Mai Tai (to go)", "White Mai Tai", "Scorpion Bowl for 1", "Zombie"]  # the export's first
-    assert "China Sky Rita" in names and len(names) == 52  # 26 from the printed list, 26 from the original POS
+    # 26 from the printed list, 26 from the original POS, and its Open Drink
+    assert "China Sky Rita" in names and len(names) == 53
     zombie = next(e for e in mixed.entries if e.name == "Zombie")
     assert zombie.number is None and [(v.name, v.price) for v in zombie.variants] == [("Regular", D("9.25"))]
     assert defs.items["zombie"].description["en"].startswith("Dark and light rums")

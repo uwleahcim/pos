@@ -703,7 +703,8 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   /// Tapping an item auto-adds it immediately when all required selections already have defaults
   /// (or when it has only one size and no options). When required selections are still needed
   /// (such as choosing a size or a required modifier group with no defaults), it expands the
-  /// inline required-selections section below.
+  /// inline required-selections section below. A dish whose price is typed when it is rung (a market
+  /// price, an off-menu dish) opens its sheet, which asks for it.
   ///
   /// [from] is the tile tapped. When Enter was pressed on it, the focus goes into the choices that open; it
   /// is back on the tile once they are made ([_settlePending]). Touched or clicked, the tile keeps the focus.
@@ -719,6 +720,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         if (v.available) v,
     ];
     if (availableVariants.isEmpty) return;
+    if (entry.asksPrice) {
+      // its price, or what it is and its price, has to be typed: the dish's own sheet asks, a tap or a hold
+      await _longPress(entry);
+      return;
+    }
 
     ItemDetail? detail;
     final choices = Choices();
@@ -2180,6 +2186,11 @@ class _ItemSheetState extends State<ItemSheet> {
   Priced? _priced;
   late int _qty = widget.initial?.qty ?? 1;
   late final _note = TextEditingController(text: widget.initial?.note ?? '');
+
+  /// What is typed for a dish that asks: its price, and what it is for an off-menu dish. A line reopened
+  /// comes with what was typed for it.
+  late final _typedName = TextEditingController(text: _request.name ?? '');
+  late final _typedPrice = TextEditingController(text: _request.price ?? '');
   Timer? _debounce;
   String? _error;
 
@@ -2200,7 +2211,23 @@ class _ItemSheetState extends State<ItemSheet> {
   void dispose() {
     _debounce?.cancel();
     _note.dispose();
+    _typedName.dispose();
+    _typedPrice.dispose();
     super.dispose();
+  }
+
+  /// Everything the dish asks to be typed is there: nothing for a dish with a price of its own.
+  bool get _typed =>
+      !widget.entry.asksPrice || (_request.price != null && (!widget.entry.asksName || _request.name != null));
+
+  /// Takes what the two boxes hold into the request: a price the hub would take, a name with something in it.
+  void _readTyped() {
+    final name = _typedName.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    setState(() {
+      _request.price = typedPrice(_typedPrice.text);
+      _request.name = widget.entry.asksName && name.isNotEmpty ? name : null;
+    });
+    _reprice();
   }
 
   Future<void> _load() async {
@@ -2221,12 +2248,19 @@ class _ItemSheetState extends State<ItemSheet> {
 
   void _reprice() {
     _debounce?.cancel();
+    if (!_typed) {
+      // nothing to ask the hub yet: it would only say that the price is missing, which the empty box says
+      if (_priced != null) setState(() => _priced = null);
+      return;
+    }
+    final asked = _request.copy();
     _debounce = Timer(const Duration(milliseconds: 150), () async {
       try {
         final priced = await widget.api.price(_request);
-        if (mounted) setState(() => _priced = priced);
+        // an answer for a price typed over since is not this dish's price
+        if (mounted && asked.price == _request.price && _typed) setState(() => _priced = priced);
       } on ApiException catch (err) {
-        if (!mounted) return;
+        if (!mounted || !_typed) return;
         if (err.status == null) {
           // No backend answers (ADR 6): the menu's own prices, marked estimated, so the dish still goes on.
           setState(() => _priced = localPrice(_lineName, widget.entry.variants, _detail, _request));
@@ -2255,8 +2289,88 @@ class _ItemSheetState extends State<ItemSheet> {
   List<CheckModifier> get _picked => pickedModifiers(_detail?.groups ?? const <GroupDetail>[], _request);
 
   String get _lineName {
+    final typed = _request.name;
+    if (widget.entry.asksName && typed != null) return typed; // an off-menu dish is called what was typed
     final variant = widget.entry.variants.firstWhere((v) => v.variantId == _request.variantId);
     return widget.entry.variants.length > 1 ? '${widget.entry.name} (${variant.name})' : widget.entry.name;
+  }
+
+  /// The line as it stands, handed back to whoever opened the sheet; nothing while it cannot be sold.
+  void _done() {
+    final priced = _priced;
+    if (priced == null || !priced.ok || !_typed) return;
+    Navigator.of(context).pop(
+      ChosenLine(
+        name: _lineName,
+        request: _request,
+        qty: _qty,
+        note: _note.text.trim(),
+        unitPrice: priced.unitPrice,
+        modifiers: _picked,
+        itemId: widget.entry.item,
+      ),
+    );
+  }
+
+  /// The boxes of a dish that asks: what it is (an off-menu dish only) and its price. Side by side where
+  /// the sheet is wide enough for a name to be read in its box; on a phone the name has the sheet's width
+  /// and the price goes under it.
+  Widget _typedBoxes() {
+    final entry = widget.entry;
+    final said = _typedPrice.text.trim();
+    final name = TextField(
+      key: const ValueKey('typed-name'),
+      controller: _typedName,
+      autofocus: widget.initial == null,
+      maxLength: typedNameMax,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.next,
+      decoration: const InputDecoration(labelText: 'What is it', isDense: true, counterText: ''),
+      onChanged: (_) => _readTyped(),
+    );
+    final price = TextField(
+      key: const ValueKey('typed-price'),
+      controller: _typedPrice,
+      autofocus: widget.initial == null && !entry.asksName,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+      textInputAction: TextInputAction.done,
+      decoration: InputDecoration(
+        labelText: 'Price',
+        prefixText: '\$ ',
+        isDense: true,
+        // said only once something is typed that is no price: an empty box says it by itself
+        errorText: said.isNotEmpty && _request.price == null ? 'Like 18.50' : null,
+      ),
+      onChanged: (_) => _readTyped(),
+      onSubmitted: (_) => _done(),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          if (!entry.asksName) return SizedBox(width: 160, child: price);
+          if (box.maxWidth < 340) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                name,
+                const SizedBox(height: 10),
+                SizedBox(width: 160, child: price),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: name),
+              const SizedBox(width: 10),
+              SizedBox(width: 116, child: price),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -2293,6 +2407,7 @@ class _ItemSheetState extends State<ItemSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (widget.entry.asksPrice) _typedBoxes(),
                     if (widget.entry.variants.length > 1) ...[
                       Text('Size', style: theme.textTheme.titleSmall),
                       const SizedBox(height: 6),
@@ -2303,7 +2418,7 @@ class _ItemSheetState extends State<ItemSheet> {
                               key: ValueKey('size:${v.variantId}'),
                               groupLabel: sizeLabel(v),
                               name: v.name,
-                              priceLabel: v.price,
+                              priceLabel: widget.entry.asksPrice ? null : v.price,
                               available: v.available,
                               selected: _request.variantId == v.variantId,
                               onTap: () {
@@ -2353,30 +2468,41 @@ class _ItemSheetState extends State<ItemSheet> {
                             ),
                           ),
                           IconButton(onPressed: () => setState(() => _qty++), icon: const Icon(Icons.add)),
-                          const Spacer(),
-                          if (total != null)
-                            Padding(
-                              padding: const EdgeInsets.only(right: 6),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '\$$total',
-                                    style: theme.textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                      color: scheme.primary,
-                                      fontFeatures: PosTheme.tabular,
+                          // the total takes what the row has left: a long one (a typed price can run to
+                          // thousands) is drawn smaller on a narrow phone, never off the sheet's edge
+                          Expanded(
+                            child: total == null
+                                ? const SizedBox()
+                                : Align(
+                                    alignment: Alignment.centerRight,
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerRight,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(left: 4, right: 6),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            Text(
+                                              '\$$total',
+                                              style: theme.textTheme.titleLarge?.copyWith(
+                                                fontWeight: FontWeight.w800,
+                                                color: scheme.primary,
+                                                fontFeatures: PosTheme.tabular,
+                                              ),
+                                            ),
+                                            if (priced!.estimated)
+                                              Text(
+                                                'estimated',
+                                                key: const ValueKey('price-estimated'),
+                                                style: theme.textTheme.labelSmall?.copyWith(color: scheme.error),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                  if (priced!.estimated)
-                                    Text(
-                                      'estimated',
-                                      key: const ValueKey('price-estimated'),
-                                      style: theme.textTheme.labelSmall?.copyWith(color: scheme.error),
-                                    ),
-                                ],
-                              ),
-                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -2411,19 +2537,7 @@ class _ItemSheetState extends State<ItemSheet> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
-          onPressed: priced != null && priced.ok
-              ? () => Navigator.of(context).pop(
-                  ChosenLine(
-                    name: _lineName,
-                    request: _request,
-                    qty: _qty,
-                    note: _note.text.trim(),
-                    unitPrice: priced.unitPrice,
-                    modifiers: _picked,
-                    itemId: widget.entry.item,
-                  ),
-                )
-              : null,
+          onPressed: priced != null && priced.ok && _typed ? _done : null,
           child: Text(widget.initial == null ? 'Add' : 'Update'),
         ),
       ],

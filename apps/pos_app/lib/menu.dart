@@ -71,6 +71,9 @@ class BoardRow {
   }
 }
 
+/// What a tile and a size button show in place of a price for a dish whose price is typed when it is rung.
+const askedLabel = 'Ask';
+
 class MenuEntry {
   const MenuEntry({
     required this.entryId,
@@ -83,6 +86,8 @@ class MenuEntry {
     this.hasOptions = false,
     this.needsChoice = false,
     this.tags = const [],
+    this.asksPrice = false,
+    this.asksName = false,
   });
 
   factory MenuEntry.fromJson(Map<String, dynamic> json) {
@@ -102,6 +107,8 @@ class MenuEntry {
       needsChoice: json['needs_choice'] as bool? ?? (hasOptions || variants.length > 1),
       tags: List<String>.from(json['tags'] as List? ?? const []),
       variants: variants,
+      asksName: json['asks_name'] as bool? ?? false,
+      asksPrice: (json['asks_price'] as bool? ?? false) || (json['asks_name'] as bool? ?? false),
     );
   }
 
@@ -114,6 +121,8 @@ class MenuEntry {
     hasOptions: true,
     needsChoice: true,
     variants: detail.variants,
+    asksPrice: detail.asksPrice,
+    asksName: detail.asksName,
   );
 
   final String entryId;
@@ -133,8 +142,15 @@ class MenuEntry {
   final List<String> tags;
   final List<VariantOffer> variants;
 
+  /// The dish has no price of its own: whoever rings it types the price (a market price). An older hub
+  /// does not say, and has no such dish.
+  final bool asksPrice;
+
+  /// An off-menu dish (Open Food): whoever rings it types what it is, and its price.
+  final bool asksName;
+
   /// One tap adds it: a single variant and no questions to ask.
-  bool get quickAdd => !hasOptions && variants.length == 1;
+  bool get quickAdd => !hasOptions && variants.length == 1 && !asksPrice;
   bool get available => variants.any((v) => v.available);
 
   /// The hub keeps numbers left (see [VariantOffer.counts]).
@@ -155,6 +171,7 @@ class MenuEntry {
   }
 
   String get priceLabel {
+    if (asksPrice) return askedLabel; // no price until it is typed
     if (variants.isEmpty) return '';
     if (variants.length == 1) return variants.first.price;
     return '${variants.first.price}+';
@@ -308,12 +325,16 @@ class ItemDetail {
     required this.variants,
     required this.groups,
     this.secondName,
+    this.asksPrice = false,
+    this.asksName = false,
   });
 
   factory ItemDetail.fromJson(Map<String, dynamic> json) => ItemDetail(
     item: json['item'] as String,
     name: json['name'] as String? ?? '',
     secondName: json['second_name'] as String?,
+    asksName: json['asks_name'] as bool? ?? false,
+    asksPrice: (json['asks_price'] as bool? ?? false) || (json['asks_name'] as bool? ?? false),
     variants: (json['variants'] as List? ?? const [])
         .map((v) => VariantOffer.fromJson(v as Map<String, dynamic>))
         .toList(),
@@ -325,6 +346,10 @@ class ItemDetail {
   final String? secondName;
   final List<VariantOffer> variants;
   final List<GroupDetail> groups;
+
+  /// See [MenuEntry.asksPrice] and [MenuEntry.asksName].
+  final bool asksPrice;
+  final bool asksName;
 }
 
 /// The one-tap instructions a choice can carry, as the backend spells them, with the word shown for each.
@@ -499,16 +524,21 @@ class LineRequest extends Choices {
     super.nested,
     super.quantities,
     super.notes,
+    this.price,
+    this.name,
   });
 
   factory LineRequest.fromJson(Map<String, dynamic> json) => LineRequest(
     variantId: json['variant_id'] as String,
     entryId: json['entry_id'] as String?,
     notes: json['notes'] as String?,
+    price: json['price']?.toString(),
+    name: json['name'] as String?,
   )..readSelections(json['selections'] as List?);
 
-  /// The same dish with the same choices, from a copy of [choices] when given (the tray's picks).
-  factory LineRequest.withChoices(String variantId, String? entryId, Choices choices) {
+  /// The same dish with the same choices, from a copy of [choices] when given (the tray's picks), and with
+  /// what was typed for it, when the dish asks its price or its name.
+  factory LineRequest.withChoices(String variantId, String? entryId, Choices choices, {String? price, String? name}) {
     final copy = choices.copyChoices();
     return LineRequest(
       variantId: variantId,
@@ -518,21 +548,51 @@ class LineRequest extends Choices {
       nested: copy.nested,
       quantities: copy.quantities,
       notes: copy.notes,
+      price: price,
+      name: name,
     );
   }
 
-  LineRequest copy() => LineRequest.withChoices(variantId, entryId, this);
+  LineRequest copy() => LineRequest.withChoices(variantId, entryId, this, price: price, name: name);
 
   String variantId;
   final String? entryId;
+
+  /// The price typed for a dish that asks its price ([MenuEntry.asksPrice]), in dollars ("18.50"); null for
+  /// every other dish, whose price is the menu's. The hub refuses a price on a dish that does not ask.
+  String? price;
+
+  /// What was typed for an off-menu dish ([MenuEntry.asksName]): what the check, the bill and the kitchen's
+  /// ticket call it.
+  String? name;
 
   Map<String, dynamic> toJson() => {
     'variant_id': variantId,
     'entry_id': ?entryId,
     'selections': selectionsJson(),
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
+    'price': ?price,
+    'name': ?name,
   };
 }
+
+/// The price somebody typed for a dish, as the hub wants it ("18.50"), or null when it is not one the hub
+/// would take: above zero (a free dish is a comp), at most 9999.99, in dollars and cents. A leading "\$" and
+/// spaces are let through.
+String? typedPrice(String text) {
+  final said = text.trim().replaceFirst(RegExp(r'^\$\s*'), '');
+  final match = RegExp(r'^(\d{0,4})(?:\.(\d{0,2}))?$').firstMatch(said);
+  if (match == null) return null;
+  final whole = match.group(1) ?? '';
+  final part = match.group(2) ?? '';
+  if (whole.isEmpty && part.isEmpty) return null;
+  final cents = (int.tryParse(whole) ?? 0) * 100 + (int.tryParse(part.padRight(2, '0')) ?? 0);
+  if (cents <= 0) return null;
+  return '${cents ~/ 100}.${(cents % 100).toString().padLeft(2, '0')}';
+}
+
+/// The longest name the hub takes for an off-menu dish: about a line of a kitchen ticket.
+const typedNameMax = 40;
 
 /// A fresh [Choices] holding the menu's defaults for [groups].
 Choices defaultChoices(List<GroupDetail> groups) {

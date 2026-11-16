@@ -49,7 +49,7 @@ def test_the_whole_menu_loads_clean_with_everything_the_file_adds():
     assert MenuEngine(defs).check() == []
     assert admin.problems(defs) == ([], [])
     note = report.notes[-1]
-    assert note.startswith("original POS: 266 dishes named, 13 re-stationed, 89 dishes added, 10 prices set, 10 groups")
+    assert note.startswith("original POS: 266 dishes named, 13 re-stationed, 93 dishes added, 10 prices set, 10 groups")
     data = legacy()
     # "Take out" under Preparation (and under the sauces) sends the dish to the takeout station as well
     take_out = [o for o in defs.options.values() if o.code == "take_out"]
@@ -62,7 +62,8 @@ def test_the_whole_menu_loads_clean_with_everything_the_file_adds():
             assert item.station == spec["station"]
     for spec in data["new"]:
         item = defs.items[spec["code"]]
-        assert item.names["en"] == spec["name"] and item.attrs == {"legacy_pos": True}
+        asks = {f"asks_{spec['asks']}": True} if "asks" in spec else {}  # an open dish: its name and price typed
+        assert item.names["en"] == spec["name"] and item.attrs == {"legacy_pos": True, **asks}
         assert [v.base_price for v in defs.variants_of(item.code)] == [D(str(spec["price"]))]
         sections = {e.section for e in defs.entries if e.item == item.code}
         assert sections and all(s.endswith(f"/{item.category}") for s in sections)
@@ -197,7 +198,7 @@ def test_the_file_refuses_what_it_cannot_place():
         import_legacy(defs, {"prices": [{"variant": "C01:large", "price": 1}]})
     assert "legacy_pos" not in {k for i in defs.items.values() for k in i.attrs}  # nothing half-added that matters
     report = add_legacy(defs)
-    assert report.items == 89 and MenuEngine(defs).check() == []
+    assert report.items == 93 and MenuEngine(defs).check() == []  # 89 dishes and the four open ones
     with pytest.raises(ValueError, match="already exists"):
         add_legacy(defs)
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .defs import (
@@ -44,6 +44,11 @@ from .resolved import (
 
 ENGINE_VERSION = "0.1.0"
 ZERO = Decimal(0)
+CENT = Decimal("0.01")
+TYPED_PRICE_MAX = Decimal("9999.99")
+"""The most a typed price can be: past it, a slip of the finger (1895 for 18.95) is the likelier reading."""
+TYPED_NAME_MAX = 40
+"""The longest typed name of an off-menu dish: about one line of a kitchen ticket."""
 
 
 @dataclass
@@ -320,6 +325,8 @@ class MenuEngine:
             origin="line",
             at=at or self._now(),
             locale=locale,
+            typed_price=request.price,
+            typed_name=request.name,
         )
 
     def validate(self, request: LineRequest, at: datetime | None = None) -> list[Problem]:
@@ -346,6 +353,8 @@ class MenuEngine:
         header: str | None = None,
         depth: int = 0,
         fold_into: str | None = None,
+        typed_price: str | None = None,
+        typed_name: str | None = None,
     ) -> ResolvedLine:
         defs = self.defs
         loc = defs.localizer
@@ -389,18 +398,23 @@ class MenuEngine:
             ctx.problems.append(Problem("sold_out", f"{variant_id} is {status}"))
 
         # --- price of the line itself
+        names = dict(item.names)
         if origin == "line":
             if entry and variant_id in entry.price_overrides:
                 unit_price, price_source = money(entry.price_overrides[variant_id]), "entry_override"
             else:
                 unit_price, price_source = money(variant.base_price), "variant_base"
+            # a dish that asks its price, or its name too: both are typed when it is rung (`Item.asks_price`)
+            typed, names = self._typed(item, typed_price, typed_name, ctx.problems)
+            if typed is not None:
+                unit_price, price_source = typed, "typed"
         elif origin == "slot":
             unit_price, price_source = money(unit_price or ZERO), "slot"
         else:
             unit_price, price_source = ZERO, "included"
 
         # --- the recipe: ingredient components to the working list, nested items to child lines
-        kitchen_name = loc.kitchen(item.names)
+        kitchen_name = loc.kitchen(names)
         own_header = f"{entry.number} {kitchen_name}" if entry and entry.number else kitchen_name
         recipe, scaled = defs.recipe_for_variant(variant)
         scale = variant.recipe_scale if scaled else ONE
@@ -498,7 +512,7 @@ class MenuEngine:
             variant_id=variant_id,
             menu_entry_id=entry_id,
             qty=qty,
-            names=dict(item.names),
+            names=names,
             variant_names=dict(variant.names),
             unit_price=unit_price,
             price_source=price_source,
@@ -518,6 +532,58 @@ class MenuEngine:
             locked=locked,
             notes=notes,
         )
+
+    def _typed(
+        self, item: Item, price: str | None, name: str | None, problems: list[Problem]
+    ) -> tuple[Decimal | None, dict[str, str]]:
+        """What was typed for a dish when it was rung: its price where the dish asks for one, and what it is
+        called where it asks that too (an off-menu dish). Returns the price to sell it at (None: the menu's
+        own) and the names the check, the bill and the kitchen ticket use. A price or a name typed for a dish
+        that does not ask is refused, never dropped: prices come from the menu, and whoever typed one would
+        otherwise see another on the check. A typed name replaces every name of the dish, the kitchen's too:
+        what was typed is what the cook has to read."""
+        names = dict(item.names)
+        label = self.defs.localizer.text(item.names, "en")
+        if not item.asks_price:
+            if price is not None:
+                problems.append(Problem("price_fixed", f"{label} has its own price"))
+            if name is not None:
+                problems.append(Problem("name_fixed", f"{label} has its own name"))
+            return None, names
+        typed: Decimal | None = None
+        if price is None or not str(price).strip():
+            problems.append(Problem("price_needed", f"Type the price of {label}"))
+        else:
+            try:
+                amount = Decimal(str(price).strip())
+            except (InvalidOperation, ValueError):
+                amount = None
+            if amount is None or not amount.is_finite():
+                problems.append(Problem("bad_price", f"{price!r} is not a price in dollars and cents"))
+            elif amount <= 0:
+                # a dish given away is a comp, with its reason and whoever approved it
+                problems.append(Problem("bad_price", "The price has to be above zero; a free dish is a comp"))
+            elif amount > TYPED_PRICE_MAX:
+                problems.append(Problem("bad_price", f"At most ${TYPED_PRICE_MAX} for a typed price"))
+            elif amount != amount.quantize(CENT):
+                problems.append(Problem("bad_price", f"{price!r} is not a price in dollars and cents"))
+            else:
+                typed = money(amount)
+        if not item.asks_name:
+            if name is not None:
+                problems.append(Problem("name_fixed", f"{label} has its own name"))
+            return typed, names
+        said = " ".join(str(name or "").split())
+        if not said:
+            problems.append(Problem("name_needed", f"Type what the {label} is"))
+        elif len(said) > TYPED_NAME_MAX:
+            problems.append(Problem("bad_name", f"At most {TYPED_NAME_MAX} letters for a typed name"))
+        elif not said.isprintable():
+            # what a keyboard cannot type has no place on a check or a ticket
+            problems.append(Problem("bad_name", "The name has a character that cannot be printed"))
+        else:
+            names = {"en": said}
+        return typed, names
 
     def _broken(
         self, variant_id: str, qty: int, entry_id: str | None, origin: str, at: datetime, problem: Problem

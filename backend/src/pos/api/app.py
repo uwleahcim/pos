@@ -45,6 +45,7 @@ from ..orders.counts import count_ops
 from ..orders.moves import carried, carry_ops
 from ..orders.numbers import OrderNumbers
 from ..orders.taken_off import by_check, taken_off_rows
+from ..orders.typed import typed_rows
 from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing import discover
@@ -248,6 +249,8 @@ class PriceIn(BaseModel):
     selections: list[dict[str, Any]] = Field(default_factory=list)
     components: list[dict[str, Any]] = Field(default_factory=list)
     notes: str | None = None
+    price: str | None = Field(None, description="typed when rung, for a dish that asks its price")
+    name: str | None = Field(None, description="typed when rung, for an off-menu dish")
 
 
 class ApprovalIn(BaseModel):
@@ -1413,12 +1416,16 @@ def create_app(
         it was sent, and every time fewer of an unsent dish were kept (since `since`, oldest first): what it
         was worth, who took it off (`by`; empty from an app that did not say) and who rang it in
         (`rung_by`), on which screen, and how long it had been on the check (`on_check_ms`); added up by
-        who took it off and by check. A dish changed before it was sent is not one."""
+        who took it off and by check. A dish changed before it was sent is not one. `typed` lists every dish
+        sold at a typed price (an off-menu dish, a market price; rung in since `since`, oldest first): what
+        it was called, for how much, who rang it in, on which check; added up by who rang it in. One voided
+        since is marked and counts for nothing here."""
         store: OpStore | PgOpStore = app.state.store
         discounts: list[dict[str, Any]] = []
         charges: list[dict[str, Any]] = []
         voids: list[dict[str, Any]] = []
         taken_off: list[dict[str, Any]] = []
+        typed: list[dict[str, Any]] = []
         by_reason: dict[str, Decimal] = {}
         by_staff: dict[str, Decimal] = {}
         by_approver: dict[str, Decimal] = {}
@@ -1436,9 +1443,16 @@ def create_app(
             removed += sum(1 for d in state.discounts.values() if not d.active)
             voids.extend({**row, "status": state.status} for row in void_rows(state, since))
             taken_off.extend({**row, "status": state.status} for row in taken_off_rows(state, since))
+            typed.extend({**row, "status": state.status} for row in typed_rows(state, since))
         voids.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
         taken_off.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
+        typed.sort(key=lambda row: (row["at_ms"], row["order_id"], row["line_id"]))
+        sold = [row for row in typed if not row["voided"]]
         return {
+            "typed": typed,
+            "typed_total": str(sum((Decimal(t["amount"]) for t in sold), Decimal("0.00"))),
+            "typed_count": len(sold),
+            "typed_by_staff": _void_totals(sold, lambda t: t["by"]),
             "taken_off": taken_off,
             "taken_off_total": str(sum((Decimal(t["amount"]) for t in taken_off), Decimal("0.00"))),
             "taken_off_count": len(taken_off),

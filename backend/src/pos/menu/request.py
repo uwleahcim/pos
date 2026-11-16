@@ -1,4 +1,5 @@
-"""What the order client sends: the customer's choices and nothing else."""
+"""What the order client sends: the customer's choices and nothing else. A price or a name comes with them
+only for a dish the menu says asks for it."""
 
 from __future__ import annotations
 
@@ -34,3 +35,5 @@ class LineRequest:
     selections: tuple[Selection, ...] = ()
     components: tuple[ComponentRequest, ...] = ()
     notes: str | None = None
+    price: str | None = None  # typed at the order, for a dish that asks its price (`Item.asks_price`)
+    name: str | None = None  # typed at the order, for an off-menu dish (`Item.asks_name`)

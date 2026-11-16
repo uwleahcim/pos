@@ -61,8 +61,9 @@ def component_from(data: Mapping[str, Any]) -> ComponentRequest:
 
 
 def request_from(data: Mapping[str, Any]) -> LineRequest:
-    """A line request from JSON: {variant_id, entry_id?, selections?, components?, notes?}. Quantity is the
-    line's own field, so the request is always priced for one."""
+    """A line request from JSON: {variant_id, entry_id?, selections?, components?, notes?, price?, name?}.
+    Quantity is the line's own field, so the request is always priced for one. `price` and `name` are what
+    was typed for a dish that asks for them; the engine refuses them on any other dish."""
     return LineRequest(
         variant_id=str(data["variant_id"]),
         qty=1,
@@ -70,6 +71,8 @@ def request_from(data: Mapping[str, Any]) -> LineRequest:
         selections=tuple(selection_from(s) for s in data.get("selections", ())),
         components=tuple(component_from(c) for c in data.get("components", ())),
         notes=data.get("notes"),
+        price=None if data.get("price") is None else str(data["price"]),
+        name=None if data.get("name") is None else str(data["name"]),
     )
 
 
@@ -305,6 +308,8 @@ class MenuService:
                     "tags": list(e.tags),
                     "has_options": bool(self.defs.attachments_for(e.item)),
                     "needs_choice": self._needs_choice(e),
+                    # a dish whose price, or name and price, are typed when it is rung; said only for those
+                    **self._asks(e.item),
                 }
                 for e in section.entries
             ],
@@ -317,9 +322,20 @@ class MenuService:
         color = section.display.get("color") if section is not None else None
         return str(color) if color else None
 
+    def _asks(self, item_code: str) -> dict[str, bool]:
+        """What a screen has to ask for when this dish is rung, beyond its choices: `asks_price`, and
+        `asks_name` for an off-menu dish. Empty for every other dish."""
+        item = self.defs.items[item_code]
+        return {
+            **({"asks_price": True} if item.asks_price else {}),
+            **({"asks_name": True} if item.asks_name else {}),
+        }
+
     def _needs_choice(self, entry: ResolvedEntry) -> bool:
-        """Whether a tap on this dish has to ask something before it can go on the check: a size, or a
-        required group with no default. The tile shows its customize mark only then."""
+        """Whether a tap on this dish has to ask something before it can go on the check: a size, a
+        required group with no default, or its price. The tile shows its customize mark only then."""
+        if self.defs.items[entry.item].asks_price:
+            return True
         if len([v for v in entry.variants if v.status == "available"]) > 1:
             return True
         for group, overrides in self.defs.attachments_for(entry.item):
@@ -350,6 +366,7 @@ class MenuService:
         detail = self.engine.item_detail(item_id, entry_id, locale=locale)
         out = _plain(asdict(detail))
         out["second_name"] = self._second_name(item_id, locale)
+        out.update(self._asks(item_id))
         return out
 
     def details(self, channel: str = "pos", locale: str = "en", at: datetime | None = None) -> list[dict[str, Any]]:
@@ -450,6 +467,23 @@ class MenuService:
                     )
         return rows
 
+    def _typed(self, line: ResolvedLine) -> dict[str, Any]:
+        """What the line keeps of a typed price and name, once the engine took them: empty for a dish with
+        a price of its own, and while what was typed is refused."""
+        if line.price_source != "typed":
+            return {}
+        variant = self.defs.variants.get(line.variant_id)
+        item = self.defs.items.get(variant.item) if variant is not None else None
+        if item is None:
+            return {}
+        out: dict[str, Any] = {
+            "price": str(line.unit_price),
+            "menu_name": self.defs.localizer.text(item.names, "en"),
+        }
+        if item.asks_name and dict(line.names) != dict(item.names):
+            out["name"] = line.names.get("en", "")
+        return out
+
     def priced(self, request: Mapping[str, Any], at: datetime | None = None) -> dict[str, Any]:
         """The snapshot an order line keeps: names, the price of one, tax class, kitchen lines, problems."""
         line = self.resolve(request, at)
@@ -485,6 +519,9 @@ class MenuService:
                 for k in line.kitchen_lines
             ],
             "contains": sorted(line.allergens.contains),
+            # What was typed when the dish was rung: its price, and its name for an off-menu dish. `menu_name`
+            # is what the menu calls the dish itself ("Open Food"), for the reports.
+            **({"typed": typed} if (typed := self._typed(line)) else {}),
             # What one of this line takes off the numbers left, when it is more than one of its own dish.
             **({"uses": uses} if len(uses := _uses(line)) > 1 else {}),
             "problems": problems,

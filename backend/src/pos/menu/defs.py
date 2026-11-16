@@ -88,6 +88,18 @@ class Item:
     active: bool = True
     sort: int = 0
 
+    @property
+    def asks_name(self) -> bool:
+        """An off-menu dish (`attrs.asks_name`): whoever rings it types what it is, and its price. The old
+        POS's Open Food, Open Soup, Open Sushi and Open Drink are such dishes."""
+        return bool(self.attrs.get("asks_name"))
+
+    @property
+    def asks_price(self) -> bool:
+        """A dish with no price of its own (`attrs.asks_price`): the price is typed when it is rung (market
+        price). A dish that asks its name asks its price as well."""
+        return bool(self.attrs.get("asks_price")) or self.asks_name
+
 
 @dataclass(frozen=True)
 class ComponentOverride:

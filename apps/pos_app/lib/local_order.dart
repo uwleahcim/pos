@@ -260,8 +260,9 @@ Check estimateCheck(Check? check, Order order, Map<String, LocalLine> local) {
 Priced localPrice(String name, List<VariantOffer> variants, ItemDetail? detail, LineRequest request) {
   final variant = variants.where((v) => v.variantId == request.variantId).firstOrNull ?? variants.firstOrNull;
   final problems = <String>[];
-  final unit =
-      (variant == null ? 0 : cents(variant.price)) + choicesPrice(detail?.groups ?? const [], request, problems);
+  // a dish that asks its price costs what was typed for it, as the hub will have it
+  final base = request.price != null ? cents(request.price!) : (variant == null ? 0 : cents(variant.price));
+  final unit = base + choicesPrice(detail?.groups ?? const [], request, problems);
   return Priced(name: name, unitPrice: money(unit), problems: problems, estimated: true);
 }
 
