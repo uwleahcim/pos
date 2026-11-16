@@ -31,20 +31,20 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 from sys import intern
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import localtime
 from ..menu.defs import Definitions
 from ..sync.oplog import OrderEntry, OrderState
 from ..tax import TaxProfile
 from .adjustments import PricingRules
-from .check import check_for
+from .check import _money, check_for
 from .day import METHODS, ZERO, _guests, _Menu, _most_first, _Tally, order_day
 
 MAX_DAYS = 92
@@ -70,6 +70,69 @@ def _each(total: Decimal, over: int) -> str | None:
     return str((total / over).quantize(CENT, ROUND_HALF_UP)) if over > 0 else None
 
 
+class Picked(NamedTuple):
+    """One choice on a sold dish, as its line kept it."""
+
+    group: str
+    option: str
+    word: str  # the one-tap instruction in front of it (no, extra, side, light), or ""
+    qty: int  # how many of it on one of the dish
+    label: str  # what the check called it, without the count: the name to fall back on
+    price: Decimal  # what it added to one of the dish
+    depth: int  # 1 for a choice of a choice (the sauce on a roll of a combination)
+
+
+class Sold(NamedTuple):
+    """The same dish sold the same way in the same hour of one check, added up."""
+
+    item: str | None
+    entry: str
+    hour: int | None
+    amount: Decimal
+    qty: int
+    variant: str = ""
+    name: str = ""  # what the menu called the dish when it was sold, without its size
+    size: str = ""  # what its size was called
+    typed: str = ""  # the name typed for an off-menu dish
+    picked: tuple[Picked, ...] = ()  # its choices, in the order of the check
+
+
+def _same(thing: Any) -> Any:
+    return thing
+
+
+def _text(names: Any, fallback: Any = "") -> str:
+    said = names.get("en") if isinstance(names, Mapping) else None
+    return intern(str(said or fallback or ""))
+
+
+def _picked(rows: Any, one: Callable[[Any], Any]) -> tuple[Picked, ...]:
+    """The choices a line's snapshot lists, without the kitchen notes written under a dish inside it."""
+    out: list[Picked] = []
+    for row in rows or ():
+        if not isinstance(row, Mapping) or row.get("note"):
+            continue
+        qty = row.get("qty")
+        qty = qty if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else 1
+        label = str(row.get("label") or "")
+        if qty > 1:
+            label = label.removeprefix(f"{qty}x ")
+        out.append(
+            one(
+                Picked(
+                    intern(str(row.get("group_id") or "")),
+                    intern(str(row.get("option_id") or "")),
+                    intern(str(row.get("prefix") or "")),
+                    qty,
+                    intern(label),
+                    _money(row.get("price")),
+                    int(row.get("depth") or 0),
+                )
+            )
+        )
+    return one(tuple(out))
+
+
 @dataclass(frozen=True, slots=True)
 class Sale:
     """What one order comes to for the sales: worked out from its log, and good for as long as the log, the
@@ -89,12 +152,19 @@ class Sale:
     guests: int = 0
     kind: str = ""
     stood_ms: int | None = None  # a table's check, closed: from opened to closed
-    lines: tuple[tuple[str | None, str, int | None, Decimal, int], ...] = ()
-    """The dishes sold, added up by dish, menu entry and hour of the day: (item, entry, hour, amount, qty)."""
+    lines: tuple[Sold, ...] = ()
+    """The dishes sold, added up by dish, menu entry, hour of the day and the way each was sold."""
 
 
-def sale_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None) -> Sale | None:
-    """What this order comes to, or None for an order with nothing in its log."""
+def sale_of(
+    state: OrderState,
+    taxes: TaxProfile,
+    rules: PricingRules | None,
+    one: Callable[[Any], Any] = _same,
+) -> Sale | None:
+    """What this order comes to, or None for an order with nothing in its log. `one` gives back the one
+    copy to keep of a choice or a list of choices: the same few on every check, so whoever remembers many
+    sales passes its own and holds each once."""
     its_day = order_day(state)
     if its_day is None:
         return None
@@ -114,15 +184,27 @@ def sale_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None) ->
         else:
             charges += Decimal(charge["amount"])
     zone = localtime.zone()
-    lines: dict[tuple[str | None, str, int | None], list[Any]] = {}
+    lines: dict[tuple[Any, ...], list[Any]] = {}
     for row in check["lines"]:
         line = state.lines[row["line_id"]]
         priced = line.priced or {}
         item = priced.get("item")
         at = line.added_at
         hour = datetime.fromtimestamp(at.wall_ms / 1000, zone).hour if at is not None else None
-        # the same few codes on every check: one copy of each, however many checks are remembered
-        key = (intern(item) if isinstance(item, str) else None, intern(str(priced.get("entry_id") or "")), hour)
+        typed = priced.get("typed")
+        typed = typed if isinstance(typed, Mapping) else {}
+        # the same few codes and names on every check: one copy of each, however many checks are remembered
+        key = (
+            intern(item) if isinstance(item, str) else None,
+            intern(str(priced.get("entry_id") or "")),
+            hour,
+            intern(str(priced.get("variant_id") or "")),
+            # an off-menu dish is called what was typed for it: the menu's own name for it is kept beside
+            intern(str(typed["menu_name"])) if typed.get("menu_name") else _text(priced.get("names"), row["name"]),
+            _text(priced.get("variant_names")),
+            intern(str(typed.get("name") or "")),
+            _picked(priced.get("modifiers"), one),
+        )
         sold = lines.setdefault(key, [ZERO, 0])
         sold[0] += Decimal(row["total"])
         sold[1] += row["qty"]
@@ -143,7 +225,7 @@ def sale_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None) ->
         guests=_guests(state),
         kind=intern(str(kind)),
         stood_ms=stood,
-        lines=tuple((*key, amount, qty) for key, (amount, qty) in lines.items()),
+        lines=tuple(Sold(*key[:3], amount, qty, *key[3:]) for key, (amount, qty) in lines.items()),
     )
 
 
@@ -151,18 +233,27 @@ class SaleMemo:
     """Each order's `Sale`, remembered under the exact state of its log (the index's `version` and `tip`),
     so that a second reading replays only the checks that changed. All of it is dropped when the taxes or
     the rules are other objects than it was worked out under; the least recently read go first past `keep`
-    orders (40,000: a quarter beside the quarter before at 200 checks a day, about 2 KB each, so under 100 MB
-    at the very most). Nothing here can make a reading differ from one reckoned afresh: only save it the
-    work."""
+    orders (40,000: a quarter beside the quarter before at 200 checks a day, under 3 KB each with every dish
+    and how it was sold, so some 110 MB at the very most). The choices on the dishes are the same few on
+    every check, so one copy of each is kept for all of them (`_one`). Nothing here can make a reading
+    differ from one reckoned afresh: only save it the work."""
 
     def __init__(self, keep: int = 40_000, at_once: int = 500) -> None:
         self._keep, self._at_once = keep, at_once
         self._kept: OrderedDict[str, tuple[int, str, Sale | None]] = OrderedDict()
         self._under: tuple[Any, Any] = (None, None)
+        self._ones: dict[Any, Any] = {}  # the one copy of each choice, and of each list of choices
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
         return len(self._kept)
+
+    def _one(self, thing: Any) -> Any:
+        """The one copy kept of this choice or list of choices. A menu has a few thousand of them at most;
+        past very many (a menu rewritten again and again) they are let go and gathered afresh."""
+        if len(self._ones) > 200_000:
+            self._ones = {}
+        return self._ones.setdefault(thing, thing)
 
     def sales(
         self,
@@ -179,6 +270,7 @@ class SaleMemo:
         with self._lock:
             if self._under[0] is not taxes or self._under[1] is not rules:
                 self._kept.clear()
+                self._ones = {}
                 self._under = (taxes, rules)
             for entry in entries:
                 kept = self._kept.get(entry.order_id)
@@ -191,7 +283,9 @@ class SaleMemo:
         yield from found
         for start in range(0, len(missing), self._at_once):
             some = missing[start : start + self._at_once]
-            fresh = [(entry, sale_of(state, taxes, rules)) for entry, state in zip(some, views(some), strict=True)]
+            fresh = [
+                (entry, sale_of(state, taxes, rules, self._one)) for entry, state in zip(some, views(some), strict=True)
+            ]
             with self._lock:
                 if self._under[0] is taxes and self._under[1] is rules:
                     for entry, sale in fresh:
@@ -253,11 +347,11 @@ class _Span:
         kind["guests"] += sale.guests
         if sale.stood_ms is not None:
             self.turns.append(sale.stood_ms)
-        for item, entry, hour, amount, qty in sale.lines:
-            kind["amount"] += amount
-            sold = self.lines.setdefault((item, entry, hour), [ZERO, 0])
-            sold[0] += amount
-            sold[1] += qty
+        for line in sale.lines:
+            kind["amount"] += line.amount
+            sold = self.lines.setdefault((line.item, line.entry, line.hour), [ZERO, 0])
+            sold[0] += line.amount
+            sold[1] += line.qty
 
     def report(self, menu: _Menu, now_ms: int) -> dict[str, Any]:
         menus, categories, hours = _Tally(), _Tally(), _Tally()

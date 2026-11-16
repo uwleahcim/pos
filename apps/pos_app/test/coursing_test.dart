@@ -104,7 +104,7 @@ void main() {
     await tester.drag(find.byKey(const ValueKey('course-handle:new-1')), const Offset(0, -400));
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.byKey(const ValueKey('coursing-save')));
+    await bringUp(tester, 'coursing-save');
     await tester.tap(find.byKey(const ValueKey('coursing-save')));
     await tester.pumpAndSettle();
     expect(t.hub.coursingAuth, 'Bearer tok-admin');

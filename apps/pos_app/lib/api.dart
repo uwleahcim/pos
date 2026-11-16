@@ -10,6 +10,7 @@ import 'check_history.dart';
 import 'coursing.dart';
 import 'customers.dart';
 import 'day_report.dart';
+import 'dishes_report.dart';
 import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
@@ -1040,6 +1041,18 @@ class PosApi {
   Future<SalesReport> salesReport(String token, {String? from, String? to}) async => SalesReport.fromJson(
     await _get(
       '/reports/sales',
+      query: {'from': ?from, 'to': ?to},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 90),
+    ),
+  );
+
+  /// The dishes sold in a span of days and in as many days whole weeks earlier (manager token), each with its
+  /// sizes and options (docs/dishes-sold.md). The days are asked as [salesReport] asks them, and it waits as
+  /// long: the same checks are read. 404 from a hub older than the list.
+  Future<DishesReport> dishesReport(String token, {String? from, String? to}) async => DishesReport.fromJson(
+    await _get(
+      '/reports/dishes',
       query: {'from': ?from, 'to': ?to},
       headers: _bearer(token),
       timeout: const Duration(seconds: 90),

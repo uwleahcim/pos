@@ -14,6 +14,12 @@ List<Map<String, dynamic>> _rows(Object? value) => [
       if (row is Map) row.cast<String, dynamic>(),
 ];
 
+/// How many days [first] to [last] are, counted on the calendar, so a night the clocks change is still one
+/// day.
+int calendarDays(DateTime first, DateTime last) =>
+    DateTime.utc(last.year, last.month, last.day).difference(DateTime.utc(first.year, first.month, first.day)).inDays +
+    1;
+
 /// One day of a span.
 class SalesDay {
   const SalesDay({required this.day, this.checks = 0, this.guests = 0, this.gross = '0.00', this.net = '0.00'});
@@ -162,14 +168,8 @@ class SalesSpan {
   final String takenTotal;
   final SalesClock? clock;
 
-  /// How many days it is (counted on the calendar, so a night the clocks change is still one day).
-  int get dayCount =>
-      DateTime.utc(
-        last.year,
-        last.month,
-        last.day,
-      ).difference(DateTime.utc(first.year, first.month, first.day)).inDays +
-      1;
+  /// How many days it is.
+  int get dayCount => calendarDays(first, last);
 
   /// The categories of one menu, in the hub's order (the most sold first).
   List<DayRow> categoriesOf(String menu) => [

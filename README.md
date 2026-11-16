@@ -66,6 +66,9 @@ merges after any disconnect.
 - Sales over any days (one day, the 7 or 28 just gone, or any days up to 92, each figure beside the same
   days whole weeks earlier: net sales, checks, guests, the averages, a table's time, and the sales by day,
   hour, category and kind of order): `docs/sales-report.md`
+- Dishes sold, best to worst (every dish over the same days, how many and for how much beside the days
+  before, best or worst first, with the sizes it went out in and every choice made on it; a dish on the menu
+  that sold none is listed too): `docs/dishes-sold.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

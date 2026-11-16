@@ -63,7 +63,8 @@ before as a thin bar and a small figure under it.
 the order a night runs (4 AM round to 3 AM), again with the days before as the thin bar.
 
 **By category** under each menu, and **by kind of order** (tables, to go, delivery), each with the days
-before.
+before. Under the categories, **Each dish of these days, best to worst** opens the list of dishes sold for
+the same days (`dishes-sold.md`).
 
 **Money taken:** every payment recorded in those days, by how it was paid, whatever check it was for.
 
@@ -86,7 +87,6 @@ before.
 
 ## Not built
 
-- Dishes sold, best to worst, with their options: the next step of row 9.
 - Labour cost against sales. The POS knows the hours worked but not what anyone is paid, so it shows net
   sales for each hour worked instead.
 - Sales by who rang them in over many days (The day has it for one day).
@@ -97,9 +97,10 @@ before.
 
 - Figures: `backend/src/pos/orders/sales.py`. `sale_of(state, taxes, rules)` is what one order comes to
   (`Sale`: its day by `order_day`, its payments, the figures of `check_for`, and its dishes added up by
-  dish, menu entry and hour). `sales_reports(sales, spans, defs=, now_ms=)` adds any spans up in one pass;
-  `comparison(first, last)` names the days to hold beside a span; `MAX_DAYS` is 92. `sales_report` reckons
-  one span straight from order states, for a test or a script.
+  dish, menu entry, hour, size and the choices made, which is what `dishes-sold.md` reads).
+  `sales_reports(sales, spans, defs=, now_ms=)` adds any spans up in one pass; `comparison(first, last)`
+  names the days to hold beside a span; `MAX_DAYS` is 92. `sales_report` reckons one span straight from
+  order states, for a test or a script.
 - `SaleMemo` keeps each order's `Sale` in memory under the index's `version` and `tip` of its log, so only
   the orders that changed are replayed again. It is dropped whole when the taxes or the rules are other
   objects, and holds 40,000 orders at most. It can never make a reading differ from one reckoned afresh:
@@ -112,5 +113,6 @@ before.
   `unended`, `net_per_hour`), null where the location does not use the time clock.
 - App: `lib/sales_report.dart` (`SalesReport`, `SalesSpan`, `changeWords`, `spanOf`),
   `lib/screens/sales_screen.dart` (`SalesScreen`), its row in `lib/screens/location_settings_screen.dart`,
-  `PosApi.salesReport` (which waits 90 seconds, not 2).
+  `PosApi.salesReport` (which waits 90 seconds, not 2). The day chips, the heading, the calendar and the
+  rows (`ReportLine`) are in `lib/screens/span_report.dart`, shared with Dishes sold.
 - Tests: `backend/tests/orders/test_sales.py`, `apps/pos_app/test/sales_report_test.dart`.

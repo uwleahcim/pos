@@ -4,22 +4,9 @@ import '../api.dart';
 import '../day_report.dart';
 import '../sales_report.dart';
 import '../timeclock.dart' show hoursMinutes;
+import 'dishes_screen.dart';
+import 'span_report.dart';
 import 'theme.dart';
-
-/// Asks which days to add up; null when the calendar was closed without any.
-typedef PickSpan = Future<DateTimeRange?> Function(BuildContext context, DateTimeRange? from);
-
-Future<DateTimeRange?> _deviceSpan(BuildContext context, DateTimeRange? from) {
-  final now = DateTime.now();
-  return showDateRangePicker(
-    context: context,
-    initialDateRange: from,
-    firstDate: DateTime(now.year - 2, now.month, now.day),
-    lastDate: DateTime(now.year, now.month, now.day + 60), // an order can be rung for a day to come
-    helpText: 'The days to add up',
-    saveText: 'Read',
-  );
-}
 
 /// Sales over any days, for a manager (docs/sales-report.md): one day, the seven or the twenty-eight just
 /// gone, or any days picked on the calendar, each figure beside the same days whole weeks earlier. The
@@ -33,7 +20,7 @@ class SalesScreen extends StatefulWidget {
     required this.api,
     required this.token,
     this.now = DateTime.now,
-    this.pickSpan = _deviceSpan,
+    this.pickSpan = deviceSpan,
   });
 
   final PosApi api;
@@ -55,6 +42,10 @@ class _SalesScreenState extends State<SalesScreen> {
   SalesReport? _report;
   String? _error;
   int _asked = 0;
+
+  /// How many times other days were picked: each time the list is a new one, laid out from its top (a list
+  /// that stayed would keep its place among rows that are no longer the same).
+  int _picked = 0;
   int _maxDays = 92;
   final _scroll = ScrollController();
 
@@ -83,14 +74,7 @@ class _SalesScreenState extends State<SalesScreen> {
       });
     } on ApiException catch (err) {
       if (!mounted || ask != _asked) return;
-      setState(
-        () => _error = switch (err.status) {
-          401 || 403 => "The manager's hour here is over: go back and open Location again.",
-          404 => 'This hub is older than the sales report. Update the hub to see it here.',
-          null => 'The hub is not answering',
-          _ => (err.detail?['message'] as String?) ?? err.message,
-        },
-      );
+      setState(() => _error = reportError(err, 'the sales report'));
     }
   }
 
@@ -99,45 +83,16 @@ class _SalesScreenState extends State<SalesScreen> {
     setState(() {
       _choice = choice;
       _report = null;
+      _picked++;
     });
     _load();
   }
 
   Future<void> _pickOther() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final picked = await widget.pickSpan(context, _other);
+    final picked = await askOtherDays(context, widget.pickSpan, _other, maxDays: _maxDays, prefix: 'sales');
     if (picked == null || !mounted) return;
-    // counted on the calendar, so a night the clocks change is still one day
-    final days =
-        DateTime.utc(
-          picked.end.year,
-          picked.end.month,
-          picked.end.day,
-        ).difference(DateTime.utc(picked.start.year, picked.start.month, picked.start.day)).inDays +
-        1;
-    if (days > _maxDays) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            key: const ValueKey('sales-too-long'),
-            content: Text('At most $_maxDays days at a time: that was $days. Pick fewer days.'),
-          ),
-        );
-      return;
-    }
     _other = picked;
     _pick(SalesChoice.other);
-  }
-
-  String _time(int atMs) => TimeOfDay.fromDateTime(DateTime.fromMillisecondsSinceEpoch(atMs)).format(context);
-
-  /// "Mon, Nov 9 to Sun, Nov 15, 2026", or the whole date of a single day.
-  String _days(SalesSpan span, {bool whole = true}) {
-    final local = MaterialLocalizations.of(context);
-    if (span.dayCount == 1) return whole ? local.formatFullDate(span.first) : local.formatMediumDate(span.first);
-    final year = whole ? ', ${span.last.year}' : '';
-    return '${local.formatMediumDate(span.first)} to ${local.formatMediumDate(span.last)}$year';
   }
 
   static num _n(String? amount) => double.tryParse(amount ?? '') ?? 0;
@@ -152,7 +107,7 @@ class _SalesScreenState extends State<SalesScreen> {
     required Change change,
     String note = '',
     bool judged = true,
-  }) => _Line(
+  }) => ReportLine(
     key: ValueKey(key),
     words,
     now,
@@ -179,7 +134,7 @@ class _SalesScreenState extends State<SalesScreen> {
     final was = before.where((other) => other.name == row.name && other.group == row.group).firstOrNull;
     final amount = was?.amount ?? '0.00';
     final change = changeWords(_n(row.amount), _n(amount));
-    return _Line(
+    return ReportLine(
       key: ValueKey(key),
       words,
       dollars(minus ? '-${row.amount}' : row.amount),
@@ -207,23 +162,15 @@ class _SalesScreenState extends State<SalesScreen> {
     final spanHours = {for (final row in span.hours) row.hour: row};
 
     return [
-      Text(_days(span), key: const ValueKey('sales-days'), style: theme.textTheme.titleMedium),
-      Text(
-        'Beside the same ${many ? 'days' : 'day'} ${weeks == 1 ? 'a week' : '$weeks weeks'} before: '
-        '${_days(before, whole: false)}.',
-        key: const ValueKey('sales-beside'),
-        style: small,
+      SpanHeading(
+        prefix: 'sales',
+        first: span.first,
+        last: span.last,
+        beforeFirst: before.first,
+        beforeLast: before.last,
+        running: span.running,
+        nowMs: report.nowMs,
       ),
-      if (span.running)
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Text(
-            '${many ? 'The last day' : 'The day'} is still running: read at ${_time(report.nowMs)}. '
-            'Its figures will still move.',
-            key: const ValueKey('sales-running'),
-            style: small,
-          ),
-        ),
       const SizedBox(height: 6),
       _figure(
         'sales-net',
@@ -299,14 +246,14 @@ class _SalesScreenState extends State<SalesScreen> {
       ],
       const Divider(height: 28),
       _Heading('Sales', dollars(span.total), key: const ValueKey('sales-sales')),
-      _Line('Dishes sold', dollars(span.gross), key: const ValueKey('sales-gross')),
+      ReportLine('Dishes sold', dollars(span.gross), key: const ValueKey('sales-gross')),
       if (isMoney(span.discountTotal))
-        _Line('Comps and discounts', dollars('-${span.discountTotal}'), key: const ValueKey('sales-discounts')),
-      _Line('Net sales', dollars(span.net)),
-      if (isMoney(span.charges)) _Line('Charges', dollars(span.charges)),
-      if (isMoney(span.gratuity)) _Line('Gratuity', dollars(span.gratuity), under: 'Paid over to staff'),
-      _Line('Sales tax', dollars(span.tax), key: const ValueKey('sales-tax')),
-      _Line('Total', dollars(span.total), strong: true, key: const ValueKey('sales-total')),
+        ReportLine('Comps and discounts', dollars('-${span.discountTotal}'), key: const ValueKey('sales-discounts')),
+      ReportLine('Net sales', dollars(span.net)),
+      if (isMoney(span.charges)) ReportLine('Charges', dollars(span.charges)),
+      if (isMoney(span.gratuity)) ReportLine('Gratuity', dollars(span.gratuity), under: 'Paid over to staff'),
+      ReportLine('Sales tax', dollars(span.tax), key: const ValueKey('sales-tax')),
+      ReportLine('Total', dollars(span.total), strong: true, key: const ValueKey('sales-total')),
       if (span.days.length > 1) ...[
         const Divider(height: 28),
         _Heading('By day', dollars(span.net), key: const ValueKey('sales-by-day')),
@@ -359,7 +306,27 @@ class _SalesScreenState extends State<SalesScreen> {
               count: '${row.count}×',
             ),
         ],
-        const SizedBox(height: 10),
+        ListTile(
+          key: const ValueKey('sales-dishes'),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.format_list_numbered),
+          title: const Text('Each dish of these days, best to worst'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => DishesScreen(
+                api: widget.api,
+                token: widget.token,
+                now: widget.now,
+                pickSpan: widget.pickSpan,
+                choice: _choice,
+                other: _other,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
         const _Label('By kind of order'),
         for (final row in span.kinds)
           _split(
@@ -475,67 +442,25 @@ class _SalesScreenState extends State<SalesScreen> {
     ];
   }
 
-  String _otherLabel(BuildContext context) {
-    final other = _other;
-    if (_choice != SalesChoice.other || other == null) return 'Other days';
-    final local = MaterialLocalizations.of(context);
-    final first = local.formatShortMonthDay(other.start);
-    return DateUtils.isSameDay(other.start, other.end) ? first : '$first to ${local.formatShortMonthDay(other.end)}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final report = _report;
     final Widget body;
     if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!, key: const ValueKey('sales-error'), textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton(onPressed: _load, child: const Text('Try again')),
-            ],
-          ),
-        ),
-      );
+      body = SpanError(prefix: 'sales', message: _error!, onRetry: _load);
     } else if (report == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            key: const ValueKey('sales-reading'),
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              const Text('Adding up the days'),
-              if (_choice == SalesChoice.fourWeeks || _choice == SalesChoice.other)
-                Text(
-                  'Many days can take some seconds the first time.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-          ),
-        ),
-      );
+      body = SpanReading(prefix: 'sales', many: _choice == SalesChoice.fourWeeks || _choice == SalesChoice.other);
     } else {
-      body = ListView(
-        key: const ValueKey('sales-list'),
-        controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        children: _body(context, report),
+      body = KeyedSubtree(
+        key: ValueKey(_picked),
+        child: ListView(
+          key: const ValueKey('sales-list'),
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          children: _body(context, report),
+        ),
       );
     }
-    Widget chip(SalesChoice choice, String key, String label) => ChoiceChip(
-      key: ValueKey('sales:$key'),
-      label: Text(label),
-      selected: _choice == choice,
-      onSelected: (_) => _pick(choice),
-    );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sales'),
@@ -553,29 +478,7 @@ class _SalesScreenState extends State<SalesScreen> {
           constraints: const BoxConstraints(maxWidth: 640),
           child: Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      chip(SalesChoice.today, 'today', 'Today'),
-                      chip(SalesChoice.yesterday, 'yesterday', 'Yesterday'),
-                      chip(SalesChoice.week, 'week', '7 days'),
-                      chip(SalesChoice.fourWeeks, 'four-weeks', '4 weeks'),
-                      ChoiceChip(
-                        key: const ValueKey('sales:other'),
-                        avatar: const Icon(Icons.date_range_outlined, size: 18),
-                        label: Text(_otherLabel(context)),
-                        selected: _choice == SalesChoice.other,
-                        onSelected: (_) => _pickOther(),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              SpanChips(prefix: 'sales', choice: _choice, other: _other, onPick: _pick, onOther: _pickOther),
               Expanded(child: body),
             ],
           ),
@@ -625,96 +528,6 @@ class _Label extends StatelessWidget {
         children: [
           Expanded(child: Text(title, style: style)),
           if (amount != null) Text(amount!, style: style?.copyWith(fontFeatures: PosTheme.tabular)),
-        ],
-      ),
-    );
-  }
-}
-
-/// One row: words, how many when that is known, and an amount at the right edge; a quieter line under the
-/// words for the figure before, ending with how far the two are apart ([change]). Where more is better
-/// ([judged]), "up" is green and "down" red; the words say which either way.
-class _Line extends StatelessWidget {
-  const _Line(
-    this.words,
-    this.amount, {
-    super.key,
-    this.under = '',
-    this.count = '',
-    this.change,
-    this.judged = true,
-    this.strong = false,
-  });
-
-  final String words;
-  final String amount;
-  final String under;
-  final String count;
-  final Change? change;
-  final bool judged;
-  final bool strong;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final small = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
-    final style = TextStyle(fontWeight: strong ? FontWeight.w700 : null);
-    final moved = change != null && change!.words.isNotEmpty ? change! : null;
-    final colors = PosColors.of(context);
-    final movedColor = !judged || moved?.up == null
-        ? null
-        : moved!.up!
-        ? (theme.brightness == Brightness.dark ? colors.firedBorder : colors.firedText)
-        : scheme.error;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        // the count and the amount sit on the line of the words, not above a second line under them
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(words, style: style),
-                if (under.isNotEmpty || moved != null)
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        if (under.isNotEmpty) TextSpan(text: under),
-                        if (under.isNotEmpty && moved != null) const TextSpan(text: ' · '),
-                        if (moved != null)
-                          TextSpan(
-                            text: moved.words,
-                            // "up" and "down" stand out; "the same" and "nothing before" do not
-                            style: TextStyle(color: movedColor, fontWeight: moved.up == null ? null : FontWeight.w600),
-                          ),
-                      ],
-                    ),
-                    style: small,
-                  ),
-              ],
-            ),
-          ),
-          if (count.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Text(count, style: small),
-            ),
-          // a column of its own, so the counts line up whatever the amounts
-          ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 84),
-            child: Padding(
-              padding: const EdgeInsets.only(left: 12),
-              child: Text(
-                amount,
-                textAlign: TextAlign.end,
-                style: style.copyWith(fontFeatures: PosTheme.tabular),
-              ),
-            ),
-          ),
         ],
       ),
     );
