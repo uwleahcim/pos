@@ -614,6 +614,62 @@ class PosApi {
     ),
   );
 
+  /// The guest's bill at this location: where it prints, what stands at its top and foot, and the printers
+  /// by name. Null from a hub older than the bill, which prints none.
+  Future<BillSettings?> billSettings() async {
+    try {
+      return BillSettings.fromJson(await _get('/settings/bill'));
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets where the location's bills print ([printer], a printer's id;
+  /// null for the usual one) and the lines at their top and foot. The next bill prints by it.
+  Future<BillSettings> saveBillSettings(
+    String token, {
+    required String? printer,
+    required List<String> header,
+    required List<String> footer,
+  }) async => BillSettings.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/bill'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'printer': printer, 'header': header, 'footer': footer}),
+      ),
+    ),
+  );
+
+  /// Prints the guest's bill for [orderId] as the hub reckons its check at this moment: at [printer] (the one
+  /// this screen keeps for its bills, by id) or, without one, where the location's bills print. Returns the
+  /// name of the printer it was sent to. 409 with a `message` when the check is empty or the location has
+  /// no printer.
+  Future<String> printBill(String orderId, {String? printer}) async =>
+      _printedAt(await _post('/orders/$orderId/bill', {'printer': ?printer}, timeout: const Duration(seconds: 6)));
+
+  /// A made-up bill under the lines being tried, at the printer being tried (null for the usual one), before
+  /// any of it is saved (manager token). Returns the name of the printer it was sent to.
+  Future<String> printBillSample(
+    String token, {
+    required String? printer,
+    required List<String> header,
+    required List<String> footer,
+  }) async => _printedAt(
+    await _post(
+      '/print/bill-sample',
+      {'printer': printer, 'header': header, 'footer': footer},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 6),
+    ),
+  );
+
+  static String _printedAt(Map<String, dynamic> answer) {
+    final at = answer['printed_at'];
+    return at is Map ? (at['name'] ?? at['id'] ?? '').toString() : '';
+  }
+
   /// The stations the menu prints at, with the printer serving each and the ones that have none yet.
   Future<StationList> printStations() async => StationList.fromJson(await _get('/print/stations'));
 

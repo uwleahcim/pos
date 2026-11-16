@@ -226,6 +226,8 @@ still known as a Star by step 3, without its model.
   from the name, and what was `heard`. `POST /print/identify` (manager): one address.
 - `GET /print/printers`, `POST /print/test` (by id or station) and the relay's job calls as before; a job
   lists its `fallbacks` and how often it `moved`.
+- The guest's bill is not routed by station: `GET/PUT /settings/bill`, `POST /orders/{id}/bill` and
+  `POST /print/bill-sample` are in `docs/bill.md`.
 
 Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above), `jobs.py` (fallbacks), `discover.py` (the scan and
 the languages), `pos/settings.py` (`clean_printers`), the engine's `routes_to` in `pos/menu/engine.py`;

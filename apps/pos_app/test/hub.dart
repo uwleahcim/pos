@@ -184,6 +184,33 @@ class Hub {
   Map<String, dynamic>? ticketWords = {'numbered': true, 'also_at': true, 'paid': true};
   String? ticketWordsAuth;
   String? refuseTicketWords;
+
+  /// The guest's bill (`GET/PUT /settings/bill`): the setting with the printers by name; null is a hub older
+  /// than the bill (404). The token the last save or sample carried, a reason to refuse the next one with,
+  /// the bills asked for (order id, the printer the screen asked for or null) and the samples tried.
+  Map<String, dynamic>? bill = {
+    'printer': null,
+    'header': <String>[],
+    'footer': ['Thank you!'],
+    'printers': [
+      {'id': 'p1', 'name': 'Takeout'},
+      {'id': 'p2', 'name': 'Bar'},
+    ],
+    'prints_at': 'p1',
+    'usual': 'p1',
+  };
+  String? billAuth;
+  String? refuseBill;
+  final bills = <(String, String?)>[];
+  final billSamples = <Map<String, dynamic>>[];
+
+  /// The name of the printer a bill comes out of: the one asked for when it is there, else the location's.
+  Map<String, dynamic> _billAt(String? asked) {
+    final printers = (bill!['printers'] as List).cast<Map<String, dynamic>>();
+    Map<String, dynamic>? named(Object? id) => printers.where((p) => p['id'] == id).firstOrNull;
+    return named(asked) ?? named(bill!['printer']) ?? named(bill!['usual']) ?? {'id': '', 'name': ''};
+  }
+
   Map<String, dynamic> stations = {'stations': [], 'missing': [], 'takeout_station': 'takeout'};
   List<Map<String, dynamic>> found = [];
   Map<String, dynamic> identity = {'reachable': false};
@@ -201,6 +228,7 @@ class Hub {
   static final _face = RegExp(r'^/admin/staff/([^/]+)/face$');
   static final _tag = RegExp(r'^/admin/staff/([^/]+)/tag$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
+  static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
 
   /// Every request that reached the hub, as `METHOD path?query`, and how many of its reads it answered with
@@ -327,6 +355,17 @@ class Hub {
       _apply(id, ops);
       return json({'accepted': ops.map((o) => o['op_id']).toList(), 'cursor': sent.length}, 202);
     }
+    if (_bill.hasMatch(path)) {
+      if (bill == null) return json({'detail': 'Not Found'}, 404);
+      if (refuseBill != null) {
+        return json({
+          'detail': {'error': 'no_printer', 'message': refuseBill},
+        }, 409);
+      }
+      final asked = (jsonDecode(request.body) as Map)['printer'] as String?;
+      bills.add((_bill.firstMatch(path)!.group(1)!, asked));
+      return json({'job_id': 'bill-${bills.length}', 'status': 'queued', 'printed_at': _billAt(asked)}, 202);
+    }
     if (_check.hasMatch(path)) {
       return json(check ?? {'lines': [], 'subtotal': '0.00', 'tax_rate_pct': '7.00', 'tax': '0.00', 'total': '0.00'});
     }
@@ -417,6 +456,27 @@ class Hub {
           ticketWords = {...ticketWords!, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
         return json(ticketWords!);
+      case '/settings/bill':
+        if (bill == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          billAuth = request.headers['authorization'];
+          if (refuseBill != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseBill},
+            }, 422);
+          }
+          final asked = jsonDecode(request.body) as Map<String, dynamic>;
+          bill = {...bill!, ...asked, 'prints_at': asked['printer'] ?? bill!['usual']};
+        }
+        return json(bill!);
+      case '/print/bill-sample':
+        billAuth = request.headers['authorization'];
+        final tried = jsonDecode(request.body) as Map<String, dynamic>;
+        billSamples.add(tried);
+        final at = (bill!['printers'] as List).cast<Map<String, dynamic>>().firstWhere(
+          (p) => p['id'] == (tried['printer'] ?? bill!['usual']),
+        );
+        return json({'job_id': 'sample-${billSamples.length}', 'status': 'queued', 'printed_at': at}, 202);
       case '/settings/printers':
         if (request.method == 'PUT') {
           printersAuth = request.headers['authorization'];

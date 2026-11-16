@@ -35,6 +35,10 @@
   to start: `numbered`, "Ticket 2 of 3" when more than one station is cooking, and `also_at`, the names of the
   other stations cooking ("Also at: Wok 2, Sushi Bar"). And `paid`: the takeout station's ticket of a to-go
   order says PAID, or NOT PAID with what is still to collect.
+- `bill`: the guest's bill on paper (`pos/printing/bill.py`): `printer`, the id of the printer the location's
+  bills print at (null: the takeout station's printer, else the first; a screen may ask for another),
+  `header`, the restaurant's own lines at the top (name, address, phone; the first prints big), and `footer`,
+  the lines that close it.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -96,6 +100,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
     "tickets": {"numbered": True, "also_at": True, "paid": True},
+    "bill": {"printer": None, "header": [], "footer": ["Thank you!"]},
 }
 RUSH_MAX = 120
 """The most minutes a rush can add to a quote: past two hours the kitchen is closed, not busy."""
@@ -123,6 +128,10 @@ VOID_REASON_NAME_MAX = 40
 VOID_REASONS_MAX = 12
 """A screenful of buttons on a phone: the person voiding picks one at a glance."""
 VOID_WORDS = frozenset({"void", "fewer", "changed"})
+BILL_LINES_MAX = 8
+"""The most lines the top or the foot of a bill may have: a name, an address, a phone, hours, a thank-you."""
+BILL_LINE_MAX = 64
+"""The longest such line; one longer than the paper is wide goes on over the next."""
 """What a `void_line` said in place of a reason before reasons were asked, and what the void half of an edit
 still says (`changed`): never a reason's id, so the reports can tell them apart."""
 
@@ -312,6 +321,41 @@ def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{name} must be true or false")
         out[name] = value
     return out
+
+
+def _bill_lines(value: Any, what: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list | tuple) or not all(isinstance(text, str) for text in value):
+        raise ValueError(f"the {what} of the bill is a list of lines")
+    # a line is one line: whatever a paste brought along (tabs, line ends) becomes a space
+    lines = [" ".join(text.split()) for text in value]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    if len(lines) > BILL_LINES_MAX:
+        raise ValueError(f"the {what} of the bill is at most {BILL_LINES_MAX} lines")
+    for text in lines:
+        if len(text) > BILL_LINE_MAX:
+            raise ValueError(f"a line at the {what} of the bill is at most {BILL_LINE_MAX} characters")
+    return lines
+
+
+def clean_bill(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The guest's bill as the app may set it, checked: `printer`, the id of the printer bills print at (null
+    or empty for the location's usual one), and `header` and `footer`, each a list of lines (an empty line
+    between two others is a gap; the ones at either end are dropped). Raises ValueError on a bad value."""
+    printer = data.get("printer")
+    if printer in ("", None):
+        printer = None
+    elif not isinstance(printer, str) or not PRINTER_ID.match(printer):
+        raise ValueError(f"the bill's printer is a printer's id, not {printer!r}")
+    return {
+        "printer": printer,
+        "header": _bill_lines(data.get("header"), "top"),
+        "footer": _bill_lines(data.get("footer"), "foot"),
+    }
 
 
 def clean_presence(data: Mapping[str, Any]) -> dict[str, Any]:

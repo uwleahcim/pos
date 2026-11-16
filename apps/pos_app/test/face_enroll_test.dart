@@ -248,7 +248,7 @@ void main() {
   testWidgets('an older hub without face sign-in says so', (tester) async {
     final t = await terminal(tester);
     t.hub.faces = false;
-    tester.view.physicalSize = const Size(1100, 1800);
+    tester.view.physicalSize = const Size(1100, 2000); // tall enough for the cards above the face card
     await tester.pumpWidget(
       MaterialApp(
         home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1', camera: FrameCamera()),

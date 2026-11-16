@@ -47,6 +47,7 @@ from ..orders.taken_off import by_check, taken_off_rows
 from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing import discover
+from ..printing.bill import SAMPLE, bill_for
 from ..printing.jobs import PrintJob
 from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
@@ -57,6 +58,7 @@ from ..settings import (
     DEVICE,
     EXTENSION,
     SettingStore,
+    clean_bill,
     clean_coursing,
     clean_desk_phones,
     clean_printers,
@@ -208,6 +210,21 @@ class ReportIn(BaseModel):
 
 class TestPrintIn(BaseModel):
     printer: str
+
+
+class PrintBillIn(BaseModel):
+    """A guest's bill for an order. `printer` is the one this screen keeps for its bills, by id; without it
+    the bill prints where the location's bills do."""
+
+    printer: str | None = Field(None, max_length=64)
+
+
+class BillIn(BaseModel):
+    """The guest's bill as a manager sets it. One left out stays as it is; `printer` null is the usual one."""
+
+    printer: str | None = Field(None, description="the id of the printer bills print at")
+    header: list[str] | None = Field(None, description="the restaurant's own lines at the top; the first big")
+    footer: list[str] | None = Field(None, description="the lines that close the bill")
 
 
 class AvailabilityIn(BaseModel):
@@ -561,6 +578,10 @@ def _void_totals(voids: list[dict[str, Any]], key: Callable[[dict[str, Any]], st
     return [{"key": name, "amount": str(amount), "count": count} for name, (amount, count) in ranked]
 
 
+NO_NAME = "the restaurant"
+"""What a location is called in a text to a customer until `POS_LOCATION` names it; never printed on a bill."""
+
+
 def job_out(job: PrintJob, *, with_data: bool = False, due_in: float = 0.0) -> dict[str, Any]:
     out: dict[str, Any] = {
         "job_id": job.job_id,
@@ -654,7 +675,7 @@ def create_app(
         else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0")
     )
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
-    app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or "the restaurant"
+    app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
     app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
@@ -710,6 +731,8 @@ def create_app(
     app.state.printing.ticket_words = lambda: app.state.settings.get("tickets")
     # The takeout counter's copy of a to-go order says PAID or NOT PAID, by the check as the hub reckons it.
     app.state.printing.check_of = lambda state: check_for(state, app.state.taxes, app.state.pricing)
+    # A guest's bill prints at the printer the manager chose for bills, unless the screen asks for its own.
+    app.state.printing.bill_place = lambda: app.state.settings.get("bill")["printer"]
     if printing is None:
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
@@ -909,6 +932,28 @@ def create_app(
             raise HTTPException(404, "no such order")
         return polled(check_for(state, app.state.taxes, app.state.pricing))
 
+    @app.post("/orders/{order_id}/bill", status_code=202)
+    def print_bill(order_id: str, body: PrintBillIn | None = None) -> dict[str, Any]:
+        """Prints the guest's bill for the order: its check as `GET /orders/{id}/check` reckons it at this
+        moment, under the location's own lines. It prints at the printer asked for, else where the location's
+        bills print; `printed_at` says which (its id and name). An order of any status prints (a closed one
+        is a copy for the guest). 409 `nothing_on_check` for a check with no dish, `no_printer` when the
+        location has none."""
+        store: OpStore | PgOpStore = app.state.store
+        state = store.view(order_id)
+        if state is None:
+            raise HTTPException(404, "no such order")
+        check = check_for(state, app.state.taxes, app.state.pricing)
+        if not check["lines"]:
+            raise HTTPException(409, {"error": "nothing_on_check", "message": "There is nothing on this check yet."})
+        printing: PrintService = app.state.printing
+        printer = printing.bill_printer(body.printer if body is not None else None)
+        if printer is None:
+            raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
+        setting = app.state.settings.get("bill")
+        bill = bill_for(check, state.fields, head=bill_head(setting), foot=tuple(setting["footer"]), at=localtime.now())
+        return {**job_out(printing.queue(bill, printer)), "printed_at": printer_out(printer)}
+
     @app.get("/floor")
     def read_floor() -> Response:
         """The floor plan with the open checks on each table, for the floor map. Each check says what its table
@@ -1076,6 +1121,42 @@ def create_app(
         settings: SettingStore = app.state.settings
         asked = body.model_dump(exclude_none=True)
         return write_setting("tickets", {**settings.get("tickets"), **asked}, clean_tickets)
+
+    def bill_head(setting: Mapping[str, Any]) -> tuple[str, ...]:
+        """The top of the bill: the lines the manager typed, or the location's name until any are."""
+        named = (app.state.location,) if app.state.location != NO_NAME else ()
+        return tuple(setting["header"]) or named
+
+    def printer_out(printer: Printer) -> dict[str, str]:
+        return {"id": printer.id, "name": app.state.printing.head(printer)}
+
+    def bill_setting() -> dict[str, Any]:
+        printing: PrintService = app.state.printing
+        now, usual = printing.bill_printer(), printing.bill_printer(location=False)
+        return {
+            **app.state.settings.get("bill"),
+            "printers": [printer_out(p) for p in printing.printers],
+            "prints_at": now.id if now is not None else None,
+            "usual": usual.id if usual is not None else None,
+        }
+
+    @app.get("/settings/bill")
+    def read_bill() -> dict[str, Any]:
+        """The guest's bill: `printer`, the id of the printer the location's bills print at (null: the takeout
+        station's, else the first), `header` and `footer`, the lines at its top and its foot. With them, for
+        the screens: `printers`, every printer by id and the name that heads its tickets; `prints_at`, the id
+        of the printer a bill comes out of when a screen asks for none (null with no printer at all); and
+        `usual`, the one it would come out of if the location named none."""
+        return bill_setting()
+
+    @app.put("/settings/bill")
+    def write_bill(body: BillIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager sets where bills print and what stands at their top and foot; one left out of the call
+        stays as it is. The next bill prints by it."""
+        manager_from(app.state.tokens, authorization)
+        settings: SettingStore = app.state.settings
+        write_setting("bill", {**settings.get("bill"), **body.model_dump(exclude_unset=True)}, clean_bill)
+        return bill_setting()
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")
@@ -1593,6 +1674,22 @@ def create_app(
             raise HTTPException(404, {"error": "no_such_printer", "printers": [p.id for p in printing.printers]})
         job = printing.queue(replace(DEMO, station=printing.head(printer)), printer)
         return job_out(job)
+
+    @app.post("/print/bill-sample", status_code=202)
+    def print_bill_sample(body: BillIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A made-up bill under the lines given (the saved ones for any left out), at the printer given: what
+        the bill settings' sample button prints, so a manager reads the heading on paper before saving it."""
+        manager_from(app.state.tokens, authorization)
+        printing: PrintService = app.state.printing
+        try:
+            tried = clean_bill({**app.state.settings.get("bill"), **body.model_dump(exclude_unset=True)})
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        printer = printing.bill_printer(tried["printer"], location=False)
+        if printer is None:
+            raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
+        sample = replace(SAMPLE, head=bill_head(tried), foot=tuple(tried["footer"]), at=localtime.now())
+        return {**job_out(printing.queue(sample, printer)), "printed_at": printer_out(printer)}
 
     add_menu_admin(app)
     add_face_signin(app)

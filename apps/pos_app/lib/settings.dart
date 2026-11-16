@@ -12,6 +12,7 @@ class Settings extends ChangeNotifier {
     required this.device,
     required List<String> endpoints,
     this.printRelay = false,
+    this.billPrinter = '',
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints);
@@ -28,7 +29,14 @@ class Settings extends ChangeNotifier {
       extension: prefs.getString('phone_extension') ?? '',
       secret: prefs.getString('phone_secret') ?? '',
     );
-    return Settings(device: device, endpoints: endpoints, printRelay: relay, phone: phone, prefs: prefs);
+    return Settings(
+      device: device,
+      endpoints: endpoints,
+      printRelay: relay,
+      billPrinter: prefs.getString('bill_printer') ?? '',
+      phone: phone,
+      prefs: prefs,
+    );
   }
 
   final SharedPreferences? _prefs;
@@ -39,6 +47,10 @@ class Settings extends ChangeNotifier {
 
   /// Print relay: this terminal writes queued print jobs to the printers when the hub cannot.
   bool printRelay;
+
+  /// The printer this screen's bills come out of, by its id on the hub: the one beside it (the bar's own, the
+  /// host stand's). Empty for wherever the location's bills print.
+  String billPrinter;
 
   PhoneSettings _phone;
 
@@ -57,6 +69,16 @@ class Settings extends ChangeNotifier {
     await _prefs?.setString('device', this.device);
     await _prefs?.setStringList('endpoints', _endpoints);
     await _prefs?.setBool('print_relay', this.printRelay);
+    notifyListeners();
+  }
+
+  Future<void> saveBillPrinter(String? id) async {
+    billPrinter = id ?? '';
+    if (billPrinter.isEmpty) {
+      await _prefs?.remove('bill_printer');
+    } else {
+      await _prefs?.setString('bill_printer', billPrinter);
+    }
     notifyListeners();
   }
 
