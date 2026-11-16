@@ -11,6 +11,7 @@ The ticket logic (wrapping, columns, drawing text) lives here; the bytes for eac
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -43,10 +44,32 @@ def is_plain(text: str) -> bool:
 
 
 def _split(text: str, width: int) -> tuple[str, str]:
-    cut = text.rfind(" ", 0, width + 1)
-    if cut <= 0:
-        cut = width
+    """`text` cut at the last space that fits in `width` characters, else at `width`. The spaces a line starts
+    with are not a place to cut: an indented word longer than the line would never get any shorter."""
+    indent = len(text) - len(text.lstrip(" "))
+    cut = text.rfind(" ", indent, width + 1)
+    if cut <= indent:
+        cut = max(width, indent + 1)
     return text[:cut].rstrip(), text[cut:].lstrip()
+
+
+def fit(text: str, wide: Callable[[str], int], room: int) -> tuple[str, str]:
+    """`text` cut where it stops fitting in `room` dots as `wide` measures it, and what is left over: whole
+    words when it can, and always at least one character, so printing the rest on the next line ends."""
+    if wide(text) <= room:
+        return text, ""
+    indent = text[: len(text) - len(text.lstrip(" "))]
+    words = text.lstrip(" ").split(" ")
+    keep = max(len(words) - 1, 1)
+    while keep > 1 and wide(indent + " ".join(words[:keep])) > room:
+        keep -= 1
+    head, tail = indent + " ".join(words[:keep]), " ".join(words[keep:])
+    if wide(head) > room:  # one word longer than the line (or Chinese, which has no spaces): cut it
+        cut = len(head) - 1
+        while cut > len(indent) + 1 and wide(head[:cut]) > room:
+            cut -= 1
+        head, tail = head[:cut], f"{head[cut:]} {tail}".strip()
+    return head, tail
 
 
 class Builder:
@@ -79,11 +102,19 @@ class Builder:
         self._parts.append(self._cmd_text(text, bold=bold, big=big, center=center, invert=invert))
         return self
 
-    def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
-        """`left` padded, `right` flush to the right edge, on one line."""
-        width = self.chars
-        space = max(1, width - len(right) - len(left)) if is_plain(left) and is_plain(right) else 1
-        return self.line(f"{left}{' ' * space}{right}", bold=bold)
+    def columns(self, left: str, right: str, *, bold: bool = False, big: bool = False, hang: str = "  ") -> Builder:
+        """`left` at the left edge and `right` flush to the right edge, on one line. A `left` too long to
+        stand beside `right` goes on over the next lines, each starting with `hang`; `right` stays on the
+        first (a long dish on a bill keeps its price in the column)."""
+        if not (is_plain(left) and is_plain(right)):
+            return self.image_columns(left, right, bold=bold, big=big, hang=hang)
+        width = self.chars // 2 if big else self.chars
+        room = width - len(right) - 1
+        tail = ""
+        if len(left) > room > 0:
+            left, tail = _split(left, room)
+        self.line(f"{left}{' ' * max(1, width - len(right) - len(left))}{right}", bold=bold, big=big)
+        return self.line(hang + tail, bold=bold, big=big) if tail else self
 
     def rule(self) -> Builder:
         return self.line("-" * self.chars)
@@ -96,10 +127,18 @@ class Builder:
     def image_line(
         self, text: str, *, bold: bool = False, big: bool = False, center: bool = False, invert: bool = False
     ) -> Builder:
+        """A line drawn with the font. One too wide for the paper goes on below instead of being cut off at
+        the edge."""
         size = 48 if big else 26
         font = self._load_font(size)
-        probe = Image.new("1", (1, 1), 1)
-        box = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font, stroke_width=1 if bold else 0)
+        probe = ImageDraw.Draw(Image.new("1", (1, 1), 1))
+
+        def wide(part: str) -> int:
+            box = probe.textbbox((0, 0), part, font=font, stroke_width=1 if bold else 0)
+            return box[2] - box[0]
+
+        text, tail = fit(text, wide, self.dots - 4)
+        box = probe.textbbox((0, 0), text, font=font, stroke_width=1 if bold else 0)
         width = min(self.dots, box[2] - box[0] + 4)
         height = box[3] - box[1] + 6
         paper, ink = (0, 1) if invert else (1, 0)
@@ -107,7 +146,29 @@ class Builder:
         x = (self.dots - width) // 2 if center else 0
         stroke = 1 if bold else 0
         ImageDraw.Draw(img).text((x + 2 - box[0], 3 - box[1]), text, font=font, fill=ink, stroke_width=stroke)
-        return self.image(img)
+        self.image(img)
+        return self.image_line("  " + tail, bold=bold, big=big, center=center, invert=invert) if tail else self
+
+    def image_columns(
+        self, left: str, right: str, *, bold: bool = False, big: bool = False, hang: str = "  "
+    ) -> Builder:
+        """`columns` drawn with the font: what a line with Chinese in it needs to keep `right` at the edge,
+        and what a printer that draws every line (a Star) prints for all of them."""
+        size = 48 if big else 26
+        font = self._load_font(size)
+        stroke = 1 if bold else 0
+        strip = Image.new("1", (self.dots, size + 6 if not big else size + 10), 1)
+        draw = ImageDraw.Draw(strip)
+
+        def wide(text: str) -> int:
+            box = draw.textbbox((0, 0), text, font=font, stroke_width=stroke)
+            return box[2] - box[0]
+
+        left, tail = fit(left, wide, max(self.dots - wide(right) - 4 - size // 2, size))
+        draw.text((2, 3), left, font=font, fill=0, stroke_width=stroke)
+        draw.text((self.dots - wide(right) - 2, 3), right, font=font, fill=0, stroke_width=stroke)
+        self.image(strip)
+        return self.line(hang + tail, bold=bold, big=big) if tail else self
 
     def image(self, img: Image.Image) -> Builder:
         """One bit per dot, 1 = black, rows padded to whole bytes, width capped at the paper."""

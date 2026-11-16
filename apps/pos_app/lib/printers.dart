@@ -257,3 +257,57 @@ class TicketWords {
   @override
   int get hashCode => Object.hash(numbered, alsoAt, paid);
 }
+
+/// A printer as the bill's settings name it: its id and the name that heads its tickets ("Takeout").
+@immutable
+class BillPrinter {
+  const BillPrinter({required this.id, required this.name});
+
+  factory BillPrinter.fromJson(Map<String, dynamic> json) =>
+      BillPrinter(id: json['id'] as String, name: json['name'] as String? ?? json['id'] as String);
+
+  final String id;
+  final String name;
+}
+
+/// The guest's bill as the location has it (`GET/PUT /settings/bill`): [printer], the id of the printer the
+/// location's bills print at (null for the usual one: the takeout station's printer, else the first), and
+/// the lines at its top ([header]: the restaurant's name, address and phone; the first prints big) and at
+/// its foot ([footer]). With them, from the hub: every printer by name ([printers]), the one a bill comes
+/// out of when a screen asks for none ([printsAt]) and the one it would be if the location named none
+/// ([usual]). A screen may keep a printer of its own for its bills (`Settings.billPrinter`).
+@immutable
+class BillSettings {
+  const BillSettings({
+    this.printer,
+    this.header = const [],
+    this.footer = const [],
+    this.printers = const [],
+    this.printsAt,
+    this.usual,
+  });
+
+  factory BillSettings.fromJson(Map<String, dynamic> json) => BillSettings(
+    printer: json['printer'] as String?,
+    header: [for (final line in json['header'] as List? ?? const []) line as String],
+    footer: [for (final line in json['footer'] as List? ?? const []) line as String],
+    printers: [
+      for (final p in json['printers'] as List? ?? const []) BillPrinter.fromJson((p as Map).cast<String, dynamic>()),
+    ],
+    printsAt: json['prints_at'] as String?,
+    usual: json['usual'] as String?,
+  );
+
+  final String? printer;
+  final List<String> header;
+  final List<String> footer;
+  final List<BillPrinter> printers;
+  final String? printsAt;
+  final String? usual;
+
+  /// The printer's name as its tickets are headed; null for an id that is no printer (any more).
+  String? nameOf(String? id) => printers.where((p) => p.id == id).firstOrNull?.name;
+
+  /// The location's own printer for bills, when it names one that is still there.
+  String? get chosen => nameOf(printer) == null ? null : printer;
+}

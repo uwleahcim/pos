@@ -12,6 +12,7 @@ import '../tags.dart';
 import '../takeout.dart';
 import '../voids.dart';
 import 'adjustments_screen.dart';
+import 'bill_dialog.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'printers_screen.dart';
@@ -120,6 +121,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
+  BillSettings? _bill; // the guest's bill as the hub has it; null from an older hub, which prints none
   bool _ticketWordsBusy = false;
   String? _ticketWordsMessage;
 
@@ -213,6 +215,33 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // an older hub prints none of the lines: the card shows no switch for them
     }
+    try {
+      final bill = await widget.api.billSettings();
+      if (mounted) setState(() => _bill = bill);
+    } on ApiException {
+      // nothing answered about the bill: the card shows no row for it
+    }
+  }
+
+  /// One line on the bill: where it prints and what heads it.
+  String get _billLine {
+    final bill = _bill!;
+    final at = bill.nameOf(bill.printsAt);
+    final head = bill.header.where((line) => line.isNotEmpty).firstOrNull;
+    return [
+      at == null ? 'No printer to print it at' : 'Prints at $at',
+      head == null ? 'no heading yet' : 'headed "$head"',
+    ].join(' · ');
+  }
+
+  Future<void> _openBill() async {
+    final saved = await showDialog<BillSettings>(
+      context: context,
+      builder: (_) => BillDialog(api: widget.api, token: widget.token, bill: _bill!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _bill = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('The bill is saved')));
   }
 
   Future<void> _saveTicketWords(TicketWords next) async {
@@ -852,6 +881,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             trailing: const Icon(Icons.chevron_right),
             onTap: _openPrinters,
           ),
+          if (_bill != null) ...[
+            const Divider(height: 1),
+            ListTile(
+              key: const ValueKey('bill'),
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('The bill'),
+              subtitle: Text(_billLine),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openBill,
+            ),
+          ],
           if (words != null) ...[
             const Divider(height: 1),
             SwitchListTile(

@@ -17,6 +17,7 @@ import '../outbox.dart';
 import '../phone.dart';
 import '../photos.dart';
 import '../pricing.dart';
+import '../printers.dart';
 import '../session.dart';
 import '../takeout.dart';
 import '../voids.dart';
@@ -90,6 +91,7 @@ class _OrderScreenState extends State<OrderScreen> {
   String? _noteFor; // the number's digits it was read for
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
+  bool _billing = false; // a bill is on its way to the printer: the button waits
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
@@ -564,6 +566,106 @@ class _OrderScreenState extends State<OrderScreen> {
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
+  /// Prints the guest's bill: the check as the hub has it, so whatever was just rung in goes there first. It
+  /// comes out of the printer this screen keeps for its bills, or where the location's bills print. [kept]
+  /// is what to add when the screen's printer was just picked.
+  Future<void> _printBill({String kept = ''}) async {
+    if (_billing) return;
+    setState(() => _billing = true);
+    try {
+      await widget.outbox.flush();
+      if (widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId)) {
+        if (mounted) _say('The bill prints once this check has reached the hub');
+        return;
+      }
+      final own = widget.api.settings.billPrinter;
+      final at = await widget.api.printBill(widget.orderId, printer: own.isEmpty ? null : own);
+      if (mounted) _say('${at.isEmpty ? 'The bill is printing' : 'The bill is printing at $at'}$kept');
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      final told = err.detail?['message'] as String?;
+      _say(
+        told ??
+            (err.status == 404 || err.status == 405
+                ? 'This hub does not print bills yet: update it'
+                : 'The bill did not print: nothing answered'),
+      );
+    } finally {
+      if (mounted) setState(() => _billing = false);
+    }
+  }
+
+  /// The Bill button held: this bill at another printer, which the screen then keeps for its bills (on the
+  /// device). The bar's screen prints at the bar, the host stand's at the front, whatever the location's
+  /// own choice is.
+  Future<void> _billPlace() async {
+    final BillSettings? bill;
+    try {
+      bill = await widget.api.billSettings();
+    } on ApiException {
+      if (mounted) _say('The printers could not be read: nothing answered');
+      return;
+    }
+    if (!mounted) return;
+    if (bill == null || bill.printers.isEmpty) {
+      _say(bill == null ? 'This hub does not print bills yet: update it' : 'No printer is set up yet');
+      return;
+    }
+    final settings = widget.api.settings;
+    final own = bill.nameOf(settings.billPrinter) == null ? '' : settings.billPrinter;
+    final usual = bill.nameOf(bill.printsAt);
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Print this bill at', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'This screen keeps the printer you pick for its next bills.',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    key: const ValueKey('bill-at:'),
+                    label: Text(usual == null ? "The location's printer" : "The location's: $usual"),
+                    selected: own.isEmpty,
+                    onSelected: (_) => Navigator.of(context).pop(''),
+                  ),
+                  for (final p in bill!.printers)
+                    ChoiceChip(
+                      key: ValueKey('bill-at:${p.id}'),
+                      label: Text(p.name),
+                      selected: own == p.id,
+                      onSelected: (_) => Navigator.of(context).pop(p.id),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await settings.saveBillPrinter(picked);
+    if (!mounted) return;
+    await _printBill(
+      kept: picked.isEmpty
+          ? ". This screen's bills print where the location's do again"
+          : ". This screen's bills print there from now on",
+    );
+  }
+
   /// Makes a line hold `qty` of its dish: one more from a tap on the quantity, one fewer from a tap on the
   /// bin, any number typed after holding the quantity, none after holding the bin. Before the kitchen has the
   /// line it simply changes. After, more is a new line of the extra, held until fired like any new dish; fewer
@@ -946,6 +1048,8 @@ class _OrderScreenState extends State<OrderScreen> {
       onRemoveCharge: _removeCharge,
       onMove: _move,
       onLot: _lot,
+      onBill: _billing ? null : _printBill,
+      onBillPlace: _billPlace,
     );
     final menu = open
         ? Column(
@@ -1075,6 +1179,8 @@ class _TicketPanel extends StatefulWidget {
     required this.onRemoveCharge,
     required this.onMove,
     required this.onLot,
+    required this.onBill,
+    required this.onBillPlace,
   });
 
   final Order? order;
@@ -1101,6 +1207,11 @@ class _TicketPanel extends StatefulWidget {
 
   /// The dishes in hand were let go over a place at the foot of the check: `comp` or `void`.
   final Future<void> Function(String target, List<Line> lines) onLot;
+
+  /// Prints the guest's bill; null while one is on its way. A hold picks the printer this screen's bills
+  /// come out of ([onBillPlace]).
+  final VoidCallback? onBill;
+  final VoidCallback onBillPlace;
 
   @override
   State<_TicketPanel> createState() => _TicketPanelState();
@@ -1290,7 +1401,13 @@ class _TicketPanelState extends State<_TicketPanel> {
                   const SizedBox(height: 2),
                   _TotalRow('Sales tax ${_rate(check.taxRatePct)}%', check.tax),
                   const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider(height: 1)),
-                  _TotalRow(check.estimated ? 'Total (updating)' : 'Total', check.total, strong: true),
+                  _TotalRow(
+                    check.estimated ? 'Total (updating)' : 'Total',
+                    check.total,
+                    strong: true,
+                    // the bill is the total on paper, so its button stands beside it: no row of its own
+                    action: check.lines.isEmpty ? null : _BillButton(onTap: widget.onBill, onHold: widget.onBillPlace),
+                  ),
                   for (final p in order.payments)
                     _TotalRow(_paymentLabel(p), '−${p.amount}', key: ValueKey('paid-${p.paymentId}')),
                   if (order.payments.isNotEmpty) _TotalRow('Due', check.due, strong: true, key: const ValueKey('due')),
@@ -2061,12 +2178,45 @@ String _rate(String pct) {
   return value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
 }
 
+/// The Bill button beside the total: a tap prints the guest's bill, a hold picks the printer this screen's
+/// bills come out of. Greyed while a bill is on its way.
+class _BillButton extends StatelessWidget {
+  const _BillButton({required this.onTap, required this.onHold});
+
+  final VoidCallback? onTap;
+  final VoidCallback onHold;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Print the bill. Hold to pick the printer for this screen',
+      child: OutlinedButton.icon(
+        key: const ValueKey('bill'),
+        onPressed: onTap,
+        onLongPress: onTap == null ? null : onHold,
+        icon: const Icon(Icons.receipt_long_outlined, size: 18),
+        label: const Text('Bill'),
+        style: OutlinedButton.styleFrom(
+          // as tall as a finger needs and no taller: the foot of the check is always on the screen
+          visualDensity: VisualDensity.standard,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          minimumSize: const Size(0, 38),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+      ),
+    );
+  }
+}
+
 class _TotalRow extends StatelessWidget {
-  const _TotalRow(this.label, this.amount, {super.key, this.strong = false, this.onTap});
+  const _TotalRow(this.label, this.amount, {super.key, this.strong = false, this.onTap, this.action});
 
   final String label;
   final String amount;
   final bool strong;
+
+  /// A button between the label and the amount (the Bill button on the total).
+  final Widget? action;
 
   /// Set on a discount or charge row: a tap takes it off.
   final VoidCallback? onTap;
@@ -2079,9 +2229,22 @@ class _TotalRow extends StatelessWidget {
         : theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final row = Row(
       children: [
-        Expanded(
-          child: Text(label, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
+        if (action == null)
+          Expanded(
+            child: Text(label, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          )
+        else
+          // the button right after the label, the amount still at the edge; a narrow check shortens the label
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(label, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                Padding(padding: const EdgeInsets.symmetric(horizontal: 10), child: action),
+              ],
+            ),
+          ),
         Text(amount, style: baseStyle?.copyWith(fontFeatures: PosTheme.tabular)),
         if (onTap != null)
           Padding(

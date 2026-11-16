@@ -15,6 +15,9 @@ station's ticket leaves off the choices the menu hides from it (`Group.hidden_at
 rice or the soup a dish comes with); the dish prints there all the same, and the bag's ticket reads what the
 takeout station reads.
 
+A guest's bill (`pos.printing.bill`) is no kitchen ticket and is not routed by station: it prints where it
+is asked for (`bill_printer`), on the same queue, with the same fallbacks.
+
 A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
 LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
 the job store is the queue; the printing itself is retried in the background and never holds up the order
@@ -35,6 +38,7 @@ from typing import Any
 
 from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
+from .bill import Bill, render_bill
 from .escpos import find_font
 from .jobs import JobStore, PrintJob, send_raw
 from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
@@ -421,6 +425,9 @@ class PrintService:
         self.check_of: Callable[[OrderState], Mapping[str, Any]] | None = None
         """An order's check as the hub reckons it (`total`, `paid`, `due`, `unpriced`), for the takeout
         counter's PAID or NOT PAID. The API wires it in; without it no ticket speaks of money."""
+        self.bill_place: Callable[[], str | None] = lambda: None
+        """The printer the location's bills print at, by id (the `bill` setting); None when the location has
+        not said, and for a printer that is no longer there."""
         self._waiting: dict[str, list[tuple[PrintJob, Ticket, Printer]]] = {}
         """A future order's takeout tickets that are made and wait for their time, by order: what they say
         about the money is brought up to date while they wait (`_keep_money_current`)."""
@@ -440,9 +447,25 @@ class PrintService:
 
     def printer(self, name: str) -> Printer | None:
         """By id, else the first printer on the station of that name."""
-        printers = self.printers
+        return self._named(self.printers, name)
+
+    @staticmethod
+    def _named(printers: list[Printer], name: str) -> Printer | None:
         by_id = next((p for p in printers if p.id == name), None)
         return by_id or next((p for p in printers if name in p.stations), None)
+
+    def bill_printer(self, asked: str | None = None, *, location: bool = True) -> Printer | None:
+        """Where a guest's bill prints: the printer asked for (a screen that keeps its own, the one beside
+        it), else the location's, else the takeout station's (the counter, where people pay), else the first
+        printer. A printer that is no longer there is passed over, so a bill is never refused for a stale
+        choice; None only when the location has no printer at all. `location=False` leaves the location's own
+        choice out (a manager trying another before saving it)."""
+        printers = self.printers
+        for name in (asked, self.bill_place() if location else None, self.takeout_station()):
+            found = self._named(printers, name) if name else None
+            if found is not None:
+                return found
+        return printers[0] if printers else None
 
     def station_name(self, code: str) -> str:
         names = self.station_names() if self.station_names is not None else {}
@@ -623,15 +646,15 @@ class PrintService:
 
     def queue(
         self,
-        ticket: Ticket,
+        ticket: Ticket | Bill,
         printer: Printer,
         *,
         job_id: str | None = None,
         delay: float = 0.0,
         printers: list[Printer] | None = None,
     ) -> PrintJob:
-        """Renders the ticket for the printer and for each of its fallbacks (headed with whose ticket it is),
-        and queues it; a hub starts writing it at once."""
+        """Renders the ticket (or a guest's bill) for the printer and for each of its fallbacks (headed with
+        whose it is), and queues it; a hub starts writing it at once."""
         data, fallbacks = self._rendered(ticket, printer, printers)
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if self.direct and delay <= 0:
@@ -639,19 +662,24 @@ class PrintService:
         return job
 
     def _rendered(
-        self, ticket: Ticket, printer: Printer, printers: list[Printer] | None = None
+        self, ticket: Ticket | Bill, printer: Printer, printers: list[Printer] | None = None
     ) -> tuple[bytes, list[tuple[str, bytes]]]:
-        """The ticket as the printer prints it, and as each of its fallbacks does (address, bytes), in order."""
-        data = render(ticket, dots=self._dots, font=self._font, dialect=printer.dialect)
+        """The ticket as the printer prints it, and as each of its fallbacks does (address, bytes), in order.
+        A fallback's copy says whose it is: the ticket's station, or for a bill the printer it was for."""
+
+        def drawn(paper: Ticket | Bill, on: Printer) -> bytes:
+            draw = render_bill if isinstance(paper, Bill) else render
+            return draw(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+
+        data = drawn(ticket, printer)
         fallbacks = []
         by_id = {p.id: p for p in (printers if printers is not None else self.printers)}
+        whose = self.head(printer) if isinstance(ticket, Bill) else ticket.station
         for fallback_id in printer.fallbacks:
             fallback = by_id.get(fallback_id)
             if fallback is None or fallback.address == printer.address:
                 continue
-            copy = replace(ticket, reprinted_from=ticket.station)
-            rendered = render(copy, dots=self._dots, font=self._font, dialect=fallback.dialect)
-            fallbacks.append((fallback.address, rendered))
+            fallbacks.append((fallback.address, drawn(replace(ticket, reprinted_from=whose), fallback)))
         return data, fallbacks
 
     def _deliver(self, job: PrintJob) -> None:

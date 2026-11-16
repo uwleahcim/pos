@@ -39,6 +39,8 @@ merges after any disconnect.
 - Printers and stations (where a dish prints, the printers with their fallbacks set from the app, finding them on
   the network, to-go orders at the takeout counter with PAID or NOT PAID on the bag's ticket, tickets that say
   "Ticket 2 of 3" and name the other stations cooking): `docs/printing.md`
+- The guest's bill (the Bill button beside the total, what the paper says, which printer it comes out of, a
+  screen's own printer, the restaurant's lines at the top and the foot): `docs/bill.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

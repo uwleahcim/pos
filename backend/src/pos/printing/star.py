@@ -54,16 +54,10 @@ class StarBuilder(Builder):
                 return self.line("  " + tail, bold=bold, big=big, center=center, invert=invert)
         return self.image_line(text, bold=bold, big=big, center=center, invert=invert)
 
-    def columns(self, left: str, right: str, *, bold: bool = False) -> Builder:
-        """Left text at the left edge, right text flush right, drawn on one strip."""
-        font = self._load_font(26)
-        strip = Image.new("1", (self.dots, 32), 1)
-        draw = ImageDraw.Draw(strip)
-        stroke = 1 if bold else 0
-        draw.text((2, 3), left, font=font, fill=0, stroke_width=stroke)
-        box = draw.textbbox((0, 0), right, font=font, stroke_width=stroke)
-        draw.text((self.dots - (box[2] - box[0]) - 2, 3), right, font=font, fill=0, stroke_width=stroke)
-        return self.image(strip)
+    def columns(self, left: str, right: str, *, bold: bool = False, big: bool = False, hang: str = "  ") -> Builder:
+        """Left text at the left edge, right text flush right, drawn on one strip; a left too long for the
+        line goes on below it."""
+        return self.image_columns(left, right, bold=bold, big=big, hang=hang)
 
     def rule(self) -> Builder:
         strip = Image.new("1", (self.dots, 8), 1)
