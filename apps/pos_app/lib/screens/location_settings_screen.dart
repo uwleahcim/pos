@@ -18,6 +18,7 @@ import 'day_report_screen.dart';
 import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
+import 'guests_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
@@ -768,6 +769,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => DishesScreen(api: widget.api, token: widget.token),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('guests-report'),
+                  leading: const Icon(Icons.people_outline),
+                  title: const Text('Guests'),
+                  subtitle: const Text('Phone customers: visits, what they spent, favourites'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => GuestsScreen(api: widget.api, token: widget.token),
                     ),
                   ),
                 ),

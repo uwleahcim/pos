@@ -281,6 +281,16 @@ class PgOpStore:
                 )
             return [e for e in self._scan() if e.picked(status, opened_since, active_since, phone, promised)]
 
+    def with_phone(self) -> list[OrderEntry]:
+        """Every order that carries a customer's number, however old, by order id: what a list of the
+        customers is read from (the index of the numbers answers it without the other orders)."""
+        try:
+            with self._pool.connection() as conn:
+                rows = conn.execute(f"SELECT {_ENTRY} FROM orders WHERE phone <> '' ORDER BY order_id")
+                return [OrderEntry(*row) for row in rows]
+        except (errors.UndefinedTable, errors.UndefinedColumn):
+            return [entry for entry in self.index() if entry.phone]
+
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
         last read (the changed ones in one query). Shared: read them, never change them."""

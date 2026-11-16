@@ -60,6 +60,9 @@ Anyone signed in at a terminal sees the customer and may write the note, as anyo
 customer's name and number were already on every order they placed; the note is the one new thing kept
 about them, so keep it to what serves the order.
 
+All the customers on one screen, with their visits, what they spent and their favourite dishes, are for a
+manager: Location › **Guests** (`guest-list.md`).
+
 ## When a hub is not answering
 
 With no hub answering, or on a hub older than this, the form is what it was before: name, phone, channel,

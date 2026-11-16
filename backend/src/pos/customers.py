@@ -54,6 +54,11 @@ class CustomerNotes:
             self._notes[phone] = kept
         return dict(kept)
 
+    def all(self) -> dict[str, str]:
+        """Every note there is, by the number's digits: what a list of the customers shows beside each."""
+        with self._lock:
+            return {phone: kept["note"] for phone, kept in self._notes.items() if kept["note"]}
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS customer_note (
@@ -114,6 +119,16 @@ class PgCustomerNotes(CustomerNotes):
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
         return {"note": note, "by": by, "at_ms": at_ms}
+
+    def all(self) -> dict[str, str]:
+        from psycopg import errors
+
+        try:
+            with self._pool.connection() as conn:
+                rows = conn.execute("SELECT phone, note FROM customer_note WHERE note <> ''").fetchall()
+        except errors.UndefinedTable:
+            return {}  # a standby whose primary has not been updated yet
+        return {str(phone): str(note) for phone, note in rows}
 
 
 def default_notes() -> CustomerNotes:

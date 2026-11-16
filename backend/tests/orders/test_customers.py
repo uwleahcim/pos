@@ -135,6 +135,10 @@ def test_the_note_records_who_wrote_it_and_when():
     c.put("/customers/7815550101", json={"note": "side door", "by": "Amy"})
     assert notes.get("7815550101") == {"note": "side door", "by": "Amy", "at_ms": NOW}
     assert notes.get("7815550102") is None
+    # every note at once, for a list of the customers: a note taken off is none
+    c.put("/customers/7815550102", json={"note": "allergic to peanuts", "by": "Ben"})
+    c.put("/customers/7815550103", json={"note": "", "by": "Ben"})
+    assert notes.all() == {"7815550101": "side door", "7815550102": "allergic to peanuts"}
 
 
 def test_same_again_is_the_order_s_dishes_as_the_menu_sells_them_now():
@@ -206,6 +210,8 @@ def test_notes_are_kept_in_postgresql_the_same_way():
         notes.put("7815550101", "side door", by="Amy", at_ms=NOW)
         notes.put("7815550101", "no MSG", by="Ben", at_ms=NOW + 5)  # the latest word stands
         assert notes.get("7815550101") == {"note": "no MSG", "by": "Ben", "at_ms": NOW + 5}
+        notes.put("7815550102", "", by="Ben", at_ms=NOW + 6)  # a note taken off
+        assert notes.all() == {"7815550101": "no MSG"}
     finally:
         notes.close()
     again = PgCustomerNotes(DSN)  # after a restart

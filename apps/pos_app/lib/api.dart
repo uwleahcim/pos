@@ -14,6 +14,7 @@ import 'dishes_report.dart';
 import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
+import 'guests_report.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'phone.dart';
@@ -1057,6 +1058,19 @@ class PosApi {
       headers: _bearer(token),
       timeout: const Duration(seconds: 90),
     ),
+  );
+
+  /// The guest list (manager token): every customer who ordered with a phone number in the last year, with
+  /// how often they came, what they spent and what they order most (docs/guest-list.md). A year of orders
+  /// is read, so it waits as long as [salesReport]. 404 from a hub older than the list.
+  Future<GuestsReport> guestsReport(String token) async => GuestsReport.fromJson(
+    await _get('/reports/guests', headers: _bearer(token), timeout: const Duration(seconds: 90)),
+  );
+
+  /// One guest of the list read closely (manager token): more of their favourite dishes and their latest
+  /// visits. 404 `no_guest` for a number with no visit in the year.
+  Future<GuestDetail> guestDetail(String token, String phone) async => GuestDetail.fromJson(
+    await _get('/reports/guests/${phoneDigits(phone)}', headers: _bearer(token), timeout: const Duration(seconds: 30)),
   );
 
   /// Prints the day's report (manager token) at [printer] (the one this screen keeps for its bills, by id)

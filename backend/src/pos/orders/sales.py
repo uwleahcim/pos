@@ -229,18 +229,18 @@ def sale_of(
     )
 
 
-class SaleMemo:
-    """Each order's `Sale`, remembered under the exact state of its log (the index's `version` and `tip`),
-    so that a second reading replays only the checks that changed. All of it is dropped when the taxes or
-    the rules are other objects than it was worked out under; the least recently read go first past `keep`
-    orders (40,000: a quarter beside the quarter before at 200 checks a day, under 3 KB each with every dish
-    and how it was sold, so some 110 MB at the very most). The choices on the dishes are the same few on
-    every check, so one copy of each is kept for all of them (`_one`). Nothing here can make a reading
-    differ from one reckoned afresh: only save it the work."""
+class OrderMemo:
+    """What each order comes to (`of`: a `Sale`, a guest's visit), remembered under the exact state of its
+    log (the index's `version` and `tip`), so that a second reading replays only the orders that changed.
+    All of it is dropped when the taxes or the rules are other objects than it was worked out under; the
+    least recently read go first past `keep` orders. The choices on the dishes are the same few on every
+    check, so one copy of each is kept for all of them (`_one`). Nothing here can make a reading differ
+    from one reckoned afresh: only save it the work."""
 
-    def __init__(self, keep: int = 40_000, at_once: int = 500) -> None:
+    def __init__(self, of: Callable[..., Any], keep: int, at_once: int = 500) -> None:
+        self._of = of
         self._keep, self._at_once = keep, at_once
-        self._kept: OrderedDict[str, tuple[int, str, Sale | None]] = OrderedDict()
+        self._kept: OrderedDict[str, tuple[int, str, Any]] = OrderedDict()
         self._under: tuple[Any, Any] = (None, None)
         self._ones: dict[Any, Any] = {}  # the one copy of each choice, and of each list of choices
         self._lock = threading.Lock()
@@ -255,18 +255,19 @@ class SaleMemo:
             self._ones = {}
         return self._ones.setdefault(thing, thing)
 
-    def sales(
+    def each(
         self,
         entries: Sequence[OrderEntry],
         views: Callable[[Sequence[OrderEntry]], Sequence[OrderState]],
         *,
         taxes: TaxProfile,
         rules: PricingRules | None,
-    ) -> Iterator[Sale]:
-        """The sale of each of these orders: the remembered ones first, then the rest, replayed through
-        `views` a few hundred at a time (a quarter of a year is too many to hold replayed all at once)."""
+    ) -> Iterator[Any]:
+        """What each of these orders comes to: the remembered ones first, then the rest, replayed through
+        `views` a few hundred at a time (a quarter of a year is too many to hold replayed all at once). An
+        order that comes to nothing (`of` gave None) is left out."""
         missing: list[OrderEntry] = []
-        found: list[Sale] = []
+        found: list[Any] = []
         with self._lock:
             if self._under[0] is not taxes or self._under[1] is not rules:
                 self._kept.clear()
@@ -284,16 +285,37 @@ class SaleMemo:
         for start in range(0, len(missing), self._at_once):
             some = missing[start : start + self._at_once]
             fresh = [
-                (entry, sale_of(state, taxes, rules, self._one)) for entry, state in zip(some, views(some), strict=True)
+                (entry, self._of(state, taxes, rules, self._one))
+                for entry, state in zip(some, views(some), strict=True)
             ]
             with self._lock:
                 if self._under[0] is taxes and self._under[1] is rules:
-                    for entry, sale in fresh:
-                        self._kept[entry.order_id] = (entry.version, entry.tip, sale)
+                    for entry, came_to in fresh:
+                        self._kept[entry.order_id] = (entry.version, entry.tip, came_to)
                         self._kept.move_to_end(entry.order_id)
                     while len(self._kept) > self._keep:
                         self._kept.popitem(last=False)
-            yield from (sale for _, sale in fresh if sale is not None)
+            yield from (came_to for _, came_to in fresh if came_to is not None)
+
+
+class SaleMemo(OrderMemo):
+    """Each order's `Sale`, remembered (`OrderMemo`): 40,000 orders, a quarter beside the quarter before
+    at 200 checks a day, under 3 KB each with every dish and how it was sold, so some 110 MB at the very
+    most."""
+
+    def __init__(self, keep: int = 40_000, at_once: int = 500) -> None:
+        super().__init__(sale_of, keep, at_once)
+
+    def sales(
+        self,
+        entries: Sequence[OrderEntry],
+        views: Callable[[Sequence[OrderEntry]], Sequence[OrderState]],
+        *,
+        taxes: TaxProfile,
+        rules: PricingRules | None,
+    ) -> Iterator[Sale]:
+        """The sale of each of these orders."""
+        return self.each(entries, views, taxes=taxes, rules=rules)
 
 
 class _Span:

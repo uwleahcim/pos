@@ -19,6 +19,9 @@ screen holds:
   earlier (see `sales-report.md`). Not a setting either.
 - **Dishes sold**, under that: every dish of the same days, best to worst or worst first, with its sizes
   and its options (see `dishes-sold.md`). Not a setting either.
+- **Guests**, under that: every customer who ordered with a phone number in the last 12 months, with their
+  visits, what they spent and their favourite dishes, and the regulars, the guests who stopped coming and
+  the new ones each a list (see `guest-list.md`). Not a setting either.
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

@@ -172,6 +172,22 @@ class Hub {
   String? dishesAuth;
   int? refuseDishes;
 
+  /// The guest list (docs/guest-list.md). [guests] answers `GET /reports/guests`; null is a hub older than
+  /// the list. [guestDetails] answers `GET /reports/guests/<digits>` by the number asked for; one it has
+  /// nothing for is `no_guest`. How often the list was asked is [guestsAsks], the numbers read closely are
+  /// in [guestAsks], and the token of the last ask of either in [guestsAuth]. [refuseGuests] answers the
+  /// list with a status instead, and [refuseGuest] one guest. While [guestsHeld] is set the list does not go
+  /// out until a test completes it, and while [guestHeld] is set no guest does.
+  Map<String, dynamic>? guests = {};
+  Map<String, Map<String, dynamic>> guestDetails = {};
+  Completer<void>? guestsHeld;
+  Completer<void>? guestHeld;
+  int guestsAsks = 0;
+  final guestAsks = <String>[];
+  String? guestsAuth;
+  int? refuseGuests;
+  int? refuseGuest;
+
   /// A check's history (docs/check-history.md). [histories] answers `GET /orders/<id>/history` by the order
   /// asked for; one it has nothing for is `unknown_id`, and null is a hub older than the history. Each ask
   /// is in [historyAsks] and the token of the last one in [historyAuth]; [refuseHistory] answers with a
@@ -765,6 +781,37 @@ class Hub {
       dayAsks.add(asked);
       final day = asked.isEmpty ? dayRunning : asked;
       return json(days![asked] ?? {'day': day, 'today': day == dayRunning, 'now_ms': clockNow});
+    }
+    if (path == '/reports/guests') {
+      if (guests == null) return json({'detail': 'Not Found'}, 404);
+      guestsAuth = request.headers['authorization'];
+      if (refuseGuests != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': salesRefusal},
+        }, refuseGuests!);
+      }
+      guestsAsks++;
+      if (guestsHeld != null) await guestsHeld!.future;
+      return json(guests!);
+    }
+    if (path.startsWith('/reports/guests/')) {
+      if (guests == null) return json({'detail': 'Not Found'}, 404);
+      guestsAuth = request.headers['authorization'];
+      final phone = path.substring('/reports/guests/'.length);
+      guestAsks.add(phone);
+      if (guestHeld != null) await guestHeld!.future;
+      if (refuseGuest != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': salesRefusal},
+        }, refuseGuest!);
+      }
+      final detail = guestDetails[phone];
+      if (detail == null) {
+        return json({
+          'detail': {'error': 'no_guest', 'message': 'No visit from this number in the last year.'},
+        }, 404);
+      }
+      return json(detail);
     }
     if (path == '/reports/dishes') {
       if (dishes == null) return json({'detail': 'Not Found'}, 404);
