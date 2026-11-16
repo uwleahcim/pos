@@ -51,22 +51,28 @@ CREATE TABLE IF NOT EXISTS orders (
     last_ms  BIGINT,
     version  BIGINT NOT NULL,
     tip      TEXT NOT NULL,
-    phone    TEXT NOT NULL DEFAULT ''
+    phone    TEXT NOT NULL DEFAULT '',
+    promised_ms BIGINT
 );
 CREATE INDEX IF NOT EXISTS orders_open ON orders (order_id) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS orders_first_ms ON orders (first_ms);
 CREATE INDEX IF NOT EXISTS orders_last_ms ON orders (last_ms);
 """
 
-# The customer's number on each order, as digits: added 2026-11-15 to find a caller's earlier orders. An
-# index made before then gets the column and every row is worked out again, once (`_ensure_index`).
-_HAS_PHONE = """
-SELECT 1 FROM information_schema.columns
-WHERE table_schema = current_schema() AND table_name = 'orders' AND column_name = 'phone'
+# What the index came to keep after it was first made: the customer's number on each order, as digits (added
+# 2026-11-15, to find a caller's earlier orders) and the time an order is promised for (added 2026-11-16, to
+# find the orders rung earlier for a day). An index made before either gets the columns and every row is
+# worked out again, once (`_ensure_index`).
+_ADDED = ("phone", "promised_ms")
+_HAS_ADDED = """
+SELECT count(*) FROM information_schema.columns
+WHERE table_schema = current_schema() AND table_name = 'orders' AND column_name = ANY(%s)
 """
-_ADD_PHONE = """
+_ADD = """
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS promised_ms BIGINT;
 CREATE INDEX IF NOT EXISTS orders_phone ON orders (phone, first_ms) WHERE phone <> '';
+CREATE INDEX IF NOT EXISTS orders_promised_ms ON orders (promised_ms) WHERE promised_ms IS NOT NULL;
 """
 
 _UNINDEXED = """
@@ -78,12 +84,14 @@ ORDER BY o.order_id
 """
 
 _INDEX = """
-INSERT INTO orders (order_id, status, first_ms, last_ms, version, tip, phone) VALUES (%s, %s, %s, %s, %s, %s, %s)
+INSERT INTO orders (order_id, status, first_ms, last_ms, version, tip, phone, promised_ms)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (order_id) DO UPDATE SET status = EXCLUDED.status, first_ms = EXCLUDED.first_ms,
-    last_ms = EXCLUDED.last_ms, version = EXCLUDED.version, tip = EXCLUDED.tip, phone = EXCLUDED.phone
+    last_ms = EXCLUDED.last_ms, version = EXCLUDED.version, tip = EXCLUDED.tip, phone = EXCLUDED.phone,
+    promised_ms = EXCLUDED.promised_ms
 """
 
-_ENTRY = "order_id, status, first_ms, last_ms, version, tip, phone"
+_ENTRY = "order_id, status, first_ms, last_ms, version, tip, phone, promised_ms"
 
 _EVERY_ORDER = "SELECT DISTINCT order_id FROM ops ORDER BY order_id"
 
@@ -239,10 +247,12 @@ class PgOpStore:
         opened_since: int | None = None,
         active_since: int | None = None,
         phone: str | None = None,
+        promised: tuple[int, int] | None = None,
     ) -> list[OrderEntry]:
         """The orders that stand at `status`, were opened at or after `opened_since`, last changed at or
-        after `active_since` (wall-clock ms) and carry the number `phone` (digits, see `phone_digits`),
-        whichever of the four are given, by order id."""
+        after `active_since` (wall-clock ms), carry the number `phone` (digits, see `phone_digits`) and are
+        promised for a time from `promised[0]` up to, not at, `promised[1]`, whichever of the five are
+        given, by order id."""
         where: list[str] = []
         params: list[Any] = []
         for clause, value in (
@@ -250,6 +260,8 @@ class PgOpStore:
             ("first_ms >= %s", opened_since),
             ("last_ms >= %s", active_since),
             ("phone = %s", phone),
+            ("promised_ms >= %s", None if promised is None else promised[0]),
+            ("promised_ms < %s", None if promised is None else promised[1]),
         ):
             if value is not None:
                 where.append(clause)
@@ -260,8 +272,14 @@ class PgOpStore:
                 return [OrderEntry(*row) for row in conn.execute(sql, params)]
         except (errors.UndefinedTable, errors.UndefinedColumn):
             if self._ensure_index():
-                return self.index(status=status, opened_since=opened_since, active_since=active_since, phone=phone)
-            return [e for e in self._scan() if e.picked(status, opened_since, active_since, phone)]
+                return self.index(
+                    status=status,
+                    opened_since=opened_since,
+                    active_since=active_since,
+                    phone=phone,
+                    promised=promised,
+                )
+            return [e for e in self._scan() if e.picked(status, opened_since, active_since, phone, promised)]
 
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
@@ -312,17 +330,18 @@ class PgOpStore:
         updated from a build without the index, a database restored from a backup of one, or a standby that
         was promoted. False on a standby whose primary has no index yet: reads there fall back to the log.
 
-        An index from a build that did not keep each order's phone number gets the column, and every order
-        is indexed again, once: the number is in the log, not in the old rows."""
+        An index from a build that did not keep each order's phone number, or the time it is promised for,
+        gets the columns, and every order is indexed again, once: both are in the log, not in the old rows."""
         if self.role != "primary":
             return False
         with self._pool.connection() as conn:
             conn.execute(SCHEMA)
             with conn.transaction():
                 conn.execute("SELECT pg_advisory_xact_lock(%s)", (_APPEND_LOCK,))
-                had_phone = conn.execute(_HAS_PHONE).fetchone() is not None
-                conn.execute(_ADD_PHONE)
-                if had_phone:
+                had = conn.execute(_HAS_ADDED, (list(_ADDED),)).fetchone()
+                complete = had is not None and had[0] == len(_ADDED)
+                conn.execute(_ADD)
+                if complete:
                     behind = [row[0] for row in conn.execute(_UNINDEXED)]
                 else:
                     behind = [row[0] for row in conn.execute(_EVERY_ORDER)]
@@ -348,4 +367,13 @@ class PgOpStore:
 
 
 def _entry_row(entry: OrderEntry) -> tuple[Any, ...]:
-    return (entry.order_id, entry.status, entry.first_ms, entry.last_ms, entry.version, entry.tip, entry.phone)
+    return (
+        entry.order_id,
+        entry.status,
+        entry.first_ms,
+        entry.last_ms,
+        entry.version,
+        entry.tip,
+        entry.phone,
+        entry.promised_ms,
+    )

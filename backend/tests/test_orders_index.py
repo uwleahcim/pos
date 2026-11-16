@@ -250,6 +250,68 @@ def test_an_index_made_before_phone_numbers_were_kept_is_worked_out_again_once(p
         assert [e.order_id for e in updated.index(phone="7815550101")] == ["t1"]
     finally:
         updated.close()
+
+
+def test_the_index_keeps_the_time_each_order_is_promised_for(store):
+    """The orders rung for a day are found from the index, whatever has happened to them since: an order
+    paid and closed the day it was rung is still a sale of the day it is for (the day's report)."""
+    hour = 3_600_000
+    wanted = (T0 + 48 * hour, T0 + 72 * hour)  # from, and up to
+    store.append(
+        [
+            make_op("create", "a", at=0, order_type="takeout", promised_at=T0 + 50 * hour),
+            make_op("create", "b", at=1_000, order_type="takeout", promised_at=T0 + 60 * hour),
+            make_op("create", "c", at=2_000, order_type="takeout"),
+            make_op("create", "d", at=3_000, table="12"),
+            make_op("create", "e", at=4_000, order_type="takeout", promised_at=T0 + 47 * hour),
+        ]
+    )
+    assert [e.order_id for e in store.index(promised=wanted)] == ["a", "b"]
+    assert (store.entry("a").promised_ms, store.entry("c").promised_ms) == (T0 + 50 * hour, None)
+    # closed is found like open; a time moved, given later or taken off moves the order; the end is not in it
+    store.append(
+        [
+            make_op("close", "a", at=5_000),
+            make_op("set_field", "b", at=6_000, promised_at=T0 + 72 * hour),
+            make_op("set_field", "c", at=7_000, promised_at=T0 + 48 * hour),
+        ]
+    )
+    assert [e.order_id for e in store.index(promised=wanted)] == ["a", "c"]
+    assert [e.order_id for e in store.index(promised=wanted, status="open")] == ["c"]
+    assert [e.order_id for e in store.index(promised=wanted, active_since=T0 + 6_500)] == ["c"]
+    store.append([make_op("set_field", "c", at=8_000, promised_at=None)])
+    assert [e.order_id for e in store.index(promised=wanted)] == ["a"]
+    assert store.index(promised=(T0 + 80 * hour, T0 + 90 * hour)) == []
+    # what is no time at all is kept as none, and the order is indexed all the same
+    for i, nonsense in enumerate([True, "soon", -5, 0, 10**30]):
+        store.append([make_op("create", f"n{i}", at=9_000 + i, order_type="takeout", promised_at=nonsense)])
+        assert store.entry(f"n{i}").promised_ms is None
+    assert [oplog.promised_ms(n) for n in (float("inf"), float("nan"), None, 1.5e12)] == [None, None, None, 1.5e12]
+    assert [e.order_id for e in store.index(promised=(0, 10**15))] == ["a", "b", "e"]
+
+
+def test_an_index_made_before_promised_times_were_kept_is_worked_out_again_once(pg):
+    import psycopg
+
+    from pos.sync.pgstore import PgOpStore
+
+    hour = 3_600_000
+    day(pg, 3)
+    pg.append(
+        [
+            make_op("create", "t1", at=10_000, order_type="takeout", promised_at=T0 + 50 * hour),
+            make_op("close", "t1", at=11_000),
+        ]
+    )
+    want = pg.index()
+    with psycopg.connect(DSN) as conn:  # the index as an older build made it
+        conn.execute("ALTER TABLE orders DROP COLUMN promised_ms")
+    updated = PgOpStore(DSN, physical=lambda: NOW)
+    try:
+        assert updated.index() == want
+        assert [e.order_id for e in updated.index(promised=(T0 + 48 * hour, T0 + 72 * hour))] == ["t1"]
+    finally:
+        updated.close()
     again = PgOpStore(DSN, physical=lambda: NOW)  # the next start has nothing to do
     try:
         assert again.index() == want

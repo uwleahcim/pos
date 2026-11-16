@@ -13,6 +13,8 @@ screen holds:
 - **Sold out and running low**, first, because it is what a manager looks at during service: how many
   dishes are sold out and how many have a number left, and the list of them with the fewest left at the top
   (see `eighty-six.md`). Not a setting: a dish is put on it from the order screen.
+- **The day**, under it, for when service is over: what is still open, the day's sales, the money taken and
+  what came off the checks, for any day, with a print (see `day-report.md`). Not a setting either.
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

@@ -60,6 +60,9 @@ merges after any disconnect.
 - The time clock (off to start; staff clock in and out and take breaks with their PIN at any screen; a
   shift nobody ended is closed at 4 AM and marked; a manager reads the hours and corrects a shift with a
   reason the log keeps): `docs/time-clock.md`
+- The day's report (what is still open, the sales, the money taken by how it was paid, the sales by category,
+  kind of order, person and hour, what came off the checks; on the screen for any day, and on paper):
+  `docs/day-report.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;

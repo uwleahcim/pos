@@ -132,6 +132,19 @@ class Hub {
     '2222': {'staff_id': 's2', 'name': 'Ben', 'role': 'bartender'},
   };
 
+  /// The day's report (docs/day-report.md). [days] answers `GET /reports/day` by the day asked for ("" for
+  /// the running one, which is [dayRunning]); a day it has nothing for reads all zeroes, and null is a hub
+  /// older than the report. Each ask is in [dayAsks] ("" for none) and the token of the last one in
+  /// [dayAuth]. `POST /reports/day/print` keeps its body in [dayPrints] and answers the printer
+  /// [dayPrinter], or 409 `no_printer` when that is null. [refuseDay] answers both with a status instead.
+  Map<String, Map<String, dynamic>>? days = {};
+  String dayRunning = '2026-11-16';
+  final dayAsks = <String>[];
+  String? dayAuth;
+  final dayPrints = <Map<String, dynamic>>[];
+  String? dayPrinter = 'Takeout';
+  int? refuseDay;
+
   /// Unreachable: every call fails, as with the hub's cable pulled.
   bool down = false;
 
@@ -666,6 +679,33 @@ class Hub {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
       return order == null ? json({'detail': 'not found'}, 404) : json(order);
+    }
+    if (path == '/reports/day' || path == '/reports/day/print') {
+      if (days == null) return json({'detail': 'Not Found'}, 404);
+      dayAuth = request.headers['authorization'];
+      if (refuseDay != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseDay!);
+      }
+      if (path == '/reports/day/print') {
+        final asked = jsonDecode(request.body) as Map<String, dynamic>;
+        dayPrints.add(asked);
+        if (dayPrinter == null) {
+          return json({
+            'detail': {'error': 'no_printer', 'message': 'No printer is set up for this location.'},
+          }, 409);
+        }
+        return json({
+          'job_id': 'day-${dayPrints.length}',
+          'day': asked['day'] ?? dayRunning,
+          'printed_at': {'id': 'front', 'name': dayPrinter},
+        }, 202);
+      }
+      final asked = request.url.queryParameters['day'] ?? '';
+      dayAsks.add(asked);
+      final day = asked.isEmpty ? dayRunning : asked;
+      return json(days![asked] ?? {'day': day, 'today': day == dayRunning, 'now_ms': clockNow});
     }
     if (path.startsWith('/timeclock/') || path == '/settings/time_clock') {
       if (timeClock == null) return json({'detail': 'Not Found'}, 404);

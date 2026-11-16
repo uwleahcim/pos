@@ -81,6 +81,7 @@ from ..tax import TaxProfile, load_profile
 from ..timeclock import TimeClock, default_clock_store
 from .auth import manager_from
 from .conditional import ConditionalGet
+from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .menu_admin import add_menu_admin
@@ -1835,6 +1836,7 @@ def create_app(
     add_menu_admin(app)
     add_face_signin(app)
     add_time_clock(app)
+    add_day_report(app)
     return app
 
 
