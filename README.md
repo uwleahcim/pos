@@ -48,6 +48,9 @@ merges after any disconnect.
 - Bar tabs (a check with a name and no table, opened with the Tab button; found again under Tabs or by its
   name; on no floor map; given a table when the party sits down, onto that table's check or beside it):
   `docs/bar-tabs.md`
+- The waitlist (the parties waiting for a table in the order they came: name, guests, the wait they were
+  told, a phone number and a note; the wait turns amber, then red; Seat brings up the floor map and the
+  table tapped is theirs; tonight's list only, and no names kept after it): `docs/waitlist.md`
 - Tax-exempt checks (a manager marks a check exempt from sales tax with their PIN; the organisation and its
   certificate number stay with the check, print on the bill and are listed in the day's report; every sale
   stays in the sales): `docs/tax-exempt.md`

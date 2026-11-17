@@ -24,6 +24,7 @@ import '../settings.dart';
 import '../check_search.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
+import '../waitlist.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
@@ -43,6 +44,7 @@ import 'theme.dart';
 import 'time_clock_card.dart';
 import 'waste_screen.dart';
 import 'to_go_chips.dart';
+import 'waitlist_screen.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
 /// Both refresh every two seconds; a later slice replaces polling with a push.
@@ -121,6 +123,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // What "Got it" was tapped on here, until the hub has kept it: shown once even when the hub was slow to hear.
   final _notesGot = <String>{};
   DateTime _quotesRead = DateTime.fromMillisecondsSinceEpoch(0);
+  // The waitlist (docs/waitlist.md) as the hub last gave it: how many parties wait shows on its button, red
+  // when one is past the time it was told. Null until it was read, and from a hub older than the list. Read
+  // when the hub says the list changed, and now and then while it cannot say.
+  Waitlist? _wait;
+  bool _waitStale = true;
+  DateTime _waitRead = DateTime.fromMillisecondsSinceEpoch(0);
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
   Timer? _clock;
@@ -157,8 +165,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _live = widget.api.live.changes.listen((change) {
       if (change.settings || change.everything) _quotesStale = true;
       if (change.notes || change.everything) _notesStale = true;
+      if (change.waitlist || change.everything) _waitStale = true;
       if (_inFront && change.anyOrder) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
+      if (_inFront && change.waitlist) unawaited(_readWait());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
@@ -217,6 +227,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       _floor = floor;
       _moving = null; // a table is moved on the map: leaving it leaves the move
       _seating = null; // and so is a tab seated there
+      _seatingParty = null; // and a party off the waitlist
     });
   }
 
@@ -283,6 +294,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _poll.asked();
     unawaited(_readQuotes());
     unawaited(_readNotes());
+    unawaited(_readWait());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -321,6 +333,46 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // nothing answers, or a hub with no quotes: the strip keeps what it showed
     }
+  }
+
+  /// The waitlist, for the count on its button: read when the hub says the list changed, and now and then
+  /// while it cannot say (twice a minute at most). The answer is the one already held unless it changed.
+  Future<void> _readWait() async {
+    final now = DateTime.now();
+    if (!_waitStale && now.difference(_waitRead) < const Duration(seconds: 30)) return;
+    _waitStale = false;
+    _waitRead = now;
+    try {
+      final list = await widget.api.waitlist();
+      if (!mounted || identical(list, _wait)) return;
+      setState(() => _wait = list);
+      _armClock();
+    } on ApiException {
+      // nothing answers and nothing was read before: the button keeps what it showed
+    }
+  }
+
+  /// The waitlist: who is waiting for a table. **Seat** on a party there brings the floor map up, and the
+  /// next table tapped is theirs ([_seatPartyAt]).
+  Future<void> _waitlist() async {
+    final staff = widget.session.staff;
+    if (staff == null) return;
+    final left = await Navigator.of(context).push<Object?>(
+      PosPageRoute(
+        builder: (_) => WaitlistScreen(api: widget.api, staffId: staff.staffId, list: _wait),
+      ),
+    );
+    if (!mounted) return;
+    if (left is SeatParty) {
+      setState(() {
+        _seatingParty = left.party;
+        _seating = null;
+        _moving = null;
+        _floor = true;
+      });
+    }
+    _waitStale = true;
+    unawaited(_readWait());
   }
 
   Future<void> _readClockSetting() async {
@@ -442,6 +494,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         consider(laterStageChanges(promisedAt: promised, quotedMinutes: order.quotedMinutes, now: now));
       }
     }
+    // the count of parties waiting turns amber, then red, with the one that has waited longest for its time
+    final hubNow = widget.api.nowMs();
+    final turns = _wait?.nextLevelChange(hubNow);
+    if (turns != null) consider(now.add(Duration(milliseconds: turns - hubNow)));
     final at = next;
     if (at == null) return;
     _clock = Timer(at.difference(now) + const Duration(seconds: 1), () {
@@ -705,11 +761,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
     Map<String, dynamic> fields, {
     StaffMember? for_,
     String? label,
+    String? orderId,
     List<(String, Map<String, dynamic>)> lines = const [],
   }) async {
     final staff = widget.session.staff;
     final given = for_ != null && for_.staffId != staff?.staffId;
-    final orderId = widget.outbox.newId();
+    orderId ??= widget.outbox.newId();
     final opId = await widget.outbox.add(orderId, 'create', {
       ...fields,
       if (given) ...{
@@ -929,10 +986,108 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// Seating the tab is over: it sat down, or the person thought better of it. On a device that goes back
   /// to sign-in after sending, whoever sent drinks from the tab and left it to seat it is signed out now.
   void _endSeating() {
+    if (_seatingParty != null) setState(() => _seatingParty = null);
     final seating = _seating;
     if (seating == null) return;
     setState(() => _seating = null);
     if (seating.thenSignOut) unawaited(Future.microtask(widget.session.signOut));
+  }
+
+  /// The party off the waitlist being seated: the next table tapped on the floor map is where it sits down.
+  WaitParty? _seatingParty;
+
+  /// The party being seated was given a place: [to]. A free table takes it like a party walking in, with
+  /// its size filled in: how many guests, and for a host or manager whose table it is; a server who seats
+  /// it takes the check. A table that is seated asks whether the party joins it: its guests are added to that
+  /// table's check, and no new check is opened. Either way the list is told where the party sat.
+  Future<void> _seatPartyAt(FloorPlan plan, TableSpot to) async {
+    final party = _seatingParty;
+    if (party == null) return;
+    final staff = widget.session.staff;
+    final there = plan.checksAt(to.id);
+    if (there.isEmpty) {
+      final roster = await _rosterNow();
+      if (!mounted) return;
+      final assigns = roster.assigns(staff?.staffId);
+      final asked = await showDialog<Seating>(
+        context: context,
+        builder: (_) => _GuestsDialog(
+          table: to,
+          plan: plan,
+          servers: assigns ? roster.servers : const [],
+          me: roster.byId(staff?.staffId),
+          title: 'Seat ${party.name} at ${to.label}',
+          guests: party.size,
+        ),
+      );
+      if (asked == null || !mounted) return; // still seating: another table can be tapped
+      final orderId = widget.outbox.newId();
+      setState(() => _seatingParty = null);
+      unawaited(_partySeated(party, to, orderId));
+      await _create(
+        {'table': to.id, 'guests': asked.guests, 'order_type': 'dine_in'},
+        for_: asked.server,
+        label: to.label,
+        orderId: orderId,
+      );
+      return;
+    }
+    final first = there.first;
+    final guests = (first.guests ?? 0) + party.size;
+    final join = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${to.label} is seated'),
+        content: Text(
+          'Does ${party.label} join the table? Its check then counts ${guestWords(guests)}. '
+          'For a table of their own, tap a free one.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            key: const ValueKey('party-join'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('Join ${to.label}'),
+          ),
+        ],
+      ),
+    );
+    if (join != true || !mounted) return; // still seating: another table can be tapped
+    await widget.outbox.add(first.orderId, 'set_field', {
+      'guests': guests,
+      if (staff != null) 'by': staff.name,
+      if (staff != null) 'by_id': staff.staffId,
+    });
+    if (!mounted) return;
+    setState(() => _seatingParty = null);
+    _floorKey.currentState?.refresh();
+    await _partySeated(party, to, first.orderId, done: '${party.name} joined ${to.label}');
+  }
+
+  /// Tells the list that [party] sat down at [at], on the check [orderId]. The check is opened whatever the
+  /// list answers: the guests are at the table. A list that cannot be told keeps the party, and says so.
+  /// [done] is what to say when all went well; nothing when the screen shows it anyway (the check opens, or
+  /// the table is said to be its server's).
+  Future<void> _partySeated(WaitParty party, TableSpot at, String orderId, {String? done}) async {
+    final staff = widget.session.staff;
+    if (staff == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    String? words;
+    try {
+      final list = await widget.api.seatParty(staff.staffId, party.id, table: at.id, orderId: orderId);
+      if (mounted) setState(() => _wait = list);
+      final sat = list.party;
+      // another screen sat them first: the list keeps where that screen put them
+      words = sat != null && sat.table.isNotEmpty && sat.table != at.id
+          ? '${party.name} was already seated at ${sat.tableLabel}. The list keeps that table.'
+          : done;
+    } on ApiException {
+      words =
+          '${party.name} is at ${at.label}, but the waitlist could not be told. '
+          'Take them off the list when the hub is back.';
+    }
+    if (mounted) _armClock();
+    if (words != null) messenger.showSnackBar(SnackBar(key: const ValueKey('party-seated'), content: Text(words)));
   }
 
   /// The tab being seated was given a place: [to]. A free table takes it like a party walking in: how many
@@ -1057,6 +1212,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// A free table seats a party; a busy one opens its check, or asks which one when it has several.
   Future<void> _onTable(FloorPlan plan, TableSpot table) async {
+    if (_seatingParty != null) return _seatPartyAt(plan, table);
     if (_seating != null) return _seatAt(plan, table);
     if (_moving != null) return _moveTo(plan, table);
     final checks = plan.checksAt(table.id);
@@ -1151,8 +1307,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final showsTabs = tabsOnly || tabs.isNotEmpty;
     final manages = const {'manager', 'owner'}.contains(widget.session.staff?.role);
     final rush = _quotes?.rush;
+    // The waitlist: its button stands in the bar wherever there is room, and on a phone while a party is
+    // waiting or for whoever gives tables out; everybody else on a phone finds it in the menu.
+    final wait = _wait;
+    final waiting = wait?.waiting.length ?? 0;
+    final waitInBar = wait != null && (!small || waiting > 0 || _roster.assigns(widget.session.staff?.staffId));
+    final waitLevel = wait?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
+      if (wait != null && !waitInBar) ('Waitlist', Icons.groups_2_outlined, _waitlist),
       (
         _showClosed ? 'Hide closed' : 'Show closed',
         _showClosed ? Icons.visibility_off : Icons.visibility,
@@ -1222,6 +1385,28 @@ class _OrdersScreenState extends State<OrdersScreen> {
               child: ClipRRect(borderRadius: BorderRadius.circular(7), child: widget.camera.preview()),
             ),
           ),
+          if (waitInBar)
+            IconButton(
+              key: const ValueKey('waitlist-open'),
+              tooltip: waiting == 0 ? 'Waitlist' : 'Waitlist: $waiting waiting',
+              onPressed: _waitlist,
+              icon: Badge(
+                key: ValueKey('waitlist-badge:${waitLevel.name}'),
+                isLabelVisible: waiting > 0,
+                label: Text('$waiting'),
+                backgroundColor: switch (waitLevel) {
+                  TimerLevel.ok => scheme.primary,
+                  TimerLevel.warn => posColors.timerWarn,
+                  TimerLevel.late => posColors.timerLate,
+                },
+                textColor: switch (waitLevel) {
+                  TimerLevel.ok => scheme.onPrimary,
+                  TimerLevel.warn => posColors.timerWarnText,
+                  TimerLevel.late => posColors.timerLateText,
+                },
+                child: const Icon(Icons.groups_2_outlined),
+              ),
+            ),
           IconButton(
             tooltip: _floor ? 'List of checks' : 'Floor map',
             icon: AnimatedSwitcher(
@@ -1308,6 +1493,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
             MovingBar.words(
               'Seating ${_seating!.order.tabLabel}. Tap their table.',
               key: const ValueKey('seating-bar'),
+              onCancel: _endSeating,
+            ),
+          if (_floor && _seatingParty != null)
+            MovingBar.words(
+              'Seating ${_seatingParty!.label}. Tap their table.',
+              key: const ValueKey('seating-party-bar'),
               onCancel: _endSeating,
             ),
           Expanded(
@@ -1489,7 +1680,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // room for that by being its glass alone. While a tab is being seated the next tap is a table's, so
       // neither shows. On a phone's floor map the two stand above the words under the map (what the colours
       // of a table say), where the map leaves room anyway.
-      floatingActionButton: _seating != null
+      floatingActionButton: _seating != null || _seatingParty != null
           ? null
           : Padding(
               padding: EdgeInsets.only(bottom: small && _floor ? 44 : 0),
@@ -1867,9 +2058,19 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
 /// Seats a party: how many guests and, for a host or manager, whose table it is. A server sees only the
 /// guests: the table is theirs by opening it.
 class _GuestsDialog extends StatefulWidget {
-  const _GuestsDialog({required this.table, required this.plan, this.servers = const [], this.me, this.title});
+  const _GuestsDialog({
+    required this.table,
+    required this.plan,
+    this.servers = const [],
+    this.me,
+    this.title,
+    this.guests,
+  });
   final TableSpot table;
   final FloorPlan plan;
+
+  /// How many the party is, when that is known already (a party off the waitlist); the table's seats when not.
+  final int? guests;
 
   /// What the dialog is headed with when it is not a party walking in ("Seat Linda's tab at A5").
   final String? title;
@@ -1885,7 +2086,7 @@ class _GuestsDialog extends StatefulWidget {
 }
 
 class _GuestsDialogState extends State<_GuestsDialog> {
-  late int _guests = widget.table.kind == 'counter' ? 1 : widget.table.seats;
+  late int _guests = widget.guests ?? (widget.table.kind == 'counter' ? 1 : widget.table.seats);
   // A manager who serves starts on their own name; a host has to say whose table it is.
   late StaffMember? _server = widget.servers.where((s) => s.staffId == widget.me?.staffId).firstOrNull;
 
@@ -1895,6 +2096,7 @@ class _GuestsDialogState extends State<_GuestsDialog> {
     final scheme = theme.colorScheme;
     return AlertDialog(
       title: Text(widget.title ?? 'Seat ${widget.table.label}'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1913,11 +2115,16 @@ class _GuestsDialogState extends State<_GuestsDialog> {
                     onPressed: _guests > 1 ? () => setState(() => _guests--) : null,
                     icon: const Icon(Icons.remove),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text(
-                      '$_guests guests',
-                      style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        '$_guests guests',
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.fade,
+                        style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
+                      ),
                     ),
                   ),
                   IconButton(onPressed: () => setState(() => _guests++), icon: const Icon(Icons.add)),

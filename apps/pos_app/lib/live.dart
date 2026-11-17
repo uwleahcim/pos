@@ -14,6 +14,7 @@ class LiveChange {
     this.menu = false,
     this.settings = false,
     this.notes = false,
+    this.waitlist = false,
   });
 
   /// The orders that changed, by id.
@@ -32,6 +33,9 @@ class LiveChange {
   /// A note for the shift was put up, changed or taken down (docs/shift-notes.md).
   final bool notes;
 
+  /// A party was put on the waitlist, changed, sat down or taken off (docs/waitlist.md).
+  final bool waitlist;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -40,7 +44,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -242,6 +246,7 @@ class LiveFeed extends ChangeNotifier {
             menu: topics.contains('menu'),
             settings: topics.contains('settings'),
             notes: topics.contains('notes'),
+            waitlist: topics.contains('waitlist'),
           ),
         );
     }
