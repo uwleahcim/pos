@@ -84,6 +84,7 @@ from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
 from ..timeclock import TimeClock, default_clock_store
+from ..waste import WasteLog, default_waste_store
 from .auth import manager_from
 from .conditional import ConditionalGet
 from .day import add_day_report
@@ -95,6 +96,7 @@ from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .sales import add_sales_report
 from .timeclock import add_time_clock
+from .waste import add_waste_log
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -736,6 +738,7 @@ def create_app(
     customers: CustomerNotes | None = None,
     clock: TimeClock | None = None,
     notes: ShiftNotes | None = None,
+    waste: WasteLog | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -818,6 +821,8 @@ def create_app(
     app.state.clock = clock if clock is not None else TimeClock(default_clock_store())
     # Notes for the shift (each person sees one once) and the manager's log.
     app.state.notes = notes if notes is not None else ShiftNotes(default_note_store())
+    # The waste log: food that was not sold, written down beside the orders and never part of them.
+    app.state.waste = waste if waste is not None else WasteLog(default_waste_store())
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
@@ -1909,6 +1914,7 @@ def create_app(
     add_face_signin(app)
     add_time_clock(app)
     add_shift_notes(app)
+    add_waste_log(app)
     add_day_report(app)
     add_sales_report(app)
     add_guest_list(app)

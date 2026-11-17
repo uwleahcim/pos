@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'counter_test.dart';
 import 'coursing_test.dart' show pumpLocation;
+import 'location_rows.dart' show wholeLocation;
 import 'phone_test.dart' show active;
 
 /// Desk phones linked to screens: a call taken on a desk phone opens the caller's order on the linked screen
@@ -286,7 +287,7 @@ void main() {
   group('Location settings', () {
     /// The whole screen in view, so the Desk phones card at the bottom needs no scrolling.
     Future<void> tall(WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1100, 3000);
+      tester.view.physicalSize = wholeLocation;
       await tester.pumpAndSettle();
     }
 

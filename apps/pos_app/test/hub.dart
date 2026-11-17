@@ -241,6 +241,210 @@ class Hub {
   int? refuseNotesSeen;
   (int, String, String)? refuseNote;
 
+  /// The waste log (docs/waste-log.md). [waste] holds today's entries, the newest first; null is a hub older
+  /// than the log. `GET /waste` answers them with [wasteReasons]. `POST /waste` writes one at the top by
+  /// whoever the body names ([wasteWritten] keeps the bodies), a dish named and priced from [wasteDishes];
+  /// [refuseWaste] answers 422 with these words instead. `POST /waste/<id>/strike` strikes one out
+  /// ([wasteStruck]: the entry, the staff id and the token it came with); [refuseWasteStrike] answers 409
+  /// with these words instead. `GET /reports/waste` adds [waste] up, or answers [wasteReport] when a test
+  /// set one ([wasteAsks] keeps each ask's days, [wasteAuth] the token of the last, and [refuseWasteReport]
+  /// answers with a status instead). `GET` and `PUT
+  /// /settings/waste` keep [wasteReasons] ([wasteReasonsAuth], [refuseWasteReasons]). [wasteDays] holds the
+  /// entries of earlier days by their day, which `GET /waste?day=` answers ([wasteDayAsks] keeps the days
+  /// asked) and a strike finds too.
+  List<Map<String, dynamic>>? waste = [];
+  final wasteDays = <String, List<Map<String, dynamic>>>{};
+  final wasteDayAsks = <String?>[];
+  List<String> wasteReasons = ['Dropped', 'Burnt', 'Made wrong', 'Expired', 'Spoiled', 'Staff meal'];
+  final wasteWritten = <Map<String, dynamic>>[];
+  final wasteStruck = <(String, String, String?)>[];
+  final wasteAsks = <Map<String, String>>[];
+  Map<String, dynamic>? wasteReport;
+  String? wasteAuth;
+  String? wasteReasonsAuth;
+  String? refuseWaste;
+  int? refuseWasteReport; // a status `GET /reports/waste` answers with instead
+  String? refuseWasteStrike;
+  String? refuseWasteReasons;
+  static const wasteDishes = {
+    'GTC:quart': ("General Tso's Chicken (Quart)", 'GTC', '24.95'),
+    'GTC:pint': ("General Tso's Chicken (Pint)", 'GTC', '13.95'),
+    'EGGROLL:regular': ('Egg roll', 'EGGROLL', '3.50'),
+    'WINGS:6pc': ('Chicken wings', 'WINGS', '8.95'),
+    'BB:regular': ('Beef with Broccoli', 'BB', '14.95'),
+  };
+  static const wasteStaff = {'s1': 'Amy', 's2': 'Ben', 's3': 'Mike', 's4': 'Holly', 's5': 'Wei'};
+
+  /// An entry of the waste log as the hub answers it, written at [atMs] (now when left out).
+  Map<String, dynamic> wasteEntry(
+    String id,
+    String name,
+    int qty,
+    String reason, {
+    String? each,
+    String by = 'Amy',
+    String byId = 's1',
+    String note = '',
+    int? atMs,
+    int? struckMs,
+    String struckBy = '',
+    String? variantId,
+  }) => {
+    'id': id,
+    'at_ms': atMs ?? clockNow,
+    'day': '2026-11-16',
+    'name': name,
+    'qty': qty,
+    'reason': reason,
+    'item': each == null ? null : (variantId ?? name).split(':').first,
+    'variant_id': variantId,
+    'each': each,
+    'value': each == null ? null : (double.parse(each) * qty).toStringAsFixed(2),
+    'note': note,
+    'by_id': byId,
+    'by': by,
+    'struck_ms': struckMs,
+    'struck_by': struckBy,
+  };
+
+  static Map<String, dynamic> _wasteTotal(Iterable<Map<String, dynamic>> entries) {
+    var count = 0, unpriced = 0, value = 0.0, n = 0;
+    for (final entry in entries) {
+      n++;
+      count += entry['qty'] as int;
+      if (entry['value'] == null) {
+        unpriced += entry['qty'] as int;
+      } else {
+        value += double.parse(entry['value'] as String);
+      }
+    }
+    return {'entries': n, 'count': count, 'value': value.toStringAsFixed(2), 'unpriced': unpriced};
+  }
+
+  static final _wasteStrike = RegExp(r'^/waste/([^/]+)/strike$');
+
+  /// The waste log: the day, a new entry, an entry struck out, the days added up.
+  http.Response _waste(http.Request request) {
+    final path = request.url.path;
+    if (waste == null) return json({'detail': 'Not Found'}, 404);
+    final standing = [
+      for (final entry in waste!)
+        if (entry['struck_ms'] == null) entry,
+    ];
+    if (path == '/reports/waste') {
+      wasteAuth = request.headers['authorization'];
+      wasteAsks.add(request.url.queryParameters);
+      if (wasteAuth == null || refuseWasteReport != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseWasteReport ?? 401);
+      }
+      if (wasteReport != null) return json(wasteReport!);
+      List<Map<String, dynamic>> by(String Function(Map<String, dynamic>) key, {bool dishes = false}) {
+        final groups = <String, List<Map<String, dynamic>>>{};
+        for (final entry in standing) {
+          groups.putIfAbsent(key(entry), () => []).add(entry);
+        }
+        final rows = [
+          for (final group in groups.values)
+            {
+              'name': dishes ? group.last['name'] : key(group.first),
+              if (dishes) 'typed': group.last['item'] == null,
+              ..._wasteTotal(group),
+            },
+        ];
+        rows.sort((a, b) => double.parse(b['value'] as String).compareTo(double.parse(a['value'] as String)));
+        return rows;
+      }
+
+      final from = request.url.queryParameters['from'] ?? '2026-11-16';
+      final to = request.url.queryParameters['to'] ?? from;
+      return json({
+        'from': from,
+        'to': to,
+        'total': _wasteTotal(standing),
+        'struck': waste!.length - standing.length,
+        'days': [
+          if (from != to) {'day': from, ..._wasteTotal(const [])},
+          {'day': to, ..._wasteTotal(standing)},
+        ],
+        'reasons': by((e) => e['reason'] as String),
+        'dishes': by(
+          (e) => (e['variant_id'] ?? 'typed:${(e['name'] as String).toLowerCase()}') as String,
+          dishes: true,
+        ),
+        'max_days': 92,
+        'now_ms': clockNow,
+      });
+    }
+    final strike = _wasteStrike.firstMatch(path)?.group(1);
+    if (strike != null) {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final token = request.headers['authorization'];
+      wasteStruck.add((strike, body['staff_id'] as String? ?? '', token));
+      if (refuseWasteStrike != null) {
+        return json({
+          'detail': {'error': 'not_yours', 'message': refuseWasteStrike},
+        }, 409);
+      }
+      final entry = [...waste!, ...wasteDays.values.expand((day) => day)].where((e) => e['id'] == strike).firstOrNull;
+      if (entry == null) {
+        return json({
+          'detail': {'error': 'unknown_entry', 'message': 'There is no such entry.'},
+        }, 404);
+      }
+      entry['struck_ms'] ??= clockNow;
+      entry['struck_by'] = token != null ? 'Mike' : (wasteStaff[body['staff_id']] ?? '');
+      return json(entry);
+    }
+    if (request.method == 'POST') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      wasteWritten.add(body);
+      if (refuseWaste != null) {
+        return json({
+          'detail': {'error': 'bad_reason', 'message': refuseWaste},
+        }, 422);
+      }
+      final dish = wasteDishes[body['variant_id']];
+      final entry = wasteEntry(
+        'w-new-${wasteWritten.length}',
+        dish?.$1 ?? body['name'] as String,
+        body['qty'] as int,
+        body['reason'] as String,
+        each: dish?.$3,
+        variantId: body['variant_id'] as String?,
+        note: body['note'] as String? ?? '',
+        byId: body['staff_id'] as String,
+        by: wasteStaff[body['staff_id']] ?? '',
+      );
+      waste!.insert(0, entry);
+      return json(entry);
+    }
+    final asked = request.url.queryParameters['day'];
+    wasteDayAsks.add(asked);
+    if (asked != null && asked != '2026-11-16') {
+      final entries = wasteDays[asked] ?? const <Map<String, dynamic>>[];
+      return json({
+        'day': asked,
+        'today': false,
+        'entries': entries,
+        'total': _wasteTotal(entries.where((e) => e['struck_ms'] == null)),
+        'reasons': wasteReasons,
+        'limits': {'name': 60, 'note': 120, 'qty': 999},
+        'now_ms': clockNow,
+      });
+    }
+    return json({
+      'day': '2026-11-16',
+      'today': true,
+      'entries': waste,
+      'total': _wasteTotal(standing),
+      'reasons': wasteReasons,
+      'limits': {'name': 60, 'note': 120, 'qty': 999},
+      'now_ms': clockNow,
+    });
+  }
+
   /// The manager's log (docs/shift-notes.md). [logbook] holds the entries, the newest first; null is a hub
   /// older than the log. `GET /logbook` answers [logPage] of them at a time, by subject and by the words
   /// asked for (each ask's query is in [logAsks]), `POST /logbook` writes one at the top ([logWritten]) and
@@ -884,6 +1088,7 @@ class Hub {
     if (path == '/orders') return json({'orders': orders});
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
     if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);
+    if (path == '/waste' || path.startsWith('/waste/') || path == '/reports/waste') return _waste(request);
     if (path == '/signin' && request.method == 'POST') {
       final body = jsonDecode(request.body) as Map;
       final tagUid = body['tag_uid'] as String?;
@@ -1265,6 +1470,21 @@ class Hub {
           kitchenNotes = [...(jsonDecode(request.body) as Map<String, dynamic>)['notes'] as List].cast<String>();
         }
         return json({'notes': kitchenNotes});
+      case '/settings/waste':
+        if (waste == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          wasteReasonsAuth = request.headers['authorization'];
+          if (refuseWasteReasons != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseWasteReasons},
+            }, 422);
+          }
+          wasteReasons = [...(jsonDecode(request.body) as Map<String, dynamic>)['reasons'] as List].cast<String>();
+        }
+        return json({
+          'reasons': wasteReasons,
+          'limits': {'reasons': 12, 'reason': 24},
+        });
       case '/reports/adjustments':
         return report == null ? json({'detail': 'Not Found'}, 404) : json(report!);
       case '/settings/desk_phones':

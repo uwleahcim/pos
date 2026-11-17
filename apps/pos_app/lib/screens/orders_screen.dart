@@ -41,6 +41,7 @@ import 'tab_dialog.dart';
 import 'table_moves.dart';
 import 'theme.dart';
 import 'time_clock_card.dart';
+import 'waste_screen.dart';
 import 'to_go_chips.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
@@ -415,6 +416,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     builder: (_) => TimeClockDialog(api: widget.api, device: widget.settings.device),
   );
 
+  /// The waste log (docs/waste-log.md): anybody signed in writes down what was made and not sold.
+  Future<void> _waste() => Navigator.of(context).push(
+    PosPageRoute<void>(
+      builder: (_) =>
+          WasteScreen(api: widget.api, staffId: widget.session.staff?.staffId ?? '', device: widget.settings.device),
+    ),
+  );
+
   /// Sets [_clock] for the next moment the clock alone changes this screen: the rush running out, or an
   /// order for later nearing or reaching its time to start.
   void _armClock() {
@@ -679,6 +688,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         builder: (_) => LocationSettingsScreen(
           api: widget.api,
           token: token,
+          staffId: widget.session.staff?.staffId,
           device: widget.settings.device,
           camera: widget.camera,
           tags: widget.tags,
@@ -1153,6 +1163,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
       if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
+      ('Waste', Icons.delete_sweep_outlined, _waste),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role) && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role))

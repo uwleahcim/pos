@@ -30,6 +30,7 @@ import 'shift_notes.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
 import 'voids.dart';
+import 'waste.dart';
 
 /// Worker: the `/menu/items` answer split into one JSON text per dish, under the name [PosApi.item] reads
 /// it back by, with the menu revision the answer carries. Decoding ten megabytes and encoding each dish
@@ -1160,6 +1161,69 @@ class PosApi {
   /// A manager strikes an entry out. It stays in the log, readable, with who struck it and when.
   Future<LogEntry> strikeLogEntry(String token, String entryId) async =>
       LogEntry.fromJson(await _post('/logbook/$entryId/strike', const <String, dynamic>{}, headers: _bearer(token)));
+
+  // The waste log (docs/waste-log.md). -----------------------------------------------------------------------
+
+  /// One day of the waste log, the newest entry first, with the location's reasons: the day that is running,
+  /// or [day] ("2026-11-16"). 404 from a hub older than the log.
+  Future<WasteDay> wasteDay({String? day}) async => WasteDay.fromJson(await _get('/waste', query: {'day': ?day}));
+
+  /// Somebody writes down food that was wasted: a dish of the menu ([variantId], which the hub names and
+  /// prices itself) or something typed ([name]), how many, and a reason of the location's list.
+  Future<WasteEntry> logWaste({
+    required String staffId,
+    String? variantId,
+    String? entryId,
+    String name = '',
+    required int qty,
+    required String reason,
+    String note = '',
+    String? device,
+  }) async => WasteEntry.fromJson(
+    await _post('/waste', {
+      'staff_id': staffId,
+      'variant_id': ?variantId,
+      'entry_id': ?entryId,
+      'name': name,
+      'qty': qty,
+      'reason': reason,
+      'note': note,
+      'device': device ?? '',
+    }),
+  );
+
+  /// Strikes an entry out: the person who wrote it, the day they wrote it ([staffId]), or a manager any day
+  /// ([token]). It stays in the log, readable, and counts in no total.
+  Future<WasteEntry> strikeWaste(String entryId, {String staffId = '', String? token}) async => WasteEntry.fromJson(
+    await _post('/waste/$entryId/strike', {'staff_id': staffId}, headers: token == null ? null : _bearer(token)),
+  );
+
+  /// The waste of a span of days added up by day, by reason and by dish (manager token). The days are asked
+  /// as [salesReport] asks them. 404 from a hub older than the log.
+  Future<WasteReport> wasteReport(String token, {String? from, String? to}) async =>
+      WasteReport.fromJson(await _get('/reports/waste', query: {'from': ?from, 'to': ?to}, headers: _bearer(token)));
+
+  /// The location's reasons for the waste log, in the order the buttons show. Null from a hub older than
+  /// the log.
+  Future<WasteReasons?> wasteReasons() async {
+    try {
+      return WasteReasons.fromJson(await _get('/settings/waste'));
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) lists the reasons for every terminal.
+  Future<WasteReasons> saveWasteReasons(String token, List<String> reasons) async => WasteReasons.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/waste'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'reasons': reasons}),
+      ),
+    ),
+  );
 
   // A check's history (docs/check-history.md). ---------------------------------------------------------------
 

@@ -90,6 +90,9 @@ merges after any disconnect.
 - Dish names in Chinese on the screens (each person picks, under Display, which name of a dish they read:
   English or 中文; the menu's tiles and the check follow it and it follows them to every screen; what is
   recorded, the bill and the kitchen's tickets do not change): `docs/dish-names.md`
+- The waste log (food that was made or bought and not sold: what it was, how many and why, with a reason
+  from the location's list; struck out, never deleted; a manager reads it by reason, by dish and by day; it
+  is beside the sales and never part of them): `docs/waste-log.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`
