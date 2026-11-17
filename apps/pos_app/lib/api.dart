@@ -20,6 +20,7 @@ import 'guests_report.dart';
 import 'kitchen_notes.dart';
 import 'live.dart';
 import 'menu.dart';
+import 'orders_ahead.dart';
 import 'phone.dart';
 import 'powers.dart';
 import 'pricing.dart';
@@ -227,6 +228,7 @@ class Order {
     this.allergies = const [],
     this.discounts = const [],
     this.openedMs,
+    this.due,
   });
 
   /// A check the backend has not heard of yet (its create is still on the way).
@@ -238,7 +240,8 @@ class Order {
       payments = const [],
       allergies = const [],
       discounts = const [],
-      openedMs = null;
+      openedMs = null,
+      due = null;
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries
@@ -263,12 +266,18 @@ class Order {
             (discountId: key, lineId: value['line_id'] as String?),
       ],
       openedMs: (json['opened_ms'] as num?)?.toInt(),
+      due: json['due'] as String?,
     );
   }
 
   /// When the check was opened (wall-clock ms), as a list of checks says it; null on a read of one order,
   /// and from a hub older than the search of the checks.
   final int? openedMs;
+
+  /// What is still to pay on a to-go order that took money, as a list of checks says it ("45.01", or "0.00"
+  /// once it is paid up): a deposit is not the whole of it. Null on an order nothing was paid on, on a
+  /// table's check, on a read of one order (its check says it) and from a hub older than deposits.
+  final String? due;
 
   final String orderId;
   final String status;
@@ -317,6 +326,10 @@ class Order {
   /// How many dishes are on the order: what a kitchen counts when it says an order is big.
   int get dishes => activeLines.fold(0, (n, l) => n + l.qty);
   bool get hasPaid => payments.isNotEmpty;
+
+  /// What an event needs, on a catering order: the guests, how it leaves, where to, the note.
+  EventDetails get event => EventDetails.of(fields);
+  bool get isCatering => isTakeout && channel == 'catering';
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
   List<Line> get activeLines => lines.where((l) => l.isActive).toList();
@@ -495,6 +508,17 @@ class PosApi {
   );
 
   Future<Order> order(String orderId) => _repeated('/orders/$orderId', Order.fromJson);
+
+  /// The orders ahead (docs/catering.md): every to-go order a customer named a time for that has not been
+  /// handed over, by the day it is for, with the money on each. Null from a hub older than the list.
+  Future<OrdersAhead?> ordersAhead() async {
+    try {
+      return await _repeated('/orders/ahead', OrdersAhead.fromJson);
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
 
   /// The order this number opened last today, as the hub finds it (the digits match, the location's day,
   /// a voided order does not count), or null when the number opened none today.

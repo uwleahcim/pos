@@ -37,8 +37,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
-- **Quote times**: the minutes per channel, which channels may pay at pickup, and how many more minutes
-  an order of so many dishes takes (see `counter-mode.md`). Tonight's rush is not here: it is the flame on
+- **Quote times**: the minutes per channel, which channels may pay at pickup, how long before its time a
+  catering order's ticket prints, and how many more minutes an order of so many dishes takes (see
+  `counter-mode.md`). Tonight's rush is not here: it is the flame on
   the orders screen, because it is set in the middle of service.
 - **To-go question**, on the same card: whether a to-go order is asked what goes in the bag before it is
   sent (on to start), the question's words and the things it offers, eight at most (see

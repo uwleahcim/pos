@@ -106,6 +106,10 @@ merges after any disconnect.
 - The pickup board (a screen facing the pickup shelf lists the to-go orders being made and the ones ready,
   by number and first name and nothing else; a switch on the device, the board standing where the sign-in
   pad stands, with Staff in its corner for the pad): `docs/pickup-board.md`
+- Catering orders and the orders ahead (a to-go order for any later day, with the guests, pickup or
+  delivery, the address and a note; a deposit with the rest still due, and Pay for the rest; the list of
+  checks says the day and what is left to pay; Orders ahead lists what was promised for a later time by
+  day, with what was paid on each): `docs/catering.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

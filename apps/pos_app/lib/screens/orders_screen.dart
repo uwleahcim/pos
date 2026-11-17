@@ -29,10 +29,13 @@ import '../waitlist.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
+import 'event_fields.dart';
 import 'floor_view.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
+import 'orders_ahead_screen.dart';
+import 'pay_dialog.dart';
 import 'rush.dart';
 import 'server_picker.dart';
 import 'shift_notes_dialog.dart';
@@ -723,6 +726,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
       'promised_at': promised.millisecondsSinceEpoch,
       if (request.promisedAt != null) 'for_later': true,
       'stage': 'new',
+      // what a catering order's event needs: only what was filled in
+      for (final MapEntry(:key, :value) in (request.event?.toFields() ?? const <String, dynamic>{}).entries)
+        if (value != null && value != '') key: value,
     }, lines: lines);
   }
 
@@ -735,12 +741,58 @@ class _OrdersScreenState extends State<OrdersScreen> {
     await _create({'order_type': 'dine_in', 'tab': true, 'customer_name': name});
   }
 
-  /// Ready sends the customer their text (the hub does, once); picked up closes the check.
+  /// Ready sends the customer their text (the hub does, once); picked up closes the check. An order a
+  /// deposit was taken on is asked for the rest as it is handed over (docs/catering.md): cash or paid
+  /// elsewhere, or not now, which closes the check with the rest still due, as an order nothing was paid on
+  /// always closed.
   Future<void> _setStage(Order order, String stage) async {
+    PayChoice? paying;
+    final due = order.due;
+    if (stage == 'picked_up' && due != null && cents(due) > 0) {
+      paying = await showDialog<PayChoice>(
+        context: context,
+        builder: (_) => PayDialog(due: due, channel: order.channel, payAtPickup: true, sends: false, handover: true),
+      );
+      if (paying == null || !mounted) return;
+    }
     await widget.outbox.addAll(order.orderId, [
+      if (paying != null && paying.takesMoney)
+        (
+          'pay',
+          {
+            'payment_id': widget.outbox.newId(),
+            'method': paying.method,
+            'amount': paying.amount ?? due,
+            'tendered': ?paying.tendered,
+            if (paying.note.isNotEmpty) 'note': paying.note,
+            'by': ?widget.session.staff?.name,
+          },
+        ),
       ('set_field', {'stage': stage}),
       if (stage == 'picked_up') ('close', {}),
     ]);
+    final tendered = paying?.tendered;
+    final change = tendered == null ? 0 : cents(tendered) - cents(paying?.amount ?? due ?? '0');
+    if (change > 0 && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
+          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+        ),
+      );
+    }
+  }
+
+  /// The orders ahead (docs/catering.md): what was promised for a later time, by the day it is for, with
+  /// the money on each. A tap on one opens it.
+  Future<void> _ahead() async {
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => OrdersAheadScreen(api: widget.api, onOpen: _open),
+      ),
+    );
+    if (mounted) unawaited(_refresh());
   }
 
   /// The night as it stands on one screen (docs/today.md), behind the PIN of whoever may see the reports.
@@ -1377,6 +1429,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _refresh();
         }),
       ),
+      ('Orders ahead', Icons.event_note_outlined, _ahead),
       if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       ('Waste', Icons.delete_sweep_outlined, _waste),
@@ -1703,9 +1756,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                       '$items items',
                                       order.status,
                                       if (order.isFired) 'fired',
+                                      // a time the customer named says its day too, when that is not today
                                       if (isTakeout && promisedAt != null)
-                                        '${order.forLater ? 'for' : 'ready'} ${clockTime(promisedAt)}',
-                                      if (isTakeout) order.hasPaid ? 'paid' : 'pay at pickup',
+                                        order.forLater
+                                            ? 'for ${whenFor(promisedAt, now)}'
+                                            : 'ready ${clockTime(promisedAt)}',
+                                      // "$45.01 due" once a deposit was taken: not the whole of it
+                                      if (isTakeout) moneyWords(order),
                                       if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
                                       if (finding && (order.fields['server']?.toString() ?? '').isNotEmpty)
                                         order.fields['server'].toString(),
@@ -1783,7 +1840,9 @@ String _opened(int ms, DateTime now) {
 }
 
 /// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is
-/// for now (the channel's quote) or a later time today or tomorrow. For a [caller] the number, the phone
+/// for now (the channel's quote) or a later time today, tomorrow or any day off a calendar. A catering
+/// order (docs/catering.md) always names its day and time, and says what its event needs: the guests,
+/// pickup or delivery, the address and a note. For a [caller] the number, the phone
 /// channel and the caller-ID name are filled in; all of it stays editable.
 ///
 /// The number in the box is looked up as a customer (as the form opens for a caller, and as a number is
@@ -1811,8 +1870,14 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   late String _channel = widget.caller == null ? 'counter' : 'phone';
   String _locale = 'en';
   bool _later = false;
-  int _dayOffset = 0; // 0 today, 1 tomorrow
+  DateTime _day = DateTime.now(); // the day a later order is for: its date alone counts
   TimeOfDay? _time;
+
+  // what a catering order's event needs
+  final _guests = TextEditingController();
+  final _address = TextEditingController();
+  final _eventNote = TextEditingController();
+  String _handover = 'pickup';
 
   CustomerCard? _customer; // who the hub says is at the number in the box; null: not asked, or no answer
   String _filled = ''; // the name the form itself put in the box: a customer's replaces it, a typed one stays
@@ -1835,6 +1900,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     _name.dispose();
     _phone.dispose();
     _note.dispose();
+    _guests.dispose();
+    _address.dispose();
+    _eventNote.dispose();
     super.dispose();
   }
 
@@ -1889,14 +1957,18 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     }
   }
 
+  bool get _catering => _channel == 'catering';
+
+  /// The customer names the time: the switch says so, and a catering order always does.
+  bool get _named => _later || _catering;
+
   DateTime? get _promised {
     final time = _time;
-    if (!_later || time == null) return null;
-    final day = DateTime.now().add(Duration(days: _dayOffset));
-    return DateTime(day.year, day.month, day.day, time.hour, time.minute);
+    if (!_named || time == null) return null;
+    return WhenPicker.at(_day, time);
   }
 
-  bool get _ready => _name.text.trim().isNotEmpty && (!_later || _time != null);
+  bool get _ready => _name.text.trim().isNotEmpty && (!_named || _time != null);
 
   /// Start, or Same again on the past order [again].
   void _start({String? again}) => Navigator.of(context).pop(
@@ -1908,13 +1980,11 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       promisedAt: _promised,
       again: again,
       note: _noteChanged ? _noteText : null,
+      event: _catering
+          ? EventFields.read(guests: _guests, address: _address, note: _eventNote, handover: _handover)
+          : null,
     ),
   );
-
-  Future<void> _pickTime() async {
-    final picked = await showTimePicker(context: context, initialTime: _time ?? TimeOfDay.now());
-    if (picked != null && mounted) setState(() => _time = picked);
-  }
 
   /// What is known of the customer at the number: how often they ordered, the note, their latest orders.
   Widget _customerCard(ThemeData theme, CustomerCard customer) {
@@ -2051,47 +2121,52 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                 ],
               ),
               const SizedBox(height: 8),
-              SwitchListTile(
-                key: const ValueKey('takeout-later'),
-                contentPadding: EdgeInsets.zero,
-                title: const Text('For later'),
-                subtitle: Text(
-                  key: const ValueKey('takeout-quote'),
-                  _later
-                      ? 'Prints ahead of its time by the quote${rush > 0 ? ' ($minutes min tonight)' : ''}'
-                      : 'Ready in about $minutes min${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
+              // A catering order is always for a time the customer names: the switch has nothing to ask.
+              if (_catering)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text(
+                    key: const ValueKey('takeout-quote'),
+                    'The kitchen gets its ticket $minutes min before its time.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                )
+              else
+                SwitchListTile(
+                  key: const ValueKey('takeout-later'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('For later'),
+                  subtitle: Text(
+                    key: const ValueKey('takeout-quote'),
+                    _later
+                        ? 'Prints ahead of its time by the quote${rush > 0 ? ' ($minutes min tonight)' : ''}'
+                        : 'Ready in about $minutes min${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
+                  ),
+                  value: _later,
+                  onChanged: (on) => setState(() => _later = on),
                 ),
-                value: _later,
-                onChanged: (on) => setState(() => _later = on),
-              ),
-              if (_later)
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SegmentedButton<int>(
-                      segments: const [
-                        ButtonSegment(value: 0, label: Text('Today')),
-                        ButtonSegment(value: 1, label: Text('Tomorrow')),
-                      ],
-                      selected: {_dayOffset},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (s) => setState(() => _dayOffset = s.first),
-                    ),
-                    OutlinedButton.icon(
-                      key: const ValueKey('takeout-time'),
-                      onPressed: _pickTime,
-                      icon: const Icon(Icons.schedule),
-                      label: Text(_time == null ? 'Time' : _time!.format(context)),
-                    ),
-                  ],
+              if (_named)
+                WhenPicker(
+                  day: _day,
+                  time: _time,
+                  onDay: (day) => setState(() => _day = day),
+                  onTime: (time) => setState(() => _time = time),
                 ),
-              if (_later && _time == null)
+              if (_named && _time == null)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text('Pick the time it is for.', style: theme.textTheme.bodySmall),
                 ),
+              if (_catering) ...[
+                const SizedBox(height: 12),
+                EventFields(
+                  guests: _guests,
+                  address: _address,
+                  note: _eventNote,
+                  handover: _handover,
+                  onHandover: (way) => setState(() => _handover = way),
+                ),
+              ],
             ],
           ),
         ),

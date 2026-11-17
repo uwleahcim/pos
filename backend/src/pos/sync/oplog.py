@@ -95,6 +95,14 @@ ORDER_FIELDS = frozenset(
         # What goes in the bag with a to-go order (pos.orders.bag): the answer to the one question asked
         # before it is sent, {items: [{id, name, qty}]}. No items: nothing was wanted.
         "bag",
+        # An order for an event (pos.orders.ahead): how many it feeds, how it leaves (pickup | delivery),
+        # where it is brought when it is delivered, and a line about the event (set up by 11:30, side
+        # door). The head count is not `guests`: that is a table's, which the reports count as covers and
+        # the automatic charges go by, and neither is meant for an order that leaves in trays.
+        "event_guests",
+        "handover",
+        "address",
+        "event_note",
     }
 )
 ALLERGY_NOTE_MAX = 80

@@ -1,5 +1,5 @@
 import 'day_report.dart' show dollars, kindLabel, methodLabel;
-import 'takeout.dart' show channelLabel, stageLabel;
+import 'takeout.dart' show EventDetails, channelLabel, handoverLabel, stageLabel;
 import 'voids.dart' show checkName;
 
 /// A check's history as the hub tells it (`GET /orders/{id}/history`, docs/check-history.md): every step the
@@ -260,6 +260,14 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
             if (fields['quoted_minutes'] is num) 'quoted ${_n(fields['quoted_minutes'])} minutes',
           ].join(', '),
           if (_text(fields['note']).isNotEmpty) 'Note: ${_text(fields['note'])}',
+          // a catering order: what its event needs
+          if (fields['handover'] != null || fields['event_guests'] != null)
+            EventDetails(
+              guests: _n(fields['event_guests']),
+              handover: _text(fields['handover']) == 'delivery' ? 'delivery' : 'pickup',
+              address: _text(fields['address']),
+              note: _text(fields['event_note']),
+            ).words,
         ].where((line) => line.isNotEmpty).toList(),
       );
     case 'table':
@@ -321,6 +329,14 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
           under: [if (was.isNotEmpty) 'It was ${_orderKind(was)} order'],
         ),
         'channel' => (title: _changed('Taken by', channelLabel(was), channelLabel(now)), under: const <String>[]),
+        // what a catering order's event needs (docs/catering.md)
+        'event_guests' => (title: _changed('Guests for the event', was, now), under: const <String>[]),
+        'handover' => (
+          title: now.isEmpty ? 'Pickup or delivery taken off' : 'Set for ${handoverLabel(now).toLowerCase()}',
+          under: [if (was.isNotEmpty && now.isNotEmpty) 'It was for ${handoverLabel(was).toLowerCase()}'],
+        ),
+        'address' => (title: _changed('Address', was, now), under: const <String>[]),
+        'event_note' => (title: _changed('Note for the event', was, now), under: const <String>[]),
         final field => (title: _changed(_text(field), was, now), under: const <String>[]),
       };
     case 'added' || 'moved_in':

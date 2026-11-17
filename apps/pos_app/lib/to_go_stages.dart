@@ -3,6 +3,7 @@
 library;
 
 import 'api.dart';
+import 'local_order.dart';
 import 'takeout.dart';
 
 /// The chips, in the order an order moves through them; [unpaid] cuts across the other three.
@@ -38,9 +39,24 @@ bool inChip(ToGoChip chip, Order order, DateTime now) {
     ToGoChip.later => order.stage == 'new' && waitsForItsTime(order, now),
     ToGoChip.cooking => order.stage == 'new' && order.isFired && !waitsForItsTime(order, now),
     ToGoChip.ready => order.stage == 'ready',
-    ToGoChip.unpaid => !order.hasPaid,
+    ToGoChip.unpaid => owes(order),
   };
 }
+
+/// Whether money is still to collect on a to-go order, as far as a list of checks can tell: by what the hub
+/// says is due on an order that took money (a deposit is not the whole of it), and on any other order, or
+/// with a hub older than deposits, by whether anything was paid at all.
+bool owes(Order order) => switch (order.due) {
+  final due? => cents(due) > 0,
+  null => !order.hasPaid,
+};
+
+/// What a list of checks says of a to-go order's money: "paid", "pay at pickup" while nothing was taken,
+/// and "$45.01 due" once a deposit was.
+String moneyWords(Order order) => switch (order.due) {
+  final due? when cents(due) > 0 => '\$$due due',
+  _ => order.hasPaid ? 'paid' : 'pay at pickup',
+};
 
 /// How many of [orders] each chip lists at [now].
 Map<ToGoChip, int> chipCounts(Iterable<Order> orders, DateTime now) => {

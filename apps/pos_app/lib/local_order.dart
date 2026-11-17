@@ -37,6 +37,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
   final lines = {for (final l in order.lines) l.lineId: l};
   final payments = [...order.payments];
   final allergies = [...order.allergies];
+  var due = order.due;
   for (final op in ops) {
     final data = (op['data'] as Map?)?.cast<String, dynamic>() ?? const {};
     switch (op['kind']) {
@@ -128,6 +129,8 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
               pending: true,
             ),
           );
+          // money taken here that the hub has not counted yet comes off what its list says is still due
+          if (due != null) due = money(math.max(0, cents(due) - cents(data['amount']?.toString() ?? '0')));
         }
     }
   }
@@ -141,6 +144,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     allergies: allergies..sort((a, b) => (a.seat ?? 0).compareTo(b.seat ?? 0)),
     discounts: order.discounts,
     openedMs: order.openedMs,
+    due: due,
   );
 }
 

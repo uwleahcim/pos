@@ -680,7 +680,7 @@ void main() {
 
     expect(t.hub.quotesAuth, 'Bearer tok-admin');
     expect(t.hub.quotes, {
-      'minutes': {'counter': 15, 'phone': 25, 'online': 25, 'delivery': 45},
+      'minutes': {'counter': 15, 'phone': 25, 'online': 25, 'delivery': 45, 'catering': 60},
       'pay_at_pickup': ['online', 'phone'],
     });
     expect(find.text('Quote times saved'), findsOneWidget);
