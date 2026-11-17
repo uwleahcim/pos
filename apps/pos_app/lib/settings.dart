@@ -16,6 +16,7 @@ class Settings extends ChangeNotifier {
     int lockMinutes = 0,
     this.signOutAfterSend = false,
     String opensOn = floorMap,
+    this.pickupBoard = false,
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
@@ -42,6 +43,7 @@ class Settings extends ChangeNotifier {
       lockMinutes: prefs.getInt('lock_minutes') ?? 0,
       signOutAfterSend: prefs.getBool('sign_out_after_send') ?? false,
       opensOn: prefs.getString('opens_on') ?? floorMap,
+      pickupBoard: prefs.getBool('pickup_board') ?? false,
       phone: phone,
       prefs: prefs,
     );
@@ -90,6 +92,11 @@ class Settings extends ChangeNotifier {
 
   /// Whether this screen opens on the floor map (not on the list of checks).
   bool get opensOnFloor => opensOn == floorMap;
+
+  /// The pickup board (docs/pickup-board.md): while nobody is signed in, this screen lists the to-go orders
+  /// being made and the ones ready, by number and first name, for the customers at the shelf. The sign-in
+  /// pad is one tap away. Off is how a device starts.
+  bool pickupBoard;
 
   PhoneSettings _phone;
 
@@ -147,6 +154,16 @@ class Settings extends ChangeNotifier {
       await _prefs?.remove('opens_on');
     } else {
       await _prefs?.setString('opens_on', opensOn);
+    }
+    notifyListeners();
+  }
+
+  Future<void> savePickupBoard(bool on) async {
+    pickupBoard = on;
+    if (on) {
+      await _prefs?.setBool('pickup_board', true);
+    } else {
+      await _prefs?.remove('pickup_board');
     }
     notifyListeners();
   }

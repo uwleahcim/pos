@@ -56,6 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late int _lockMinutes = widget.settings.lockMinutes;
   late bool _signOutAfterSend = widget.settings.signOutAfterSend;
   late String _opensOn = widget.settings.opensOn;
+  late bool _pickupBoard = widget.settings.pickupBoard;
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -115,6 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.saveLockMinutes(_lockMinutes);
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
     await widget.settings.saveOpensOn(_opensOn);
+    await widget.settings.savePickupBoard(_pickupBoard);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -298,6 +300,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // The pickup board: what this screen shows while nobody is signed in; kept with Save.
+              Card(
+                child: SwitchListTile(
+                  key: const ValueKey('pickup-board-switch'),
+                  contentPadding: const EdgeInsets.fromLTRB(20, 8, 12, 10),
+                  secondary: Icon(Icons.view_module_outlined, color: scheme.onSurfaceVariant),
+                  title: Text('Pickup board', style: theme.textTheme.titleMedium),
+                  subtitle: Text(
+                    _pickupBoard
+                        ? 'While nobody is signed in, this screen lists the to-go orders being made and the ones '
+                              'ready, by number and first name. Staff, in its corner, brings up the sign-in pad.'
+                        : 'For a screen facing the pickup shelf: while nobody is signed in it lists the to-go '
+                              'orders being made and the ones ready, by number and first name.',
+                    key: const ValueKey('pickup-board-line'),
+                  ),
+                  value: _pickupBoard,
+                  onChanged: (on) => setState(() => _pickupBoard = on),
                 ),
               ),
               const SizedBox(height: 16),

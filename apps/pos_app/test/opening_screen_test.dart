@@ -103,7 +103,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       final settings = Settings(device: 't1', endpoints: ['http://hub:8000'], prefs: prefs);
       tester.view
-        ..physicalSize = const Size(900, 2200)
+        ..physicalSize = wholeSettings
         ..devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(

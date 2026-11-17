@@ -25,6 +25,7 @@ import 'ringer.dart';
 import 'screens/lock_layer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
+import 'screens/pickup_board_screen.dart';
 import 'screens/reader_keys.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
@@ -290,12 +291,18 @@ class _PosAppState extends State<PosApp> {
                         onOrder: canOrder ? _orderForCaller : null,
                         child: LockLayer(
                           session: session,
-                          pad: (context) => SignInScreen(
-                            session: session,
+                          // (a pickup board stands over the pad too: the shelf's screen locked itself)
+                          pad: (context) => PickupBoardGate(
                             settings: settings,
-                            camera: camera,
-                            faces: widget.faces,
-                            lockedNote: lockedNote(settings.lockMinutes, session.lockedFrom?.name ?? ''),
+                            api: api,
+                            pad: (context, toBoard) => SignInScreen(
+                              session: session,
+                              settings: settings,
+                              camera: camera,
+                              faces: widget.faces,
+                              lockedNote: lockedNote(settings.lockMinutes, session.lockedFrom?.name ?? ''),
+                              onBoard: toBoard,
+                            ),
                           ),
                           child: child ?? const SizedBox.shrink(),
                         ),
@@ -318,22 +325,28 @@ class _PosAppState extends State<PosApp> {
                 );
               } else if (!session.signedIn && !session.locked) {
                 // (a screen locked for standing idle keeps what was open, under the pad the lock lays over it)
-                screen = SignInScreen(
+                // On a device that is a pickup board the board stands here, the pad one tap behind it.
+                screen = PickupBoardGate(
                   key: const ValueKey('sign-in'),
-                  session: session,
                   settings: settings,
-                  camera: camera,
-                  faces: widget.faces,
-                  onSettings: () => Navigator.of(context).push(
-                    PosPageRoute(
-                      builder: (_) => SettingsScreen(
-                        settings: settings,
-                        api: api,
-                        relay: widget.relay,
-                        phone: phone,
-                        push: widget.push,
-                        screen: widget.callScreen,
-                        camera: camera,
+                  api: api,
+                  pad: (_, toBoard) => SignInScreen(
+                    session: session,
+                    settings: settings,
+                    camera: camera,
+                    faces: widget.faces,
+                    onBoard: toBoard,
+                    onSettings: () => Navigator.of(context).push(
+                      PosPageRoute(
+                        builder: (_) => SettingsScreen(
+                          settings: settings,
+                          api: api,
+                          relay: widget.relay,
+                          phone: phone,
+                          push: widget.push,
+                          screen: widget.callScreen,
+                          camera: camera,
+                        ),
                       ),
                     ),
                   ),

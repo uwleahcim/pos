@@ -1904,6 +1904,11 @@ class Terminal {
   final Settings settings;
 }
 
+/// A screen tall enough for the whole of the device's Settings with nothing to scroll, and room for the
+/// cards still to come: for the tests that tap Save at its foot. A height that just fits the screen as it
+/// is today pushes Save out with the next card added above it.
+const wholeSettings = Size(900, 4000);
+
 Future<Terminal> terminal(WidgetTester tester, {String role = 'manager'}) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
