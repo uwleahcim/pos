@@ -147,7 +147,13 @@ def test_the_copy_on_a_fallback_printer_says_the_same():
 
 def test_a_manager_turns_either_line_off():
     c = kitchen("wok", "sushi")
-    assert c.get("/settings/tickets").json() == {"numbered": True, "also_at": True, "paid": True, "moved": True}
+    assert c.get("/settings/tickets").json() == {
+        "numbered": True,
+        "also_at": True,
+        "paid": True,
+        "moved": True,
+        "pack": True,
+    }
     assert c.put("/settings/tickets", json={"numbered": False}).status_code == 401
     headers = manager(c)
     saved = c.put("/settings/tickets", json={"numbered": False}, headers=headers).json()
@@ -156,20 +162,27 @@ def test_a_manager_turns_either_line_off():
         "also_at": True,
         "paid": True,
         "moved": True,
+        "pack": True,
     }  # those left out stay as they were
     assert said(c, send(c, "o1", CHICKEN, ROLL), "wok") == ["Also at: Sushi bar"]
     saved = c.put("/settings/tickets", json={"numbered": True, "also_at": False}, headers=headers).json()
-    assert saved == {"numbered": True, "also_at": False, "paid": True, "moved": True}
+    assert saved == {"numbered": True, "also_at": False, "paid": True, "moved": True, "pack": True}
     assert said(c, send(c, "o2", CHICKEN, ROLL), "sushi") == ["Ticket 2 of 2"]
     c.put("/settings/tickets", json={"numbered": False}, headers=headers)
-    assert c.get("/settings/tickets").json() == {"numbered": False, "also_at": False, "paid": True, "moved": True}
+    assert c.get("/settings/tickets").json() == {
+        "numbered": False,
+        "also_at": False,
+        "paid": True,
+        "moved": True,
+        "pack": True,
+    }
     assert said(c, send(c, "o3", CHICKEN, ROLL), "wok") == []
 
 
 def test_the_setting_is_a_switch_for_each_line():
-    assert clean_tickets({}) == {"numbered": True, "also_at": True, "paid": True, "moved": True}
+    assert clean_tickets({}) == {"numbered": True, "also_at": True, "paid": True, "moved": True, "pack": True}
     cleaned = clean_tickets({"numbered": False, "also_at": False, "more": 1})
-    assert cleaned == {"numbered": False, "also_at": False, "paid": True, "moved": True}
+    assert cleaned == {"numbered": False, "also_at": False, "paid": True, "moved": True, "pack": True}
     with pytest.raises(ValueError, match="also_at must be true or false"):
         clean_tickets({"also_at": "yes"})
 

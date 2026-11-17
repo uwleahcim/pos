@@ -35,7 +35,8 @@
   to start: `numbered`, "Ticket 2 of 3" when more than one station is cooking, and `also_at`, the names of the
   other stations cooking ("Also at: Wok 2, Sushi Bar"). And `paid`: the takeout station's ticket of a to-go
   order says PAID, or NOT PAID with what is still to collect. And `moved`: food on its way that changes table
-  prints a MOVED slip at its stations, with the table it was sent for and the table it goes to now.
+  prints a MOVED slip at its stations, with the table it was sent for and the table it goes to now. And
+  `pack`: a catering order's first tickets come with a pack sheet (`pos.printing.pack`).
 - `ticket_skips`: the stations each screen prints no ticket at (`screens`, a list of `{device, stations}`):
   dishes sent or voided from that screen print nothing there, since whoever rings them in makes them (the
   bar's own screen and the bar printer). Empty to start: every screen prints everywhere.
@@ -133,7 +134,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         },
     },
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
-    "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True},
+    "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True, "pack": True},
     "ticket_skips": {"screens": []},
     "bill": {"printer": None, "header": [], "footer": ["Thank you!"]},
     # Off until a manager turns it on: a clock changes what every person does when they come in. A break
@@ -375,8 +376,9 @@ def clean_desk_phones(data: Mapping[str, Any]) -> dict[str, Any]:
 def clean_tickets(data: Mapping[str, Any]) -> dict[str, Any]:
     """What the tickets of one send say about each other, as the app may set it: `numbered` and `also_at`; and
     `paid`, whether the takeout counter's copy of a to-go order says PAID or NOT PAID; and `moved`, whether a
-    station gets a slip when food it is cooking changes table. Each true or false; one left out keeps its
-    default. Raises ValueError on a bad value."""
+    station gets a slip when food it is cooking changes table; and `pack`, whether a catering order's first
+    tickets come with a pack sheet. Each true or false; one left out keeps its default. Raises ValueError on
+    a bad value."""
     out = {}
     for name, default in DEFAULTS["tickets"].items():
         value = data.get(name, default)

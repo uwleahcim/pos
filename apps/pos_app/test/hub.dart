@@ -623,6 +623,18 @@ class Hub {
   /// which takes "ahead" for the id of an order it does not have.
   Map<String, dynamic>? ahead;
 
+  /// The prep lists it makes, by day of service (`GET /orders/ahead/prep?day=`, docs/catering.md); a day it
+  /// has none for is a day with no dish ahead. Null is a hub older than the prep list (404). [prepPrints] are
+  /// the lists printed (the day, the printer asked for) and [refusePrep] a reason to refuse the next with.
+  Map<String, Map<String, dynamic>>? prep = {};
+  final prepPrints = <(String, String?)>[];
+  String? refusePrep;
+
+  /// The orders whose pack sheet was printed (`POST /orders/{id}/pack-sheet`); null is a hub older than pack
+  /// sheets (404), and [refusePack] a reason to refuse the next with.
+  List<String>? packSheets = [];
+  String? refusePack;
+
   /// Every audit photo a terminal sent (`POST /events/photos`).
   final photosPut = <Map<String, dynamic>>[];
   Map<String, dynamic>? rules;
@@ -721,6 +733,7 @@ class Hub {
   static final _tag = RegExp(r'^/admin/staff/([^/]+)/tag$');
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
+  static final _pack = RegExp(r'^/orders/([^/]+)/pack-sheet$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
   static final _history = RegExp(r'^/orders/([^/]+)/history$');
   static final _photo = RegExp(r'^/events/photos/([^/]+)$');
@@ -1452,6 +1465,50 @@ class Hub {
     }
     if (path == '/orders/ahead') {
       return ahead == null ? json({'detail': 'no such order'}, 404) : json(ahead!);
+    }
+    if (path == '/orders/ahead/prep') {
+      if (prep == null) return json({'detail': 'Not Found'}, 404);
+      final day = request.url.queryParameters['day'] ?? '';
+      return json(
+        prep![day] ??
+            {
+              'day': day,
+              'orders': <dynamic>[],
+              'count': 0,
+              'guests': 0,
+              'dishes': 0,
+              'unsent': 0,
+              'stations': <dynamic>[],
+            },
+      );
+    }
+    if (path == '/orders/ahead/prep/print') {
+      if (prep == null) return json({'detail': 'Not Found'}, 404);
+      if (refusePrep != null) {
+        return json({
+          'detail': {'error': 'no_printer', 'message': refusePrep},
+        }, 409);
+      }
+      final body = jsonDecode(request.body) as Map;
+      prepPrints.add((body['day'] as String? ?? '', body['printer'] as String?));
+      return json({
+        'job_id': 'prep-${prepPrints.length}',
+        'day': body['day'],
+        'printed_at': {'id': 'front', 'name': 'Takeout'},
+      }, 202);
+    }
+    if (_pack.hasMatch(path)) {
+      if (packSheets == null) return json({'detail': 'Not Found'}, 404);
+      if (refusePack != null) {
+        return json({
+          'detail': {'error': 'no_printer', 'message': refusePack},
+        }, 409);
+      }
+      packSheets!.add(_pack.firstMatch(path)!.group(1)!);
+      return json({
+        'job_id': 'pack-${packSheets!.length}',
+        'printed_at': {'id': 'front', 'name': 'Takeout'},
+      }, 202);
     }
     if (_order.hasMatch(path)) {
       final id = _order.firstMatch(path)!.group(1)!;

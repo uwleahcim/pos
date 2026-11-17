@@ -71,14 +71,19 @@ def post(c: TestClient, *ops: dict, order_id: str = "o1") -> dict:
     return sent.json()
 
 
+def tickets(jobs: list[PrintJob]) -> list[str]:
+    """The kitchen tickets among these jobs. A catering order's first tickets come with a pack sheet, which
+    `test_pack.py` reads; these tests are about the tickets."""
+    return [job.job_id for job in jobs if not job.job_id.endswith(":pack")]
+
+
 def release(c: TestClient) -> list[str]:
-    """The hub's look at what is due, as its loop takes it every few seconds: the jobs it made."""
-    made: list[PrintJob] = c.app.state.printing.release_due()
-    return [job.job_id for job in made]
+    """The hub's look at what is due, as its loop takes it every few seconds: the tickets it made."""
+    return tickets(c.app.state.printing.release_due())
 
 
 def printed(c: TestClient) -> list[str]:
-    return [job.job_id for job in c.app.state.printing.store.all()]
+    return tickets(c.app.state.printing.store.all())
 
 
 def waiting(c: TestClient) -> list[tuple[str, int, int]]:
@@ -193,7 +198,8 @@ def test_an_order_moved_up_to_now_prints_with_the_change():
     key = send(c, "o1", CHICKEN, **CATERING)
     # they are at the door: it is for half an hour from now, and it takes an hour
     moved = post(c, payload("now", "set_field", 200, promised_at=T0 + 30 * MINUTE))
-    assert moved["print_jobs"] == [f"{key}:wok", f"{key}:takeout"]
+    # (and the pack sheet a catering order's first tickets come with: `test_pack.py`)
+    assert moved["print_jobs"] == [f"{key}:wok", f"{key}:takeout", "now:pack"]
     assert waiting(c) == [] and release(c) == []
 
 

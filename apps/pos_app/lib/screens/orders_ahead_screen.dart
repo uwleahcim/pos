@@ -7,6 +7,7 @@ import '../live.dart';
 import '../local_order.dart';
 import '../orders_ahead.dart';
 import '../takeout.dart';
+import 'prep_list_screen.dart';
 import 'theme.dart';
 
 /// Orders ahead (docs/catering.md): every to-go order a customer named a time for that has not been handed
@@ -82,6 +83,16 @@ class _OrdersAheadScreenState extends State<OrdersAheadScreen> {
     if (mounted) unawaited(_reader.now());
   }
 
+  /// The day's prep list: its dishes added up for each station.
+  Future<void> _prep(AheadDay day, String heading) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PrepListScreen(api: widget.api, day: day.day, heading: heading),
+      ),
+    );
+    if (mounted) unawaited(_reader.now(must: false));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -100,7 +111,12 @@ class _OrdersAheadScreenState extends State<OrdersAheadScreen> {
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
         children: [
           for (final day in list.days) ...[
-            _DayHead(key: ValueKey('ahead-day:${day.day}'), heading: list.heading(day), day: day),
+            _DayHead(
+              key: ValueKey('ahead-day:${day.day}'),
+              heading: list.heading(day),
+              day: day,
+              onPrep: () => _prep(day, list.heading(day)),
+            ),
             for (final order in day.orders)
               _AheadCard(key: ValueKey('ahead:${order.orderId}'), order: order, onTap: () => _open(order)),
           ],
@@ -150,12 +166,14 @@ class _Says extends StatelessWidget {
   );
 }
 
-/// A day's heading: the day, how many orders and guests, and what its orders add up to.
+/// A day's heading: the day, how many orders and guests, what its orders add up to, and the way to the
+/// day's prep list.
 class _DayHead extends StatelessWidget {
-  const _DayHead({super.key, required this.heading, required this.day});
+  const _DayHead({super.key, required this.heading, required this.day, required this.onPrep});
 
   final String heading;
   final AheadDay day;
+  final VoidCallback onPrep;
 
   @override
   Widget build(BuildContext context) {
@@ -164,37 +182,53 @@ class _DayHead extends StatelessWidget {
     final orders = day.orders.length;
     final faint = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: PosTheme.tabular);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 14, 4, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(4, 14, 0, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // the day and its count wrap apart on a narrow phone with large type
-          Wrap(
-            spacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.end,
-            children: [
-              Text(heading, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-              Text(
-                [
-                  orders == 1 ? '1 order' : '$orders orders',
-                  if (day.guests > 0) day.guests == 1 ? '1 guest' : '${day.guests} guests',
-                ].join(' · '),
-                style: faint,
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            [
-              'Total \$${day.total}',
-              if (cents(day.paid) > 0) 'paid \$${day.paid}',
-              if (cents(day.paid) > 0) 'due \$${day.due}',
-            ].join(' · '),
-            key: ValueKey('ahead-day-money:${day.day}'),
-            style: faint,
+          Expanded(child: _words(theme, faint, orders)),
+          TextButton.icon(
+            key: ValueKey('ahead-prep:${day.day}'),
+            onPressed: onPrep,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.format_list_bulleted, size: 18),
+            label: const Text('Prep list'),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _words(ThemeData theme, TextStyle? faint, int orders) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // the day and its count wrap apart on a narrow phone with large type
+        Wrap(
+          spacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.end,
+          children: [
+            Text(heading, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+            Text(
+              [
+                orders == 1 ? '1 order' : '$orders orders',
+                if (day.guests > 0) day.guests == 1 ? '1 guest' : '${day.guests} guests',
+              ].join(' · '),
+              style: faint,
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          [
+            'Total \$${day.total}',
+            if (cents(day.paid) > 0) 'paid \$${day.paid}',
+            if (cents(day.paid) > 0) 'due \$${day.due}',
+          ].join(' · '),
+          key: ValueKey('ahead-day-money:${day.day}'),
+          style: faint,
+        ),
+      ],
     );
   }
 }

@@ -1411,6 +1411,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 title: const Text('Tell the kitchen when a table moves'),
                 subtitle: const Text('A MOVED slip at each station still cooking for it, with the new table'),
               ),
+            if (words.pack case final pack?)
+              SwitchListTile(
+                key: const ValueKey('tickets-pack'),
+                value: pack,
+                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(pack: on)),
+                title: const Text('Print a pack sheet with a catering order'),
+                subtitle: const Text(
+                  'With its first tickets, where to-go orders are packed: every dish with a box to tick',
+                ),
+              ),
             if (_ticketWordsMessage != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

@@ -145,6 +145,14 @@ order's time less its quote has come, from the order as it stands at that moment
 Once its tickets have printed, the order is like any other: a dish added prints at once, a dish taken off
 prints a VOID.
 
+**The pack sheet.** A catering order's first tickets come with one more paper at the takeout station's
+printer (else where the bills print): the whole order as it stands, every dish with a box to tick, who it
+is for and when, the money and what goes in the bag, with a line to sign for who packed and who checked.
+The kitchen's tickets are as they were. Dishes added later print their tickets and no second sheet; the
+button on the order's screen prints one again. The fifth switch on the Printers card, **Print a pack sheet
+with a catering order**, turns the one that comes by itself off. **The prep list** of a day (what its
+orders ahead need made, by station) prints from its own screen where the bills print. See `catering.md`.
+
 **A table that moves.** Moving a table, merging two, or moving dishes to another table's check prints no
 order ticket and no void. Each station with dishes sent in the last 45 minutes gets a MOVED slip instead:
 the table the dishes were sent for, the table they go to now, and the dishes. The fourth switch on the
@@ -257,7 +265,8 @@ still known as a Star by step 3, without its model.
 - `GET /settings/tickets`, `PUT /settings/tickets` (manager): `numbered` and `also_at`, the two lines a
   ticket says about the other tickets of its send, and `paid`, PAID or NOT PAID on the takeout station's
   ticket (`PrintService.money`, from the order's check), and `moved`, the MOVED slip for dishes already
-  sent whose table changed (`table_changes`). Each true or false; one left out of a `PUT` stays as it is.
+  sent whose table changed (`table_changes`), and `pack`, the pack sheet that comes with a catering
+  order's first tickets (`_pack_with`). Each true or false; one left out of a `PUT` stays as it is.
 - `GET /settings/ticket_skips`, `PUT /settings/ticket_skips` (manager): `screens` as `{device, stations}`,
   the stations each screen prints no ticket at (`ticket-skips.md`).
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
@@ -269,6 +278,8 @@ still known as a Star by step 3, without its model.
   lists its `fallbacks` and how often it `moved`.
 - The guest's bill is not routed by station: `GET/PUT /settings/bill`, `POST /orders/{id}/bill` and
   `POST /print/bill-sample` are in `docs/bill.md`.
+- The pack sheet and the prep list: `POST /orders/{id}/pack-sheet`, `GET /orders/ahead/prep` and
+  `POST /orders/ahead/prep/print` are in `docs/catering.md`.
 
 Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above; `_hold`
 and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`

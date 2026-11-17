@@ -90,7 +90,7 @@ def test_nothing_prints_for_a_table_that_moves_with_nothing_on_its_way():
 def test_a_manager_can_turn_the_slip_off():
     c = kitchen("wok")
     saved = c.put("/settings/tickets", json={"moved": False}, headers=manager(c)).json()
-    assert saved == {"numbered": True, "also_at": True, "paid": True, "moved": False}
+    assert saved == {"numbered": True, "also_at": True, "paid": True, "moved": False, "pack": True}
     seated(c, "o1", "12", CHICKEN)
     assert post(c, "o1", payload("mv", "set_field", 100, table="14"))["print_jobs"] == []
 

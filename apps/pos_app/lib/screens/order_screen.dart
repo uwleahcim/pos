@@ -124,6 +124,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _quotesAsked = false;
   Future<BagQuestion?>? _bagRead; // the to-go question as the location set it, being read or read
   bool _billing = false; // a bill is on its way to the printer: the button waits
+  bool _packing = false; // so is a pack sheet
   bool _sentHere = false; // dishes were sent to the kitchen from this screen since it opened
   final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
@@ -853,6 +854,33 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  /// Prints the order's pack sheet (docs/catering.md): the order as the hub has it, so whatever was just
+  /// rung in goes there first. It comes out where to-go orders are packed.
+  Future<void> _printPack() async {
+    if (_packing) return;
+    setState(() => _packing = true);
+    try {
+      await widget.outbox.flush();
+      if (widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId)) {
+        if (mounted) _say('The pack sheet prints once this order has reached the hub');
+        return;
+      }
+      final at = await widget.api.printPackSheet(widget.orderId);
+      if (mounted) _say('The pack sheet is printing${at.isEmpty ? '' : ' at $at'}');
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      final told = err.detail?['message'] as String?;
+      _say(
+        told ??
+            (err.status == 404 || err.status == 405
+                ? 'This hub does not print pack sheets yet: update it'
+                : 'The pack sheet did not print: nothing answered'),
+      );
+    } finally {
+      if (mounted) setState(() => _packing = false);
+    }
+  }
+
   /// The order and its check as this screen shows them, for the split screen standing over it.
   SplitView? _view() {
     final order = _order;
@@ -1511,7 +1539,11 @@ class _OrderScreenState extends State<OrderScreen> {
             // an order for later says its day and time, and a catering order what its event needs; a tap
             // changes them
             if (order != null && order.isTakeout && order.forLater && order.promisedAt != null)
-              _WhenStrip(order: order, onTap: open ? () => _changeWhen(order) : null),
+              _WhenStrip(
+                order: order,
+                onTap: open ? () => _changeWhen(order) : null,
+                onPack: order.activeLines.isEmpty || _packing ? null : _printPack,
+              ),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -2599,10 +2631,13 @@ class _CustomerStrip extends StatelessWidget {
 /// The day and time an order for later is for, and on a catering order what its event needs, in one line
 /// under the bar: "For Sat 21 Nov 12:00 · 30 guests · Delivery · 12 Main St". A tap changes them.
 class _WhenStrip extends StatelessWidget {
-  const _WhenStrip({required this.order, this.onTap});
+  const _WhenStrip({required this.order, this.onTap, this.onPack});
 
   final Order order;
   final VoidCallback? onTap;
+
+  /// Prints the order's pack sheet; null while there is nothing to pack, or one is on its way.
+  final VoidCallback? onPack;
 
   @override
   Widget build(BuildContext context) {
@@ -2612,26 +2647,63 @@ class _WhenStrip extends StatelessWidget {
     return Material(
       key: const ValueKey('when-strip'),
       color: scheme.surfaceContainerHighest, // plain, like the customer's note: red is the allergy strip's
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-          child: Row(
-            children: [
-              Icon(Icons.event_outlined, size: 16, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  ['For ${whenFor(order.promisedAt!, DateTime.now())}', if (event.isNotEmpty) event].join(' · '),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                child: Row(
+                  children: [
+                    Icon(Icons.event_outlined, size: 16, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        ['For ${whenFor(order.promisedAt!, DateTime.now())}', if (event.isNotEmpty) event].join(' · '),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (onTap != null) Icon(Icons.edit_outlined, size: 14, color: scheme.onSurfaceVariant),
+                  ],
                 ),
               ),
-              if (onTap != null) Icon(Icons.edit_outlined, size: 14, color: scheme.onSurfaceVariant),
-            ],
+            ),
           ),
-        ),
+          // the paper to pack the order by: beside what the order is for, not one more button in the bar.
+          // A wide screen has the room to say what it is; a phone shows the sign alone.
+          if (MediaQuery.sizeOf(context).width >= 720)
+            Tooltip(
+              message: 'Print the pack sheet',
+              child: TextButton.icon(
+                key: const ValueKey('pack-sheet'),
+                onPressed: onPack,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  minimumSize: const Size(44, 30),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                icon: const Icon(Icons.fact_check_outlined, size: 18),
+                label: const Text('Pack sheet'),
+              ),
+            )
+          else
+            IconButton(
+              key: const ValueKey('pack-sheet'),
+              tooltip: 'Print the pack sheet',
+              onPressed: onPack,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 30),
+              iconSize: 18,
+              icon: const Icon(Icons.fact_check_outlined),
+            ),
+        ],
       ),
     );
   }

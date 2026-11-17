@@ -109,7 +109,9 @@ merges after any disconnect.
 - Catering orders and the orders ahead (a to-go order for any later day, with the guests, pickup or
   delivery, the address and a note; a deposit with the rest still due, and Pay for the rest; the list of
   checks says the day and what is left to pay; Orders ahead lists what was promised for a later time by
-  day, with what was paid on each): `docs/catering.md`
+  day, with what was paid on each; each day's prep list adds its dishes up by station, on screen and on
+  paper; a catering order prints a pack sheet with its tickets, every dish with a box to tick):
+  `docs/catering.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`
