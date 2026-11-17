@@ -232,30 +232,40 @@ class FoundPrinter {
 /// Bar"). And [paid]: whether the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
 /// is still to collect; null from a hub that does not print it yet, which gets no word about it back. And
 /// [moved]: whether the stations cooking for a table get a MOVED slip when it changes tables; null the same
-/// way from a hub that does not move tables yet.
+/// way from a hub that does not move tables yet. And [pack]: whether a catering order's first tickets come
+/// with a pack sheet; null from a hub that prints none.
 @immutable
 class TicketWords {
-  const TicketWords({this.numbered = true, this.alsoAt = true, this.paid, this.moved});
+  const TicketWords({this.numbered = true, this.alsoAt = true, this.paid, this.moved, this.pack});
 
   factory TicketWords.fromJson(Map<String, dynamic> json) => TicketWords(
     numbered: json['numbered'] as bool? ?? true,
     alsoAt: json['also_at'] as bool? ?? true,
     paid: json['paid'] as bool?,
     moved: json['moved'] as bool?,
+    pack: json['pack'] as bool?,
   );
 
   final bool numbered;
   final bool alsoAt;
   final bool? paid;
   final bool? moved;
+  final bool? pack;
 
-  Map<String, dynamic> toJson() => {'numbered': numbered, 'also_at': alsoAt, 'paid': ?paid, 'moved': ?moved};
+  Map<String, dynamic> toJson() => {
+    'numbered': numbered,
+    'also_at': alsoAt,
+    'paid': ?paid,
+    'moved': ?moved,
+    'pack': ?pack,
+  };
 
-  TicketWords copyWith({bool? numbered, bool? alsoAt, bool? paid, bool? moved}) => TicketWords(
+  TicketWords copyWith({bool? numbered, bool? alsoAt, bool? paid, bool? moved, bool? pack}) => TicketWords(
     numbered: numbered ?? this.numbered,
     alsoAt: alsoAt ?? this.alsoAt,
     paid: paid ?? this.paid,
     moved: moved ?? this.moved,
+    pack: pack ?? this.pack,
   );
 
   @override
@@ -264,10 +274,11 @@ class TicketWords {
       other.numbered == numbered &&
       other.alsoAt == alsoAt &&
       other.paid == paid &&
-      other.moved == moved;
+      other.moved == moved &&
+      other.pack == pack;
 
   @override
-  int get hashCode => Object.hash(numbered, alsoAt, paid, moved);
+  int get hashCode => Object.hash(numbered, alsoAt, paid, moved, pack);
 }
 
 /// The stations each screen prints no ticket at, as a manager set them for the location: what is sent or

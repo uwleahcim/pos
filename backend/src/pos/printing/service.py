@@ -44,6 +44,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from .. import localtime
 from ..orders.bag import FIELD as BAG
 from ..orders.bag import bag_lines, bag_of
 from ..sync.hlc import wall_clock_ms
@@ -53,6 +54,8 @@ from .day import DayPaper, render_day
 from .escpos import find_font
 from .held import Held, HeldTickets, Part
 from .jobs import JobStore, PrintJob, send_raw
+from .pack import PackSheet, render_pack
+from .prep import PrepPaper, render_prep
 from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
 
 LATE_AFTER_MS = 10 * 60 * 1000
@@ -281,6 +284,13 @@ def _when(ms: Any) -> datetime | None:
     return datetime.fromtimestamp(ms / 1000) if isinstance(ms, int) else None
 
 
+def _local(ms: Any) -> datetime | None:
+    """A wall-clock stamp on the restaurant's own clock, as its reports read one."""
+    if isinstance(ms, bool) or not isinstance(ms, int):
+        return None
+    return datetime.fromtimestamp(ms / 1000, localtime.zone())
+
+
 def allergy_words(told: Mapping[str, Any], names: Mapping[str, str]) -> str:
     """One allergy in words: its allergens by name, then whatever else was said ("Peanuts, Sesame - no MSG").
     Plain letters, so a printer writes it as text."""
@@ -357,6 +367,11 @@ def ticket_for(
         tab=state.is_tab,
         was_tab=was_tab,
     )
+
+
+Paper = Ticket | Bill | DayPaper | PackSheet | PrepPaper
+"""What a printer can be handed: a kitchen ticket, a guest's bill, the day's report, an order's pack sheet
+or a day's prep list."""
 
 
 @dataclass(frozen=True)
@@ -564,6 +579,16 @@ class PrintService:
                 return found
         return printers[0] if printers else None
 
+    def pack_printer(self, asked: str | None = None) -> Printer | None:
+        """Where an order's pack sheet prints: the printer asked for, else the takeout station's (where the
+        bag is packed), else where the location's bills print. None only when the location has no printer."""
+        printers = self.printers
+        for name in (asked, self.takeout_station()):
+            found = self._named(printers, name) if name else None
+            if found is not None:
+                return found
+        return self.bill_printer()
+
     def station_name(self, code: str) -> str:
         names = self.station_names() if self.station_names is not None else {}
         return names.get(code) or code
@@ -625,6 +650,10 @@ class PrintService:
                 late = taken_offline(batch, now, self._late_after_ms)
                 skip = self.skips(key.device)
                 jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, skip=skip))
+            if printed:
+                carried = {line.line_id for line in sent} | out
+                skips = self.skips(next((op for op in batch if op.kind == "fire"), batch[0]).device)
+                jobs.extend(self._pack_with(after, carried, key=f"{batch[0].op_id}:pack", skip=skips))
             if _told(before) != _told(after):
                 gone = {line.line_id for line in sent} | out
                 had = [
@@ -767,9 +796,82 @@ class PrintService:
                 elif lead_delay(state, now) > 0:
                     self.held.put(replace(held, start_ms=starts_ms(state) or now))
                 else:
-                    jobs.extend(self._print_held(held, state))
+                    tickets = self._print_held(held, state)
+                    jobs.extend(tickets)
+                    if tickets:
+                        # a sheet for the packer too, unless every screen that sent it prints nothing there
+                        skips = frozenset.intersection(*(frozenset(part.skip) for part in held.parts))
+                        key = f"{held.parts[0].key}:pack"
+                        jobs.extend(self._pack_with(state, held.lines, key=key, skip=skips))
                     self.held.drop(held.order_id)
         return jobs
+
+    def pack_sheet(self, state: OrderState) -> PackSheet | None:
+        """The pack sheet of a to-go order as the log has it now (`pos.printing.pack`): every dish on it, in
+        the words the takeout station's ticket uses, the ones nobody sent apart; who it is for and when, what
+        its event needs, the allergies, the money and what else goes in the bag. None for a table's order and
+        for an order with no dish on it."""
+        lines = [line for line in state.ordered_lines() if line.active]
+        if not is_to_go(state) or not lines:
+            return None
+        names = self.allergen_names()
+        by_seat = {told["seat"]: allergy_words(told, names) for told in state.allergy_list() if told.get("seat")}
+        reads = Takes(whole=self.takeout_station() or "")  # every dish, with the choices the packer reads
+        sent = [line for line in lines if line.fired_at is not None or line.arrived_sent]
+        unsent = [line for line in lines if line.fired_at is None and not line.arrived_sent]
+        fields = state.fields
+        guests = fields.get("event_guests")
+        return PackSheet(
+            order_id=state.order_id,
+            lines=tuple(_ticket_lines(sent, reads, void=False, allergies=by_seat)),
+            unsent=tuple(_ticket_lines(unsent, reads, void=False, allergies=by_seat)),
+            count=sum(line.qty for line in lines),
+            order_no=fields.get("order_no") if isinstance(fields.get("order_no"), int) else None,
+            customer=str(fields.get("customer_name", "")),
+            phone=" ".join(str(fields.get("phone") or "").split()),
+            channel=str(fields.get("channel", "")),
+            promised=_local(fields.get("promised_at")),
+            guests=guests if isinstance(guests, int) and not isinstance(guests, bool) and guests > 0 else None,
+            handover=str(fields.get("handover") or ""),
+            address=" ".join(str(fields.get("address") or "").split()),
+            note=" ".join(str(fields.get("event_note") or "").split()),
+            allergies=allergy_lines(state, names),
+            money=self.money(state),
+            bag=self.bag(state),
+            at=_local(self._now()) or datetime.now(),
+        )
+
+    def print_pack(
+        self, state: OrderState, *, asked: str | None = None, job_id: str | None = None
+    ) -> tuple[PrintJob, Printer] | None:
+        """Prints the order's pack sheet where pack sheets print (`pack_printer`), and says where. None when
+        there is nothing to print it from, or nothing to print it on."""
+        sheet = self.pack_sheet(state)
+        printer = self.pack_printer(asked) if sheet is not None else None
+        if sheet is None or printer is None:
+            return None
+        return self.queue(sheet, printer, job_id=job_id), printer
+
+    def _pack_with(
+        self, state: OrderState, carried: Iterable[str], *, key: str, skip: frozenset[str] = frozenset()
+    ) -> list[PrintJob]:
+        """The pack sheet that comes with a catering order's tickets, the first time dishes of it reach paper
+        (`carried`: the dishes going out now): none when some dish was on paper before, so dishes added later
+        print their tickets and no second sheet (anyone can print one again, with the order as it stands).
+        The location's `tickets.pack` turns it off; a screen that prints no ticket at the takeout station
+        (`skip`) gets no sheet there either."""
+        if str(state.fields.get("channel") or "") != "catering" or state.status == "void":
+            return []
+        if not self.ticket_words().get("pack"):
+            return []
+        takeout = self.takeout_station()
+        if takeout is not None and takeout in skip:
+            return []
+        now = set(carried)
+        if any(line.active and line.fired_at is not None and line.line_id not in now for line in state.lines.values()):
+            return []
+        made = self.print_pack(state, job_id=key)
+        return [made[0]] if made is not None else []
 
     def send(
         self,
@@ -914,15 +1016,16 @@ class PrintService:
 
     def queue(
         self,
-        ticket: Ticket | Bill | DayPaper,
+        ticket: Paper,
         printer: Printer,
         *,
         job_id: str | None = None,
         delay: float = 0.0,
         printers: list[Printer] | None = None,
     ) -> PrintJob:
-        """Renders the ticket (or a guest's bill, or the day's report) for the printer and for each of its
-        fallbacks (headed with whose it is), and queues it; a hub starts writing it at once."""
+        """Renders the ticket (or a guest's bill, the day's report, a pack sheet, a prep list) for the printer
+        and for each of its fallbacks (headed with whose it is), and queues it; a hub starts writing it at
+        once."""
         data, fallbacks = self._rendered(ticket, printer, printers)
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if self.direct and delay <= 0:
@@ -930,17 +1033,21 @@ class PrintService:
         return job
 
     def _rendered(
-        self, ticket: Ticket | Bill | DayPaper, printer: Printer, printers: list[Printer] | None = None
+        self, ticket: Paper, printer: Printer, printers: list[Printer] | None = None
     ) -> tuple[bytes, list[tuple[str, bytes]]]:
         """The ticket as the printer prints it, and as each of its fallbacks does (address, bytes), in order.
         A fallback's copy says whose it is: the ticket's station, or for a bill or a day's report the printer
         it was for."""
 
-        def drawn(paper: Ticket | Bill | DayPaper, on: Printer) -> bytes:
+        def drawn(paper: Paper, on: Printer) -> bytes:
             if isinstance(paper, Bill):
                 return render_bill(paper, dots=self._dots, font=self._font, dialect=on.dialect)
             if isinstance(paper, DayPaper):
                 return render_day(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            if isinstance(paper, PackSheet):
+                return render_pack(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            if isinstance(paper, PrepPaper):
+                return render_prep(paper, dots=self._dots, font=self._font, dialect=on.dialect)
             return render(paper, dots=self._dots, font=self._font, dialect=on.dialect)
 
         data = drawn(ticket, printer)

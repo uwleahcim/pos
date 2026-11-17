@@ -60,7 +60,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   On the same card, two switches for what the tickets of one send say about each other: **Number the
   tickets of one send** ("Ticket 2 of 3") and **Name the other stations on each ticket** ("Also at: Wok 2,
   Sushi Bar"). A third switch, **Print PAID or NOT PAID on to-go orders**, is for the takeout station's
-  ticket, and a fourth, **Tell the kitchen when a table moves**, for the MOVED slip (see `moves.md`). All
+  ticket, and a fourth, **Tell the kitchen when a table moves**, for the MOVED slip (see `moves.md`). A
+  fifth, **Print a pack sheet with a catering order**, is for the sheet that comes with a catering
+  order's first tickets, every dish with a box to tick (see `catering.md`). All
   on to start; a flip is saved at once and the next ticket prints by it. The row **Screens that skip a
   station** says which stations a screen prints no ticket at (the bar's own screen and the bar printer;
   none to start; see `ticket-skips.md`).

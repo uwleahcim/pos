@@ -21,6 +21,7 @@ import 'kitchen_notes.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'orders_ahead.dart';
+import 'prep_list.dart';
 import 'phone.dart';
 import 'powers.dart';
 import 'pricing.dart';
@@ -519,6 +520,32 @@ class PosApi {
       rethrow;
     }
   }
+
+  /// The prep list of [day] (a day of service, `2026-11-21`; docs/catering.md): what its orders ahead need
+  /// made, added up for each station. Null from a hub older than the list.
+  Future<PrepList?> prepList(String day) async {
+    try {
+      return await _repeated('/orders/ahead/prep', PrepList.fromJson, query: {'day': day});
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// Prints the prep list of [day] at [printer] (the one this screen keeps for its bills, by id) or, without
+  /// one, where the location's bills print. Returns the name of the printer it was sent to. 409 with a
+  /// `message` when the day has no dish or the location has no printer.
+  Future<String> printPrep(String day, {String? printer}) async => _printedAt(
+    await _post('/orders/ahead/prep/print', {'day': day, 'printer': ?printer}, timeout: const Duration(seconds: 6)),
+  );
+
+  /// Prints the pack sheet of [orderId] as the order stands at this moment (docs/catering.md), where pack
+  /// sheets print: the takeout station's printer, else where the location's bills print. Returns the name
+  /// of the printer it was sent to. 409 with a `message` when the order has no dish or the location has no
+  /// printer.
+  Future<String> printPackSheet(String orderId) async => _printedAt(
+    await _post('/orders/$orderId/pack-sheet', const <String, dynamic>{}, timeout: const Duration(seconds: 6)),
+  );
 
   /// The order this number opened last today, as the hub finds it (the digits match, the location's day,
   /// a voided order does not count), or null when the number opened none today.

@@ -99,6 +99,7 @@ from .guests import add_guest_list
 from .history import add_history
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
+from .prep import add_prep
 from .sales import add_sales_report
 from .timeclock import add_time_clock
 from .today import add_today
@@ -456,6 +457,7 @@ class TicketsIn(BaseModel):
     also_at: bool | None = Field(None, description='"Also at: Wok 2, Sushi Bar": the other stations cooking')
     paid: bool | None = Field(None, description="PAID or NOT PAID on the takeout station's ticket of a to-go order")
     moved: bool | None = Field(None, description="a MOVED slip at the stations when food on its way changes table")
+    pack: bool | None = Field(None, description="a pack sheet with a catering order's first tickets")
 
 
 class TicketSkipIn(BaseModel):
@@ -1344,7 +1346,7 @@ def create_app(
         when more than one station is cooking) and `also_at` ("Also at: Wok 2, Sushi Bar", the other stations
         cooking). And `paid`: the takeout station's ticket of a to-go order says PAID, or NOT PAID with what
         is still to collect. And `moved`: food on its way that changes table prints a MOVED slip at its
-        stations."""
+        stations. And `pack`: a catering order's first tickets come with a pack sheet."""
         settings: SettingStore = app.state.settings
         return settings.get("tickets")
 
@@ -2039,6 +2041,7 @@ def create_app(
     add_waste_log(app)
     add_waitlist(app)
     add_day_report(app)
+    add_prep(app)
     add_sales_report(app)
     add_today(app)
     add_guest_list(app)
