@@ -30,6 +30,7 @@ import 'settings.dart';
 import 'shift_notes.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
+import 'today.dart';
 import 'voids.dart';
 import 'waitlist.dart';
 import 'waste.dart';
@@ -1319,6 +1320,11 @@ class PosApi {
   /// the day of service that is running. 404 from a hub older than the report.
   Future<DayReport> dayReport(String token, {String? day}) async =>
       DayReport.fromJson(await _get('/reports/day', query: {'day': ?day}, headers: _bearer(token)));
+
+  /// Today so far beside the same weekday a week ago (docs/today.md), with the token of somebody who may
+  /// see the reports. 404 from a hub older than it.
+  Future<TodayReport> today(String token) async =>
+      TodayReport.fromJson(await _get('/reports/today', headers: _bearer(token)));
 
   /// The sales of the days [from] to [to] (manager token), each named as the hub names a day
   /// ("2026-11-16"), and of as many days whole weeks earlier to hold beside them (docs/sales-report.md);

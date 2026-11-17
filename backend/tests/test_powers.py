@@ -321,6 +321,7 @@ DOORS = [
     ("reports", "get", "/reports/day", None),
     ("reports", "get", "/reports/sales", None),
     ("reports", "get", "/reports/dishes", None),
+    ("reports", "get", "/reports/today", None),
     ("guests", "get", "/reports/guests", None),
     ("time_clock", "get", f"/timeclock/report?since={T0}&until={T0 + 1000}", None),
     ("menu", "get", "/admin/menu", None),

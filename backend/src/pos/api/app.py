@@ -98,6 +98,7 @@ from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .sales import add_sales_report
 from .timeclock import add_time_clock
+from .today import add_today
 from .waitlist import add_waitlist
 from .waste import add_waste_log
 
@@ -1961,6 +1962,7 @@ def create_app(
     add_waitlist(app)
     add_day_report(app)
     add_sales_report(app)
+    add_today(app)
     add_guest_list(app)
     add_history(app)
     return app

@@ -212,13 +212,14 @@ class TaxExempts {
 
 /// The time clock's part of a day, where the location uses it.
 class DayClock {
-  const DayClock({this.workedMs = 0, this.people = 0, this.unended = 0, this.onNow = const []});
+  const DayClock({this.workedMs = 0, this.people = 0, this.unended = 0, this.onNow = const [], this.netPerHour});
 
   factory DayClock.fromJson(Map<String, dynamic> json) => DayClock(
     workedMs: _i(json['worked_ms']),
     people: _i(json['people']),
     unended: _i(json['unended']),
     onNow: [for (final row in _rows(json['on_now'])) _s(row['name'])],
+    netPerHour: json['net_per_hour'] is String ? json['net_per_hour'] as String : null,
   );
 
   final int workedMs;
@@ -229,6 +230,10 @@ class DayClock {
 
   /// Who is on the clock at this moment (only for the day that is running).
   final List<String> onNow;
+
+  /// Net sales for each hour worked so far, where the hub says it (Today does); null when nobody has
+  /// worked an hour, and from The day's own report.
+  final String? netPerHour;
 }
 
 class DayReport {

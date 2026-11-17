@@ -48,7 +48,9 @@ class _CheckHistoryScreenState extends State<CheckHistoryScreen> {
       if (!mounted || ask != _asked) return;
       setState(
         () => _error = switch (err.status) {
-          401 || 403 => "The manager's hour here is over: go back and ask for the history again.",
+          401 => "The manager's hour here is over: go back and ask for the history again.",
+          // the reports were handed to this person's role and the history was not (docs/roles.md)
+          403 => "Only ${widget.api.powers.value.whose('history')} can read a check's history.",
           404 when err.detail?['error'] == 'unknown_id' =>
             'The hub has not heard of this check yet. If it was only just rung in, wait until it is sent.',
           404 => 'This hub is older than the check history. Update the hub to see it here.',

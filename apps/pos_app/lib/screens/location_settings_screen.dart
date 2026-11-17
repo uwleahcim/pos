@@ -36,6 +36,7 @@ import 'tag_enroll_dialog.dart';
 import 'theme.dart';
 import 'ticket_skips_dialog.dart';
 import 'time_clock_screen.dart';
+import 'today_screen.dart';
 import 'void_rules_dialog.dart';
 import 'waste_reasons_dialog.dart';
 import 'waste_screen.dart';
@@ -860,6 +861,25 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _openBoard,
                 ),
+                // the night as it stands, on one screen (docs/today.md)
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('today'),
+                    leading: const Icon(Icons.today_outlined),
+                    title: const Text('Today'),
+                    subtitle: const Text('The night as it stands, beside the same day last week'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => TodayScreen(
+                          api: widget.api,
+                          token: widget.token,
+                          holds: widget.holds,
+                          device: widget.device ?? '',
+                        ),
+                      ),
+                    ),
+                  ),
                 // and what a manager comes to look at when service is over
                 if (_may('reports'))
                   ListTile(

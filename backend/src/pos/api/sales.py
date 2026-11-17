@@ -33,10 +33,44 @@ from .. import localtime
 from ..identity.tokens import Grant
 from ..orders.dishes import dishes_report
 from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, sales_reports, span_ms
+from ..sync.oplog import OrderEntry
 from .auth import holder_from
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
 HOUR_MS = 3_600_000
+
+
+def net_per_hour(net: str, worked_ms: int) -> str | None:
+    """The net sales for each hour worked; None while nobody has worked any."""
+    if worked_ms <= 0:
+        return None
+    return str((Decimal(net) * HOUR_MS / worked_ms).quantize(Decimal("0.01"), ROUND_HALF_UP))
+
+
+def clock_part(app: FastAPI, since: int, until: int, net: str) -> dict[str, Any] | None:
+    """The time clock's part of a span, where the location uses it: the hours worked on shifts that began
+    in it, by how many people, the shifts nobody clocked out of, and the net sales for each hour worked."""
+    setting = app.state.settings.get("time_clock")
+    if not setting["enabled"]:
+        return None
+    hours = app.state.clock.report(since, until, breaks_paid=setting["breaks_paid"])
+    return {
+        "worked_ms": hours["worked_ms"],
+        "people": len(hours["people"]),
+        "unended": hours["unended"],
+        "net_per_hour": net_per_hour(net, hours["worked_ms"]),
+    }
+
+
+def orders_between(app: FastAPI, since: int, until: int) -> list[OrderEntry]:
+    """Every order that can count on a day of service between two moments, or was paid in one: changed
+    since `since` (the days' own, an older tab paid in them) or promised for a time in between (one rung
+    long before counts on its day), as long as it was opened before `until`."""
+    store = app.state.store
+    entries = {e.order_id: e for e in store.index(active_since=since)}
+    for entry in store.index(promised=(since, until)):
+        entries.setdefault(entry.order_id, entry)
+    return [e for e in entries.values() if e.first_ms is not None and e.first_ms < until]
 
 
 def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
@@ -65,31 +99,10 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
             )
         return days
 
-    def clock_part(since: int, until: int, net: str) -> dict[str, Any] | None:
-        setting = app.state.settings.get("time_clock")
-        if not setting["enabled"]:
-            return None
-        hours = app.state.clock.report(since, until, breaks_paid=setting["breaks_paid"])
-        worked = hours["worked_ms"]
-        each = (Decimal(net) * HOUR_MS / worked).quantize(Decimal("0.01"), ROUND_HALF_UP) if worked > 0 else None
-        return {
-            "worked_ms": worked,
-            "people": len(hours["people"]),
-            "unended": hours["unended"],
-            "net_per_hour": None if each is None else str(each),
-        }
-
     def sold_in(before: tuple[date, date], span: tuple[date, date]) -> Iterator[Sale]:
         """What each order comes to that can count in either span, or was paid in either."""
         store = app.state.store
-        since, until = span_ms(before[0], span[1])
-        # Every order changed since the earlier span began (its own and the later span's, an older tab paid
-        # in either), and every order promised for a day from then on (one rung long before counts on its
-        # day), as long as it was opened before the later span ended.
-        entries = {e.order_id: e for e in store.index(active_since=since)}
-        for entry in store.index(promised=(since, until)):
-            entries.setdefault(entry.order_id, entry)
-        picked = [e for e in entries.values() if e.first_ms is not None and e.first_ms < until]
+        picked = orders_between(app, *span_ms(before[0], span[1]))
         return memo.sales(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing)
 
     @app.get("/reports/sales")
@@ -107,7 +120,7 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
         before = comparison(*span)
         reports = sales_reports(sold_in(before, span), [span, before], defs=app.state.menu.defs, now_ms=now_ms)
         for report in reports:
-            report["clock"] = clock_part(report["since_ms"], report["until_ms"], report["sales"]["net"])
+            report["clock"] = clock_part(app, report["since_ms"], report["until_ms"], report["sales"]["net"])
         return {"span": reports[0], "before": reports[1], "max_days": MAX_DAYS, "now_ms": now_ms}
 
     @app.get("/reports/dishes")

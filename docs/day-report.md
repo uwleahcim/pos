@@ -9,7 +9,7 @@ it sold, `dishes-sold.md`.
 
 ## Opening it
 
-Orders screen › **Location** (manager PIN) › **The day**, the second row from the top.
+Orders screen › **Location** (manager PIN) › **The day**, the third row from the top, under Today.
 
 - **Today** is the day that is running. **Yesterday** and **Another day** (a calendar) read any other.
 - The **printer** button at the top puts the same figures on paper where the location's bills print, or at
@@ -100,7 +100,8 @@ the tax that was not charged, and each check with the organisation, its certific
 
 - **Counting the cash drawer**, so no "over or short": count the drawer against the Cash line by hand.
   Payments at the table are parked, and the drawer count belongs with them.
-- Averages (per check, per guest), a comparison with last week, the cost of the hours worked.
+- Averages (per check, per guest) and a comparison with last week: Today (`today.md`) has both for the
+  running day, and Sales (`sales-report.md`) for any days. The cost of the hours worked.
 - A file for the bookkeeper, and a report sent by e-mail.
 - Tips, since none are recorded yet.
 
