@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pos.orders.bag import bag_lines, bag_of, bag_ops
-from pos.printing.jobs import JobStore
 from pos.printing.ticket import DEMO, render
 from pos.settings import clean_bag
 from pos.sync.hlc import HLC
@@ -272,11 +271,11 @@ def test_more_dishes_sent_with_a_new_answer_carry_it_on_their_own_ticket():
     assert ticket(c, "more:bag") is None
 
 
-def test_a_ticket_waiting_for_its_time_is_made_again_with_the_new_answer():
-    mono = [1000.0]
-    store = JobStore(clock=lambda: mono[0])
-    c = future(store)
-    # sent ahead in the morning for tonight: the tickets are made now and print in three hours
+def test_an_order_sent_ahead_prints_with_the_answer_as_it_stands_at_its_time():
+    clock = [T0 + 100]
+    c = future(clock)
+    printing = c.app.state.printing
+    # sent ahead in the morning for tonight: nothing is made until its time, three hours on
     ops = [
         payload("open", "create", 0, **PHONE, promised_at=T0 + 4 * HOUR, quoted_minutes=60),
         payload("a1", "add_line", 1, line_id="L1", item="?", request=CHICKEN),
@@ -284,15 +283,16 @@ def test_a_ticket_waiting_for_its_time_is_made_again_with_the_new_answer():
         payload("fire", "fire", 3, course="*"),
     ]
     assert c.post("/orders/o1/ops", json=ops).json()["refused"] == []
-    assert bagged(c, "fire") == ["ALSO IN THE BAG", "Forks"]
-    wok_before = store.get("fire:wok").data
-    answer(c, "noon", CHOPSTICKS, at=500)
+    answer(c, "noon", CHOPSTICKS, at=500)  # the customer calls back: nothing is on paper, so no slip
+    assert printing.store.all() == []
+    clock[0] = T0 + 3 * HOUR
+    assert [job.job_id for job in printing.release_due()] == ["fire:wok", "fire:takeout"]
     assert bagged(c, "fire") == ["ALSO IN THE BAG", "2 x Chopsticks"]
-    assert store.get("fire:wok").data == wok_before and len(store.all()) == 2  # one ticket still, and no slip
     # the copy a fallback printer would get says the same
-    assert "2 x Chopsticks" in [line.strip() for line in decode(store.get("fire:takeout").fallbacks[0][1]).text]
-    # once its time has come it may be on paper: a change is a slip then
-    mono[0] += 3 * HOUR / 1000 + 1
+    assert "2 x Chopsticks" in [
+        line.strip() for line in decode(printing.store.get("fire:takeout").fallbacks[0][1]).text
+    ]
+    # now that it is on paper, a change is a slip
     answer(c, "evening", NAPKINS, at=600)
     assert bagged(c, "fire") == ["ALSO IN THE BAG", "2 x Chopsticks"]
     assert bagged(c, "evening:bag") == ["NOW IN THE BAG", "Napkins"]

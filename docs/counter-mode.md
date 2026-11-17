@@ -171,5 +171,6 @@ in phase 2.
   problems. The first `pay` with a given id wins, so a retry cannot pay twice.
 - `set_field` moves `stage`: `new`, `ready`, `picked_up`.
 - The check carries `payments`, `paid` and `due`.
-- A future order's print job carries `due_in`, the seconds until its ticket prints (`GET /print/jobs`); a
-  void prints at once.
+- A future order's tickets are not made until its time (`printing.md`, "Orders sent ahead"). Until then
+  `GET /print/jobs` lists it under `held`: `order_id`, `starts_ms` (when its tickets print) and `lines`
+  (how many dishes wait). The `fire` that sends it answers with no `print_jobs`.

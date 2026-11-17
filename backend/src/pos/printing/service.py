@@ -22,6 +22,10 @@ own screen and the bar printer). The rest of the order prints where it always do
 A guest's bill (`pos.printing.bill`) is no kitchen ticket and is not routed by station: it prints where it
 is asked for (`bill_printer`), on the same queue, with the same fallbacks.
 
+An order sent ahead of its time (tonight at seven, Saturday's catering) prints nothing when it is sent:
+the hub keeps which dishes wait (`pos.printing.held`, in the database, so a restart loses nothing) and
+makes the ticket when the time comes, from the order as it stands then (`release_due`).
+
 A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
 LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
 the job store is the queue; the printing itself is retried in the background and never holds up the order
@@ -47,6 +51,7 @@ from ..sync.oplog import Line, Op, OrderState, replay
 from .bill import Bill, render_bill
 from .day import DayPaper, render_day
 from .escpos import find_font
+from .held import Held, HeldTickets, Part
 from .jobs import JobStore, PrintJob, send_raw
 from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
 
@@ -55,6 +60,9 @@ LATE_AFTER_MS = 10 * 60 * 1000
 
 DEFAULT_LEAD_MINUTES = 15
 """How long before its promised time a future order's ticket prints when the order carries no quote."""
+
+SOON_MS = 60_000
+"""An order whose ticket is due within this is cooked now: nothing is held for under a minute."""
 
 
 @dataclass(frozen=True)
@@ -220,17 +228,25 @@ def taken_offline(ops: Iterable[Op], now_ms: int, late_after_ms: int = LATE_AFTE
     return datetime.fromtimestamp(min(op.hlc.wall_ms for op in late) / 1000)
 
 
+def starts_ms(state: OrderState, *, default_lead_minutes: int = DEFAULT_LEAD_MINUTES) -> int | None:
+    """When this order's ticket prints (wall-clock ms): its promised time less the minutes quoted for it.
+    None for an order that names no time."""
+    promised = state.fields.get("promised_at")
+    if isinstance(promised, bool) or not isinstance(promised, int):
+        return None
+    quoted = state.fields.get("quoted_minutes")
+    lead = quoted if isinstance(quoted, int) and not isinstance(quoted, bool) and quoted > 0 else default_lead_minutes
+    return promised - lead * 60_000
+
+
 def lead_delay(state: OrderState, now_ms: int, *, default_lead_minutes: int = DEFAULT_LEAD_MINUTES) -> float:
     """Seconds a ticket for this order waits before printing: a future order (architecture section 12,
     "Future orders") fires on its own ahead of its promised time by the minutes quoted for it, so the kitchen
     sees it when it is time to cook, not when it was taken. 0 for an order due now or soon."""
-    promised = state.fields.get("promised_at")
-    if not isinstance(promised, int):
+    start = starts_ms(state, default_lead_minutes=default_lead_minutes)
+    if start is None or start - now_ms <= SOON_MS:
         return 0.0
-    quoted = state.fields.get("quoted_minutes")
-    lead_ms = (quoted if isinstance(quoted, int) and quoted > 0 else default_lead_minutes) * 60_000
-    delay = (promised - lead_ms - now_ms) / 1000
-    return delay if delay > 60 else 0.0
+    return (start - now_ms) / 1000
 
 
 def _dollars(amount: Decimal) -> str:
@@ -470,9 +486,14 @@ class PrintService:
         dots: int = 576,
         now: Callable[[], int] = wall_clock_ms,
         late_after_ms: int = LATE_AFTER_MS,
+        held: HeldTickets | None = None,
     ) -> None:
         self._printers = printers
         self.store = store or JobStore()
+        self.held = held if held is not None else HeldTickets()
+        """What waits of the orders sent ahead of their time (`pos.printing.held`): kept in the database on a
+        hub, so their tickets print when the time comes whatever happened to the hub in between."""
+        self._holding = threading.Lock()  # one at a time decides what waits and what prints of an order
         self.direct = direct
         self._send = send
         self._font = font or find_font()
@@ -504,9 +525,9 @@ class PrintService:
         self.bill_place: Callable[[], str | None] = lambda: None
         """The printer the location's bills print at, by id (the `bill` setting); None when the location has
         not said, and for a printer that is no longer there."""
-        self._waiting: dict[str, list[tuple[PrintJob, Ticket, Printer]]] = {}
-        """A future order's takeout tickets that are made and wait for their time, by order: what they say
-        about the money is brought up to date while they wait (`_keep_money_current`)."""
+        self.state_of: Callable[[str], OrderState | None] | None = None
+        """An order as the log has it now, by id (the API wires the store in): what a ticket that waited for
+        its time is made from. Without it nothing that waits is released."""
 
     @classmethod
     def from_env(cls) -> PrintService:
@@ -574,7 +595,11 @@ class PrintService:
 
         What goes in the bag of a to-go order (`pos.orders.bag`) is on the takeout station's ticket. When the
         answer changes after the order went to the kitchen, that station gets a slip headed BAG with the
-        answer as it stands (`bag_slip`); a ticket still waiting for its time is made again instead."""
+        answer as it stands (`bag_slip`).
+
+        An order sent ahead of its time prints nothing here: its dishes are put on hold (`_hold`) and print
+        as one ticket a station when the time comes (`release_due`), with the allergies, the money and the bag
+        as they stand then. A dish taken off while it waits was never on paper, so no void prints for it."""
         if not self.printers:
             return []
         jobs: list[PrintJob] = []
@@ -587,37 +612,44 @@ class PrintService:
             before = replay([op for op in everything if op.op_id not in new], order_id)
             after = replay(everything, order_id)
             sent, voided = kitchen_changes(before, after)
-            waits = self._keep_current(after)
+            now = self._now()
+            waiting: frozenset[str] = frozenset()  # the dishes still on hold after this batch
+            out: frozenset[str] = frozenset()  # the dishes that were on hold and print with this batch
+            if is_to_go(after):
+                key = next((op for op in batch if op.kind == "fire"), batch[0])
+                released, waiting, out, sent, voided = self._hold(after, sent, voided, key=key, now=now)
+                jobs.extend(released)
+            printed = bool(sent) or bool(out)  # a ticket of this batch says the order as it stands now
             if sent or voided:
                 key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
-                now = self._now()
                 late = taken_offline(batch, now, self._late_after_ms)
-                delay = lead_delay(after, now) if not voided else 0.0  # a void prints at once
                 skip = self.skips(key.device)
-                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, delay=delay, skip=skip))
+                jobs.extend(self.send(after, sent, voided, key=key.op_id, late=late, skip=skip))
             if _told(before) != _told(after):
-                gone = {line.line_id for line in sent}
+                gone = {line.line_id for line in sent} | out
                 had = [
                     line
                     for line in after.ordered_lines()
-                    if line.active and line.fired_at is not None and line.line_id not in gone
+                    if line.active
+                    and line.fired_at is not None
+                    and line.line_id not in gone
+                    and line.line_id not in waiting  # not on paper yet: its ticket will say it
                 ]
                 if had:
                     key = next(op for op in batch if op.kind == "allergy")
-                    now = self._now()
-                    late = taken_offline(batch, now, self._late_after_ms)
-                    # with a future order's own tickets, when those are still waiting for their time
-                    delay = lead_delay(after, now)
-                    jobs.extend(self.send(after, had, [], key=key.op_id, late=late, delay=delay, kind="allergy"))
+                    late = taken_offline(batch, self._now(), self._late_after_ms)
+                    jobs.extend(self.send(after, had, [], key=key.op_id, late=late, kind="allergy"))
             bag = self.bag(after)
-            if bag is not None and bag != self.bag(before) and not sent and not waits:
+            if bag is not None and bag != self.bag(before) and not printed:
                 # The answer changed and no ticket of this batch carries it. With dishes already at the
                 # kitchen, the bag is being packed from a ticket that says otherwise.
-                if any(line.active and line.fired_at is not None for line in after.lines.values()):
+                on_paper = (
+                    line.active and line.fired_at is not None and line.line_id not in waiting
+                    for line in after.lines.values()
+                )
+                if any(on_paper):
                     key = next(op for op in batch if op.kind in ("create", "set_field") and BAG in op.data)
-                    slip = f"{key.op_id}:bag"
-                    # with a future order's own tickets, when those are still waiting for their time
-                    jobs.extend(self.bag_slip(after, key=slip, delay=lead_delay(after, self._now())))
+                    jobs.extend(self.bag_slip(after, key=f"{key.op_id}:bag"))
             if self.ticket_words().get("moved"):
                 for was_at, lines in table_changes(before, after, self._now()):
                     slip = f"{batch[0].op_id}:moved:{was_at}"
@@ -625,6 +657,118 @@ class PrintService:
                 for name, lines in tab_changes(before, after, self._now()):
                     slip = f"{batch[0].op_id}:moved:tab:{name}"
                     jobs.extend(self.send(after, lines, [], key=slip, kind="moved", was_tab=name))
+        return jobs
+
+    def _hold(
+        self, after: OrderState, sent: list[Line], voided: list[Line], *, key: Op, now: int
+    ) -> tuple[list[PrintJob], frozenset[str], frozenset[str], list[Line], list[Line]]:
+        """What a batch on a to-go order means for the dishes that wait for its time. While the order's time
+        is still ahead, the dishes it sends are put on hold and print nothing; a dish on hold that was taken
+        off is dropped quietly, since no ticket of it is on paper. Once the time has come (the clock passed
+        it, or the order was moved up), everything on hold prints with this batch, as one ticket.
+
+        Gives the jobs it queued, the dishes still on hold, the dishes those jobs carry, and what is left of
+        `sent` and `voided` to print the usual way: nothing of `sent` while the order waits or when it went
+        out with the held ones, and only the voids of dishes that were on paper."""
+        with self._holding:
+            try:
+                held = self.held.get(after.order_id)
+            except Exception:  # noqa: BLE001 - what waits cannot be read: the order call goes through all the same
+                held = None
+            waits = after.status != "void" and lead_delay(after, now) > 0
+            if held is None and not (waits and sent):
+                return [], frozenset(), frozenset(), sent, voided
+            was = held.lines if held is not None else frozenset()
+            off = {line.line_id for line in voided if line.line_id in was}
+            parts = list(held.without(off).parts) if held is not None else []
+            if sent:
+                skip = tuple(sorted(self.skips(key.device)))
+                parts.append(Part(key.op_id, tuple(line.line_id for line in sent), skip))
+            now_held = Held(after.order_id, starts_ms(after) or now, tuple(parts))
+            voided = [line for line in voided if line.line_id not in was]
+            if waits:
+                try:
+                    if now_held != held:
+                        self.held.put(now_held)
+                    return [], now_held.lines, frozenset(), [], voided
+                except Exception:  # noqa: BLE001 - what waits could not be written down
+                    # A ticket that prints early is on paper, with its day on it; one that was never written
+                    # down would be lost. So it prints now, and from here on it is an order the kitchen has.
+                    pass
+            jobs = self._print_held(now_held, after) if after.status != "void" else []
+            try:
+                self.held.drop(after.order_id)
+            except Exception:  # noqa: BLE001 - still written down: it prints again at its time, never not at all
+                pass
+            return jobs, frozenset(), now_held.lines, [], voided
+
+    def _print_held(self, held: Held, state: OrderState) -> list[PrintJob]:
+        """The tickets of dishes that waited for their time, from the order as it stands: the dishes still on
+        it, one ticket a station. Dishes sent from a screen that prints no ticket at some station go on a
+        ticket of their own, which leaves that station out as theirs would have."""
+        by_skip: dict[tuple[str, ...], tuple[str, set[str]]] = {}
+        for part in held.parts:
+            by_skip.setdefault(part.skip, (part.key, set()))[1].update(part.lines)
+        jobs: list[PrintJob] = []
+        for skip, (key, ids) in by_skip.items():
+            # the kitchen sees every one of them for the first time: none is a change to a ticket it has
+            lines = [
+                replace(line, modified_after_fire=False)
+                for line in state.ordered_lines()
+                if line.line_id in ids and line.active and line.fired_at
+            ]
+            if lines:
+                jobs.extend(self.send(state, lines, [], key=key, skip=frozenset(skip)))
+        return jobs
+
+    def adopt(self, orders: Iterable[OrderState]) -> list[str]:
+        """Puts on hold the sent dishes of orders whose time is still ahead and of which nothing is written
+        down: what a hub does as it starts with a list of what waits that was only just begun
+        (`HeldTickets.fresh`). Before hubs kept that list in the database, such an order's tickets waited in
+        the hub's memory, and the restart that brought this in lost them. An order that has something on hold
+        is left as it is. Gives the orders it took on."""
+        now = self._now()
+        taken = []
+        for state in orders:
+            if not is_to_go(state) or state.status == "void" or lead_delay(state, now) <= 0:
+                continue
+            with self._holding:
+                if self.held.get(state.order_id) is not None:
+                    continue
+                lines = tuple(
+                    line.line_id
+                    for line in state.ordered_lines()
+                    if line.active and line.fired_at is not None and not line.arrived_sent
+                )
+                if lines:
+                    part = Part(f"held:{state.order_id}", lines)
+                    self.held.put(Held(state.order_id, starts_ms(state) or now, (part,)))
+                    taken.append(state.order_id)
+        return taken
+
+    def release_due(self) -> list[PrintJob]:
+        """Prints the tickets of the orders sent ahead whose time has come: each from the order as the log has
+        it now. The hub's loop calls it every few seconds (`start_retrying`), and so does a relay asking for
+        work, so a ticket that was due while the hub was off prints as soon as it is back. An order voided
+        whole prints nothing; one that was closed prints all the same, since closing a check does not cancel
+        the food. An order whose time was moved since it was put on hold waits for the new one."""
+        if self.state_of is None or not self.printers:
+            return []
+        jobs: list[PrintJob] = []
+        now = self._now()
+        for due in self.held.due(now + SOON_MS):
+            with self._holding:
+                held = self.held.get(due.order_id)  # as it stands now: a batch may have changed it meanwhile
+                state = self.state_of(due.order_id) if held is not None else None
+                if held is None or state is None:
+                    continue
+                if state.status == "void":
+                    self.held.drop(held.order_id)
+                elif lead_delay(state, now) > 0:
+                    self.held.put(replace(held, start_ms=starts_ms(state) or now))
+                else:
+                    jobs.extend(self._print_held(held, state))
+                    self.held.drop(held.order_id)
         return jobs
 
     def send(
@@ -635,7 +779,6 @@ class PrintService:
         *,
         key: str,
         late: datetime | None = None,
-        delay: float = 0.0,
         kind: str | None = None,
         was_at: str = "",
         was_tab: str | None = None,
@@ -643,10 +786,9 @@ class PrintService:
     ) -> list[PrintJob]:
         """One ticket per printer that has lines in this change. `skip` is the stations the screen that sent
         it prints no ticket at: their lines are on nobody's ticket but the bag's, and such a station is neither
-        counted nor named on the other tickets, since no ticket of it is on its way. `delay` seconds holds the
-        tickets back (a future order's lead time); the hub's retry loop and the relays pick them up when they
-        are due. The takeout station's copy of a to-go order also says where the money stands (`money`) and
-        what else goes in the bag (`bag`).
+        counted nor named on the other tickets, since no ticket of it is on its way. The takeout station's
+        copy of a to-go order also says where the money stands (`money`) and what else goes in the bag
+        (`bag`).
         `kind` is `allergy` for the notice that follows dishes already sent, which lists them again, and
         `moved` for the slip that says they now go to another table than `was_at`, the one they were sent for
         (or than the bar, when they were sent for the tab called `was_tab`).
@@ -659,13 +801,13 @@ class PrintService:
         with self._lock:
             ticket_no = next(self._tickets)
         printers = self.printers
+        printed_at = datetime.fromtimestamp(self._now() / 1000)  # by the hub's clock, like the times it reckons by
         courses = self.course_names() if self.course_names is not None else {}
         allergens = self.allergen_names()
         words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         money = self.money(state) if kind is None else None
         bag = self.bag(state) if kind is None else None
         made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
-        bagged: set[str] = set()  # the printers whose ticket is the copy that goes in the bag
         for printer, routes in self.routing(printers, to_go=is_to_go(state), skip=skip):
             ticket = ticket_for(
                 state,
@@ -682,12 +824,12 @@ class PrintService:
             )
             if ticket is None:
                 continue
+            ticket = replace(ticket, at=printed_at)
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
             if routes.whole is not None and kind is None:
                 # the copy that goes in the bag: where the money stands, and what else the customer wants in it
                 ticket = replace(ticket, money=money, bag=bag)
-                bagged.add(printer.id)
             made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
         cooks = sum(1 for _, _, cooked in made if cooked)
         jobs, nth = [], 0
@@ -698,11 +840,7 @@ class PrintService:
             if words.get("also_at"):
                 others = dict.fromkeys(name for _, _, there in made for name in there if name not in cooked)
                 ticket = replace(ticket, also_at=tuple(others))
-            job = self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers)
-            if printer.id in bagged and self.store.due_in(job) > 0:
-                with self._lock:
-                    self._waiting.setdefault(state.order_id, []).append((job, ticket, printer))
-            jobs.append(job)
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", printers=printers))
         return jobs
 
     def bag(self, state: OrderState) -> tuple[str, ...] | None:
@@ -711,7 +849,7 @@ class PrintService:
         answer = bag_of(state.fields) if is_to_go(state) else None
         return None if answer is None else bag_lines(answer)
 
-    def bag_slip(self, state: OrderState, *, key: str, delay: float = 0.0) -> list[PrintJob]:
+    def bag_slip(self, state: OrderState, *, key: str) -> list[PrintJob]:
         """The slip the takeout station gets when what goes in the bag changes after the order was sent: the
         order as its ticket was headed, no dishes, and the answer as it stands now. The ticket the bag is
         packed from was printed with the old one."""
@@ -726,7 +864,7 @@ class PrintService:
             if ticket is None:
                 continue
             ticket = replace(ticket, bag=self.bag(state), allergies=())  # the dishes' business, not the bag's
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", printers=printers))
         return jobs
 
     def money(self, state: OrderState) -> Money | None:
@@ -736,34 +874,6 @@ class PrintService:
         if self.check_of is None or not is_to_go(state) or not self.ticket_words().get("paid"):
             return None
         return money_words(self.check_of(state))
-
-    def _keep_current(self, state: OrderState) -> bool:
-        """A future order's ticket is made when the order is sent and prints when its time comes, which can be
-        days later (catering). Whatever is paid, added or taken off in between changes what the ticket should
-        say about the money, and the customer may change what goes in the bag, so the waiting ticket is made
-        again with the order as it stands now. A ticket whose time has come is left alone: it may be on
-        paper. True when a ticket of this order still waits, and so says what the order says now."""
-        if state.order_id not in self._waiting:
-            return False
-        money, bag = self.money(state), self.bag(state)
-        with self._lock:
-            still = []
-            for job, ticket, printer in self._waiting.pop(state.order_id, []):
-                if job.status != "queued" or self.store.due_in(job) <= 0:
-                    continue
-                fresh = ticket
-                if money is not None and money != ticket.money:
-                    fresh = replace(fresh, money=money)
-                if bag != ticket.bag:
-                    fresh = replace(fresh, bag=bag)
-                if fresh is not ticket:
-                    if not self.store.rewrite(job.job_id, *self._rendered(fresh, printer)):
-                        continue
-                    ticket = fresh
-                still.append((job, ticket, printer))
-            if still:
-                self._waiting[state.order_id] = still
-            return bool(still)
 
     def cooking(self, printer: Printer, takes: Takes, lines: Iterable[Line]) -> tuple[str, ...]:
         """The stations these lines are cooked at on this printer's ticket, by name, in the order they stand on
@@ -848,18 +958,17 @@ class PrintService:
         self.store.deliver_direct(job, send=self._send)
 
     def start_retrying(self, interval: float = 3.0) -> None:
-        """A daemon that gives undelivered jobs another go every `interval` seconds, and prints a future
-        order's tickets when their time comes (hubs only)."""
-        if not self.direct:
-            return
+        """A daemon that every `interval` seconds makes the tickets of the orders sent ahead whose time has
+        come (`release_due`), and on a hub gives undelivered jobs another go."""
 
         def loop() -> None:
             while True:
                 time.sleep(interval)
-                try:
-                    self.retry_pending()
-                except Exception:  # noqa: BLE001 - a printing hiccup must never stop the retry loop
-                    pass
+                for step in (self.release_due, self.retry_pending):
+                    try:
+                        step()
+                    except Exception:  # noqa: BLE001 - a printing hiccup must never stop the loop
+                        pass
 
         threading.Thread(target=loop, name="print-retry", daemon=True).start()
 

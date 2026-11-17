@@ -114,7 +114,10 @@ def render(
         number = f"#{ticket.order_no}  " if ticket.order_no is not None else ""
         b.line(f"{number}{ticket.customer}".strip().upper(), big=True, bold=True)
     if ticket.promised is not None:
-        b.line(f"READY BY {ticket.promised:%H:%M}", bold=True)
+        # The day too when it is not the day the ticket prints: a ticket that comes out early, or late, must
+        # not be cooked for the wrong day.
+        day = "" if ticket.promised.date() == ticket.at.date() else f"  {ticket.promised:%a %b} {ticket.promised.day}"
+        b.line(f"READY BY {ticket.promised:%H:%M}{day.upper()}", bold=True)
     if ticket.money is not None:
         # Under the number and the name: the third thing asked at the shelf. Money still to collect is a
         # black bar across the paper, so a bag is not handed over on the strength of a quiet line.

@@ -247,24 +247,26 @@ def test_a_future_order_prints_at_its_lead_time_and_a_void_at_once():
     assert lead_delay(soon, NOW) == 0  # due in ten minutes with the default lead: cook it now
     assert lead_delay(replay([make_op("create", at=0, order_type="takeout")], "o1"), NOW) == 0
 
-    mono = [1000.0]
-    store = JobStore(clock=lambda: mono[0])
-    service = PrintService([Printer("kitchen", "k:9100")], store=store, direct=False, now=lambda: NOW)
+    clock = [NOW]
+    store = JobStore()
+    service = PrintService([Printer("kitchen", "k:9100")], store=store, direct=False, now=lambda: clock[0])
     c = client(printing=service)
     takeout(c, "o1", 0, promised_at=promised, quoted_minutes=20)
     fired = c.post("/orders/o1/ops", json=[payload("f", "fire", 2, course="*")]).json()
-    assert fired["print_jobs"] == ["f:kitchen"]
-    job = c.get("/print/jobs").json()["jobs"][0]
-    assert (job["status"], job["due_in"]) == ("queued", 2400)
+    # nothing is on paper, and nothing is made, until its time: the hub keeps which dishes wait
+    assert fired["print_jobs"] == []
+    waiting = c.get("/print/jobs").json()
+    assert waiting == {"jobs": [], "held": [{"order_id": "o1", "starts_ms": promised - 20 * 60_000, "lines": 1}]}
     assert c.post("/print/jobs/claim", json={"relay": "r1", "printers": ["k:9100"]}).json()["job"] is None
-    mono[0] += 2401
+    clock[0] += 39 * 60_000 + 1  # within a minute of its time: cook it
     claimed = c.post("/print/jobs/claim", json={"relay": "r1", "printers": ["k:9100"]}).json()["job"]
     assert claimed["job_id"] == "f:kitchen" and claimed["due_in"] == 0
+    assert c.get("/print/jobs").json()["held"] == []
     # The ticket carries the number, the name and the promised time, big, for the shelf.
     text = decode(store.get("f:kitchen").data).text
     assert "#1  LINDA" in text and f"READY BY {datetime.fromtimestamp(promised / 1000):%H:%M}" in text
     assert "Counter" in text and not any("No table" in t for t in text)
-    # A void on a future order does not wait: the kitchen may have started early.
+    # A void of a dish that is on paper does not wait.
     c.app.state.settings = servers_void()  # no manager at hand: this is about when the void prints
     c.post("/orders/o1/ops", json=[payload("v", "void_line", 3, line_id="L1", reason="kitchen-error")])
     assert [j.job_id for j in store.pending()] == ["v:kitchen"]

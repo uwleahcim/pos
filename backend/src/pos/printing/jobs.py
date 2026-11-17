@@ -108,17 +108,6 @@ class JobStore:
     def get(self, job_id: str) -> PrintJob | None:
         return self._jobs.get(job_id)
 
-    def rewrite(self, job_id: str, data: bytes, fallbacks: list[tuple[str, bytes]] | None = None) -> bool:
-        """Gives a job that is still waiting for its time (a future order's ticket) new words to print. False,
-        and nothing changed, for a job whose time has come: it may be on paper already."""
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None or job.status != "queued" or job.not_before <= self._clock():
-                return False
-            job.data = data
-            job.fallbacks = list(fallbacks or ())
-            return True
-
     def due_in(self, job: PrintJob) -> float:
         """Seconds until a scheduled job may print; 0 for one that may print now."""
         return max(0.0, job.not_before - self._clock())
