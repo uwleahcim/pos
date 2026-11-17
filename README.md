@@ -87,6 +87,9 @@ merges after any disconnect.
 - One-tap notes to the kitchen (the words typed on a dish again and again, as buttons over the dish's note:
   Rush, Split for 2; a manager keeps the list; the ticket prints them as it prints a typed note):
   `docs/kitchen-notes.md`
+- Dish names in Chinese on the screens (each person picks, under Display, which name of a dish they read:
+  English or 中文; the menu's tiles and the check follow it and it follows them to every screen; what is
+  recorded, the bill and the kitchen's tickets do not change): `docs/dish-names.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

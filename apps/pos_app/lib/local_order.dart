@@ -17,13 +17,17 @@ import 'outbox.dart';
 /// What the screen knew about a line it added: the price the menu showed, the choices picked, and the dish,
 /// so the line can be shown priced and reopened before the backend has answered.
 class LocalLine {
-  const LocalLine({this.unitPrice, this.modifiers = const [], this.itemId, this.entryId});
+  const LocalLine({this.unitPrice, this.modifiers = const [], this.itemId, this.entryId, this.zhName});
   final String? unitPrice;
 
   /// Its choices with the price of each; the estimate works out what they add for the quantity.
   final List<CheckModifier> modifiers;
   final String? itemId;
   final String? entryId;
+
+  /// The dish's Chinese name as the menu showed it, so a person who reads the names in Chinese sees it on
+  /// the check at once and not only when the hub has answered.
+  final String? zhName;
 }
 
 Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {

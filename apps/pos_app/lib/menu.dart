@@ -185,11 +185,13 @@ class MenuSection {
     required this.entries,
     this.sections = const [],
     this.color,
+    this.secondName,
   });
 
   factory MenuSection.fromJson(Map<String, dynamic> json) => MenuSection(
     sectionId: json['section_id'] as String,
     name: json['name'] as String? ?? '',
+    secondName: json['second_name'] as String?,
     color: json['color'] as String?,
     entries: (json['entries'] as List? ?? const []).map((e) => MenuEntry.fromJson(e as Map<String, dynamic>)).toList(),
     sections: (json['sections'] as List? ?? const [])
@@ -199,6 +201,10 @@ class MenuSection {
 
   final String sectionId;
   final String name;
+
+  /// The category's name in the other language (Chinese beside an English name), where the menu holds one.
+  /// An older hub does not say.
+  final String? secondName;
 
   /// The tile colour the menu gives this category (`#RRGGBB`), or null for one from the app's palette.
   final String? color;

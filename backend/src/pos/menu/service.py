@@ -294,6 +294,7 @@ class MenuService:
         return {
             "section_id": section.section_id,
             "name": section.name,
+            "second_name": self._section_second_name(section.section_id, locale),
             "color": self._section_color(section.section_id),
             "entries": [
                 {
@@ -356,6 +357,15 @@ class MenuService:
         names = self.defs.items[item_code].names
         other = "en" if locale.startswith("zh") else "zh"
         return names.get(other)
+
+    def _section_second_name(self, section_id: str, locale: str) -> str | None:
+        """A category's name in the other language, as a dish has one ([_second_name]): a screen whose person
+        reads Chinese puts it on the category's button. None where the menu holds no such name."""
+        section = self.defs.sections.get(section_id)
+        if section is None:
+            return None
+        other = "en" if locale.startswith("zh") else "zh"
+        return section.names.get(other) or None
 
     def _kitchen_name(self, item_code: str) -> str | None:
         """What the dish's ticket calls it when that is not its name (`腰果蝦 SHMP CASHEW r`): the screens'
