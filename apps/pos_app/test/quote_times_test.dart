@@ -349,7 +349,10 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
     await tester.pumpAndSettle();
     await bringUp(tester, 'quote-times');
-    expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 min'), findsOneWidget); // not the rush
+    expect(
+      find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 · Catering 60 min'),
+      findsOneWidget,
+    ); // not the rush
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
     expect(find.text('Big orders'), findsOneWidget);
@@ -370,7 +373,10 @@ void main() {
     expect((t.hub.quotes['minutes'] as Map)['counter'], 15); // the channel's own minutes, not the rush on top
     expect((t.hub.quotes['rush'] as Map)['minutes'], 20); // saving the quote times leaves the rush alone
     expect(find.text('Quote times saved'), findsOneWidget);
-    expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 min · 8 dishes or more +10'), findsOneWidget);
+    expect(
+      find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 · Catering 60 min · 8 dishes or more +10'),
+      findsOneWidget,
+    );
     await stop(tester);
   });
 
@@ -420,7 +426,8 @@ void main() {
     expect(fill('o1'), fill('o2'));
     expect(fill('o3'), isNot(fill('o1')));
 
-    expect(find.text('2 items · open · for ${clockTime(far)} · pay at pickup'), findsOneWidget);
+    // (with its day, should the time fall past midnight)
+    expect(find.text('2 items · open · for ${whenFor(far, DateTime.now())} · pay at pickup'), findsOneWidget);
     expect(find.text('2 items · open · ready ${clockTime(soon)} · pay at pickup'), findsOneWidget);
     await stop(tester);
   });

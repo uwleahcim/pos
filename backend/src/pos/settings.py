@@ -108,7 +108,9 @@ STANDARD_KITCHEN_NOTES = ["Rush", "Split for 2", "Well done", "Less oil", "Less 
 STANDARD_WASTE_REASONS = ["Dropped", "Burnt", "Made wrong", "Expired", "Spoiled", "Staff meal"]
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
-        "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
+        # For catering the minutes are how long before its time the kitchen gets the ticket: an order for an
+        # event always names its time.
+        "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45, "catering": 60},
         "pay_at_pickup": ["phone"],
         "big_orders": {"dishes": 0, "minutes": 0},
     },

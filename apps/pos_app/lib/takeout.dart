@@ -28,7 +28,7 @@ class Rush {
 /// [rush] a manager set for tonight, and [bigMinutes] for an order of [bigDishes] dishes or more.
 class Quotes {
   const Quotes({
-    this.minutes = const {'counter': 15, 'phone': 20, 'online': 25, 'delivery': 45},
+    this.minutes = const {'counter': 15, 'phone': 20, 'online': 25, 'delivery': 45, 'catering': cateringLead},
     this.payAtPickup = const ['phone'],
     this.rush,
     this.bigDishes = 0,
@@ -67,8 +67,10 @@ class Quotes {
   final bool takesRush;
   final bool takesBigOrders;
 
-  /// The channel's own minutes, as a manager set them.
-  int baseFor(String channel) => minutes[channel] ?? 15;
+  /// The channel's own minutes, as a manager set them. For catering they are how long before its time the
+  /// kitchen gets the ticket; a hub from before catering had a lead of its own says nothing, and the hour
+  /// stands.
+  int baseFor(String channel) => minutes[channel] ?? (channel == 'catering' ? cateringLead : 15);
 
   /// The minutes the rush adds to a quote made at [at]. An order the customer named a time for ([promised])
   /// takes them only when that time is still within the rush's night: tonight's rush says nothing about
@@ -88,7 +90,10 @@ class Quotes {
   /// The minutes an order of [dishes] dishes takes on top of its quote.
   int extraFor(int dishes) => bigDishes > 0 && bigMinutes > 0 && dishes >= bigDishes ? bigMinutes : 0;
 
-  bool mayPayAtPickup(String channel) => payAtPickup.contains(channel);
+  /// Whether an order on [channel] may go to the kitchen with money still to collect. A catering order
+  /// always may: it is taken days ahead on a deposit, or on none, and the rest is paid when it is handed
+  /// over.
+  bool mayPayAtPickup(String channel) => channel == 'catering' || payAtPickup.contains(channel);
 
   /// What a manager's save sends: the rush is set by itself (`PUT /settings/rush`).
   Map<String, dynamic> toJson() => {
@@ -145,7 +150,74 @@ DateTime? laterStageChanges({required int promisedAt, required int quotedMinutes
 }
 
 /// The channels an operator takes orders on by hand; online and delivery orders come in on their own.
-const handChannels = ['counter', 'phone'];
+const handChannels = ['counter', 'phone', 'catering'];
+
+/// How long before its time the kitchen gets a catering order's ticket, until a manager sets it.
+const cateringLead = 60;
+
+/// How a catering order leaves: the customer comes for it, or it is brought to an address.
+const handovers = ['pickup', 'delivery'];
+
+String handoverLabel(String handover) => handover == 'delivery' ? 'Delivery' : 'Pickup';
+
+/// The longest an address or a note for the event is kept.
+const eventTextMax = 200;
+
+/// What an event needs beyond a name and a time (docs/catering.md): how many it feeds, how it leaves, where
+/// to, and whatever else the kitchen or the driver must know.
+class EventDetails {
+  const EventDetails({this.guests, this.handover = 'pickup', this.address = '', this.note = ''});
+
+  /// As an order carries them: `event_guests`, `handover`, `address`, `event_note`. (The head count is not a
+  /// table's `guests`, which the reports count as covers.)
+  factory EventDetails.of(Map<String, dynamic> fields) => EventDetails(
+    guests: switch (fields['event_guests']) {
+      final int n when n > 0 => n,
+      _ => null,
+    },
+    handover: fields['handover'] == 'delivery' ? 'delivery' : 'pickup',
+    address: oneLine(fields['address']),
+    note: oneLine(fields['event_note']),
+  );
+
+  final int? guests;
+  final String handover;
+  final String address;
+  final String note;
+
+  bool get delivered => handover == 'delivery';
+
+  /// What goes on the order. An address is kept only for a delivery; a field left empty is written empty,
+  /// so one taken off an order is gone from it.
+  Map<String, dynamic> toFields() => {
+    'event_guests': guests,
+    'handover': handover,
+    'address': delivered ? address : '',
+    'event_note': note,
+  };
+
+  /// "30 guests · Delivery · 12 Main St, Winchester · Set up by 11:30, side door".
+  String get words => [
+    if (guests != null) guests == 1 ? '1 guest' : '$guests guests',
+    handoverLabel(handover),
+    if (delivered && address.isNotEmpty) address,
+    if (note.isNotEmpty) note,
+  ].join(' · ');
+
+  @override
+  bool operator ==(Object other) =>
+      other is EventDetails &&
+      other.guests == guests &&
+      other.handover == handover &&
+      (delivered ? other.address == address : true) &&
+      other.note == note;
+
+  @override
+  int get hashCode => Object.hash(guests, handover, delivered ? address : '', note);
+}
+
+/// A text on one line, as the hub keeps it.
+String oneLine(Object? text) => (text?.toString() ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
 
 /// What the to-go dialog collects: name and phone first, the channel, and when the order is for.
 class TakeoutRequest {
@@ -157,6 +229,7 @@ class TakeoutRequest {
     this.promisedAt,
     this.again,
     this.note,
+    this.event,
   });
 
   final String name;
@@ -173,14 +246,20 @@ class TakeoutRequest {
   /// The line about the customer as the form leaves it, when it was changed there; null keeps what the hub
   /// has.
   final String? note;
+
+  /// What a catering order's event needs; null on any other order.
+  final EventDetails? event;
 }
 
 /// What the pay-first dialog hands back: cash with what was tendered, paid elsewhere with a note, or
 /// nothing taken yet (pay at pickup, where the location allows it for the channel).
 class PayChoice {
-  const PayChoice({this.method, this.tendered, this.note = ''});
+  const PayChoice({this.method, this.amount, this.tendered, this.note = ''});
 
   final String? method; // cash | elsewhere | null: pay at pickup
+
+  /// What is taken: the whole of what is due, or a part of it (a deposit). Null when nothing is.
+  final String? amount;
   final String? tendered;
   final String note;
 
@@ -200,6 +279,28 @@ String channelLabel(String channel) => switch (channel) {
 String clockTime(int ms) {
   final at = DateTime.fromMillisecondsSinceEpoch(ms);
   return '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+}
+
+const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// "Sat 21 Nov": a day an order is for, with its weekday, since that is what a customer names.
+String dayName(DateTime day) => '${_weekdays[day.weekday - 1]} ${day.day} ${_months[day.month - 1]}';
+
+/// The day [day] is, as seen from [now]: "today", "tomorrow", or "Sat 21 Nov".
+String dayAhead(DateTime day, DateTime now) {
+  final days = DateTime(day.year, day.month, day.day).difference(DateTime(now.year, now.month, now.day)).inHours / 24;
+  return switch (days.round()) {
+    0 => 'today',
+    1 => 'tomorrow',
+    _ => dayName(day),
+  };
+}
+
+/// When an order is for, as a list says it at [now]: "18:05" today, "tomorrow 12:00", "Sat 21 Nov 12:00".
+String whenFor(int ms, DateTime now) {
+  final day = dayAhead(DateTime.fromMillisecondsSinceEpoch(ms), now);
+  return day == 'today' ? clockTime(ms) : '$day ${clockTime(ms)}';
 }
 
 String stageLabel(String stage) => switch (stage) {

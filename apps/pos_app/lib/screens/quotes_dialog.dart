@@ -22,7 +22,8 @@ class _QuotesDialogState extends State<QuotesDialog> {
   static const _channels = ['counter', 'phone', 'online', 'delivery'];
   static const _tickWidth = 76.0; // the column of "pay at pickup" ticks, under its heading
   late final Map<String, TextEditingController> _minutes = {
-    for (final c in _channels) c: TextEditingController(text: '${widget.quotes.baseFor(c)}'),
+    // catering has a row of its own: its minutes are how long before its time the kitchen gets the ticket
+    for (final c in [..._channels, 'catering']) c: TextEditingController(text: '${widget.quotes.baseFor(c)}'),
   };
   late final Set<String> _payAtPickup = {...widget.quotes.payAtPickup};
   late final _bigDishes = TextEditingController(text: _shown(widget.quotes.bigDishes));
@@ -142,6 +143,31 @@ class _QuotesDialogState extends State<QuotesDialog> {
                     ],
                   ),
                 ),
+              const Divider(height: 16),
+              Text('Catering', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'How long before its time the kitchen gets the ticket of a catering order. It may always '
+                      'be sent with money still to collect.',
+                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 90,
+                    child: TextField(
+                      key: const ValueKey('quote:catering'),
+                      controller: _minutes['catering'],
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(suffixText: 'min', isDense: true),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               if (widget.quotes.takesBigOrders) ...[
                 const Divider(height: 16),
                 Text('Big orders', style: theme.textTheme.titleSmall),

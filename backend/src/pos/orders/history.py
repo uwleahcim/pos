@@ -69,6 +69,10 @@ OPENED_WITH = (
     "quoted_minutes",
     "server",
     "note",
+    "event_guests",
+    "handover",
+    "address",
+    "event_note",
 )
 """What a check says of itself when it is opened, in the order a screen lists it."""
 OWN_STEP = {
@@ -81,7 +85,17 @@ OWN_STEP = {
     "split": "split",
 }
 """The fields whose change is a step with a name of its own."""
-PLAIN = ("customer_name", "phone", "note", "order_type", "channel")
+PLAIN = (
+    "customer_name",
+    "phone",
+    "note",
+    "order_type",
+    "channel",
+    "event_guests",
+    "handover",
+    "address",
+    "event_note",
+)
 """The fields whose change reads as "the name was A, now B". The rest (the server's id, the customer's
 language, a ticket number) change with something a step already says, or are the hub's own bookkeeping."""
 LINE_SAID = tuple(sorted(LINE_FIELDS - {"rank"}))

@@ -11,11 +11,13 @@ Tap **To go** on the orders screen.
 1. **Name and phone.** The name goes on the ticket and in the texts; the phone is where the ready text
    goes (leave it empty for a walk-up who waits). The language chips (English, 中文) pick the language
    of the texts.
-2. **Channel.** Counter or phone; online and delivery orders arrive on their own in phase 2. The hub's
-   quote for the channel says when it will be ready ("Ready in about 15 min"). While a manager's rush is
-   on, the quote is longer and the form says by how much ("Ready in about 35 min (busy kitchen: +20)").
-3. **For later.** Today or tomorrow, and a time. The kitchen ticket prints ahead of that time by the
-   channel's quote, so the kitchen sees the order when it is time to cook it, not when it was taken.
+2. **Channel.** Counter, phone or catering; online and delivery orders arrive on their own in phase 2.
+   The hub's quote for the channel says when it will be ready ("Ready in about 15 min"). While a manager's
+   rush is on, the quote is longer and the form says by how much ("Ready in about 35 min (busy kitchen:
+   +20)"). A catering order asks for its day and time and what its event needs (`catering.md`).
+3. **For later.** Today, tomorrow or another day off a calendar, and a time. The kitchen ticket prints
+   ahead of that time by the channel's quote, so the kitchen sees the order when it is time to cook it,
+   not when it was taken.
 
 The check opens with no seats or courses. Add the dishes as on a table. The app bar shows the number the
 hub gave the order and the time it is for (`#42 Linda · 18:05`). When the dishes make it a big order (see
@@ -49,6 +51,10 @@ next customer.
 Cards come with the payments phase. A paid order lists what was taken under the total, and what is still
 due. When nothing is due the button is **Send**.
 
+Where the order may go with money still to collect (a phone order, a catering order), a part of it can be
+taken instead of the whole: a deposit. And once the kitchen has an order, **Pay** beside what is due takes
+the rest, so an order that pays at pickup can be paid at pickup (`catering.md`, "A deposit, and the rest").
+
 Either button first asks, once an order, **what goes in the bag** besides the food (chopsticks, forks,
 napkins, or nothing), unless the location turned the question off. The answer stands on the check over the
 totals and prints on the takeout counter's ticket (see `to-go-question.md`).
@@ -67,7 +73,8 @@ One row of chips above the list sorts the to-go orders by stage, each chip with 
   nothing of them yet.
 - **Cooking**: orders the kitchen has, from the moment their ticket prints.
 - **Ready**: orders on the shelf, waiting to be picked up.
-- **Unpaid**: every open to-go order with nothing paid on it, whatever its stage.
+- **Unpaid**: every open to-go order with money still to collect, whatever its stage: nothing paid on
+  it, or a deposit and a rest.
 
 Tapping a chip lists only its orders, the one due first at the top; tapping it again brings every check
 back. The row shows once there is a to-go order to sort, and only on the list, not on the floor map. An
@@ -101,7 +108,8 @@ A manager sets the minutes per channel, and which channels may pay at pickup, un
 **Quote times** (manager PIN; see `location-settings.md`). The hub keeps them for every terminal:
 `GET /settings/quotes`, `PUT` with a manager
 session token. Defaults: counter 15, phone 20, online 25, delivery 45 minutes; phone orders may pay at
-pickup. Kitchen pacing will quote the times itself in phase 2; until then two things move a quote with the
+pickup. Catering has a row of its own, 60 minutes: how long before its time the kitchen gets a catering
+order's ticket. Kitchen pacing will quote the times itself in phase 2; until then two things move a quote with the
 kitchen.
 
 ### The rush

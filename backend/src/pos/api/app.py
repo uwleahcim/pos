@@ -10,6 +10,7 @@ import base64
 import binascii
 import json
 import os
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -41,6 +42,7 @@ from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
 from ..orders.adjustments import APPROVAL_TTL, PricingRules, load_rules
+from ..orders.ahead import orders_ahead
 from ..orders.bag import bag_ops
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
@@ -154,6 +156,37 @@ def listed(state: OrderState) -> dict[str, Any]:
     }
     snapshot["opened_ms"] = state.first.wall_ms if state.first is not None else None
     return snapshot
+
+
+class Dues:
+    """What is still to pay on a to-go order that took money (`due`, as its check reckons it), for a list
+    of orders: a deposit is money taken and not the whole of it, and a list that knew only "something was
+    paid" would call such an order paid. Remembered under the exact state of the order's log, so a list read
+    every few seconds reckons a check once; let go when the taxes or the rules are other objects, and past a
+    few thousand orders."""
+
+    def __init__(self) -> None:
+        self._kept: dict[str, tuple[Any, int, str]] = {}
+        self._under: tuple[Any, Any] = (None, None)
+        self._lock = threading.Lock()
+
+    def of(self, state: OrderState, taxes: TaxProfile, rules: PricingRules | None) -> str | None:
+        """None for a table's check and for an order nothing was paid on: all of it is due, and a list says
+        so without being told."""
+        if not state.payments or str(state.fields.get("order_type") or "dine_in") == "dine_in":
+            return None
+        stands = (state.last, len(state.applied))
+        with self._lock:
+            if self._under[0] is not taxes or self._under[1] is not rules or len(self._kept) > 5000:
+                self._kept.clear()
+                self._under = (taxes, rules)
+            kept = self._kept.get(state.order_id)
+            if kept is not None and (kept[0], kept[1]) == stands:
+                return kept[2]
+        due = str(check_for(state, taxes, rules)["due"])
+        with self._lock:
+            self._kept[state.order_id] = (*stands, due)
+        return due
 
 
 def op_out(op: Op) -> dict[str, Any]:
@@ -786,6 +819,7 @@ def create_app(
     app.state.photos = photos if photos is not None else PhotoStore()
     app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.tokens = tokens if tokens is not None else Tokens()
+    app.state.dues = Dues()  # what is still to pay on the to-go orders a list names
     app.state.settings = settings if settings is not None else default_settings()
     # The change feed: what the screens hold open instead of polling (see `feed`). It tells what arrives in
     # the log, whoever wrote it, and what the menu says changed: a save, one made on another hub, the 86 board.
@@ -1018,8 +1052,34 @@ def create_app(
                 recent = {entry.order_id for entry in entries}
                 entries += [entry for entry in store.index(status="open") if entry.order_id not in recent]
         states = sorted(store.views(entries), key=lambda state: state.last or _NEVER, reverse=True)
-        orders = [listed(state) if brief else state.snapshot() for state in states]
+        if not brief:
+            return polled({"orders": [state.snapshot() for state in states], "cursor": store.cursor})
+        orders = []
+        for state in states:
+            order = listed(state)
+            # a to-go order that took money says what is still to pay: a deposit is not the whole of it
+            due = app.state.dues.of(state, app.state.taxes, app.state.pricing)
+            if due is not None:
+                order["due"] = due
+            orders.append(order)
         return polled({"orders": orders, "cursor": store.cursor})
+
+    @app.get("/orders/ahead")  # before /orders/{order_id}, which would take "ahead" for an id
+    def read_orders_ahead() -> Response:
+        """The orders still to come, by the day each is for (`pos.orders.ahead`): every to-go order the
+        customer named a time for that was not voided or handed over, an open one however late it is, a
+        closed one while its time is still ahead. `days` is `[{day, orders, count, guests, unsent, total,
+        paid, due}]`, the earliest first; an order says who and when, how it leaves (`handover`, `address`,
+        `event_note`, `guests`), its `dishes` and how many of them nobody sent (`unsent`), `items` by name,
+        and `total`, `paid` and `due` as its check reckons them. Anyone at a terminal may read it, like the
+        list of orders."""
+        store: OpStore | PgOpStore = app.state.store
+        now_ms = store.now_ms()
+        entries = {entry.order_id: entry for entry in store.index(status="open")}
+        for entry in store.index(promised=(now_ms, _NO_LATER)):
+            entries.setdefault(entry.order_id, entry)
+        states = store.views(list(entries.values()))
+        return polled(orders_ahead(states, now_ms=now_ms, taxes=app.state.taxes, rules=app.state.pricing))
 
     @app.get("/orders/last")  # before /orders/{order_id}, which would take "last" for an id
     def read_last_order(phone: str = Query(min_length=1)) -> dict[str, Any]:

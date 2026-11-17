@@ -619,6 +619,10 @@ class Hub {
   Map<String, dynamic>? check;
   (String, String)? refuseExempt;
 
+  /// The orders ahead it lists (`GET /orders/ahead`, docs/catering.md). Null is a hub older than the list,
+  /// which takes "ahead" for the id of an order it does not have.
+  Map<String, dynamic>? ahead;
+
   /// Every audit photo a terminal sent (`POST /events/photos`).
   final photosPut = <Map<String, dynamic>>[];
   Map<String, dynamic>? rules;
@@ -1445,6 +1449,9 @@ class Hub {
       final saved = jsonDecode(request.body) as Map<String, dynamic>;
       prefsSaved.add((id, saved));
       return json({'staff_id': id, 'preferences': saved});
+    }
+    if (path == '/orders/ahead') {
+      return ahead == null ? json({'detail': 'no such order'}, 404) : json(ahead!);
     }
     if (_order.hasMatch(path)) {
       final id = _order.firstMatch(path)!.group(1)!;

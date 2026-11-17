@@ -34,6 +34,7 @@ import 'check_list.dart';
 import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
+import 'event_fields.dart';
 import 'lot_comp_dialog.dart';
 import 'menu_editor.dart' show ManagerPinDialog;
 import 'menu_panel.dart';
@@ -730,41 +731,83 @@ class _OrderScreenState extends State<OrderScreen> {
       // nothing answers: cash and paid elsewhere need nothing from a backend
     }
     if (!mounted) return;
+    // Where the order may go to the kitchen with money still to collect, a part of it can be taken now: a
+    // deposit (docs/catering.md). The counter pays the whole.
     final choice = await showDialog<PayChoice>(
       context: context,
-      builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup),
+      builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup, partial: payAtPickup),
     );
     if (choice == null || !mounted) return;
     _sentHere = true;
     await _appendAll([
-      if (choice.takesMoney)
-        (
-          'pay',
-          {
-            'payment_id': widget.outbox.newId(),
-            'method': choice.method,
-            'amount': check.due,
-            'tendered': ?choice.tendered,
-            if (choice.note.isNotEmpty) 'note': choice.note,
-            'by': ?_staffName,
-          },
-        ),
+      if (choice.takesMoney) _payOp(choice, check.due),
       ..._settleQuote(_order ?? order),
       ('fire', {'course': '*'}),
     ]);
     if (!mounted) return;
-    final change = choice.tendered == null ? 0 : cents(choice.tendered!) - cents(check.due);
-    if (change > 0) {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
-          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
-        ),
-      );
-      if (!mounted) return;
-    }
-    Navigator.of(context).pop();
+    await _showChange(choice, check.due);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  /// The payment [choice] makes, of what it says was taken (the whole of [due] where it names no amount).
+  (String, Map<String, dynamic>) _payOp(PayChoice choice, String due) => (
+    'pay',
+    {
+      'payment_id': widget.outbox.newId(),
+      'method': choice.method,
+      'amount': choice.amount ?? due,
+      'tendered': ?choice.tendered,
+      if (choice.note.isNotEmpty) 'note': choice.note,
+      'by': ?_staffName,
+    },
+  );
+
+  /// The change to hand back, when more cash was handed over than was taken.
+  Future<void> _showChange(PayChoice choice, String due) async {
+    final change = choice.tendered == null ? 0 : cents(choice.tendered!) - cents(choice.amount ?? due);
+    if (change <= 0) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
+        actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+      ),
+    );
+  }
+
+  /// Money taken on a to-go order and nothing else (docs/catering.md): a deposit on an order for a later
+  /// day before it is sent, or what is still due on one the kitchen already has. Any part of what is due
+  /// can be taken; the screen stays on the order.
+  Future<void> _pay(Order order, Check check) async {
+    final choice = await showDialog<PayChoice>(
+      context: context,
+      builder: (_) => PayDialog(due: check.due, channel: order.channel, partial: true, sends: false),
+    );
+    if (choice == null || !choice.takesMoney || !mounted) return;
+    await _appendAll([_payOp(choice, check.due)]);
+    if (mounted) await _showChange(choice, check.due);
+  }
+
+  /// The day and the time of an order for later, changed on the order, and on a catering order what its
+  /// event needs. Only what was changed is written, each change with who made it.
+  Future<void> _changeWhen(Order order) async {
+    final promised = order.promisedAt;
+    if (promised == null) return;
+    final had = order.isCatering ? order.event : null;
+    final asked = await showDialog<WhenAndEvent>(
+      context: context,
+      builder: (_) => WhenDialog(promised: DateTime.fromMillisecondsSinceEpoch(promised), event: had),
+    );
+    if (asked == null || !mounted) return;
+    final was = had?.toFields() ?? const <String, dynamic>{};
+    final now = asked.event?.toFields() ?? const <String, dynamic>{};
+    final changed = <String, dynamic>{
+      if (asked.promised.millisecondsSinceEpoch != promised) 'promised_at': asked.promised.millisecondsSinceEpoch,
+      for (final MapEntry(:key, :value) in now.entries)
+        if (value != was[key]) key: value,
+    };
+    if (changed.isEmpty) return;
+    await _append('set_field', {...changed, 'by': ?_staffName, 'by_id': ?_staffId});
   }
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -1356,6 +1399,18 @@ class _OrderScreenState extends State<OrderScreen> {
       onBill: _billing ? null : _printBill,
       onBillPlace: _billPlace,
       onSplit: _openSplit,
+      // Money alone on a to-go order: a deposit on one for later before it is sent, or what is still due
+      // on one the kitchen has. An order for now that was not sent is paid as it is sent ("Pay & send").
+      onPay:
+          order != null &&
+              check != null &&
+              open &&
+              order.isTakeout &&
+              check.lines.isNotEmpty &&
+              cents(check.due) > 0 &&
+              (order.heldCourses.isEmpty || order.forLater)
+          ? () => _pay(order, check)
+          : null,
     );
     final menu = open
         ? Column(
@@ -1453,6 +1508,10 @@ class _OrderScreenState extends State<OrderScreen> {
                 onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
               ),
             if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
+            // an order for later says its day and time, and a catering order what its event needs; a tap
+            // changes them
+            if (order != null && order.isTakeout && order.forLater && order.promisedAt != null)
+              _WhenStrip(order: order, onTap: open ? () => _changeWhen(order) : null),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
@@ -1519,6 +1578,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onBill,
     required this.onBillPlace,
     required this.onSplit,
+    this.onPay,
   });
 
   final Order? order;
@@ -1526,6 +1586,9 @@ class _TicketPanel extends StatefulWidget {
   final bool open;
   final Coursing coursing;
   final String? lastAdded;
+
+  /// Takes money on the order: the Pay button on what is due. Null where there is none.
+  final VoidCallback? onPay;
 
   /// What time it is, in milliseconds: an open check says how long ago its dishes were sent.
   final int Function() now;
@@ -1796,7 +1859,14 @@ class _TicketPanelState extends State<_TicketPanel> {
                   ),
                   for (final p in order.payments)
                     _TotalRow(_paymentLabel(p), '−${p.amount}', key: ValueKey('paid-${p.paymentId}')),
-                  if (order.payments.isNotEmpty) _TotalRow('Due', check.due, strong: true, key: const ValueKey('due')),
+                  if (order.payments.isNotEmpty || widget.onPay != null)
+                    _TotalRow(
+                      'Due',
+                      check.due,
+                      strong: true,
+                      key: const ValueKey('due'),
+                      action: widget.onPay == null ? null : _PayButton(onTap: widget.onPay!),
+                    ),
                 ],
               ),
             ),
@@ -2526,6 +2596,47 @@ class _CustomerStrip extends StatelessWidget {
   }
 }
 
+/// The day and time an order for later is for, and on a catering order what its event needs, in one line
+/// under the bar: "For Sat 21 Nov 12:00 · 30 guests · Delivery · 12 Main St". A tap changes them.
+class _WhenStrip extends StatelessWidget {
+  const _WhenStrip({required this.order, this.onTap});
+
+  final Order order;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final event = order.isCatering ? order.event.words : '';
+    return Material(
+      key: const ValueKey('when-strip'),
+      color: scheme.surfaceContainerHighest, // plain, like the customer's note: red is the allergy strip's
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          child: Row(
+            children: [
+              Icon(Icons.event_outlined, size: 16, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  ['For ${whenFor(order.promisedAt!, DateTime.now())}', if (event.isNotEmpty) event].join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onTap != null) Icon(Icons.edit_outlined, size: 14, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Fire one held course, or everything at once: and stay on the check, or leave it. With coursing off
 /// (or dishes not coursed) only everything can go, and the button counts the dishes still to send.
 class _FireMenu extends StatelessWidget {
@@ -2621,9 +2732,10 @@ class _FireMenu extends StatelessWidget {
 
 /// "#42 Linda · 18:05" for the app bar of a to-go order; the hub gives the number when the create lands.
 /// [readyAt] is when it will be ready as the screen works it out (a big order not sent yet takes longer).
+/// An order the customer named a time for says its day too, when that is not today ("Sat 21 Nov 12:00").
 String _takeoutTitle(Order order, int? readyAt) => [
   '#${order.orderNo ?? '…'} ${order.customerName.isEmpty ? 'To go' : order.customerName}',
-  if (readyAt != null) clockTime(readyAt),
+  if (readyAt != null) order.forLater ? whenFor(readyAt, DateTime.now()) : clockTime(readyAt),
   if (!order.isOpen) order.status,
 ].join(' · ');
 
@@ -2678,6 +2790,28 @@ class _BillButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
         ),
       ),
+    );
+  }
+}
+
+/// The Pay button beside what is due on a to-go order: takes money and nothing else.
+class _PayButton extends StatelessWidget {
+  const _PayButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonal(
+      key: const ValueKey('pay'),
+      onPressed: onTap,
+      style: FilledButton.styleFrom(
+        visualDensity: VisualDensity.standard,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        minimumSize: const Size(0, 38),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+      ),
+      child: const Text('Pay'),
     );
   }
 }

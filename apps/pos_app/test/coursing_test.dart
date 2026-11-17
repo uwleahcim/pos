@@ -161,15 +161,15 @@ void main() {
   testWidgets('the quote times are set from the same screen; a server has no Location button', (tester) async {
     final t = await pumpLocation(tester);
     await bringUp(tester, 'quote-times');
-    expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 min'), findsOneWidget);
+    expect(find.text('Counter 15 · Phone 20 · Online 25 · Delivery 45 · Catering 60 min'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('quote-times')));
     await tester.pumpAndSettle();
     expect(find.text('Quote times'), findsNWidgets(2)); // the row and the dialog's title
     await tester.enterText(find.byKey(const ValueKey('quote:phone')), '25');
     await tester.tap(find.byKey(const ValueKey('quotes-save')));
     await tester.pumpAndSettle();
-    expect(t.hub.quotes['minutes'], {'counter': 15, 'phone': 25, 'online': 25, 'delivery': 45});
-    expect(find.text('Counter 15 · Phone 25 · Online 25 · Delivery 45 min'), findsOneWidget);
+    expect(t.hub.quotes['minutes'], {'counter': 15, 'phone': 25, 'online': 25, 'delivery': 45, 'catering': 60});
+    expect(find.text('Counter 15 · Phone 25 · Online 25 · Delivery 45 · Catering 60 min'), findsOneWidget);
     await stop(tester);
 
     await pumpOrders(tester, const [], role: 'server');

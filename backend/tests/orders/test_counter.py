@@ -138,7 +138,7 @@ def test_pay_before_fire_records_the_payment_and_what_is_due():
 def test_quote_times_are_set_by_a_manager_and_read_by_every_terminal():
     c = client()
     quotes = c.get("/settings/quotes").json()
-    assert quotes["minutes"] == {"counter": 15, "phone": 20, "online": 25, "delivery": 45}
+    assert quotes["minutes"] == {"counter": 15, "phone": 20, "online": 25, "delivery": 45, "catering": 60}
     assert quotes["pay_at_pickup"] == ["phone"]
 
     body = {"minutes": {"counter": 10, "phone": 25}, "pay_at_pickup": ["online", "phone"]}
@@ -146,7 +146,7 @@ def test_quote_times_are_set_by_a_manager_and_read_by_every_terminal():
     token = c.post("/admin/session", json={"device": "t1", "pin": "9999"}).json()["token"]
     auth = {"authorization": f"Bearer {token}"}
     saved = c.put("/settings/quotes", json=body, headers=auth).json()
-    assert saved["minutes"] == {"counter": 10, "phone": 25, "online": 25, "delivery": 45}
+    assert saved["minutes"] == {"counter": 10, "phone": 25, "online": 25, "delivery": 45, "catering": 60}
     assert saved["pay_at_pickup"] == ["online", "phone"]
     assert c.get("/settings/quotes").json() == saved
     r = c.put("/settings/quotes", json={"minutes": {"drone": 5}}, headers=auth)

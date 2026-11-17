@@ -815,7 +815,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     final quotes = _quotes;
     if (quotes == null) return 'Loading…';
     final channels = [
-      for (final c in const ['counter', 'phone', 'online', 'delivery']) '${channelLabel(c)} ${quotes.baseFor(c)}',
+      for (final c in const ['counter', 'phone', 'online', 'delivery', 'catering'])
+        '${channelLabel(c)} ${quotes.baseFor(c)}',
     ].join(' · ');
     final big = quotes.extraFor(quotes.bigDishes) > 0
         ? ' · ${quotes.bigDishes} dishes or more +${quotes.bigMinutes}'
