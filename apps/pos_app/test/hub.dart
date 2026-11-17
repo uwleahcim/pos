@@ -445,6 +445,52 @@ class Hub {
     });
   }
 
+  /// The waitlist (docs/waitlist.md). [parties] are tonight's parties in the order they came, each as the hub
+  /// answers it ([waitParty] makes one); null is a hub older than the list, which the tests written before
+  /// it run against. `GET /waitlist` answers them ([waitAsks] counts the asks) and every change that came is
+  /// in [waitPosts], as its method and path and what it carried. The hub's clock is [clockNow].
+  /// [refuseWait] answers the next change with a status and a reason, and [waitDown] fails every call of the
+  /// list as if no hub answered, while the rest of the hub goes on.
+  List<Map<String, dynamic>>? parties;
+  int waitAsks = 0;
+  final waitPosts = <(String, Map<String, dynamic>)>[];
+  (int, String, String)? refuseWait;
+  bool waitDown = false;
+
+  /// A waiting party as the hub answers it: [quoted] minutes told (none when null), counted from [atMs].
+  static Map<String, dynamic> waitParty(
+    String id,
+    String name,
+    int size, {
+    required int atMs,
+    int? quoted,
+    String phone = '',
+    String note = '',
+    String by = 'Holly',
+    int? calledMs,
+  }) => {
+    'id': id,
+    'name': name,
+    'size': size,
+    'phone': phone,
+    'quoted_minutes': quoted,
+    'note': note,
+    'at_ms': atMs,
+    'by': by,
+    'called_ms': calledMs,
+    'status': 'waiting',
+    'due_ms': quoted == null ? null : atMs + quoted * 60000,
+    'amber_ms': quoted == null ? null : atMs + (quoted > 5 ? quoted - 5 : 0) * 60000,
+    'seated_ms': null,
+    'table': '',
+    'table_label': '',
+    'order_id': '',
+    'left_ms': null,
+    'left_why': '',
+    'ended_by': '',
+    'waited_minutes': null,
+  };
+
   /// The manager's log (docs/shift-notes.md). [logbook] holds the entries, the newest first; null is a hub
   /// older than the log. `GET /logbook` answers [logPage] of them at a time, by subject and by the words
   /// asked for (each ask's query is in [logAsks]), `POST /logbook` writes one at the top ([logWritten]) and
@@ -882,6 +928,135 @@ class Hub {
     return http.Response.bytes(response.bodyBytes, 200, headers: {...response.headers, 'etag': etag});
   }
 
+  static final _partyPath = RegExp(r'^/waitlist/([^/]+)(?:/(called|seat|left|back))?$');
+
+  /// Tonight's list as the hub answers it, with the [party] a change was made to.
+  Map<String, dynamic> _waitOut([Map<String, dynamic>? party]) {
+    int ended(Map<String, dynamic> p) => (p['seated_ms'] ?? p['left_ms']) as int;
+    final waiting = [
+      for (final p in parties!)
+        if (p['status'] == 'waiting') p,
+    ];
+    final earlier = [
+      for (final p in parties!)
+        if (p['status'] != 'waiting') p,
+    ]..sort((a, b) => ended(b).compareTo(ended(a)));
+    final waits = [
+      for (final p in earlier)
+        if (p['status'] == 'seated') (p['seated_ms'] as int) - (p['at_ms'] as int),
+    ];
+    return {
+      'waiting': waiting,
+      'earlier': earlier,
+      'counts': {
+        'waiting': waiting.length,
+        'guests': waiting.fold<int>(0, (sum, p) => sum + (p['size'] as int)),
+        'seated': waits.length,
+        'left': earlier.length - waits.length,
+        'average_wait_minutes': waits.isEmpty ? null : (waits.reduce((a, b) => a + b) / waits.length / 60000).round(),
+      },
+      'quotes': [5, 10, 15, 20, 30, 45, 60, 90],
+      'most': 60,
+      'most_guests': 60,
+      'name_max': 24,
+      'note_max': 60,
+      'party': ?party,
+    };
+  }
+
+  /// The waitlist: the list, and each change to a party of it.
+  http.Response _waitlist(http.Request request) {
+    final path = request.url.path;
+    if (parties == null) return json({'detail': 'Not Found'}, 404);
+    if (waitDown) throw const SocketException('down');
+    http.Response refused(int status, String error, String message) => json({
+      'detail': {'error': error, 'message': message},
+    }, status);
+    if (path == '/waitlist' && request.method == 'GET') {
+      waitAsks += 1;
+      return json(_waitOut());
+    }
+    final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
+    waitPosts.add(('${request.method} $path', body));
+    final refuse = refuseWait;
+    if (refuse != null) {
+      refuseWait = null;
+      return refused(refuse.$1, refuse.$2, refuse.$3);
+    }
+    final who = notesStaff[body['staff_id']];
+    if (who == null) return refused(404, 'unknown_staff', 'Nobody here has this id.');
+    Map<String, dynamic> told(Map<String, dynamic> party) {
+      final quoted = body['quoted_minutes'] as int?;
+      final at = party['at_ms'] as int;
+      return party..addAll({
+        'name': (body['name'] as String).trim(),
+        'size': body['size'],
+        'phone': body['phone'] ?? '',
+        'quoted_minutes': quoted,
+        'note': body['note'] ?? '',
+        'due_ms': quoted == null ? null : at + quoted * 60000,
+        'amber_ms': quoted == null ? null : at + (quoted > 5 ? quoted - 5 : 0) * 60000,
+      });
+    }
+
+    if (path == '/waitlist') {
+      if ((body['name'] as String).trim().isEmpty) return refused(422, 'no_name', 'The name cannot be left empty.');
+      final party = told(waitParty('p${parties!.length + 1}', '', 1, atMs: clockNow, by: who));
+      parties!.add(party);
+      return json(_waitOut(party));
+    }
+    final match = _partyPath.firstMatch(path);
+    final party = match == null ? null : parties!.where((p) => p['id'] == match.group(1)).firstOrNull;
+    if (match == null || party == null) {
+      return refused(404, 'unknown_party', "This party is not on tonight's list.");
+    }
+    final waiting = party['status'] == 'waiting';
+    final gone = refused(409, 'not_waiting', '${party['name']} is off the list. Put them back first.');
+    void ends(String status) => party.addAll({
+      'status': status,
+      'ended_by': who,
+      'waited_minutes': (clockNow - (party['at_ms'] as int)) ~/ 60000,
+    });
+    switch (match.group(2)) {
+      case null:
+        if (!waiting) return gone;
+        told(party);
+      case 'called':
+        if (!waiting) return gone;
+        party['called_ms'] = body['on'] == false ? null : party['called_ms'] ?? clockNow;
+      case 'seat':
+        if (party['status'] == 'left') return gone;
+        if (waiting) {
+          ends('seated');
+          party.addAll({
+            'seated_ms': clockNow,
+            'table': body['table'],
+            'table_label': body['table'],
+            'order_id': body['order_id'] ?? '',
+          });
+        }
+      case 'left':
+        if (party['status'] == 'seated') return gone;
+        if (waiting) {
+          ends('left');
+          party.addAll({'left_ms': clockNow, 'left_why': body['why'] ?? 'left'});
+        }
+      case 'back':
+        party.addAll({
+          'status': 'waiting',
+          'seated_ms': null,
+          'table': '',
+          'table_label': '',
+          'order_id': '',
+          'left_ms': null,
+          'left_why': '',
+          'ended_by': '',
+          'waited_minutes': null,
+        });
+    }
+    return json(_waitOut(party));
+  }
+
   static final _note = RegExp(r'^/notes/([^/]+)$');
   static final _strike = RegExp(r'^/logbook/([^/]+)/strike$');
 
@@ -1087,6 +1262,7 @@ class Hub {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);
     if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);
     if (path == '/waste' || path.startsWith('/waste/') || path == '/reports/waste') return _waste(request);
     if (path == '/signin' && request.method == 'POST') {

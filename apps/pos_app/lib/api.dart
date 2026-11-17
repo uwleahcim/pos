@@ -30,6 +30,7 @@ import 'shift_notes.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
 import 'voids.dart';
+import 'waitlist.dart';
 import 'waste.dart';
 
 /// Worker: the `/menu/items` answer split into one JSON text per dish, under the name [PosApi.item] reads
@@ -1224,6 +1225,73 @@ class PosApi {
       ),
     ),
   );
+
+  // The waitlist (docs/waitlist.md). ------------------------------------------------------------------------
+
+  /// Tonight's waitlist: who is waiting, in the order they came, and who went off the list earlier. The very
+  /// same object as last time while nobody changed it. With no backend answering it is the list as it was
+  /// last read. Null from a hub older than the waitlist.
+  Future<Waitlist?> waitlist() async {
+    try {
+      return await _repeated('/waitlist', Waitlist.fromJson, remember: 'waitlist');
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  static Map<String, dynamic> _party(String staffId, String name, int size, String phone, int? quoted, String note) => {
+    'staff_id': staffId,
+    'name': name,
+    'size': size,
+    'phone': phone,
+    'quoted_minutes': quoted,
+    'note': note,
+  };
+
+  /// [staffId] puts a party on the list, behind the ones already waiting. [quotedMinutes] is the wait they
+  /// were told; null when no time was given. Answers the list as it stands, with the new [Waitlist.party].
+  /// 422 with the hub's reason for what it does not take; 409 `too_many` with the list full.
+  Future<Waitlist> addParty(
+    String staffId, {
+    required String name,
+    required int size,
+    String phone = '',
+    int? quotedMinutes,
+    String note = '',
+  }) async => Waitlist.fromJson(await _post('/waitlist', _party(staffId, name, size, phone, quotedMinutes, note)));
+
+  /// Puts right what a waiting party told the host. Its place on the list stays. 409 `not_waiting` for a
+  /// party that went off the list meanwhile.
+  Future<Waitlist> changeParty(
+    String staffId,
+    String partyId, {
+    required String name,
+    required int size,
+    String phone = '',
+    int? quotedMinutes,
+    String note = '',
+  }) async =>
+      Waitlist.fromJson(await _put('/waitlist/$partyId', _party(staffId, name, size, phone, quotedMinutes, note)));
+
+  /// The party was told its table is ready; with [on] false, it was not after all.
+  Future<Waitlist> partyCalled(String staffId, String partyId, {bool on = true}) async =>
+      Waitlist.fromJson(await _post('/waitlist/$partyId/called', {'staff_id': staffId, 'on': on}));
+
+  /// The party sat down at [table]; [orderId] is the check opened for it. A party another screen sat first
+  /// stays where that screen put it: [Waitlist.party] says where.
+  Future<Waitlist> seatParty(String staffId, String partyId, {required String table, String orderId = ''}) async =>
+      Waitlist.fromJson(
+        await _post('/waitlist/$partyId/seat', {'staff_id': staffId, 'table': table, 'order_id': orderId}),
+      );
+
+  /// The party went off the list without a table: [why] is `left` or `no_show`.
+  Future<Waitlist> partyLeft(String staffId, String partyId, {String why = 'left'}) async =>
+      Waitlist.fromJson(await _post('/waitlist/$partyId/left', {'staff_id': staffId, 'why': why}));
+
+  /// A party that went off the list tonight is put back where it stood.
+  Future<Waitlist> partyBack(String staffId, String partyId) async =>
+      Waitlist.fromJson(await _post('/waitlist/$partyId/back', {'staff_id': staffId}));
 
   // A check's history (docs/check-history.md). ---------------------------------------------------------------
 

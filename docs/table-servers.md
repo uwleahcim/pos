@@ -23,6 +23,9 @@ guests: **Server**, a button for everyone who takes tables, each with what they 
 - When the table goes to someone else, the screen stays on the floor map for the next party and says
   "A8 is Ben's". The check is Ben's from its first line; the order's history keeps who sat it.
 
+A party off the waitlist is seated the same way, with its guests already filled in: **Seat** on the party,
+then a tap on its table (`waitlist.md`).
+
 ## Handing a table over
 
 A host, manager or owner **holds a busy table down** on the floor map. "Who serves A7?" lists the same
