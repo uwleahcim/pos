@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pos.api.app import create_app
-from pos.printing.jobs import JobStore
 from pos.printing.service import Printer, PrintService, money_words
 from pos.printing.ticket import DEMO, Money, render
 from pos.settings import clean_tickets
@@ -164,53 +163,53 @@ def test_a_manager_turns_it_off():
         clean_tickets({"paid": 1})
 
 
-def future(c_store: JobStore) -> TestClient:
-    """A hub with a wok and a takeout counter whose clocks the test holds."""
+def future(clock: list[int]) -> TestClient:
+    """A hub with a wok and a takeout counter whose clock the test holds."""
     service = PrintService(
         [Printer("wok", "10.0.0.1", id="wok"), Printer("takeout", "10.0.0.2", id="takeout", fallbacks=("wok",))],
-        store=c_store,
         direct=False,
-        now=lambda: T0 + 100,
+        now=lambda: clock[0],
     )
     return TestClient(create_app(OpStore(physical=lambda: T0 + 100), menu=menu_with_takeout(), printing=service))
 
 
-def test_a_ticket_waiting_for_its_time_is_brought_up_to_date_when_the_order_is_paid():
-    mono = [1000.0]
-    store = JobStore(clock=lambda: mono[0])
-    c = future(store)
-    # sent ahead in the morning for tonight: the tickets are made now and print in three hours
-    key = send(c, "o1", CHICKEN, **PHONE, promised_at=T0 + 4 * HOUR, quoted_minutes=60)
-    job = store.get(f"{key}:takeout")
-    assert store.due_in(job) > 3 * HOUR / 1000 - 60
+def test_an_order_sent_ahead_prints_at_its_time_with_the_money_as_it_stands_then():
+    clock = [T0 + 100]
+    c = future(clock)
+    printing = c.app.state.printing
+    # sent ahead in the morning for tonight: nothing is made until its time, three hours on
+    paid = send(c, "o1", CHICKEN, **PHONE, promised_at=T0 + 4 * HOUR, quoted_minutes=60)
+    part = send(c, "o2", CHICKEN, **PHONE, promised_at=T0 + 4 * HOUR, quoted_minutes=60)
     owed = due(c)
-    assert money(c, key) == [f"NOT PAID  ${owed}"]
-    wok_before = store.get(f"{key}:wok").data
-
     pay(c, "p1", "5.00")  # a deposit at noon
-    assert money(c, key) == [f"NOT PAID  ${owed - 5}", f"$5.00 paid of ${owed}"]
     pay(c, "p2", owed - 5, at=600)  # and the rest
-    assert money(c, key) == ["PAID"]
-    address, copy = job.fallbacks[0]
+    pay(c, "p3", "5.00", order_id="o2")  # a deposit alone on the other
+    assert printing.store.all() == [] and printing.release_due() == []
+
+    clock[0] = T0 + 3 * HOUR
+    made = {job.job_id for job in printing.release_due()}
+    assert made == {f"{paid}:wok", f"{paid}:takeout", f"{part}:wok", f"{part}:takeout"}
+    assert money(c, paid) == ["PAID"]
+    assert money(c, part) == [f"NOT PAID  ${owed - 5}", f"$5.00 paid of ${owed}"]
+    # the copy a fallback printer would get says the same, and the cooks' ticket never speaks of money
+    address, copy = printing.store.get(f"{paid}:takeout").fallbacks[0]
     assert address == "10.0.0.1" and "PAID" in [line.strip() for line in decode(copy).text]
-    assert store.get(f"{key}:wok").data == wok_before  # the cooks' ticket never spoke of money
-    # it is one job still, and prints once, when its time comes
-    assert len(store.all()) == 2 and store.pending() == []
-    mono[0] += 3 * HOUR / 1000 + 1
-    assert {j.job_id for j in store.pending()} == {f"{key}:wok", f"{key}:takeout"}
+    assert not any("PAID" in line for line in ticket(c, paid, "wok").text)
+    # each prints once
+    assert printing.release_due() == [] and len(printing.store.all()) == 4
 
 
 def test_a_ticket_whose_time_has_come_is_left_as_it_printed():
-    mono = [1000.0]
-    store = JobStore(clock=lambda: mono[0])
-    c = future(store)
+    clock = [T0 + 100]
+    c = future(clock)
+    printing = c.app.state.printing
     key = send(c, "o1", CHICKEN, **PHONE, promised_at=T0 + 4 * HOUR, quoted_minutes=60)
     owed = due(c)
-    mono[0] += 3 * HOUR / 1000 + 1  # its time has come: it may be on paper already
+    clock[0] = T0 + 3 * HOUR  # its time has come: it is on paper
+    printing.release_due()
     pay(c, "p1", owed)
     assert money(c, key) == [f"NOT PAID  ${owed}"]
-    assert store.rewrite(f"{key}:takeout", b"x") is False and store.rewrite("no-such-job", b"x") is False
-    assert c.app.state.printing._waiting == {}
+    assert len(printing.store.all()) == 2 and printing.held.all() == []
 
 
 def test_the_words_for_every_way_a_check_can_stand():

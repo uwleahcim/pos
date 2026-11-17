@@ -110,17 +110,40 @@ Only the copy for the bag says it: the cooks' tickets never do, nor does a table
 for an allergy told late. With no printer at the takeout station no ticket says it. It is what the hub knew
 when the ticket was made: a ticket on paper stays as it printed, and the list of checks is where an order
 paid since shows as paid (the **Unpaid** chip, `counter-mode.md`). A dish added later prints its own ticket
-with what is owed now. One case is kept right on paper: the ticket of an order **sent ahead for later** is
-made at once and waits for its time, so the hub makes it again whenever the order is paid or changed while
-it waits, and it prints with the money as it stands then.
+with what is owed now. An order **sent ahead for later** is not on paper until its time, so its ticket
+says the money as it stands then (see "Orders sent ahead" below).
 
 The switch is the third on the Printers card, **Print PAID or NOT PAID on to-go orders**, on to start.
 
 **What goes in the bag.** The same copy says, under the dishes, what the customer wants in the bag besides
 the food, as answered before the order was sent: `ALSO IN THE BAG`, then a large line for each thing
 (`2 x Chopsticks`), or `NOTHING`. An answer changed after the order was sent prints the takeout station a
-slip headed BAG with the answer as it stands; a ticket still waiting for its time is made again instead.
-See `to-go-question.md`.
+slip headed BAG with the answer as it stands; an order still waiting for its time is not on paper, so its
+ticket says the latest answer and no slip prints. See `to-go-question.md`.
+
+### Orders sent ahead
+
+An order for later (tonight at seven, Saturday's catering) is sent when it is taken and cooked when its
+time comes. Sending it prints nothing. The hub keeps which dishes wait, and makes the tickets when the
+order's time less its quote has come, from the order as it stands at that moment:
+
+- **One ticket a station**, however many times dishes were added and sent while it waited. None of them
+  is marked as a change: the kitchen sees the order for the first time.
+- **A dish taken off while it waits** is not on the ticket, and no VOID prints for it: no ticket of it was
+  ever on paper. An order with every dish taken off, or voided whole, prints nothing.
+- **An order moved to another time** waits for the new one. Moved up to now, it prints with the change.
+- **The allergies, PAID or NOT PAID and what goes in the bag** are what the order says when it prints.
+- **Closing the check does not cancel the food**: an order paid in full on Tuesday and closed prints on
+  Saturday all the same. Voiding it does.
+- **It outlives the hub.** What waits is kept in the hub's database, not in its memory, so a hub that is
+  updated or loses power in between prints all the same, and the hub that takes over has the same list.
+  A hub that was off when a ticket was due prints it as soon as it is back. The first start with this list
+  also takes on the orders that were sent ahead before hubs kept it.
+- **A ticket for another day says the day**: `READY BY 12:00  SAT NOV 21`. On its own day it says the
+  time alone.
+
+Once its tickets have printed, the order is like any other: a dish added prints at once, a dish taken off
+prints a VOID.
 
 **A table that moves.** Moving a table, merging two, or moving dishes to another table's check prints no
 order ticket and no void. Each station with dishes sent in the last 45 minutes gets a MOVED slip instead:
@@ -247,8 +270,10 @@ still known as a Star by step 3, without its model.
 - The guest's bill is not routed by station: `GET/PUT /settings/bill`, `POST /orders/{id}/bill` and
   `POST /print/bill-sample` are in `docs/bill.md`.
 
-Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above), `jobs.py` (fallbacks), `discover.py` (the scan and
+Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above; `_hold`
+and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`
+in the table `held_ticket`), `jobs.py` (fallbacks), `discover.py` (the scan and
 the languages), `pos/settings.py` (`clean_printers`), the engine's `routes_to` in `pos/menu/engine.py`;
 `apps/pos_app/lib/screens/printers_screen.dart`, `printers.dart`, the editor's Prints at in
-`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_other_stations.py`, `test_discover.py`,
+`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_other_stations.py`, `test_held.py`, `test_discover.py`,
 `apps/pos_app/test/printers_screen_test.dart`, `ticket_words_test.dart`.

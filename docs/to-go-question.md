@@ -55,8 +55,8 @@ order's answer is changed, until it is taken out.
 - **Changed after the order was sent**: the takeout station gets a short slip headed **BAG**, with the
   order's number and name, no dishes, and **NOW IN THE BAG** with the answer as it stands. The printer beeps
   as it does for a change to the dishes.
-- **An order for later** whose ticket is still waiting for its time: the waiting ticket is made again with
-  the new answer, and no slip prints.
+- **An order for later** still waiting for its time: nothing of it is on paper yet, so its ticket says the
+  latest answer when it prints, and no slip prints.
 - **More dishes sent later**: that send's ticket for the bag says the answer as it stands, not more of the
   same.
 - **No printer at the takeout station**: no ticket says the answer. It is still on the check.

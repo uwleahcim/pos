@@ -54,6 +54,7 @@ from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
 from ..printing import discover
 from ..printing.bill import SAMPLE, bill_for
+from ..printing.held import default_held
 from ..printing.jobs import PrintJob
 from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
@@ -128,6 +129,7 @@ class OpIn(BaseModel):
 
 
 _NEVER = HLC(0, 0, "")
+_NO_LATER = 10**14  # wall-clock ms some three thousand years on: later than any order is for
 
 
 def polled(content: Any) -> Response:
@@ -798,7 +800,8 @@ def create_app(
     app.state.printing = (
         printing
         if printing is not None
-        else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0")
+        # what waits of the orders sent ahead of their time is kept in the database: a restart loses nothing
+        else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0", held=default_held())
     )
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
@@ -869,7 +872,16 @@ def create_app(
     app.state.printing.check_of = lambda state: check_for(state, app.state.taxes, app.state.pricing)
     # A guest's bill prints at the printer the manager chose for bills, unless the screen asks for its own.
     app.state.printing.bill_place = lambda: app.state.settings.get("bill")["printer"]
+    # A ticket that waited for its order's time is made from the order as the log has it then.
+    app.state.printing.state_of = lambda order_id: app.state.store.view(order_id)
     if printing is None:
+        if app.state.printing.held.fresh:
+            try:
+                # orders sent ahead before this hub wrote down what waits: their tickets were in its memory
+                ahead = app.state.store.index(promised=(app.state.store.now_ms(), _NO_LATER))
+                app.state.printing.adopt(app.state.store.views(ahead))
+            except Exception:  # noqa: BLE001 - a hub starts whatever its printing does
+                pass
         app.state.printing.start_retrying()
     # Phase 0: the Flutter web build runs from another origin; phase 1 narrows this to the apps' origins.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -1901,16 +1913,22 @@ def create_app(
 
     @app.get("/print/jobs")
     def list_jobs(status: str | None = Query(None, pattern="^(queued|leased|done|failed)$")) -> dict[str, Any]:
+        """The newest print jobs, and `held`: the orders sent ahead of their time whose tickets are not made
+        yet, each with when they print (`starts_ms`) and how many dishes wait."""
         printing: PrintService = app.state.printing
         jobs = sorted(printing.store.all(), key=lambda j: j.created, reverse=True)
         if status is not None:
             jobs = [j for j in jobs if j.status == status]
-        return {"jobs": [job_out(j, due_in=printing.store.due_in(j)) for j in jobs[:200]]}
+        held = [{"order_id": h.order_id, "starts_ms": h.start_ms, "lines": len(h.lines)} for h in printing.held.all()]
+        return {"jobs": [job_out(j, due_in=printing.store.due_in(j)) for j in jobs[:200]], "held": held}
 
     @app.post("/print/jobs/claim")
     def claim_job(body: ClaimIn) -> dict[str, Any]:
-        """A relay asks for one job for a printer it can reach; the bytes come with it."""
+        """A relay asks for one job for a printer it can reach; the bytes come with it. The tickets of orders
+        sent ahead whose time has come are made first, so a relay finds them whether or not the hub's own
+        loop got to them."""
         printing: PrintService = app.state.printing
+        printing.release_due()
         job = printing.store.claim(body.printers, body.relay)
         return {"job": job_out(job, with_data=True) if job else None}
 
