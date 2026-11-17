@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api.dart';
+import '../kitchen_notes.dart';
 import '../live.dart';
 import '../local_order.dart' show localPrice;
 import '../menu.dart';
@@ -172,8 +173,20 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void initState() {
     super.initState();
     _load();
+    unawaited(_readKitchenNotes());
     _watch = Timer.periodic(MenuPanelCheck.every, (_) => _check());
     _live = widget.api.live.changes.listen(_onLive);
+  }
+
+  /// The location's one-tap notes to the kitchen, read ahead once so a dish's sheet has its buttons at once
+  /// (each sheet reads them again as it opens, so a change of the list needs no word from the hub's feed).
+  /// With nothing answering the last list read stands.
+  Future<void> _readKitchenNotes() async {
+    try {
+      await widget.api.kitchenNotes();
+    } on ApiException {
+      // the note is typed, as before
+    }
   }
 
   /// The hub says the menu changed: a save moves the revision, an 86 does not, so the menu is read either
@@ -546,7 +559,11 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (pending == null || !option.available || !option.isDish) return;
     final inside = await showDialog<Choices>(
       context: context,
-      builder: (_) => DishChoicesSheet(option: option, initial: ask.choices.nested[option.optionId]),
+      builder: (_) => DishChoicesSheet(
+        option: option,
+        initial: ask.choices.nested[option.optionId],
+        kitchenNotes: widget.api.kitchenNotesKnown,
+      ),
     );
     if (inside == null || !mounted || _pending != pending) return;
     pending.answered(ask, option, inside);
@@ -2187,6 +2204,9 @@ class _ItemSheetState extends State<ItemSheet> {
   late int _qty = widget.initial?.qty ?? 1;
   late final _note = TextEditingController(text: widget.initial?.note ?? '');
 
+  /// The location's one-tap notes, as last read: the buttons over the note. Read again as the sheet opens.
+  late List<String> _kitchenNotes = widget.api.kitchenNotesKnown;
+
   /// What is typed for a dish that asks: its price, and what it is for an off-menu dish. A line reopened
   /// comes with what was typed for it.
   late final _typedName = TextEditingController(text: _request.name ?? '');
@@ -2205,6 +2225,17 @@ class _ItemSheetState extends State<ItemSheet> {
       _request = LineRequest(variantId: first.variantId, entryId: widget.entry.entryId);
     }
     _load();
+    unawaited(_readKitchenNotes());
+  }
+
+  Future<void> _readKitchenNotes() async {
+    try {
+      final read = await widget.api.kitchenNotes();
+      final notes = read?.notes ?? const <String>[];
+      if (mounted && !listEquals(notes, _kitchenNotes)) setState(() => _kitchenNotes = notes);
+    } on ApiException {
+      // nothing answers and nothing was saved: the note is typed, as before
+    }
   }
 
   @override
@@ -2433,12 +2464,15 @@ class _ItemSheetState extends State<ItemSheet> {
                     ChoicesEditor(
                       groups: detail.groups,
                       choices: _request,
+                      kitchenNotes: _kitchenNotes,
                       onChanged: () {
                         setState(() {});
                         _reprice();
                       },
                     ),
+                    KitchenNoteChips(notes: _kitchenNotes, controller: _note),
                     TextField(
+                      key: const ValueKey('line-note'),
                       controller: _note,
                       decoration: const InputDecoration(
                         labelText: 'Note to the kitchen',
@@ -2551,9 +2585,18 @@ class _ItemSheetState extends State<ItemSheet> {
 /// to the kitchen, as a hold on its menu tile would. The item sheet and a dish's own sheet share it, so a dish
 /// inside a dish reads the same at every level.
 class ChoicesEditor extends StatefulWidget {
-  const ChoicesEditor({super.key, required this.groups, required this.choices, required this.onChanged});
+  const ChoicesEditor({
+    super.key,
+    required this.groups,
+    required this.choices,
+    required this.onChanged,
+    this.kitchenNotes = const [],
+  });
 
   final List<GroupDetail> groups;
+
+  /// The location's one-tap notes, for the sheet of a dish opened from here.
+  final List<String> kitchenNotes;
 
   /// Edited in place; [onChanged] says when.
   final Choices choices;
@@ -2613,7 +2656,8 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
   Future<void> _openDish(Choices choices, GroupDetail group, OptionDetail option) async {
     final inside = await showDialog<Choices>(
       context: context,
-      builder: (_) => DishChoicesSheet(option: option, initial: choices.nested[option.optionId]),
+      builder: (_) =>
+          DishChoicesSheet(option: option, initial: choices.nested[option.optionId], kitchenNotes: widget.kitchenNotes),
     );
     if (inside == null || !mounted) return;
     setState(() {
@@ -2770,12 +2814,15 @@ class _ChoicesEditorState extends State<ChoicesEditor> {
 /// sheet shows them, and a note to the kitchen that prints with it. Done hands the choices back, and the dish
 /// is chosen with them; Cancel changes nothing.
 class DishChoicesSheet extends StatefulWidget {
-  const DishChoicesSheet({super.key, required this.option, this.initial});
+  const DishChoicesSheet({super.key, required this.option, this.initial, this.kitchenNotes = const []});
 
   final OptionDetail option;
 
   /// The choices already on the dish, when it was chosen before.
   final Choices? initial;
+
+  /// The location's one-tap notes: the buttons over this dish's note.
+  final List<String> kitchenNotes;
 
   @override
   State<DishChoicesSheet> createState() => _DishChoicesSheetState();
@@ -2809,7 +2856,13 @@ class _DishChoicesSheetState extends State<DishChoicesSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ChoicesEditor(groups: option.groups, choices: _choices, onChanged: () => setState(() {})),
+              ChoicesEditor(
+                groups: option.groups,
+                choices: _choices,
+                kitchenNotes: widget.kitchenNotes,
+                onChanged: () => setState(() {}),
+              ),
+              KitchenNoteChips(notes: widget.kitchenNotes, controller: _note),
               TextField(
                 key: const ValueKey('dish-note'),
                 controller: _note,
@@ -2835,6 +2888,51 @@ class _DishChoicesSheetState extends State<DishChoicesSheet> {
           child: const Text('Done'),
         ),
       ],
+    );
+  }
+}
+
+/// The location's one-tap notes to the kitchen (docs/kitchen-notes.md), a button each, over the box a dish's
+/// note is typed in. A tap puts the words in the note, after what is there; another tap takes them out. What
+/// was typed around them stays, and the box shows the note as the kitchen will read it.
+class KitchenNoteChips extends StatelessWidget {
+  const KitchenNoteChips({super.key, required this.notes, required this.controller});
+
+  final List<String> notes;
+  final TextEditingController controller;
+
+  void _tap(String note) {
+    final text = toggleNote(controller.text, note);
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (notes.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ListenableBuilder(
+        listenable: controller,
+        // Close together, so six notes are two rows on a phone and the note under them stays in view.
+        builder: (context, _) => Wrap(
+          spacing: 6,
+          children: [
+            for (final note in notes)
+              FilterChip(
+                key: ValueKey('kitchen-note:$note'),
+                label: Text(note),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+                visualDensity: VisualDensity.compact,
+                showCheckmark: false, // the chips keep their places as they are tapped
+                selected: hasNote(controller.text, note),
+                onSelected: (_) => _tap(note),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

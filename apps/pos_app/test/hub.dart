@@ -104,6 +104,21 @@ class Hub {
     ],
   };
 
+  /// The one-tap notes to the kitchen it keeps (`GET/PUT /settings/kitchen_notes`, docs/kitchen-notes.md),
+  /// the token the last save carried and a reason to refuse the next save with. Null is a hub older than the
+  /// notes, on which a dish's note is typed: what the tests written before them still run against.
+  List<String>? kitchenNotes;
+  String? kitchenNotesAuth;
+  String? refuseKitchenNotes;
+  static List<String> get standardKitchenNotes => [
+    'Rush',
+    'Split for 2',
+    'Well done',
+    'Less oil',
+    'Less salt',
+    'See server',
+  ];
+
   /// The void rules it keeps (`GET/PUT /settings/voids`), the token the last save carried and a reason to
   /// refuse the next save with. Null is a hub older than the rules, which a terminal voids on with the
   /// operator's word alone: what the tests written before the rules still run against. [purposes] is what
@@ -1238,6 +1253,18 @@ class Hub {
           };
         }
         return json(bag!);
+      case '/settings/kitchen_notes':
+        if (kitchenNotes == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          kitchenNotesAuth = request.headers['authorization'];
+          if (refuseKitchenNotes != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseKitchenNotes},
+            }, 422);
+          }
+          kitchenNotes = [...(jsonDecode(request.body) as Map<String, dynamic>)['notes'] as List].cast<String>();
+        }
+        return json({'notes': kitchenNotes});
       case '/reports/adjustments':
         return report == null ? json({'detail': 'Not Found'}, 404) : json(report!);
       case '/settings/desk_phones':

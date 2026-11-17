@@ -16,6 +16,7 @@ import 'desk_phone.dart';
 import 'faces.dart';
 import 'floor.dart';
 import 'guests_report.dart';
+import 'kitchen_notes.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'phone.dart';
@@ -911,6 +912,40 @@ class PosApi {
       ),
     ),
   );
+
+  /// The one-tap notes as this terminal last read them, for a dish's sheet opened before the hub answers
+  /// again: the buttons are there at once.
+  List<String> kitchenNotesKnown = const [];
+
+  /// The location's one-tap notes to the kitchen (docs/kitchen-notes.md), in the order the buttons show. The
+  /// last list read when nothing answers, so the buttons are there in an outage (ADR 6). Null from a hub
+  /// older than the notes: the note is typed then, as before.
+  Future<KitchenNotes?> kitchenNotes() async {
+    try {
+      final read = await _repeated('/settings/kitchen_notes', KitchenNotes.fromJson, remember: 'kitchen_notes');
+      kitchenNotesKnown = read.notes;
+      return read;
+    } on ApiException catch (err) {
+      if (err.status != 404) rethrow;
+      kitchenNotesKnown = const [];
+      return null;
+    }
+  }
+
+  /// A manager (token from [adminSession]) lists the one-tap notes for every terminal.
+  Future<KitchenNotes> saveKitchenNotes(String token, KitchenNotes notes) async {
+    final saved = KitchenNotes.fromJson(
+      await _withFailover(
+        (base) => _client.put(
+          Uri.parse('$base/settings/kitchen_notes'),
+          headers: {'content-type': 'application/json', ..._bearer(token)},
+          body: jsonEncode(notes.toJson()),
+        ),
+      ),
+    );
+    kitchenNotesKnown = saved.notes;
+    return saved;
+  }
 
   /// The allergens the menu names, in its order: what a server picks from when a guest tells of an allergy.
   /// The last list read when nothing answers, so an allergy can still be noted (ADR 6). Null from a hub
