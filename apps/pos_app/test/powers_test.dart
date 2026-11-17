@@ -589,6 +589,7 @@ void main() {
       await tester.pumpAndSettle();
       await typePin(tester, '9999', 'Open location settings');
       expect(find.text('Location settings'), findsOneWidget);
+      await bringUp(tester, 'powers'); // under the reports, of which Today is one more
       expect(find.byKey(const ValueKey('powers')), findsOneWidget);
       expect(tester.widget<LocationSettingsScreen>(find.byType(LocationSettingsScreen)).holds, everything);
       await stop(tester);

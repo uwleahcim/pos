@@ -181,6 +181,19 @@ class Hub {
   String? dayPrinter = 'Takeout';
   int? refuseDay;
 
+  /// Today so far (docs/today.md). [today] answers `GET /reports/today`; null is a hub older than it. Each
+  /// ask's token is in [todayAuth] and they are counted in [todayAsks]. [refuseToday] answers with a status
+  /// instead: 403 as the hub words a power taken back.
+  Map<String, dynamic>? today;
+  int todayAsks = 0;
+  String? todayAuth;
+  int? refuseToday;
+
+  /// The rush (`PUT /settings/rush`), on a hub whose quotes name one (`'rush': null` for none): the minutes
+  /// it was set to, in order, and the token of the last ask.
+  final rushSet = <int>[];
+  String? rushAuth;
+
   /// Sales over a span of days (docs/sales-report.md). [sales] answers `GET /reports/sales` by the days asked
   /// for, written "2026-11-09..2026-11-15" ("" when none were named: the running day); a span it has nothing
   /// for reads all zeroes beside the same days whole weeks earlier, and null is a hub older than the
@@ -1544,6 +1557,19 @@ class Hub {
             },
       );
     }
+    if (path == '/reports/today') {
+      if (today == null) return json({'detail': 'Not Found'}, 404);
+      todayAsks += 1;
+      todayAuth = request.headers['authorization'];
+      if (refuseToday != null) {
+        return json({
+          'detail': refuseToday == 403
+              ? {'error': 'not_allowed', 'role': 'host', 'power': 'reports'}
+              : {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseToday!);
+      }
+      return json(today!);
+    }
     if (path == '/reports/sales') {
       if (sales == null) return json({'detail': 'Not Found'}, 404);
       salesAuth = request.headers['authorization'];
@@ -1602,6 +1628,17 @@ class Hub {
         return json(coursing);
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
+        return json(quotes);
+      case '/settings/rush':
+        if (!quotes.containsKey('rush')) return json({'detail': 'Not Found'}, 404);
+        rushAuth = request.headers['authorization'];
+        final minutes = (jsonDecode(request.body) as Map)['minutes'] as int;
+        rushSet.add(minutes);
+        final until = DateTime.now().add(const Duration(hours: 6)).millisecondsSinceEpoch;
+        quotes = {
+          ...quotes,
+          'rush': minutes > 0 ? {'minutes': minutes, 'until': until, 'by': 'Mike'} : null,
+        };
         return json(quotes);
       case '/settings/table_timers':
         if (tableTimers == null) return json({'detail': 'Not Found'}, 404);

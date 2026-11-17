@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../day_report.dart' show dollars;
 import '../sales_report.dart';
 import 'theme.dart';
 
@@ -358,4 +359,64 @@ class ReportLine extends StatelessWidget {
 
   /// The room the words keep, whatever the figures.
   static const _wordsAtLeast = 96.0;
+}
+
+num _amount(String? amount) => double.tryParse(amount ?? '') ?? 0;
+
+/// Rows of two bars, the span's over the thin one of the days before, drawn to the same scale.
+List<Widget> pairedBars(
+  BuildContext context,
+  List<({String key, String label, String now, String before})> rows, {
+  required double labelWidth,
+}) {
+  final theme = Theme.of(context);
+  final scheme = theme.colorScheme;
+  final small = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: PosTheme.tabular);
+  var most = 0.0;
+  for (final row in rows) {
+    for (final amount in [_amount(row.now), _amount(row.before)]) {
+      if (amount > most) most = amount.toDouble();
+    }
+  }
+  Widget bar(String amount, double height, Color color) => Align(
+    alignment: Alignment.centerLeft,
+    child: FractionallySizedBox(
+      widthFactor: most <= 0 ? 0 : (_amount(amount) / most).clamp(0.0, 1.0).toDouble(),
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(height / 2)),
+      ),
+    ),
+  );
+  return [
+    for (final row in rows)
+      Padding(
+        key: ValueKey(row.key),
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            SizedBox(width: labelWidth, child: Text(row.label)),
+            Expanded(
+              child: Column(
+                children: [
+                  bar(row.now, 8, scheme.primary),
+                  const SizedBox(height: 3),
+                  bar(row.before, 4, scheme.outline),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 100,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(dollars(row.now), style: const TextStyle(fontFeatures: PosTheme.tabular)),
+                  Text(dollars(row.before), style: small),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+  ];
 }

@@ -73,6 +73,9 @@ merges after any disconnect.
 - The time clock (off to start; staff clock in and out and take breaks with their PIN at any screen; a
   shift nobody ended is closed at 4 AM and marked; a manager reads the hours and corrects a shift with a
   reason the log keeps): `docs/time-clock.md`
+- Today (the owner's phone view: net sales so far and whether tonight is ahead of or behind the same day last
+  week at this time, the open checks, what came off, who is on the clock, 86 a dish and the kitchen rush from
+  the phone, the night hour by hour; it reads again by itself): `docs/today.md`
 - The day's report (what is still open, the sales, the money taken by how it was paid, the sales by category,
   kind of order, person and hour, what came off the checks; on the screen for any day, and on paper):
   `docs/day-report.md`

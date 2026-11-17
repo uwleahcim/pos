@@ -43,6 +43,7 @@ import 'tab_dialog.dart';
 import 'table_moves.dart';
 import 'theme.dart';
 import 'time_clock_card.dart';
+import 'today_screen.dart';
 import 'waste_screen.dart';
 import 'to_go_chips.dart';
 import 'waitlist_screen.dart';
@@ -742,6 +743,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ]);
   }
 
+  /// The night as it stands on one screen (docs/today.md), behind the PIN of whoever may see the reports.
+  Future<void> _today() async {
+    Set<String>? holds;
+    final token = await showDialog<String>(
+      context: context,
+      builder: (_) => ManagerPinDialog(
+        api: widget.api,
+        device: widget.settings.device,
+        action: 'Open Today',
+        what: "see today's figures",
+        power: 'reports',
+        onPowers: (powers) => holds = powers,
+      ),
+    );
+    if (token == null || !mounted) return;
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => TodayScreen(
+          api: widget.api,
+          token: token,
+          holds: holds,
+          by: widget.session.staff?.name,
+          device: widget.settings.device,
+        ),
+      ),
+    );
+  }
+
   /// What a manager sets for the whole location (coursing, quote times) and reads of it (the day, the
   /// sales), behind a PIN. The screen shows what the PIN's owner may open (docs/roles.md): everything to a
   /// manager, and to anyone else what the location handed their role.
@@ -1353,6 +1382,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ('Waste', Icons.delete_sweep_outlined, _waste),
       if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
+      if (powers.holds(role, 'reports')) ('Today', Icons.today_outlined, _today),
       if (powers.opensLocation(role)) ('Location', Icons.storefront_outlined, _location),
       if (powers.holds(role, 'menu'))
         (

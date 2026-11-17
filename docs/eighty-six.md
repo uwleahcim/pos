@@ -56,6 +56,9 @@ with the fewest left at the top (`3 of 12 left`), and who set each one. **Bring 
 on sale again; **No number** stops counting a dish and leaves it on sale. Setting one is done at the dish,
 on the order screen.
 
+The same list is a card on **Today** (`today.md`), where **86 a dish** finds a dish by name and sets it
+from there: for an owner who is not at an order screen.
+
 ## When the number clears
 
 At four in the morning, the restaurant's own time (`POS_TIMEZONE`). Not at midnight: a bar still pouring at

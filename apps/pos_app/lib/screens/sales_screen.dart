@@ -269,7 +269,7 @@ class _SalesScreenState extends State<SalesScreen> {
           style: small,
         ),
         const SizedBox(height: 4),
-        ..._bars(context, [
+        ...pairedBars(context, [
           for (final (i, day) in span.days.indexed)
             (
               key: 'sales-day:${dayName(day.day)}',
@@ -288,7 +288,7 @@ class _SalesScreenState extends State<SalesScreen> {
           style: small,
         ),
         const SizedBox(height: 4),
-        ..._bars(context, [
+        ...pairedBars(context, [
           for (final row in hours)
             (
               key: 'sales-hour:${row.hour}',
@@ -389,64 +389,6 @@ class _SalesScreenState extends State<SalesScreen> {
 
   /// Where an hour falls in a night: from 4 AM round to 3 AM, and dishes with no time kept last.
   static int _place(int? hour) => hour == null ? 24 : (hour - 4) % 24;
-
-  /// Rows of two bars, the span's over the thin one of the days before, drawn to the same scale.
-  List<Widget> _bars(
-    BuildContext context,
-    List<({String key, String label, String now, String before})> rows, {
-    required double labelWidth,
-  }) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final small = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: PosTheme.tabular);
-    var most = 0.0;
-    for (final row in rows) {
-      for (final amount in [_n(row.now), _n(row.before)]) {
-        if (amount > most) most = amount.toDouble();
-      }
-    }
-    Widget bar(String amount, double height, Color color) => Align(
-      alignment: Alignment.centerLeft,
-      child: FractionallySizedBox(
-        widthFactor: most <= 0 ? 0 : (_n(amount) / most).clamp(0.0, 1.0).toDouble(),
-        child: Container(
-          height: height,
-          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(height / 2)),
-        ),
-      ),
-    );
-    return [
-      for (final row in rows)
-        Padding(
-          key: ValueKey(row.key),
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Row(
-            children: [
-              SizedBox(width: labelWidth, child: Text(row.label)),
-              Expanded(
-                child: Column(
-                  children: [
-                    bar(row.now, 8, scheme.primary),
-                    const SizedBox(height: 3),
-                    bar(row.before, 4, scheme.outline),
-                  ],
-                ),
-              ),
-              SizedBox(
-                width: 100,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(dollars(row.now), style: const TextStyle(fontFeatures: PosTheme.tabular)),
-                    Text(dollars(row.before), style: small),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-    ];
-  }
 
   @override
   Widget build(BuildContext context) {
