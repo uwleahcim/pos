@@ -56,6 +56,9 @@
   show): what a server would otherwise type on a dish again and again, such as "Rush" or "Split for 2". A
   tap puts the words in the dish's note, so an order carries the words themselves and a note can be reworded
   or dropped later. An empty list offers none.
+- `waste`: why food is written into the waste log (`reasons`, a list of short words in the order the buttons
+  show, at least one): dropped, burnt, made wrong. An entry of the log carries the words themselves
+  (`pos.waste`), so a reason can be reworded or dropped later.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -98,6 +101,7 @@ STANDARD_BAG_CHOICES = [
 ]
 BAG_QUESTION = "What goes in the bag?"
 STANDARD_KITCHEN_NOTES = ["Rush", "Split for 2", "Well done", "Less oil", "Less salt", "See server"]
+STANDARD_WASTE_REASONS = ["Dropped", "Burnt", "Made wrong", "Expired", "Spoiled", "Staff meal"]
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
@@ -133,6 +137,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
+    # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
+    "waste": {"reasons": STANDARD_WASTE_REASONS},
 }
 WEEK_STARTS = ("mon", "sun")
 RUSH_MAX = 120
@@ -171,6 +177,10 @@ KITCHEN_NOTE_MAX = 24
 """A chip on a phone, and words a cook reads at a glance under the dish."""
 KITCHEN_NOTES_MAX = 12
 """Two or three rows of chips on a phone: more than that and typing the note is as quick."""
+WASTE_REASON_MAX = 24
+"""A button on a phone."""
+WASTE_REASONS_MAX = 12
+"""One screenful of buttons: whoever logs the waste picks one at a glance."""
 BILL_LINES_MAX = 8
 """The most lines the top or the foot of a bill may have: a name, an address, a phone, hours, a thank-you."""
 BILL_LINE_MAX = 64
@@ -500,6 +510,36 @@ def clean_kitchen_notes(data: Mapping[str, Any]) -> dict[str, Any]:
         seen.add(note.casefold())
         notes.append(note)
     return {"notes": notes}
+
+
+def clean_waste(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The waste log's reasons as the app may set them, checked: `reasons`, a list of short words in the
+    order the buttons show (the standard ones when left out), at least one, since every entry of the log
+    says why. Raises ValueError on a bad value."""
+    raw = data.get("reasons")
+    if raw is None:
+        raw = DEFAULTS["waste"]["reasons"]  # left out: the standard ones
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, str) for entry in raw):
+        raise ValueError("reasons must be a list of words")
+    if not raw:
+        raise ValueError("the waste log needs at least one reason to pick from")
+    if len(raw) > WASTE_REASONS_MAX:
+        raise ValueError(f"at most {WASTE_REASONS_MAX} reasons, so they fit one screen")
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        reason = " ".join(entry.split())
+        if not reason:
+            raise ValueError("every reason needs its words")
+        if len(reason) > WASTE_REASON_MAX:
+            raise ValueError(f"a reason is at most {WASTE_REASON_MAX} characters")
+        if not reason.isprintable():
+            raise ValueError("a reason has a character that cannot be printed")
+        if reason.casefold() in seen:
+            raise ValueError(f"the reason {reason!r} is listed twice")
+        seen.add(reason.casefold())
+        reasons.append(reason)
+    return {"reasons": reasons}
 
 
 def skipped_stations(setting: Mapping[str, Any], device: str) -> frozenset[str]:

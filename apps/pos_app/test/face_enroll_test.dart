@@ -74,7 +74,7 @@ Future<Terminal> pumpLocation(WidgetTester tester, {EventCamera? camera, TagRead
   final t = await terminal(tester);
   t.hub.faceStatus = {'enabled': false, 'ready': true, 'active': false, 'enrolled': 1, 'model': 'r50', 'error': null};
   t.hub.staffList = [person('s1', 'Amy', 'server', samples: 5), person('s2', 'Ben', 'bartender')];
-  tester.view.physicalSize = const Size(1100, 3300); // the whole list on one tall screen, nothing to scroll
+  tester.view.physicalSize = wholeLocation; // the whole list on one tall screen, nothing to scroll
   await tester.pumpWidget(
     MaterialApp(
       home: LocationSettingsScreen(

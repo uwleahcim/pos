@@ -192,7 +192,8 @@ class SpanReading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Padding(
+    // scrolls where a small phone with large text leaves it less room than it takes
+    child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         key: ValueKey('$prefix-reading'),
@@ -223,7 +224,7 @@ class SpanError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Padding(
+    child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,

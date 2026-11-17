@@ -14,6 +14,7 @@ import '../tags.dart';
 import '../takeout.dart';
 import '../timeclock.dart';
 import '../voids.dart';
+import '../waste.dart';
 import 'adjustments_screen.dart';
 import 'bag_question_dialog.dart';
 import 'bill_dialog.dart';
@@ -34,6 +35,8 @@ import 'theme.dart';
 import 'ticket_skips_dialog.dart';
 import 'time_clock_screen.dart';
 import 'void_rules_dialog.dart';
+import 'waste_reasons_dialog.dart';
+import 'waste_screen.dart';
 
 /// What a manager sets for the whole location, for every terminal: whether dishes are coursed, the courses
 /// by name in kitchen order (as many as the kitchen serves) and where a new dish goes, the quote times,
@@ -49,6 +52,7 @@ class LocationSettingsScreen extends StatefulWidget {
     super.key,
     required this.api,
     required this.token,
+    this.staffId,
     this.device,
     this.camera,
     this.tags,
@@ -56,6 +60,9 @@ class LocationSettingsScreen extends StatefulWidget {
 
   final PosApi api;
   final String token;
+
+  /// Who is signed in at this terminal: who an entry of the waste log written from here is by.
+  final String? staffId;
 
   /// This terminal's device name: first in the list of screens a desk phone can be linked to.
   final String? device;
@@ -134,6 +141,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
+  WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
@@ -218,6 +226,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _kitchenNotes = notes);
     } on ApiException {
       // nothing answered about the kitchen notes: the row says so
+    }
+    try {
+      final reasons = await widget.api.wasteReasons();
+      if (mounted) setState(() => _wasteReasons = reasons);
+    } on ApiException {
+      // nothing answered about the waste log: the row says so
     }
     try {
       final board = await widget.api.board();
@@ -673,6 +687,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kitchen notes saved')));
   }
 
+  Future<void> _wasteReasonsList() async {
+    final saved = await showDialog<WasteReasons>(
+      context: context,
+      builder: (_) => WasteReasonsDialog(api: widget.api, token: widget.token, reasons: _wasteReasons!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _wasteReasons = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Waste reasons saved')));
+  }
+
   Future<void> _tableTimers() async {
     final saved = await showDialog<TableTimers>(
       context: context,
@@ -726,6 +750,13 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (notes == null) return 'The hub has not answered about the kitchen notes (an older hub: update it)';
     if (notes.notes.isEmpty) return 'None listed: a note to the kitchen is typed';
     return 'One tap on a dish: ${notes.notes.join(', ')}';
+  }
+
+  /// One line on the waste log's reasons.
+  String get _wasteReasonsSummary {
+    final reasons = _wasteReasons;
+    if (reasons == null) return 'The hub has not answered about the waste log (an older hub: update it)';
+    return 'Why food is written into the waste log: ${reasons.reasons.join(', ')}';
   }
 
   /// One line on the timers: each stage's minutes to amber and to red, a dash for never.
@@ -838,6 +869,25 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => GuestsScreen(api: widget.api, token: widget.token),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                // not a sale: what the kitchen made or bought and did not sell
+                ListTile(
+                  key: const ValueKey('waste-report'),
+                  leading: const Icon(Icons.delete_sweep_outlined),
+                  title: const Text('Waste'),
+                  subtitle: const Text('What was made and not sold, by reason, by dish and by day'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => WasteScreen(
+                        api: widget.api,
+                        staffId: widget.staffId ?? '',
+                        device: widget.device,
+                        token: widget.token,
+                      ),
                     ),
                   ),
                 ),
@@ -977,6 +1027,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   subtitle: Text(_kitchenNotesSummary),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _kitchenNotes == null ? null : _kitchenNotesList,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('waste-reasons'),
+                  leading: const Icon(Icons.delete_sweep_outlined),
+                  title: const Text('Waste reasons'),
+                  subtitle: Text(_wasteReasonsSummary),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _wasteReasons == null ? null : _wasteReasonsList,
                 ),
               ],
             ),
