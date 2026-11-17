@@ -93,6 +93,9 @@ merges after any disconnect.
 - The waste log (food that was made or bought and not sold: what it was, how many and why, with a reason
   from the location's list; struck out, never deleted; a manager reads it by reason, by dish and by day; it
   is beside the sales and never part of them): `docs/waste-log.md`
+- The pickup board (a screen facing the pickup shelf lists the to-go orders being made and the ones ready,
+  by number and first name and nothing else; a switch on the device, the board standing where the sign-in
+  pad stands, with Staff in its corner for the pad): `docs/pickup-board.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

@@ -32,6 +32,7 @@ class SignInScreen extends StatefulWidget {
     this.onSettings,
     this.faces,
     this.lockedNote,
+    this.onBoard,
   });
 
   final Session session;
@@ -46,6 +47,10 @@ class SignInScreen extends StatefulWidget {
   /// On a screen that locked itself for standing idle: why the pad is here and that nothing was closed,
   /// shown above the pad. Null on the plain sign-in screen.
   final String? lockedNote;
+
+  /// On a device that is a pickup board (docs/pickup-board.md): back to the board, from the bar. Null on
+  /// every other device.
+  final VoidCallback? onBoard;
 
   @override
   State<SignInScreen> createState() => _SignInScreenState();
@@ -233,6 +238,20 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
               icon: Icon(_clocking ? Icons.dialpad : Icons.punch_clock_outlined),
               label: Text(_clocking ? 'Back to sign in' : 'Time clock'),
               onPressed: _busy ? null : _toggleClock,
+            ),
+          // On the shelf's screen: back to the pickup board (it comes back by itself too, left alone).
+          if (widget.onBoard != null && compact(context))
+            IconButton(
+              key: const ValueKey('board-back'),
+              icon: const Icon(Icons.view_module_outlined, semanticLabel: 'Pickup board'),
+              onPressed: widget.onBoard,
+            )
+          else if (widget.onBoard != null)
+            TextButton.icon(
+              key: const ValueKey('board-back'),
+              icon: const Icon(Icons.view_module_outlined),
+              label: const Text('Pickup board'),
+              onPressed: widget.onBoard,
             ),
           if (widget.onSettings != null)
             IconButton(tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: widget.onSettings),

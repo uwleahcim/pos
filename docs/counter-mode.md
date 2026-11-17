@@ -75,6 +75,9 @@ order still being rung up for now is under no stage yet (it is under Unpaid, and
 order sent ahead for a later time has no **Ready** button until its ticket prints, so a slip of the thumb
 cannot text a customer whose food nobody has started.
 
+A screen facing the pickup shelf can show the customers the same two stages, Cooking as "Being made" and
+Ready, by number and first name: the pickup board (`pickup-board.md`).
+
 An order the customer named a time for reads "for 18:30" where another reads "ready 18:05", and is marked
 as its time to start cooking nears (its time less its quote):
 
