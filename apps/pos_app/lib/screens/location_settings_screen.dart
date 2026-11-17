@@ -6,6 +6,7 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
+import '../kitchen_notes.dart';
 import '../menu.dart';
 import '../printers.dart';
 import '../table_timers.dart';
@@ -21,6 +22,7 @@ import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'guests_screen.dart';
+import 'kitchen_notes_dialog.dart';
 import 'logbook_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
@@ -131,6 +133,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
+  KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
@@ -209,6 +212,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _bag = bag);
     } on ApiException {
       // nothing answered about the to-go question: the row says so
+    }
+    try {
+      final notes = await widget.api.kitchenNotes();
+      if (mounted) setState(() => _kitchenNotes = notes);
+    } on ApiException {
+      // nothing answered about the kitchen notes: the row says so
     }
     try {
       final board = await widget.api.board();
@@ -654,6 +663,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('To-go question saved')));
   }
 
+  Future<void> _kitchenNotesList() async {
+    final saved = await showDialog<KitchenNotes>(
+      context: context,
+      builder: (_) => KitchenNotesDialog(api: widget.api, token: widget.token, notes: _kitchenNotes!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _kitchenNotes = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kitchen notes saved')));
+  }
+
   Future<void> _tableTimers() async {
     final saved = await showDialog<TableTimers>(
       context: context,
@@ -699,6 +718,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (bag == null) return 'The hub has not answered about the to-go question (an older hub: update it)';
     if (!bag.asks) return 'Off: a to-go order is sent with nothing asked';
     return 'Asked before a to-go order is sent: ${[for (final choice in bag.choices) choice.name].join(', ')}';
+  }
+
+  /// One line on the one-tap notes: what a dish's sheet offers, or that a note is typed.
+  String get _kitchenNotesSummary {
+    final notes = _kitchenNotes;
+    if (notes == null) return 'The hub has not answered about the kitchen notes (an older hub: update it)';
+    if (notes.notes.isEmpty) return 'None listed: a note to the kitchen is typed';
+    return 'One tap on a dish: ${notes.notes.join(', ')}';
   }
 
   /// One line on the timers: each stage's minutes to amber and to red, a dash for never.
@@ -941,6 +968,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   subtitle: Text(_bagSummary),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _bag == null ? null : _bagQuestion,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('kitchen-notes'),
+                  leading: const Icon(Icons.edit_note_outlined),
+                  title: const Text('Kitchen notes'),
+                  subtitle: Text(_kitchenNotesSummary),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _kitchenNotes == null ? null : _kitchenNotesList,
                 ),
               ],
             ),

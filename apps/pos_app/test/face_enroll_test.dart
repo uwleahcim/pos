@@ -177,6 +177,7 @@ void main() {
     final t = await pumpLocation(tester);
     expect(find.text('Switch to whoever steps up'), findsOneWidget);
     expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('hands-free-switch'))).value, isTrue);
+    await bringUp(tester, 'hands-free-switch');
     await tester.tap(find.byKey(const ValueKey('hands-free-switch')));
     await tester.pumpAndSettle();
     expect(t.hub.handsFree, {'switch': false, 'away_seconds': 60});

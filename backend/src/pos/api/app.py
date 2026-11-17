@@ -67,6 +67,7 @@ from ..settings import (
     clean_bill,
     clean_coursing,
     clean_desk_phones,
+    clean_kitchen_notes,
     clean_printers,
     clean_quotes,
     clean_rush,
@@ -312,6 +313,12 @@ class VoidReasonIn(BaseModel):
 class BagChoiceIn(BaseModel):
     id: str | None = Field(None, description="left out for a choice new on the screen: the hub names it from the name")
     name: str
+
+
+class KitchenNotesIn(BaseModel):
+    """The one-tap notes to the kitchen: short words, in the order the buttons show."""
+
+    notes: list[str] = Field(default_factory=list)
 
 
 class BagIn(BaseModel):
@@ -1338,6 +1345,21 @@ def create_app(
         screen asks by it from its next to-go order."""
         manager_from(app.state.tokens, authorization)
         return write_setting("bag", body.model_dump(), clean_bag)
+
+    @app.get("/settings/kitchen_notes")
+    def read_kitchen_notes() -> dict[str, Any]:
+        """The one-tap notes to the kitchen: `notes`, short words in the order the dish's sheet shows them as
+        buttons ("Rush", "Split for 2"). A tap puts the words in the dish's note, which prints under the dish
+        as a typed note does."""
+        settings: SettingStore = app.state.settings
+        return settings.get("kitchen_notes")
+
+    @app.put("/settings/kitchen_notes")
+    def write_kitchen_notes(body: KitchenNotesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager lists the one-tap notes. Orders carry the words themselves, so a note reworded or dropped
+        changes nothing on a dish already rung in. An empty list offers none."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("kitchen_notes", body.model_dump(), clean_kitchen_notes)
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")

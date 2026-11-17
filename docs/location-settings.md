@@ -36,6 +36,8 @@ screen holds:
 - **To-go question**, on the same card: whether a to-go order is asked what goes in the bag before it is
   sent (on to start), the question's words and the things it offers, eight at most (see
   `to-go-question.md`).
+- **Kitchen notes**, on the same card: the one-tap notes a dish's sheet offers over its note ("Rush",
+  "Split for 2"), twelve at most (see `kitchen-notes.md`).
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick

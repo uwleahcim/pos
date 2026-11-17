@@ -84,6 +84,9 @@ merges after any disconnect.
 - The to-go question (before a to-go order is sent the screen asks once what goes in the bag: chopsticks,
   forks, napkins or nothing; the answer prints on the takeout station's ticket; a manager words it, lists
   what it offers or turns it off): `docs/to-go-question.md`
+- One-tap notes to the kitchen (the words typed on a dish again and again, as buttons over the dish's note:
+  Rush, Split for 2; a manager keeps the list; the ticket prints them as it prints a typed note):
+  `docs/kitchen-notes.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

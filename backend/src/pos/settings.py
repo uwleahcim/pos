@@ -52,6 +52,10 @@
   bag, by name in the order the buttons show (chopsticks, forks and napkins to start). "Nothing" is always
   an answer. An answer on an order carries each choice's id and the name it had then, so a choice can be
   renamed or dropped later.
+- `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
+  show): what a server would otherwise type on a dish again and again, such as "Rush" or "Split for 2". A
+  tap puts the words in the dish's note, so an order carries the words themselves and a note can be reworded
+  or dropped later. An empty list offers none.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -93,6 +97,7 @@ STANDARD_BAG_CHOICES = [
     {"id": "napkins", "name": "Napkins"},
 ]
 BAG_QUESTION = "What goes in the bag?"
+STANDARD_KITCHEN_NOTES = ["Rush", "Split for 2", "Well done", "Less oil", "Less salt", "See server"]
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
@@ -126,6 +131,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "time_clock": {"enabled": False, "breaks_paid": False, "week_starts": "mon"},
     # On to start, with what the old POS rang as free dishes: the owner asked for the question.
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
+    # A short list to start with; the location makes it its own.
+    "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
 }
 WEEK_STARTS = ("mon", "sun")
 RUSH_MAX = 120
@@ -160,6 +167,10 @@ BAG_CHOICE_NAME_MAX = 24
 BAG_CHOICES_MAX = 8
 """One screenful of buttons: the question is asked on every to-go order."""
 BAG_QUESTION_MAX = 60
+KITCHEN_NOTE_MAX = 24
+"""A chip on a phone, and words a cook reads at a glance under the dish."""
+KITCHEN_NOTES_MAX = 12
+"""Two or three rows of chips on a phone: more than that and typing the note is as quick."""
 BILL_LINES_MAX = 8
 """The most lines the top or the foot of a bill may have: a name, an address, a phone, hours, a thank-you."""
 BILL_LINE_MAX = 64
@@ -460,6 +471,35 @@ def clean_bag(data: Mapping[str, Any]) -> dict[str, Any]:
             taken.add(ident)
         choices.append({"id": str(ident), "name": name})
     return {"enabled": enabled, "question": question or BAG_QUESTION, "choices": choices}
+
+
+def clean_kitchen_notes(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The one-tap notes to the kitchen as the app may set them, checked: `notes`, a list of short words in
+    the order the buttons show (the standard ones when left out; an empty list offers none). A note holds no
+    comma: several notes on one dish are joined with commas, and the screen tells them apart by those. Raises
+    ValueError on a bad value."""
+    raw = data.get("notes")
+    if raw is None:
+        raw = DEFAULTS["kitchen_notes"]["notes"]  # left out: the standard ones
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, str) for entry in raw):
+        raise ValueError("notes must be a list of words")
+    if len(raw) > KITCHEN_NOTES_MAX:
+        raise ValueError(f"at most {KITCHEN_NOTES_MAX} notes, so they stay one tap away")
+    notes: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        note = " ".join(entry.split())
+        if not note:
+            raise ValueError("every note needs its words")
+        if len(note) > KITCHEN_NOTE_MAX:
+            raise ValueError(f"a note is at most {KITCHEN_NOTE_MAX} characters")
+        if "," in note:
+            raise ValueError(f"a note holds no comma: {note!r}")
+        if note.casefold() in seen:
+            raise ValueError(f"the note {note!r} is listed twice")
+        seen.add(note.casefold())
+        notes.append(note)
+    return {"notes": notes}
 
 
 def skipped_stations(setting: Mapping[str, Any], device: str) -> frozenset[str]:
