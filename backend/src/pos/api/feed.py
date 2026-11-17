@@ -112,7 +112,8 @@ class ChangeFeed:
             self._tell(ids, (), cursor)
 
     def changed(self, topic: str) -> None:
-        """Something that is not an order changed: `menu` (a save, the 86 board) or `settings`."""
+        """Something that is not an order changed: `menu` (a save, the 86 board), `settings`, or `notes` (a
+        note for the shift was put up, changed or taken down). A screen that does not know a topic ignores it."""
         self._tell((), (topic,), None)
 
     def _tell(self, order_ids: Iterable[str], topics: Iterable[str], cursor: int | None) -> None:

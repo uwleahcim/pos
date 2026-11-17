@@ -19,9 +19,11 @@ import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'guests_screen.dart';
+import 'logbook_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
+import 'shift_notes_screen.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
@@ -782,6 +784,40 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => GuestsScreen(api: widget.api, token: widget.token),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // what the managers tell the staff, and each other
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  key: const ValueKey('shift-notes'),
+                  leading: const Icon(Icons.sticky_note_2_outlined),
+                  title: const Text('Notes for the shift'),
+                  subtitle: const Text('What everybody sees once after signing in: the specials, what is out'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          ShiftNotesScreen(api: widget.api, device: widget.device ?? '', token: widget.token),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('logbook'),
+                  leading: const Icon(Icons.menu_book_outlined),
+                  title: const Text("Manager's log"),
+                  subtitle: const Text('What happened in a shift, by subject, for the next manager'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => LogbookScreen(api: widget.api, token: widget.token, device: widget.device ?? ''),
                     ),
                   ),
                 ),

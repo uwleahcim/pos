@@ -38,6 +38,7 @@ from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
+from ..notes import ShiftNotes, default_note_store
 from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
@@ -88,6 +89,7 @@ from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list
 from .history import add_history
 from .menu_admin import add_menu_admin
+from .notes import add_shift_notes
 from .sales import add_sales_report
 from .timeclock import add_time_clock
 
@@ -711,6 +713,7 @@ def create_app(
     feed: ChangeFeed | None = None,
     customers: CustomerNotes | None = None,
     clock: TimeClock | None = None,
+    notes: ShiftNotes | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -791,6 +794,8 @@ def create_app(
     )
     # The time clock: who is on the clock, their breaks, and the log of every change to them.
     app.state.clock = clock if clock is not None else TimeClock(default_clock_store())
+    # Notes for the shift (each person sees one once) and the manager's log.
+    app.state.notes = notes if notes is not None else ShiftNotes(default_note_store())
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
@@ -1847,6 +1852,7 @@ def create_app(
     add_menu_admin(app)
     add_face_signin(app)
     add_time_clock(app)
+    add_shift_notes(app)
     add_day_report(app)
     add_sales_report(app)
     add_guest_list(app)
