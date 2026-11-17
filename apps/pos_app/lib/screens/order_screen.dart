@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../allergies.dart';
 import '../api.dart';
+import '../bag.dart';
 import '../check_order.dart';
 import '../coursing.dart';
 import '../customers.dart';
@@ -26,6 +27,7 @@ import '../split.dart';
 import '../takeout.dart';
 import '../voids.dart';
 import 'allergy_dialog.dart';
+import 'bag_sheet.dart';
 import 'check_history_screen.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
@@ -118,6 +120,7 @@ class _OrderScreenState extends State<OrderScreen> {
   String? _noteFor; // the number's digits it was read for
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
+  Future<BagQuestion?>? _bagRead; // the to-go question as the location set it, being read or read
   bool _billing = false; // a bill is on its way to the printer: the button waits
   bool _sentHere = false; // dishes were sent to the kitchen from this screen since it opened
   final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
@@ -279,6 +282,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
         unawaited(_readQuotes(order));
+        if (order.isTakeout && order.isOpen) unawaited(_bagQuestion()); // read by the time Send is tapped
       }
     } on ApiException {
       // 404 until the create op lands; the status bar shows outages.
@@ -656,8 +660,51 @@ class _OrderScreenState extends State<OrderScreen> {
     await _append('set_field', {'customer_name': name, 'by': ?_staffName, 'by_id': ?_staffId});
   }
 
+  /// The to-go question as the location set it (docs/to-go-question.md), read once for this screen. Null
+  /// from a hub older than the question, and while nothing answers and nothing was saved: nothing is asked
+  /// then, and the read is tried again the next time.
+  Future<BagQuestion?> _bagQuestion() => _bagRead ??= () async {
+    try {
+      return await widget.api.bagQuestion();
+    } on ApiException {
+      _bagRead = null;
+      return null;
+    }
+  }();
+
+  /// Asks what goes in the bag before a to-go order is sent, once: an order that carries an answer is not
+  /// asked about again. The answer goes on the order at once, so it is kept if the payment that follows is
+  /// called off. False when the sheet was closed without an answer: the order is not sent.
+  Future<bool> _askBag(Order order, {String action = 'Send'}) async {
+    if (!order.isTakeout || order.bag != null) return true;
+    final question = await _bagQuestion();
+    if (!mounted) return false;
+    if (question == null || !question.asks) return true;
+    final answer = await askBag(context, question: question, action: action);
+    if (answer == null || !mounted) return false;
+    await _append('set_field', {'bag': bagField(answer), 'by': ?_staffName, 'by_id': ?_staffId});
+    return mounted;
+  }
+
+  /// The answer tapped on the check: the question again, with what the order carries. Once the kitchen has
+  /// the order, the hub prints the takeout station a slip about the change.
+  Future<void> _changeBag(Order order) async {
+    final had = order.bag ?? const <BagItem>[];
+    final question = await _bagQuestion();
+    if (!mounted) return;
+    if (question == null) {
+      _say('The hub is not answering: what goes in the bag stays as it is.');
+      return;
+    }
+    final answer = await askBag(context, question: question, answer: had, action: 'Save');
+    if (answer == null || !mounted || listEquals(answer, had)) return;
+    await _append('set_field', {'bag': bagField(answer), 'by': ?_staffName, 'by_id': ?_staffId});
+    if (mounted && order.isFired) _say('The takeout printer gets a slip about it.');
+  }
+
   /// A to-go order with nothing due goes to the kitchen: its time is settled first if it is a big one.
   Future<void> _sendToGo(Order order) async {
+    if (!await _askBag(order)) return;
     _sentHere = true;
     await _appendAll([
       ..._settleQuote(order),
@@ -670,6 +717,8 @@ class _OrderScreenState extends State<OrderScreen> {
   /// and the screen goes back for the next customer. Where the location lets the channel pay at pickup (a
   /// phone order), the order can go to the kitchen unpaid and the ready text says so.
   Future<void> _payAndSend(Order order, Check check) async {
+    if (!await _askBag(order, action: 'Next')) return;
+    if (!mounted) return;
     var payAtPickup = false;
     try {
       payAtPickup = (await widget.api.quotes()).mayPayAtPickup(order.channel);
@@ -1295,6 +1344,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onRemoveDiscount: _removeDiscount,
       onRemoveCharge: _removeCharge,
       onRemoveExempt: _removeExempt,
+      onBag: order == null ? null : () => _changeBag(order),
       onMove: _move,
       onLot: _lot,
       onBill: _billing ? null : _printBill,
@@ -1456,6 +1506,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onRemoveDiscount,
     required this.onRemoveCharge,
     required this.onRemoveExempt,
+    required this.onBag,
     required this.onMove,
     required this.onLot,
     required this.onBill,
@@ -1487,6 +1538,9 @@ class _TicketPanel extends StatefulWidget {
 
   /// Puts the tax back on a check a manager marked tax exempt.
   final VoidCallback onRemoveExempt;
+
+  /// Asks again what goes in the bag of a to-go order: the answer's row tapped.
+  final VoidCallback? onBag;
 
   /// Lines let go at another place or course on the check.
   final Future<void> Function(Drop drop) onMove;
@@ -1686,6 +1740,9 @@ class _TicketPanelState extends State<_TicketPanel> {
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
               child: Column(
                 children: [
+                  // a to-go order's answer to what goes in the bag, under its dishes; a tap asks again
+                  if (order.bag case final bag? when order.isTakeout)
+                    _BagRow(key: const ValueKey('bag-row'), items: bag, onTap: open ? widget.onBag : null),
                   _TotalRow('Subtotal', check.subtotal),
                   // Each discount and charge is its own row; a tap takes it off (a manager's PIN when the
                   // rules ask for one). The receipt shows them the same way.
@@ -2720,6 +2777,49 @@ class _TotalFoot extends StatelessWidget {
 /// Tells whoever listens that this screen read something new.
 class _Changes extends ChangeNotifier {
   void tell() => notifyListeners();
+}
+
+/// What goes in the bag of a to-go order besides the food, over the totals: the answer to the question
+/// asked before sending. A tap asks it again.
+class _BagRow extends StatelessWidget {
+  const _BagRow({super.key, required this.items, this.onTap});
+
+  final List<BagItem> items;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final grey = theme.colorScheme.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2, right: 6),
+              child: Icon(Icons.shopping_bag_outlined, size: 16, color: grey),
+            ),
+            Expanded(
+              child: Text(
+                'In the bag: ${bagWords(items)}',
+                style: theme.textTheme.bodyMedium?.copyWith(color: grey),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (onTap != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 6, top: 2),
+                child: Icon(Icons.edit_outlined, size: 14, color: grey),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _TotalRow extends StatelessWidget {

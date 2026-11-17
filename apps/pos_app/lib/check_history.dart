@@ -452,6 +452,17 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
         title: 'Put the sales tax back on',
         under: [if (organisation.isNotEmpty) 'It was tax exempt for $organisation'],
       );
+    case 'bag':
+      final items = [
+        if (said['items'] is List)
+          for (final item in said['items'] as List)
+            if (item is Map)
+              (item['qty'] is int && item['qty'] as int > 1 ? '${item['qty']}x ' : '') + _text(item['name']),
+      ];
+      return (
+        title: said['changed'] == true ? 'Changed what goes in the bag' : 'Asked what goes in the bag',
+        under: [items.isEmpty ? 'Nothing' : items.join(', ')],
+      );
     default:
       return (title: step.what, under: const []);
   }

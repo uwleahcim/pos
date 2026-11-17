@@ -49,6 +49,10 @@ next customer.
 Cards come with the payments phase. A paid order lists what was taken under the total, and what is still
 due. When nothing is due the button is **Send**.
 
+Either button first asks, once an order, **what goes in the bag** besides the food (chopsticks, forks,
+napkins, or nothing), unless the location turned the question off. The answer stands on the check over the
+totals and prints on the takeout counter's ticket (see `to-go-question.md`).
+
 ## The list
 
 To-go orders sit in the list of checks with their number, name, channel, time and whether they are paid.

@@ -47,6 +47,11 @@
   bills print at (null: the takeout station's printer, else the first; a screen may ask for another),
   `header`, the restaurant's own lines at the top (name, address, phone; the first prints big), and `footer`,
   the lines that close it.
+- `bag`: the one question asked before a to-go order is first sent (`pos/orders/bag.py`): `enabled`,
+  whether it is asked (on to start); `question`, its words; `choices`, what the customer may want in the
+  bag, by name in the order the buttons show (chopsticks, forks and napkins to start). "Nothing" is always
+  an answer. An answer on an order carries each choice's id and the name it had then, so a choice can be
+  renamed or dropped later.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -82,6 +87,12 @@ STANDARD_VOID_REASONS = [
     {"id": "kitchen-error", "name": "Kitchen error"},
     {"id": "out-of-stock", "name": "Out of stock"},
 ]
+STANDARD_BAG_CHOICES = [
+    {"id": "chopsticks", "name": "Chopsticks"},
+    {"id": "forks", "name": "Forks"},
+    {"id": "napkins", "name": "Napkins"},
+]
+BAG_QUESTION = "What goes in the bag?"
 DEFAULTS: dict[str, dict[str, Any]] = {
     "quotes": {
         "minutes": {"counter": 15, "phone": 20, "online": 25, "delivery": 45},
@@ -113,6 +124,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # Off until a manager turns it on: a clock changes what every person does when they come in. A break
     # is the meal break, off the clock, unless the location pays for breaks. The pay week starts on Monday.
     "time_clock": {"enabled": False, "breaks_paid": False, "week_starts": "mon"},
+    # On to start, with what the old POS rang as free dishes: the owner asked for the question.
+    "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
 }
 WEEK_STARTS = ("mon", "sun")
 RUSH_MAX = 120
@@ -141,6 +154,12 @@ VOID_REASON_NAME_MAX = 40
 VOID_REASONS_MAX = 12
 """A screenful of buttons on a phone: the person voiding picks one at a glance."""
 VOID_WORDS = frozenset({"void", "fewer", "changed"})
+BAG_CHOICE_ID = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+BAG_CHOICE_NAME_MAX = 24
+"""A button on a phone, and a line of the bag's ticket in big letters."""
+BAG_CHOICES_MAX = 8
+"""One screenful of buttons: the question is asked on every to-go order."""
+BAG_QUESTION_MAX = 60
 BILL_LINES_MAX = 8
 """The most lines the top or the foot of a bill may have: a name, an address, a phone, hours, a thank-you."""
 BILL_LINE_MAX = 64
@@ -390,6 +409,57 @@ def clean_time_clock(data: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("week_starts must be mon or sun")
     out["week_starts"] = week
     return out
+
+
+def clean_bag(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The to-go question as the app may set it, checked: `enabled`, whether it is asked; `question`, its
+    words (the standard ones when left empty); `choices`, a list of `{id, name}` in the order the buttons
+    show. A choice without an id is new on the screen and gets one from its name; ids never change after
+    that, since answers on orders carry them. Asked, it needs at least one choice. Raises ValueError on a bad
+    value."""
+    enabled = data.get("enabled", DEFAULTS["bag"]["enabled"])
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be true or false")
+    question = data.get("question")
+    question = " ".join(question.split()) if isinstance(question, str) else ""
+    if len(question) > BAG_QUESTION_MAX:
+        raise ValueError(f"the question takes {BAG_QUESTION_MAX} letters")
+    raw = data.get("choices")
+    if raw is None:
+        raw = DEFAULTS["bag"]["choices"]  # left out: the standard ones
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("choices must be a list of {id, name}")
+    if enabled and not raw:
+        raise ValueError("list at least one thing to offer, or turn the question off")
+    if len(raw) > BAG_CHOICES_MAX:
+        raise ValueError(f"at most {BAG_CHOICES_MAX} choices, so they fit one screen")
+    names: set[str] = set()
+    taken: set[str] = set()
+    for entry in raw:
+        name = " ".join(str(entry.get("name") or "").split())
+        if not name:
+            raise ValueError("every choice needs a name")
+        if len(name) > BAG_CHOICE_NAME_MAX:
+            raise ValueError(f"a choice is at most {BAG_CHOICE_NAME_MAX} characters")
+        if name.casefold() in names:
+            raise ValueError(f"the choice {name!r} is listed twice")
+        names.add(name.casefold())
+        ident = entry.get("id")
+        if ident not in (None, ""):
+            if not isinstance(ident, str) or not BAG_CHOICE_ID.match(ident):
+                raise ValueError(f"a choice id is letters, digits, - or _, not {ident!r}")
+            if ident in taken:
+                raise ValueError(f"the choice id {ident!r} is listed twice")
+            taken.add(ident)
+    choices: list[dict[str, str]] = []
+    for entry in raw:
+        ident = entry.get("id")
+        name = " ".join(str(entry["name"]).split())
+        if ident in (None, ""):
+            ident = _new_id(name, taken, "choice")
+            taken.add(ident)
+        choices.append({"id": str(ident), "name": name})
+    return {"enabled": enabled, "question": question or BAG_QUESTION, "choices": choices}
 
 
 def skipped_stations(setting: Mapping[str, Any], device: str) -> frozenset[str]:

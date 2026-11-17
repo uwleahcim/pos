@@ -40,6 +40,8 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..orders.bag import FIELD as BAG
+from ..orders.bag import bag_lines, bag_of
 from ..sync.hlc import wall_clock_ms
 from ..sync.oplog import Line, Op, OrderState, replay
 from .bill import Bill, render_bill
@@ -302,14 +304,15 @@ def ticket_for(
     station's ticket, and a seat's own stands under each of its dishes. `kind` says what the ticket is when it
     is not for dishes sent or voided (`allergy`: an allergy told after `sent` had gone to the kitchen;
     `moved`: `sent` went to the kitchen for table `was_at`, or for the bar tab called `was_tab`, and now goes
-    to this order's table)."""
+    to this order's table; `bag`: what goes in the bag changed after the order was sent, a slip with no
+    dishes on it)."""
     names = allergens or {}
     by_seat = {told["seat"]: allergy_words(told, names) for told in state.allergy_list() if told.get("seat")}
     lines = [
         *_ticket_lines(voided or [], routes, void=True, allergies=by_seat),
         *_ticket_lines(sent, routes, void=False, allergies=by_seat),
     ]
-    if not lines:
+    if not lines and kind != "bag":
         return None
     voids = sum(line.void for line in lines)
     kind = kind or ("new" if not voids else "void" if voids == len(lines) else "modify")
@@ -567,7 +570,11 @@ class PrintService:
         table) prints a slip headed MOVED at every station that has some of it, with the table on the cooks'
         tickets and the table it goes to now (`table_changes`; the location's `tickets.moved` turns it off).
         A bar tab that sits down is the same: the slip says whose tab the drinks were made for and the table
-        they go to now (`tab_changes`)."""
+        they go to now (`tab_changes`).
+
+        What goes in the bag of a to-go order (`pos.orders.bag`) is on the takeout station's ticket. When the
+        answer changes after the order went to the kitchen, that station gets a slip headed BAG with the
+        answer as it stands (`bag_slip`); a ticket still waiting for its time is made again instead."""
         if not self.printers:
             return []
         jobs: list[PrintJob] = []
@@ -580,7 +587,7 @@ class PrintService:
             before = replay([op for op in everything if op.op_id not in new], order_id)
             after = replay(everything, order_id)
             sent, voided = kitchen_changes(before, after)
-            self._keep_money_current(after)
+            waits = self._keep_current(after)
             if sent or voided:
                 key = next((op for op in batch if op.kind in ("fire", "void_line")), batch[0])
                 now = self._now()
@@ -602,6 +609,15 @@ class PrintService:
                     # with a future order's own tickets, when those are still waiting for their time
                     delay = lead_delay(after, now)
                     jobs.extend(self.send(after, had, [], key=key.op_id, late=late, delay=delay, kind="allergy"))
+            bag = self.bag(after)
+            if bag is not None and bag != self.bag(before) and not sent and not waits:
+                # The answer changed and no ticket of this batch carries it. With dishes already at the
+                # kitchen, the bag is being packed from a ticket that says otherwise.
+                if any(line.active and line.fired_at is not None for line in after.lines.values()):
+                    key = next(op for op in batch if op.kind in ("create", "set_field") and BAG in op.data)
+                    slip = f"{key.op_id}:bag"
+                    # with a future order's own tickets, when those are still waiting for their time
+                    jobs.extend(self.bag_slip(after, key=slip, delay=lead_delay(after, self._now())))
             if self.ticket_words().get("moved"):
                 for was_at, lines in table_changes(before, after, self._now()):
                     slip = f"{batch[0].op_id}:moved:{was_at}"
@@ -629,7 +645,8 @@ class PrintService:
         it prints no ticket at: their lines are on nobody's ticket but the bag's, and such a station is neither
         counted nor named on the other tickets, since no ticket of it is on its way. `delay` seconds holds the
         tickets back (a future order's lead time); the hub's retry loop and the relays pick them up when they
-        are due.
+        are due. The takeout station's copy of a to-go order also says where the money stands (`money`) and
+        what else goes in the bag (`bag`).
         `kind` is `allergy` for the notice that follows dishes already sent, which lists them again, and
         `moved` for the slip that says they now go to another table than `was_at`, the one they were sent for
         (or than the bar, when they were sent for the tab called `was_tab`).
@@ -646,7 +663,9 @@ class PrintService:
         allergens = self.allergen_names()
         words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         money = self.money(state) if kind is None else None
+        bag = self.bag(state) if kind is None else None
         made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
+        bagged: set[str] = set()  # the printers whose ticket is the copy that goes in the bag
         for printer, routes in self.routing(printers, to_go=is_to_go(state), skip=skip):
             ticket = ticket_for(
                 state,
@@ -665,8 +684,10 @@ class PrintService:
                 continue
             if ticket.course in courses:
                 ticket = replace(ticket, course=courses[ticket.course])
-            if routes.whole is not None and money is not None:
-                ticket = replace(ticket, money=money)  # the copy that goes in the bag
+            if routes.whole is not None and kind is None:
+                # the copy that goes in the bag: where the money stands, and what else the customer wants in it
+                ticket = replace(ticket, money=money, bag=bag)
+                bagged.add(printer.id)
             made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
         cooks = sum(1 for _, _, cooked in made if cooked)
         jobs, nth = [], 0
@@ -678,10 +699,34 @@ class PrintService:
                 others = dict.fromkeys(name for _, _, there in made for name in there if name not in cooked)
                 ticket = replace(ticket, also_at=tuple(others))
             job = self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers)
-            if ticket.money is not None and self.store.due_in(job) > 0:
+            if printer.id in bagged and self.store.due_in(job) > 0:
                 with self._lock:
                     self._waiting.setdefault(state.order_id, []).append((job, ticket, printer))
             jobs.append(job)
+        return jobs
+
+    def bag(self, state: OrderState) -> tuple[str, ...] | None:
+        """What the takeout counter's ticket for this order says goes in the bag besides the food, a line a
+        choice; empty when the customer wanted nothing; None for a table's order and while nobody was asked."""
+        answer = bag_of(state.fields) if is_to_go(state) else None
+        return None if answer is None else bag_lines(answer)
+
+    def bag_slip(self, state: OrderState, *, key: str, delay: float = 0.0) -> list[PrintJob]:
+        """The slip the takeout station gets when what goes in the bag changes after the order was sent: the
+        order as its ticket was headed, no dishes, and the answer as it stands now. The ticket the bag is
+        packed from was printed with the old one."""
+        printers = self.printers
+        jobs = []
+        for printer, routes in self.routing(printers, to_go=True):
+            if routes.whole is None:
+                continue
+            with self._lock:
+                ticket_no = next(self._tickets)
+            ticket = ticket_for(state, [], station=self.head(printer), ticket_no=ticket_no, kind="bag")
+            if ticket is None:
+                continue
+            ticket = replace(ticket, bag=self.bag(state), allergies=())  # the dishes' business, not the bag's
+            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", delay=delay, printers=printers))
         return jobs
 
     def money(self, state: OrderState) -> Money | None:
@@ -692,26 +737,33 @@ class PrintService:
             return None
         return money_words(self.check_of(state))
 
-    def _keep_money_current(self, state: OrderState) -> None:
+    def _keep_current(self, state: OrderState) -> bool:
         """A future order's ticket is made when the order is sent and prints when its time comes, which can be
         days later (catering). Whatever is paid, added or taken off in between changes what the ticket should
-        say about the money, so the waiting ticket is made again with the order as it stands now. A ticket
-        whose time has come is left alone: it may be on paper."""
+        say about the money, and the customer may change what goes in the bag, so the waiting ticket is made
+        again with the order as it stands now. A ticket whose time has come is left alone: it may be on
+        paper. True when a ticket of this order still waits, and so says what the order says now."""
         if state.order_id not in self._waiting:
-            return
-        money = self.money(state)
+            return False
+        money, bag = self.money(state), self.bag(state)
         with self._lock:
             still = []
             for job, ticket, printer in self._waiting.pop(state.order_id, []):
                 if job.status != "queued" or self.store.due_in(job) <= 0:
                     continue
+                fresh = ticket
                 if money is not None and money != ticket.money:
-                    ticket = replace(ticket, money=money)
-                    if not self.store.rewrite(job.job_id, *self._rendered(ticket, printer)):
+                    fresh = replace(fresh, money=money)
+                if bag != ticket.bag:
+                    fresh = replace(fresh, bag=bag)
+                if fresh is not ticket:
+                    if not self.store.rewrite(job.job_id, *self._rendered(fresh, printer)):
                         continue
+                    ticket = fresh
                 still.append((job, ticket, printer))
             if still:
                 self._waiting[state.order_id] = still
+            return bool(still)
 
     def cooking(self, printer: Printer, takes: Takes, lines: Iterable[Line]) -> tuple[str, ...]:
         """The stations these lines are cooked at on this printer's ticket, by name, in the order they stand on

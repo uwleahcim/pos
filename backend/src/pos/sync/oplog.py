@@ -92,6 +92,9 @@ ORDER_FIELDS = frozenset(
         # A check a manager marked exempt from sales tax (pos.orders.exempt): the organisation, the number of
         # its certificate, who marked it and the manager who approved. Only the hub writes it, after the PIN.
         "tax_exempt",
+        # What goes in the bag with a to-go order (pos.orders.bag): the answer to the one question asked
+        # before it is sent, {items: [{id, name, qty}]}. No items: nothing was wanted.
+        "bag",
     }
 )
 ALLERGY_NOTE_MAX = 80
