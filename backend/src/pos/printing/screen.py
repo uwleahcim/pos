@@ -20,6 +20,11 @@ What is on the screen, and when:
 - a table's check or a bar tab that was closed is off it (the food was eaten), and so is a to-go order marked
   ready or picked up, and an order voided whole;
 - a ticket nobody marked leaves by itself after `KEEP_MS`: a screen nobody tends does not fill up for good.
+
+The pass (`passing`) is the screen of whoever calls the orders: every dish of a send on one ticket, each with
+the stations that cook it and whether they have made it. The pass has a word of its own, a `done` named `PASS`:
+the dish went out. A ticket leaves the pass when all of it went out, and a dish that went out is made at its
+stations too, unless a station says otherwise afterwards.
 """
 
 from __future__ import annotations
@@ -36,10 +41,28 @@ RECENT = 10
 """How many of the tickets a station finished last it keeps at hand, to bring one back."""
 MINUTES = {"warn": 10, "late": 20}
 """After how many minutes a ticket turns amber and then red, until the location says otherwise."""
+PASS = "*pass"
+"""What a `done` of the pass names in place of a station: the dish went out to the guest. No station's code
+can be this (`pos.settings.STATION`)."""
 
 
 def _stations(line: Line) -> list[str | None]:
     return [k.get("station") for k in (line.priced or {}).get("kitchen") or [{}]]
+
+
+def _said(line: Line, station: str) -> int | None:
+    """When `station` said this dish is made, or when the pass sent it out with the station silent since; None
+    while it is still the station's to make."""
+    at = line.done.get(station)
+    if at is not None:
+        return at
+    out = line.done.get(PASS)
+    if out is None:
+        return None
+    word, passed = line.done_stamps.get(station), line.done_stamps.get(PASS)
+    if word is not None and (passed is None or word > passed):
+        return None  # the station took its word back after the dish went out: its later word stands
+    return out
 
 
 def _due(state: OrderState) -> int | None:
@@ -60,6 +83,7 @@ def kitchen_screen(
     course_names: Mapping[str, str] | None = None,
     allergens: Mapping[str, str] | None = None,
     minutes: Mapping[str, int] | None = None,
+    passing: bool = False,
 ) -> dict[str, Any]:
     """The screen of `stations` (one as a rule; a screen can stand for two woks): `tickets`, the ones still to
     make, the longest in the kitchen first, and `recent`, the last `RECENT` it finished, the latest first.
@@ -74,7 +98,12 @@ def kitchen_screen(
     minutes after which a ticket turns amber and red.
 
     `waiting(state)` is the sent dishes of an order that are not in the kitchen yet; `skips(device)` the
-    stations the screen that sent a dish prints no ticket at."""
+    stations the screen that sent a dish prints no ticket at.
+
+    `passing` makes it the pass: the dishes of `stations` (none named: of every station) whole on one ticket,
+    never a to-go order a second time for the bag. A line's `stations` is then the pass itself (`PASS`: what
+    its `done` names), `done` says it went out, and `cooks` lists where it is cooked (`code`, `name`) and
+    whether that station has `made` it."""
     own = frozenset(stations)
     names = station_names or {}
     courses = course_names or {}
@@ -89,7 +118,7 @@ def kitchen_screen(
         if not to_go and state.status != "open":
             continue
         held = waiting(state)
-        whole = takeout if to_go and takeout in own else None
+        whole = takeout if to_go and takeout in own and not passing else None
         by_seat = {
             told["seat"]: allergy_words(told, allergens or {}) for told in state.allergy_list() if told.get("seat")
         }
@@ -114,27 +143,41 @@ def kitchen_screen(
             others: dict[str, None] = {}
             for line in lines:
                 skip = skips(line.fired_at.node) if line.fired_at is not None else frozenset()
-                takes = Takes(own=own, whole=None if whole in skip else whole, skip=skip)
+                # (the pass with no station named stands for all of them, like a kitchen's one printer)
+                takes = Takes(own=own, first=passing and not own, whole=None if whole in skip else whole, skip=skip)
                 here = sorted({s for s in _stations(line) if s is not None and takes.cooks(s)})
                 if takes.whole is not None and takes.whole not in here:
                     here.append(takes.whole)
                 for station in _stations(line):
-                    if station is not None and station not in own and station != takeout and station not in skip:
+                    if station is not None and not takes.cooks(station) and station != takeout and station not in skip:
                         if line.active:
                             others.setdefault(names.get(station) or station)
-                if not here:
+                if not here and not passing:
                     continue
-                done = all(station in line.done for station in here)
                 void = line.status == "void"
+                if passing:
+                    marks, at = [PASS], line.done.get(PASS)
+                    told = marks if at is not None else []
+                    done = at is not None
+                else:
+                    marks = here
+                    told = [station for station in here if _said(line, station) is not None]
+                    done = len(told) == len(here)
+                    at = max((_said(line, station) or 0 for station in here), default=0) if done else None
                 if void and done:
                     continue  # made before it was voided: nothing for the cook to stop
-                at = max((line.done[station] for station in here), default=0) if done else None
                 for said in _ticket_lines([line], takes, void=void, allergies=by_seat):
+                    cooks = [
+                        {"code": station, "name": names.get(station) or station, "made": station in line.done}
+                        for station in said.stations
+                        if takes.cooks(station)
+                    ]
                     rows.append(
                         {
                             "line_id": line.line_id,
-                            "stations": here,
-                            "made": [station for station in here if station in line.done],
+                            "stations": marks,
+                            "made": told,
+                            **({"cooks": cooks} if passing else {}),
                             "qty": said.qty,
                             "label": said.label,
                             "modifiers": list(said.modifiers),
@@ -184,6 +227,7 @@ def kitchen_screen(
     made.sort(key=lambda ticket: (-ticket["done_ms"], ticket["id"]))
     times = {**MINUTES, **(minutes or {})}
     return {
+        **({"pass": True} if passing else {}),
         "stations": [{"code": code, "name": names.get(code) or code} for code in sorted(own)],
         "warn": int(times["warn"]),
         "late": int(times["late"]),

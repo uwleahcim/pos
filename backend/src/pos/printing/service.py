@@ -433,9 +433,10 @@ def _ticket_lines(
         # there; a printer that takes both stations says it once, with every choice either of them reads.
         # The cooks do not read every choice (the rice, the soup): a station's ticket leaves off what the
         # menu hides from it.
-        said: dict[tuple[Any, ...], tuple[Mapping[str, Any], set[int]]] = {}
+        said: dict[tuple[Any, ...], tuple[Mapping[str, Any], set[int], list[str]]] = {}
         for k in kitchen:
-            if routes is not None and not routes(k.get("station")):
+            station = k.get("station")
+            if routes is not None and not routes(station):
                 continue
             labels, depths = tuple(k.get("labels", ())), tuple(int(d) for d in k.get("depths") or ())
             words = (k.get("qty", 1), k.get("label"), labels, depths, k.get("header"), k.get("note"))
@@ -443,8 +444,10 @@ def _ticket_lines(
             if words in said:
                 said[words][1].update(read)
             else:
-                said[words] = (k, read)
-        for (_, _, labels, depths, _, _), (k, read) in said.items():
+                said[words] = (k, read, [])
+            if isinstance(station, str) and station not in said[words][2]:
+                said[words][2].append(station)
+        for (_, _, labels, depths, _, _), (k, read, cooked) in said.items():
             out.append(
                 TicketLine(
                     qty=line.qty * int(k.get("qty", 1)),
@@ -458,6 +461,7 @@ def _ticket_lines(
                     changed=not void and line.modified_after_fire,
                     header=k.get("header") or None,
                     allergy=(allergies or {}).get(line.seat, "") if line.seat else "",
+                    stations=tuple(cooked),
                 )
             )
     return out

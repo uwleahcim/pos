@@ -634,9 +634,13 @@ class Hub {
   /// kitchen, as the hub words it, each line with the `stations` that make it and the ones that `made` it. A
   /// screen is answered with the tickets that have a dish of its stations, the finished ones under `recent`.
   /// Null is a hub older than the screens (404). A `done` operation marks the dishes it names, as on the hub.
+  /// The pass (`GET /kitchen/pass?stations=`) is answered from the same tickets: every dish of the stations
+  /// it watches (none named: all), each with its `cooks`, `done` once a `done` named `*pass` said it went
+  /// out. [kitchenPassKnown] false is a hub older than the pass (404).
   /// [kitchenMinutes] is the setting (`GET/PUT /settings/kitchen_screens`), with the token the last save
   /// carried and a reason to refuse the next save with.
   List<Map<String, dynamic>>? kitchen = [];
+  bool kitchenPassKnown = true;
 
   /// A reason the hub refuses the marks it is sent with, while this is set.
   String? refuseMarks;
@@ -644,28 +648,51 @@ class Hub {
   String? kitchenMinutesAuth;
   String? refuseKitchenMinutes;
 
-  /// The screen of [codes] as the hub answers it.
-  Map<String, dynamic> _kitchenScreen(List<String> codes) {
+  /// The screen of [codes] as the hub answers it; with [pass], the pass that watches them (none: all).
+  Map<String, dynamic> _kitchenScreen(List<String> codes, {bool pass = false}) {
     final open = <Map<String, dynamic>>[], made = <Map<String, dynamic>>[];
+    final names = {for (final station in stations['stations'] as List) (station as Map)['code']: station['name']};
     for (final ticket in kitchen!) {
       final rows = <Map<String, dynamic>>[];
       for (final line in (ticket['lines'] as List).cast<Map<String, dynamic>>()) {
         final here = [
           for (final station in line['stations'] as List)
-            if (codes.contains(station)) station,
+            if (codes.contains(station) || (pass && codes.isEmpty)) station,
         ];
         if (here.isEmpty) continue;
+        final out = line['out'] == true;
         final said = [
           for (final station in line['made'] as List? ?? const [])
             if (here.contains(station)) station,
         ];
-        final done = said.length == here.length;
+        // (a dish that went out is made at its stations too)
+        final done = pass ? out : out || said.length == here.length;
         if (done && line['void'] == true) continue;
-        rows.add({...line, 'stations': here, 'made': said, 'done': done, 'done_ms': done ? line['done_ms'] : null});
+        rows.add(
+          {
+              ...line,
+              'stations': pass ? ['*pass'] : here,
+              'made': pass ? [if (out) '*pass'] : (out ? here : said),
+              'done': done,
+              'done_ms': !done ? null : (out ? line['out_ms'] : line['done_ms']),
+              if (pass)
+                'cooks': [
+                  for (final station in here)
+                    {'code': station, 'name': names[station] ?? station, 'made': said.contains(station)},
+                ],
+            }
+            ..remove('out')
+            ..remove('out_ms'),
+        );
       }
       if (rows.isEmpty) continue;
       final all = rows.every((row) => row['done'] == true);
-      final listed = {...ticket, 'id': '${ticket['order_id']}:${ticket['since_ms']}', 'lines': rows};
+      final listed = {
+        ...ticket,
+        'id': '${ticket['order_id']}:${ticket['since_ms']}',
+        'lines': rows,
+        if (pass && codes.isEmpty) 'also_at': const <String>[], // every station is on it: nobody else cooks
+      };
       if (all) {
         listed['done_ms'] = rows.map((row) => row['done_ms'] as int? ?? 0).reduce(max);
         made.add(listed);
@@ -675,8 +702,8 @@ class Hub {
     }
     open.sort((a, b) => (a['since_ms'] as int).compareTo(b['since_ms'] as int));
     made.sort((a, b) => (b['done_ms'] as int).compareTo(a['done_ms'] as int));
-    final names = {for (final station in stations['stations'] as List) (station as Map)['code']: station['name']};
     return {
+      if (pass) 'pass': true,
       'stations': [
         for (final code in [...codes]..sort()) {'code': code, 'name': names[code] ?? code},
       ],
@@ -696,6 +723,11 @@ class Hub {
         if (ticket['order_id'] != orderId) continue;
         for (final line in (ticket['lines'] as List).cast<Map<String, dynamic>>()) {
           if (!(data['line_ids'] as List).contains(line['line_id'])) continue;
+          if (data['station'] == '*pass') {
+            line['out'] = data['done'] != false;
+            line['out_ms'] = at;
+            continue;
+          }
           if (!(line['stations'] as List).contains(data['station'])) continue;
           final said = {...(line['made'] as List? ?? const [])};
           data['done'] == false ? said.remove(data['station']) : said.add(data['station']);
@@ -1558,6 +1590,11 @@ class Hub {
     if (path == '/kitchen/screen') {
       if (kitchen == null) return json({'detail': 'Not Found'}, 404);
       return json(_kitchenScreen((request.url.queryParameters['stations'] ?? '').split(',')));
+    }
+    if (path == '/kitchen/pass') {
+      if (kitchen == null || !kitchenPassKnown) return json({'detail': 'Not Found'}, 404);
+      final watched = (request.url.queryParameters['stations'] ?? '').split(',').where((code) => code.isNotEmpty);
+      return json(_kitchenScreen(watched.toList(), pass: true));
     }
     if (path == '/orders/ahead/prep') {
       if (prep == null) return json({'detail': 'Not Found'}, 404);

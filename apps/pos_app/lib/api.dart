@@ -523,10 +523,16 @@ class PosApi {
   }
 
   /// The screen of these stations, by their codes (docs/kitchen-screens.md): the tickets they still have to
-  /// make and the last ones they finished. Null from a hub older than the screens.
-  Future<KitchenBoard?> kitchenScreen(List<String> stations) async {
+  /// make and the last ones they finished. With [pass], the pass instead: the dishes of these stations (of
+  /// every station when none is named) whole on one ticket, with what each station has made. Null from a hub
+  /// older than the screens, or than the pass.
+  Future<KitchenBoard?> kitchenScreen(List<String> stations, {bool pass = false}) async {
     try {
-      return await _repeated('/kitchen/screen', KitchenBoard.fromJson, query: {'stations': stations.join(',')});
+      return await _repeated(
+        pass ? '/kitchen/pass' : '/kitchen/screen',
+        KitchenBoard.fromJson,
+        query: stations.isEmpty ? null : {'stations': stations.join(',')},
+      );
     } on ApiException catch (err) {
       if (err.status == 404 || err.status == 405) return null;
       rethrow;

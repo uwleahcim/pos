@@ -9,8 +9,9 @@ import 'kitchen_screen.dart';
 import 'pickup_board_screen.dart';
 
 /// What a screen shows while nobody is signed in on it: the sign-in pad or, on a device set to stand as
-/// something, that: a station's kitchen screen (`Settings.kitchenStations`, docs/kitchen-screens.md) or the
-/// pickup board (`Settings.pickupBoard`, docs/pickup-board.md), with the pad one tap away for the staff.
+/// something, that: a station's kitchen screen or the pass (`Settings.kitchenStations`,
+/// `Settings.kitchenPass`, docs/kitchen-screens.md) or the pickup board (`Settings.pickupBoard`,
+/// docs/pickup-board.md), with the pad one tap away for the staff.
 ///
 /// [pad] builds the sign-in pad; it is handed the way back to the standing screen, for its bar. A pad nobody
 /// touches for [backAfter] goes back by itself, so the screen on the wall never stays on a PIN pad because
@@ -82,13 +83,13 @@ class _StandingGateState extends State<StandingGate> {
     final settings = widget.settings;
     if (!settings.stands) return widget.pad(context, null);
     if (!_staff) {
-      final stations = settings.kitchenStations;
-      if (stations.isNotEmpty) {
+      if (settings.kitchen) {
         return KitchenScreen(
           key: const ValueKey('kitchen-screen'),
           api: widget.api,
           outbox: widget.outbox,
-          stations: stations,
+          stations: settings.kitchenStations,
+          pass: settings.kitchenPass,
           onStaff: _toPad,
         );
       }

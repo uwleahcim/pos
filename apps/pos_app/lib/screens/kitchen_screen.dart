@@ -11,7 +11,11 @@ import 'theme.dart';
 /// A station's screen (docs/kitchen-screens.md): the tickets the station still has to make, the longest in
 /// the kitchen first, each in the words its paper ticket uses and coloured by how long it has waited. A
 /// cook taps a dish when it is made, or Done for the whole ticket; a finished ticket leaves, and Recall
-/// brings one of the last ones back.
+/// brings one of the last ones back. All day counts how many of each dish its tickets still wait for.
+///
+/// With [pass] it is the pass, the screen of whoever calls the orders: every station's dishes of a ticket
+/// together, each with where it is cooked and whether that station has made it. A tap there says a dish
+/// went out, Sent out the whole ticket.
 ///
 /// Nobody is signed in on it. A mark is the kitchen's own word on the order: it goes through the outbox like
 /// every other change, so a tap is never lost, and it changes no dish, price or payment.
@@ -25,6 +29,7 @@ class KitchenScreen extends StatefulWidget {
     required this.api,
     required this.outbox,
     required this.stations,
+    this.pass = false,
     this.onStaff,
     this.now = DateTime.now,
   });
@@ -32,8 +37,11 @@ class KitchenScreen extends StatefulWidget {
   final PosApi api;
   final Outbox outbox;
 
-  /// The stations this screen stands at, by their codes.
+  /// The stations this screen stands at, by their codes; for the pass, the ones it watches (none: all).
   final List<String> stations;
+
+  /// The pass: every ticket whole, with what each station has made.
+  final bool pass;
 
   /// One of the staff wants the sign-in pad.
   final VoidCallback? onStaff;
@@ -50,6 +58,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
   bool _old = false; // the hub is older than the screens
   bool _away = false; // the last read got no answer: the screen may be behind
   bool _recall = false; // looking at the last ones finished
+  bool _counts = false; // looking at the all-day counts
   String _ages = ''; // every ticket's colour and minutes as drawn
   final _marked = <String>{}; // the orders this screen marked and the hub has not shown yet
   String _laid = ''; // its own marks as they were laid over the last picture
@@ -90,7 +99,13 @@ class _KitchenScreenState extends State<KitchenScreen> {
   @override
   void didUpdateWidget(KitchenScreen old) {
     super.didUpdateWidget(old);
-    if (old.stations.join(',') != widget.stations.join(',')) unawaited(_reader.now());
+    if (old.pass != widget.pass) {
+      // another screen altogether: nothing of the old one is its picture
+      _hub = null;
+      _board = const KitchenBoard();
+      _asked = _old = _recall = _counts = false;
+    }
+    if (old.pass != widget.pass || old.stations.join(',') != widget.stations.join(',')) unawaited(_reader.now());
   }
 
   @override
@@ -113,7 +128,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
     _poll.asked();
     final mark = widget.outbox.readMark;
     try {
-      final board = await widget.api.kitchenScreen(widget.stations);
+      final board = await widget.api.kitchenScreen(widget.stations, pass: widget.pass);
       if (!mounted) return;
       // what this screen marked before the read began is in it: no longer its own to lay over
       var settled = false;
@@ -140,6 +155,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
       _board = board;
       _ages = _said(board);
       if (board.recent.isEmpty) _recall = false;
+      if (board.tickets.isEmpty) _counts = false;
     });
   }
 
@@ -168,8 +184,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
     final scheme = theme.colorScheme;
     final board = _board;
     final now = widget.now();
-    final names = board.title.isNotEmpty ? board.title : widget.stations.join(' · ');
+    final names = board.title.isNotEmpty ? board.title : [if (widget.pass) 'The pass', ...widget.stations].join(' · ');
     final shown = _recall ? board.recent : board.tickets;
+    final counts = _counts ? board.counts : const <({String label, int qty})>[];
+    final aside = _recall || _counts; // off the tickets, with Back to them
     return Scaffold(
       body: SafeArea(
         child: LayoutBuilder(
@@ -193,14 +211,18 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           children: [
                             Flexible(
                               child: Text(
-                                _recall ? 'Finished at $names' : names,
+                                _recall
+                                    ? (widget.pass ? 'Sent out from ${_lower(names)}' : 'Finished at $names')
+                                    : _counts
+                                    ? 'All day · $names'
+                                    : names,
                                 key: const ValueKey('kitchen-title'),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                               ),
                             ),
-                            if (!_recall) ...[
+                            if (!aside) ...[
                               const SizedBox(width: 10),
                               if (narrow)
                                 // (no room for the words beside large text: the number, in a pill)
@@ -228,13 +250,28 @@ class _KitchenScreenState extends State<KitchenScreen> {
                           ],
                         ),
                       ),
-                      if (_recall)
+                      if (aside)
                         TextButton.icon(
                           key: const ValueKey('kitchen-back'),
                           icon: const Icon(Icons.arrow_back),
                           label: const Text('Back'),
-                          onPressed: () => setState(() => _recall = false),
+                          onPressed: () => setState(() => _recall = _counts = false),
                         )
+                      else if (board.tickets.isNotEmpty && narrow)
+                        IconButton(
+                          key: const ValueKey('kitchen-all-day'),
+                          icon: const Icon(Icons.functions, semanticLabel: 'All day'),
+                          onPressed: () => setState(() => _counts = true),
+                        )
+                      else if (board.tickets.isNotEmpty)
+                        TextButton.icon(
+                          key: const ValueKey('kitchen-all-day'),
+                          icon: const Icon(Icons.functions),
+                          label: const Text('All day'),
+                          onPressed: () => setState(() => _counts = true),
+                        ),
+                      if (aside)
+                        const SizedBox.shrink()
                       else if (board.recent.isNotEmpty && narrow)
                         IconButton(
                           key: const ValueKey('kitchen-recall'),
@@ -270,16 +307,41 @@ class _KitchenScreenState extends State<KitchenScreen> {
                   ),
                 Divider(height: 1, color: scheme.outlineVariant),
                 Expanded(
-                  child: shown.isEmpty
+                  child: _counts
+                      ? SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(gap, gap, gap, gap),
+                          // The most wanted first, read across and then down, as wide as a ticket each.
+                          child: Wrap(
+                            spacing: gap,
+                            runSpacing: 6,
+                            children: [
+                              for (final count in counts)
+                                SizedBox(
+                                  width: width,
+                                  child: _CountRow(
+                                    key: ValueKey('kitchen-count-of:${count.label}'),
+                                    label: count.label,
+                                    qty: count.qty,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        )
+                      : shown.isEmpty
                       ? Center(
                           child: Padding(
                             padding: const EdgeInsets.all(24),
                             child: Text(
                               _old
-                                  ? 'This hub is older than the kitchen screens. Update the hub and the tickets '
-                                        'show here.'
+                                  ? (widget.pass
+                                        ? 'This hub is older than the pass screen. Update the hub and the tickets '
+                                              'show here.'
+                                        : 'This hub is older than the kitchen screens. Update the hub and the '
+                                              'tickets show here.')
                                   : !_asked
                                   ? (_away ? 'The hub is not answering yet.' : '')
+                                  : widget.pass
+                                  ? 'Nothing at the pass right now.'
                                   : 'Nothing to make right now.',
                               key: const ValueKey('kitchen-none'),
                               textAlign: TextAlign.center,
@@ -308,8 +370,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
                                             key: ValueKey('kitchen-ticket:${shown[i].id}'),
                                             child: _TicketCard(
                                               ticket: shown[i],
+                                              pass: widget.pass,
                                               // one screen for two stations: each dish says whose it is
-                                              stations: board.stations.length > 1
+                                              stations: board.stations.length > 1 && !widget.pass
                                                   ? {for (final station in board.stations) station.code: station.name}
                                                   : const {},
                                               age: _recall ? TicketAge.fresh : board.age(shown[i], now),
@@ -335,12 +398,58 @@ class _KitchenScreenState extends State<KitchenScreen> {
       ),
     );
   }
+
+  /// "the pass · Wok": a title in the middle of a sentence.
+  static String _lower(String title) => title.isEmpty ? title : '${title[0].toLowerCase()}${title.substring(1)}';
+}
+
+/// One dish of the all-day counts: how many of it the tickets still wait for.
+class _CountRow extends StatelessWidget {
+  const _CountRow({super.key, required this.label, required this.qty});
+
+  final String label;
+  final int qty;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 44),
+            child: Text(
+              '$qty',
+              textAlign: TextAlign.end,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                fontFeatures: PosTheme.tabular,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(label, style: theme.textTheme.titleMedium?.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// One ticket: whose it is and for how long, what the cook must know first (an allergy), and its dishes.
 class _TicketCard extends StatelessWidget {
   const _TicketCard({
     required this.ticket,
+    required this.pass,
     required this.stations,
     required this.age,
     required this.minutes,
@@ -350,6 +459,9 @@ class _TicketCard extends StatelessWidget {
   });
 
   final KitchenTicket ticket;
+
+  /// At the pass: each dish says where it is cooked and whether it is made, and the button sends out.
+  final bool pass;
 
   /// The screen's stations by name, when it stands for more than one; empty on a screen for one.
   final Map<String, String> stations;
@@ -417,6 +529,25 @@ class _TicketCard extends StatelessWidget {
               ],
             ),
           ),
+          // every station has made its part: what the pass waits to see
+          if (pass && !finished && ticket.allMade)
+            Container(
+              key: ValueKey('kitchen-ready:${ticket.id}'),
+              color: colors.fired,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Row(
+                children: [
+                  Icon(Icons.done_all, size: 18, color: colors.firedText),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'All made',
+                      style: theme.textTheme.bodyMedium?.copyWith(color: colors.firedText, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           for (final told in ticket.allergies)
             Container(
               color: scheme.errorContainer,
@@ -450,6 +581,7 @@ class _TicketCard extends StatelessWidget {
             _LineRow(
               key: ValueKey('kitchen-line:${ticket.id}:${line.lineId}:$index'),
               line: line,
+              pass: pass,
               where: [for (final code in line.stations) stations[code] ?? code].join(', '),
               named: stations.isNotEmpty,
               onTap: onLine == null ? null : () => onLine!(line),
@@ -472,7 +604,7 @@ class _TicketCard extends StatelessWidget {
                       side: BorderSide(color: colors.firedBorder),
                     ),
                     icon: const Icon(Icons.done_all),
-                    label: const Text('Done'),
+                    label: Text(pass ? 'Sent out' : 'Done'),
                     onPressed: onAll,
                   ),
           ),
@@ -482,11 +614,21 @@ class _TicketCard extends StatelessWidget {
   }
 }
 
-/// A dish of a ticket, as the paper words it; a tap says it is made.
+/// A dish of a ticket, as the paper words it; a tap says it is made (at the pass: that it went out).
 class _LineRow extends StatelessWidget {
-  const _LineRow({super.key, required this.line, required this.where, required this.named, required this.onTap});
+  const _LineRow({
+    super.key,
+    required this.line,
+    required this.pass,
+    required this.where,
+    required this.named,
+    required this.onTap,
+  });
 
   final KitchenLine line;
+
+  /// At the pass: the dish says where it is cooked, with a tick once that station has made it.
+  final bool pass;
 
   /// The stations of this screen that make it, by name; said when [named] (a screen for several stations).
   final String where;
@@ -527,7 +669,7 @@ class _LineRow extends StatelessWidget {
                   made ? Icons.check_circle : Icons.radio_button_unchecked,
                   size: 24,
                   color: made ? PosColors.of(context).firedBorder : scheme.outline,
-                  semanticLabel: made ? 'Made' : 'To make',
+                  semanticLabel: pass ? (made ? 'Went out' : 'To go out') : (made ? 'Made' : 'To make'),
                 ),
               ),
               Expanded(
@@ -582,12 +724,32 @@ class _LineRow extends StatelessWidget {
                   ],
                 ),
               ),
-              if (line.seat != null || named)
+              if (line.seat != null || named || (pass && line.cooks.isNotEmpty))
                 Padding(
                   padding: const EdgeInsets.only(left: 6, top: 2),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
+                      if (pass)
+                        for (final cook in line.cooks)
+                          Row(
+                            key: ValueKey('kitchen-cook:${cook.code}:${cook.made ? 'made' : 'cooking'}'),
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (cook.made)
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 3),
+                                  child: Icon(Icons.check, size: 15, color: PosColors.of(context).firedBorder),
+                                ),
+                              Text(
+                                cook.name,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: cook.made ? PosColors.of(context).firedBorder : scheme.onSurface,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
                       if (named)
                         Text(
                           where,

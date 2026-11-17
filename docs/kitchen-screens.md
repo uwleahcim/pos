@@ -8,6 +8,10 @@ It is any device that runs the app: a tablet on the wall by the wok, a Mac with 
 phone. Nobody is signed in on it. It is off on every device to start, and **the paper tickets print exactly
 as they do today**: a screen is beside the printer, not in its place.
 
+One more screen is for whoever calls the orders: **the pass**. It shows each ticket whole, every station's
+dishes together, with what each station has made (see "The pass"). And every kitchen screen has **All day**:
+how many of each dish its tickets still wait for (see "All day").
+
 ## What a cook sees
 
 The station's name at the top with how many tickets are waiting, and under it the tickets, **the longest in
@@ -42,6 +46,45 @@ Each ticket has:
 A mark is the kitchen's own word. **It changes no dish, no price and no payment, prints nothing, and is not
 a step in the check's history.** The servers' screens show nothing of it yet (see "Not built").
 
+## All day
+
+**All day**, at the top of a station's screen and of the pass, lists every dish the screen's tickets still
+wait for with how many, the most first: "4 Egg Roll, 2 General Tso Chicken". **Back** returns to the
+tickets.
+
+- A dish marked made is counted no longer; nor is a voided one. At the pass a dish counts until it went
+  out.
+- The count is by the dish's name alone: two General Tso Chicken, one of them extra spicy, are 2. The
+  tickets say which.
+- It follows the kitchen while it is looked at, and goes back to the tickets when nothing is left to count.
+
+## The pass
+
+The screen of whoever calls the orders and sends the plates out. Each ticket is **one send of an order with
+the dishes of every station on it**, the longest in the kitchen first, coloured by its minutes like a
+station's.
+
+- Each dish says **where it is cooked**, at its right: "Wok", "Fryer". Once that station has marked it
+  made, the name turns green with a tick.
+- When every station has made its part, the ticket says **All made** in a green band under its head: it
+  is ready to go.
+- **Tap a dish** when it went out: it gets the green tick. Tap again to take that back. **Sent out** says
+  it for the whole ticket, and the ticket leaves the pass.
+- **Recall** lists the last ten tickets sent out, and **Bring back** returns one.
+- A voided dish stays, struck out, until the pass taps it, as at a station.
+- **A dish that went out is made at its station too**: it comes off the station's screen without the cook
+  tapping it. If the station brings its ticket back afterwards, the station's later word stands.
+- The pass does not wait for the stations: a ticket can be sent out whether or not they marked anything.
+- A to-go order is on the pass once, with the dishes its stations cook. What the packer lists at the
+  takeout station (the whole order, for the bag) is the packer's own screen.
+- Like every mark, "went out" changes no dish, no price and no payment, and prints nothing. A to-go order
+  is still marked Ready by the staff.
+
+**Turning it on.** On the device at the pass: **Settings › Kitchen screen**, turn on **This screen is the
+pass**, then **Save**. With no station picked it watches every station. Pick stations to watch those alone:
+a kitchen's pass with the bar left out shows no ticket for a round of drinks. A screen is a station's or
+the pass, not both; to make it a station's screen again turn the switch off.
+
 ## What is on a screen, and when
 
 A screen follows the paper, rule for rule:
@@ -75,7 +118,7 @@ Each device keeps its own.
   dish then says which station makes it, and a dish is made when each of its stations on that screen has
   said so; a tap says it for all of them.
 - **A device is a kitchen screen or the pickup board (`pickup-board.md`), never both**: picking a station
-  turns the board off, and turning the board on takes the stations away.
+  (or the pass) turns the board off, and turning the board on takes the stations and the pass away.
 - To make the device a plain screen again: **Staff**, the gear, tap the station off, **Save**.
 
 Set the device itself never to sleep and keep it on its charger: the app does not hold the screen awake.
@@ -119,10 +162,9 @@ The device is still a POS screen.
 ## Not built
 
 - **A screen in place of the paper**: turning a station's printer off because it has a screen.
-- **The pass screen**: one screen for the person calling the orders, every ticket of every station with
-  what each station has made. And the **all-day counts**: how many of each dish are waiting across all the
-  tickets.
-- **What the kitchen made, on the servers' screens**: the floor map and the check do not show a mark.
+- **What the kitchen made, on the servers' screens**: the floor map and the check do not show a mark, nor
+  that a dish went out.
+- All-day counts by the dish with its choices, or of the whole day's sales: they count what waits now.
 - **Ready by itself**: a to-go order is not marked Ready when its last dish is made; the staff tap Ready.
 - A sound or a flash when a ticket comes in.
 - How long the kitchen takes, as a report.
@@ -137,6 +179,15 @@ The device is still a POS screen.
   answer as `done: {"wok": 1800000000060}`); the latest word of a station on a dish stands, whatever order
   the operations arrive in. It syncs between hubs like the rest of the log. A line that changes checks
   carries its marks with it (`pos.orders.moves.carry_ops`).
+- **The pass** has a word of its own: a `done` whose `station` is `*pass` (`pos.printing.screen.PASS`; no
+  station's code can be that): the dish went out. `kitchen_screen(..., passing=True)` lists the dishes of
+  the stations named (of every station when none is) on one ticket, never a to-go order a second time for
+  the bag; a line's `stations` is then `["*pass"]`, `done` says it went out, and `cooks` lists where it is
+  cooked (`code`, `name`) and whether that station has `made` it (`TicketLine.stations` carries the
+  stations out of `_ticket_lines`). On a station's screen a dish that went out counts as made
+  (`pos.printing.screen._said`), unless the station's latest word is later than the pass's.
+- `GET /kitchen/pass?stations=wok,fryer` (none to 32 codes; none is every station): the same answer as a
+  screen's, with `"pass": true` and `cooks` on every line.
 - **A screen's list** is worked out on the hub by `pos.printing.screen.kitchen_screen`, with the paper's
   own routing (`Takes`, `_ticket_lines`, the ticket skips, the takeout station) and
   `PrintService.not_yet()` for the orders sent ahead whose tickets still wait.
@@ -153,11 +204,14 @@ The device is still a POS screen.
   10, "late": 20}`, whole minutes, 0 for never, at most 1440, `late` after `warn`; one left out of a `PUT`
   keeps what it was.
 - App: `lib/kitchen_screen.dart` (`KitchenBoard`, `KitchenTicket`, `KitchenLine`, `markOps`, and
-  `withLocal`, which lays this device's own marks over what was read until the hub shows them),
+  `withLocal`, which lays this device's own marks over what was read until the hub shows them;
+  `KitchenBoard.counts` is All day, worked out on the device from the tickets it shows, and
+  `KitchenTicket.allMade` the pass's "All made"),
   `lib/screens/kitchen_screen.dart` (`KitchenScreen`: reads on the hub's change feed and every few seconds
   without it; opens nothing over itself, since it also stands over a locked screen),
   `lib/screens/standing_gate.dart` (`StandingGate`, which stands where the sign-in pad stands and shows the
-  kitchen screen, the pickup board or the pad), `Settings.kitchenStations` (the preference
-  `kitchen_stations`), `lib/screens/kitchen_minutes_dialog.dart`.
-- Tests: `backend/tests/printing/test_screen.py`, `apps/pos_app/test/kitchen_screen_test.dart`. The sync
-  simulations (`pos.sync.simulate`) mark dishes made among their random operations.
+  kitchen screen, the pickup board or the pad), `Settings.kitchenStations` and `Settings.kitchenPass` (the
+  preferences `kitchen_stations` and `kitchen_pass`), `lib/screens/kitchen_minutes_dialog.dart`.
+- Tests: `backend/tests/printing/test_screen.py`, `apps/pos_app/test/kitchen_screen_test.dart`,
+  `apps/pos_app/test/kitchen_pass_test.dart`. The sync simulations (`pos.sync.simulate`) mark dishes made,
+  and sent out, among their random operations.
