@@ -13,6 +13,7 @@ import 'customers.dart';
 import 'day_report.dart';
 import 'dishes_report.dart';
 import 'desk_phone.dart';
+import 'dish_names.dart';
 import 'faces.dart';
 import 'floor.dart';
 import 'guests_report.dart';
@@ -60,6 +61,7 @@ class Line {
     this.request,
     this.itemId,
     this.entryId,
+    this.zhName,
     this.replaces,
     this.by = '',
     this.byId,
@@ -84,6 +86,7 @@ class Line {
     request: json['request'] == null ? null : LineRequest.fromJson(json['request'] as Map<String, dynamic>),
     itemId: (json['priced'] as Map?)?['item'] as String?,
     entryId: (json['priced'] as Map?)?['entry_id'] as String?,
+    zhName: chineseLineName(json['priced']),
     replaces: json['replaces'] as String?,
     by: json['by'] as String? ?? '',
     byId: json['by_id'] as String?,
@@ -119,6 +122,10 @@ class Line {
   final LineRequest? request;
   final String? itemId;
   final String? entryId;
+
+  /// What the dish is called in Chinese, for a person who reads its names that way (docs/dish-names.md);
+  /// null where the menu names it in English only. [item] stays what the line is recorded as.
+  final String? zhName;
 
   /// The line this one took the place of: an edit (other choices, a kitchen note) voids a line and adds the
   /// changed dish as a new one. A comp on the old line is on this one, here and on the hub.
@@ -182,6 +189,7 @@ class Line {
     request: request,
     itemId: itemId,
     entryId: entryId,
+    zhName: zhName,
     replaces: replaces,
     by: by,
     byId: byId,

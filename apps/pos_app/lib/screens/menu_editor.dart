@@ -880,7 +880,11 @@ class CategoryEditor extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Category: ${nameOf(category)}', style: Theme.of(context).textTheme.headlineSmall),
-        _names(category, onChanged),
+        _names(
+          category,
+          onChanged,
+          renamed: (locale, was, now) => renameCategorySections(catalog, categoryKey, locale, was, now),
+        ),
         const SizedBox(height: 12),
         _dropdown<String?>(
           label: 'Its dishes cook at',
@@ -1523,17 +1527,25 @@ class _RouteDialog extends StatelessWidget {
 
 // --- building blocks ------------------------------------------------------------------------------------
 
-/// English, Chinese and (for dishes) kitchen-ticket names.
-Widget _names(Map<String, dynamic> row, VoidCallback onChanged, {bool kitchen = false}) {
+/// English, Chinese and (for dishes) kitchen-ticket names. [renamed] hears each change: the language, the
+/// name it had and the name it has now.
+Widget _names(
+  Map<String, dynamic> row,
+  VoidCallback onChanged, {
+  bool kitchen = false,
+  void Function(String locale, String? was, String? now)? renamed,
+}) {
   final id = row['id'] ?? row['code'];
   void set(String locale, String text) {
     final names = Map<String, dynamic>.from(row['names'] as Map? ?? const {});
+    final was = names[locale] as String?;
     if (text.trim().isEmpty) {
       names.remove(locale);
     } else {
       names[locale] = text.trim();
     }
     row['names'] = names;
+    renamed?.call(locale, was, names[locale] as String?);
     onChanged();
   }
 
@@ -1689,6 +1701,22 @@ Map<String, dynamic> newEntry(MenuCatalog catalog, String item, Map<String, dyna
     'display': <String, dynamic>{},
     'sort': catalog.all('entry').where((e) => e['section'] == section['id']).length,
   };
+}
+
+/// A category's new name goes onto its section of every menu it is on, because the order screen names a
+/// category's tile from the section (docs/dish-names.md). A section that was given a name of its own keeps it.
+void renameCategorySections(MenuCatalog catalog, String categoryKey, String locale, String? was, String? now) {
+  for (final section in catalog.all('section').where((s) => s['id'] == '${s['menu']}/$categoryKey')) {
+    final names = Map<String, dynamic>.from(section['names'] as Map? ?? const {});
+    final has = names[locale] as String?;
+    if (has != null && has != was) continue;
+    if (now == null) {
+      names.remove(locale);
+    } else {
+      names[locale] = now;
+    }
+    section['names'] = names;
+  }
 }
 
 /// Puts a category on a menu, as the import does: a section `menu/category` named like the category, under

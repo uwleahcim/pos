@@ -11,6 +11,7 @@ import '../bag.dart';
 import '../check_order.dart';
 import '../coursing.dart';
 import '../customers.dart';
+import '../dish_names.dart';
 import '../line_ops.dart';
 import '../live.dart';
 import '../local_order.dart';
@@ -416,6 +417,7 @@ class _OrderScreenState extends State<OrderScreen> {
       modifiers: line.modifiers,
       itemId: line.itemId,
       entryId: line.request.entryId,
+      zhName: line.zhName,
     );
     return {
       'line_id': id,
@@ -1189,6 +1191,7 @@ class _OrderScreenState extends State<OrderScreen> {
       modifiers: priced?.modifiers ?? const [],
       itemId: line.itemId,
       entryId: line.entryId,
+      zhName: line.zhName,
     );
   }
 
@@ -1337,6 +1340,7 @@ class _OrderScreenState extends State<OrderScreen> {
       coursing: widget.coursing,
       lastAdded: _lastAdded,
       now: widget.now ?? _deviceNow,
+      zhNameOf: (line) => line.zhName ?? _local[line.lineId]?.zhName,
       onEdit: _edit,
       onQty: _setQty,
       onTypeQty: _typeQty,
@@ -1498,6 +1502,7 @@ class _TicketPanel extends StatefulWidget {
     required this.coursing,
     required this.lastAdded,
     required this.now,
+    required this.zhNameOf,
     this.allergenNames = const {},
     required this.onEdit,
     required this.onQty,
@@ -1522,6 +1527,11 @@ class _TicketPanel extends StatefulWidget {
 
   /// What time it is, in milliseconds: an open check says how long ago its dishes were sent.
   final int Function() now;
+
+  /// A line's dish in Chinese, where the menu names it so: what the check calls it for a person who reads
+  /// dish names in Chinese (docs/dish-names.md). From the hub's own record of the line, or, until the hub
+  /// has answered, from what the menu showed when the dish was rung.
+  final String? Function(Line line) zhNameOf;
 
   /// The menu's allergens by code, to name what a marked dish contains.
   final Map<String, String> allergenNames;
@@ -1806,6 +1816,8 @@ class _TicketPanelState extends State<_TicketPanel> {
     final scheme = theme.colorScheme;
     final posColors = PosColors.of(context);
     final priced = widget.check?.line(line.lineId);
+    // the dish in the language of whoever is at the screen; the record, the bill and the reports keep one name
+    final zhName = DishLanguage.chineseOf(context) ? widget.zhNameOf(line) : null;
     final comps = [
       for (final d in widget.check?.discounts ?? const <CheckDiscount>[])
         if (d.lineId == line.lineId) d,
@@ -1925,7 +1937,7 @@ class _TicketPanelState extends State<_TicketPanel> {
           Expanded(
             child: holdable(
               Text(
-                priced?.name ?? line.item,
+                zhName ?? priced?.name ?? line.item,
                 style: line.isVoid
                     ? TextStyle(decoration: TextDecoration.lineThrough, color: scheme.onSurfaceVariant)
                     : theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

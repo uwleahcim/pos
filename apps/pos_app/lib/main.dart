@@ -11,6 +11,7 @@ import 'cache.dart';
 import 'call_screen.dart';
 import 'camera.dart';
 import 'desk_phone_watcher.dart';
+import 'dish_names.dart';
 import 'face_signin.dart';
 import 'frames.dart';
 import 'idle_lock.dart';
@@ -269,31 +270,35 @@ class _PosAppState extends State<PosApp> {
           // The call banner and strip sit over every screen and dialog. So do the rules of the keyboard's
           // focus: a touch or a click takes it to what was touched, a badge reader's keys press none of the
           // buttons, and the arrows leave a text box once the cursor can go no further.
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context)
-                .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
-            // Every touch tells the idle lock somebody is here. While the screen is locked the sign-in pad
-            // lies over the screens, which stay as they were; the call banner stays above the pad, as it
-            // is above the sign-in screen.
-            child: Touches(
-              lock: widget.idleLock,
-              child: TapTakesFocus(
-                child: ReaderKeysPressNothing(
-                  typed: tags is WedgeTagReader ? tags.typed : null,
-                  child: ArrowsLeaveTextBoxes(
-                    child: PhoneBar(
-                      client: phone,
-                      onOrder: canOrder ? _orderForCaller : null,
-                      child: LockLayer(
-                        session: session,
-                        pad: (context) => SignInScreen(
+          // Which name of a dish the signed-in person reads, English or Chinese: theirs like the text size.
+          builder: (context, child) => DishLanguage(
+            chinese: readsChinese(prefs.locale),
+            child: MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(prefs.textScale))),
+              // Every touch tells the idle lock somebody is here. While the screen is locked the sign-in pad
+              // lies over the screens, which stay as they were; the call banner stays above the pad, as it
+              // is above the sign-in screen.
+              child: Touches(
+                lock: widget.idleLock,
+                child: TapTakesFocus(
+                  child: ReaderKeysPressNothing(
+                    typed: tags is WedgeTagReader ? tags.typed : null,
+                    child: ArrowsLeaveTextBoxes(
+                      child: PhoneBar(
+                        client: phone,
+                        onOrder: canOrder ? _orderForCaller : null,
+                        child: LockLayer(
                           session: session,
-                          settings: settings,
-                          camera: camera,
-                          faces: widget.faces,
-                          lockedNote: lockedNote(settings.lockMinutes, session.lockedFrom?.name ?? ''),
+                          pad: (context) => SignInScreen(
+                            session: session,
+                            settings: settings,
+                            camera: camera,
+                            faces: widget.faces,
+                            lockedNote: lockedNote(settings.lockMinutes, session.lockedFrom?.name ?? ''),
+                          ),
+                          child: child ?? const SizedBox.shrink(),
                         ),
-                        child: child ?? const SizedBox.shrink(),
                       ),
                     ),
                   ),

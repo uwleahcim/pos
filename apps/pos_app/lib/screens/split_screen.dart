@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../dish_names.dart';
 import '../local_order.dart';
 import '../menu.dart';
 import '../split.dart';
@@ -344,7 +345,7 @@ class _SplitScreenState extends State<SplitScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    priced?.name ?? line.item,
+                    (DishLanguage.chineseOf(context) ? line.zhName : null) ?? priced?.name ?? line.item,
                     style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                   ),
                   if (words.isNotEmpty)

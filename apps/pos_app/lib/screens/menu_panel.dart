@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api.dart';
+import '../dish_names.dart';
 import '../kitchen_notes.dart';
 import '../live.dart';
 import '../local_order.dart' show localPrice;
@@ -27,8 +28,15 @@ class ChosenLine {
     this.unitPrice,
     this.modifiers = const [],
     this.itemId,
+    this.zhName,
   });
+
+  /// What the line is recorded as: the dish's English name, whoever rings it in.
   final String name;
+
+  /// The dish's Chinese name, where the menu holds one: what the check calls the line for a person who
+  /// reads the names in Chinese (docs/dish-names.md). Never what is recorded.
+  final String? zhName;
   final LineRequest request;
   final int qty;
   final String note;
@@ -1523,6 +1531,7 @@ class _SectionButton extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final count = section.allEntries.length;
+    final (name, _) = namesShown(section.name, section.secondName, chineseFirst: DishLanguage.chineseOf(context));
     final tint = categoryTint(scheme, hex: section.color, index: index);
     final bg = tint.fill;
     final fg = tint.text;
@@ -1549,7 +1558,7 @@ class _SectionButton extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      section.name,
+                      name,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleSmall?.copyWith(color: fg, fontWeight: FontWeight.w700),
@@ -1731,10 +1740,12 @@ class _PendingItemSelection {
       orElse: () => availableVariants.first,
     );
     final name = entry.variants.length > 1 ? '${entry.name} (${variant.name})' : entry.name;
+    final zh = namesShown(entry.name, entry.secondName, chineseFirst: true).$2 == null ? null : entry.secondName;
     final request = LineRequest.withChoices(variant.variantId, entry.entryId, choices);
     final groups = detail?.groups ?? const <GroupDetail>[];
     return ChosenLine(
       name: name,
+      zhName: zh == null ? null : (entry.variants.length > 1 ? '$zh (${variant.name})' : zh),
       request: request,
       // the menu's own prices until the hub answers, as the sheet does when no hub answers
       unitPrice: localPrice(name, availableVariants, detail, request).unitPrice,
@@ -2057,6 +2068,8 @@ class _EntryButton extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final available = entry.available;
+    // The name the person at the screen reads is the big one; the other goes small under it.
+    final (name, second) = namesShown(entry.name, entry.secondName, chineseFirst: DishLanguage.chineseOf(context));
     // Someone typed a number left: it stands where the price does, as 86 does once none are left.
     final left = available ? entry.left : null;
     final bg = !available
@@ -2142,7 +2155,7 @@ class _EntryButton extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          entry.name,
+                          name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.titleSmall?.copyWith(
@@ -2152,11 +2165,11 @@ class _EntryButton extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (entry.secondName != null)
+                      if (second != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 1),
                           child: Text(
-                            entry.secondName!,
+                            second,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, fontSize: 11.5),
@@ -2326,6 +2339,16 @@ class _ItemSheetState extends State<ItemSheet> {
     return widget.entry.variants.length > 1 ? '${widget.entry.name} (${variant.name})' : widget.entry.name;
   }
 
+  /// The same in Chinese, for the check of a person who reads the names that way; null where the menu has
+  /// no Chinese name for the dish, and for a dish whose name was typed.
+  String? get _zhLineName {
+    final entry = widget.entry;
+    if (entry.asksName && _request.name != null) return null;
+    if (namesShown(entry.name, entry.secondName, chineseFirst: true).$2 == null) return null;
+    final variant = entry.variants.firstWhere((v) => v.variantId == _request.variantId);
+    return entry.variants.length > 1 ? '${entry.secondName} (${variant.name})' : entry.secondName;
+  }
+
   /// The line as it stands, handed back to whoever opened the sheet; nothing while it cannot be sold.
   void _done() {
     final priced = _priced;
@@ -2333,6 +2356,7 @@ class _ItemSheetState extends State<ItemSheet> {
     Navigator.of(context).pop(
       ChosenLine(
         name: _lineName,
+        zhName: _zhLineName,
         request: _request,
         qty: _qty,
         note: _note.text.trim(),
@@ -2411,14 +2435,15 @@ class _ItemSheetState extends State<ItemSheet> {
     final detail = _detail;
     final priced = _priced;
     final total = priced == null ? null : (double.parse(priced.unitPrice) * _qty).toStringAsFixed(2);
+    final (name, second) = namesShown(
+      widget.entry.name,
+      widget.entry.secondName,
+      chineseFirst: DishLanguage.chineseOf(context),
+    );
     return AlertDialog(
       title: Row(
         children: [
-          Expanded(
-            child: Text(
-              widget.entry.secondName == null ? widget.entry.name : '${widget.entry.name}  ${widget.entry.secondName}',
-            ),
-          ),
+          Expanded(child: Text(second == null ? name : '$name  $second')),
           if (widget.onEightySix != null)
             IconButton(
               tooltip: '86 ${widget.entry.name}',
