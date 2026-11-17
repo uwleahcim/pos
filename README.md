@@ -81,6 +81,9 @@ merges after any disconnect.
 - Notes for the shift and the manager's log (a manager's note comes up once for each person after they
   sign in: the specials, what is out; a manager sees who has read it; the managers' own log is kept by
   subject, searched, and struck out, never deleted): `docs/shift-notes.md`
+- The to-go question (before a to-go order is sent the screen asks once what goes in the bag: chopsticks,
+  forks, napkins or nothing; the answer prints on the takeout station's ticket; a manager words it, lists
+  what it offers or turns it off): `docs/to-go-question.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'allergies.dart';
+import 'bag.dart';
 import 'cache.dart';
 import 'check_history.dart';
 import 'coursing.dart';
@@ -295,6 +296,10 @@ class Order {
 
   /// The customer named the time ("for 18:30"), so it is theirs: a big order starts sooner, never later.
   bool get forLater => fields['for_later'] == true;
+
+  /// What goes in the bag besides the food, as the to-go question was answered: nothing in the list when
+  /// the customer wants nothing, null while nobody was asked.
+  List<BagItem>? get bag => bagAnswer(fields);
 
   /// How many dishes are on the order: what a kitchen counts when it says an order is big.
   int get dishes => activeLines.fold(0, (n, l) => n + l.qty);
@@ -881,6 +886,31 @@ class PosApi {
       rethrow;
     }
   }
+
+  /// The one question asked before a to-go order is sent (docs/to-go-question.md), as the location set it:
+  /// whether it is asked, its words and what it offers. The last answer read when nothing answers, so an
+  /// order taken in an outage is still asked about (ADR 6). Null from a hub older than the question, which
+  /// keeps no answer: the screen then asks nothing.
+  Future<BagQuestion?> bagQuestion() async {
+    try {
+      return await _repeated('/settings/bag', BagQuestion.fromJson, remember: 'bag');
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets the to-go question for every terminal. A choice without an
+  /// id is new; the answer carries the id the hub gave it.
+  Future<BagQuestion> saveBagQuestion(String token, BagQuestion question) async => BagQuestion.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/bag'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(question.toJson()),
+      ),
+    ),
+  );
 
   /// The allergens the menu names, in its order: what a server picks from when a guest tells of an allergy.
   /// The last list read when nothing answers, so an allergy can still be noted (ADR 6). Null from a hub

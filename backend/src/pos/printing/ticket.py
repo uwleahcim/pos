@@ -44,7 +44,8 @@ class Money:
 class Ticket:
     station: str  # "Wok"
     # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent) | moved
-    # (dishes already sent now go to another table than the one on their ticket: `was_at`)
+    # (dishes already sent now go to another table than the one on their ticket: `was_at`) | bag (what goes in
+    # the bag of a to-go order changed after it was sent: no dishes, the answer alone)
     kind: str
     order_id: str
     ticket_no: int
@@ -68,6 +69,9 @@ class Ticket:
     was_at: str = ""  # on a `moved` slip: the table the dishes were sent for, which the cooks' tickets name
     tab: bool = False  # a bar tab: no table, called by the name on it (`customer`)
     was_tab: str | None = None  # on a `moved` slip for a tab that sat down: the name its tickets were headed with
+    # The takeout counter's copy of a to-go order: what the customer wants in the bag besides the food, a line
+    # each ("2 x Chopsticks", "Forks"); empty when nothing was wanted, None while nobody was asked.
+    bag: tuple[str, ...] | None = None
 
 
 def render(
@@ -76,7 +80,7 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved") or ticket.late else 1)
+        b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved", "bag") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
@@ -84,6 +88,7 @@ def render(
         "reprint": f"REPRINT {ticket.station}",
         "allergy": f"*** ALLERGY *** {ticket.station}",
         "moved": f"*** MOVED *** {ticket.station}",
+        "bag": f"*** BAG *** {ticket.station}",
     }
     if ticket.late:
         # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
@@ -170,6 +175,14 @@ def render(
             b.line(f"    ** {line.note} **", bold=True, invert=inv)
         if line.allergy:
             b.line(f"    ** ALLERGY: {line.allergy} **", bold=True, invert=inv)
+    if ticket.bag is not None:
+        # Under the dishes, as big as a dish: whoever packs the bag reads it last, with the bag open. "Nothing"
+        # is said too, so nobody drops chopsticks in out of habit.
+        if ticket.lines:
+            b.rule()
+        b.line("NOW IN THE BAG" if ticket.kind == "bag" else "ALSO IN THE BAG", bold=True)
+        for words in ticket.bag or ("NOTHING",):
+            b.line(words, big=True)
     b.rule()
     b.line(f"{ticket.order_id[-8:]}  {ticket.at.strftime('%Y-%m-%d %H:%M:%S')}")
     b.feed(2).cut()

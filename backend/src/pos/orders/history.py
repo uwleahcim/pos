@@ -38,7 +38,9 @@ Each step is a dict:
 - `paid`: `method`, `amount`, `tendered`, `check`, `note`;
 - `allergy`: `seat`, `allergens` (by name), `note`; `allergy_cleared`: `seat`;
 - `tax_exempt` (a manager marked the check exempt from sales tax): `organisation`, `certificate`;
-  `tax_exempt_removed`: `organisation`.
+  `tax_exempt_removed`: `organisation`;
+- `bag` (what goes in the bag with a to-go order was answered): `items`, each `{name, qty}` (none: nothing
+  was wanted), and `changed` when an earlier answer stood.
 """
 
 from __future__ import annotations
@@ -48,6 +50,8 @@ from typing import Any
 
 from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply
 from .adjustments import PricingRules
+from .bag import FIELD as BAG
+from .bag import bag_of
 from .check import shown_modifiers
 from .exempt import FIELD as EXEMPT
 from .exempt import exemption_of
@@ -201,6 +205,11 @@ def history(
                         step("tax_exempt", organisation=marked["organisation"], certificate=marked["certificate"])
                     elif stood is not None:
                         step("tax_exempt_removed", organisation=stood["organisation"])
+                elif name == BAG:
+                    answer, stood = bag_of({BAG: now}), bag_of({BAG: was})
+                    if answer is not None and answer != stood:
+                        items = [{"name": item["name"], "qty": item["qty"]} for item in answer["items"]]
+                        step("bag", items=items, changed=stood is not None)
 
         elif kind == "add_line":
             added = state.lines.get(data.get("line_id"))

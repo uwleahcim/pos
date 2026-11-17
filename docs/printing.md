@@ -116,6 +116,12 @@ it waits, and it prints with the money as it stands then.
 
 The switch is the third on the Printers card, **Print PAID or NOT PAID on to-go orders**, on to start.
 
+**What goes in the bag.** The same copy says, under the dishes, what the customer wants in the bag besides
+the food, as answered before the order was sent: `ALSO IN THE BAG`, then a large line for each thing
+(`2 x Chopsticks`), or `NOTHING`. An answer changed after the order was sent prints the takeout station a
+slip headed BAG with the answer as it stands; a ticket still waiting for its time is made again instead.
+See `to-go-question.md`.
+
 **A table that moves.** Moving a table, merging two, or moving dishes to another table's check prints no
 order ticket and no void. Each station with dishes sent in the last 45 minutes gets a MOVED slip instead:
 the table the dishes were sent for, the table they go to now, and the dishes. The fourth switch on the

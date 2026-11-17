@@ -33,6 +33,9 @@ screen holds:
 - **Quote times**: the minutes per channel, which channels may pay at pickup, and how many more minutes
   an order of so many dishes takes (see `counter-mode.md`). Tonight's rush is not here: it is the flame on
   the orders screen, because it is set in the middle of service.
+- **To-go question**, on the same card: whether a to-go order is asked what goes in the bag before it is
+  sent (on to start), the question's words and the things it offers, eight at most (see
+  `to-go-question.md`).
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick

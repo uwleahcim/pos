@@ -87,6 +87,23 @@ class Hub {
   String? tableTimersAuth;
   String? refuseTableTimers;
 
+  /// The to-go question it keeps (`GET/PUT /settings/bag`, docs/to-go-question.md), the token the last save
+  /// carried and a reason to refuse the next save with. Null is a hub older than the question, which a
+  /// terminal sends its to-go orders to with nothing asked: what the tests written before it still run
+  /// against. [standardBag] is the question as a new hub has it.
+  Map<String, dynamic>? bag;
+  String? bagAuth;
+  String? refuseBag;
+  static Map<String, dynamic> get standardBag => {
+    'enabled': true,
+    'question': 'What goes in the bag?',
+    'choices': [
+      {'id': 'chopsticks', 'name': 'Chopsticks'},
+      {'id': 'forks', 'name': 'Forks'},
+      {'id': 'napkins', 'name': 'Napkins'},
+    ],
+  };
+
   /// The void rules it keeps (`GET/PUT /settings/voids`), the token the last save carried and a reason to
   /// refuse the next save with. Null is a hub older than the rules, which a terminal voids on with the
   /// operator's word alone: what the tests written before the rules still run against. [purposes] is what
@@ -1197,6 +1214,30 @@ class Hub {
           };
         }
         return json(voids!);
+      case '/settings/bag':
+        if (bag == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          bagAuth = request.headers['authorization'];
+          if (refuseBag != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseBag},
+            }, 422);
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          bag = {
+            ...body,
+            if ((body['question'] as String? ?? '').isEmpty) 'question': 'What goes in the bag?',
+            // a choice new on the screen gets its id from its name, as the hub gives it
+            'choices': [
+              for (final c in body['choices'] as List)
+                {
+                  ...c as Map,
+                  'id': c['id'] ?? (c['name'] as String).toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-'),
+                },
+            ],
+          };
+        }
+        return json(bag!);
       case '/reports/adjustments':
         return report == null ? json({'detail': 'Not Found'}, 404) : json(report!);
       case '/settings/desk_phones':
@@ -1557,6 +1598,9 @@ class Hub {
         case 'set_field' when data.containsKey('customer_name'):
           // the name on a bar tab, changed
           (order['fields'] as Map)['customer_name'] = data['customer_name'];
+        case 'set_field' when data.containsKey('bag'):
+          // what goes in the bag of a to-go order, answered
+          (order['fields'] as Map)['bag'] = data['bag'];
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';

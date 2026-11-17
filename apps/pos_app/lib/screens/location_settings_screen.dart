@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../bag.dart';
 import '../camera.dart';
 import '../coursing.dart';
 import '../desk_phone.dart';
@@ -13,6 +14,7 @@ import '../takeout.dart';
 import '../timeclock.dart';
 import '../voids.dart';
 import 'adjustments_screen.dart';
+import 'bag_question_dialog.dart';
 import 'bill_dialog.dart';
 import 'day_report_screen.dart';
 import 'dishes_screen.dart';
@@ -128,6 +130,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
+  BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
@@ -200,6 +203,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _voids = voids);
     } on ApiException {
       // nothing answered about voids: the card says so
+    }
+    try {
+      final bag = await widget.api.bagQuestion();
+      if (mounted) setState(() => _bag = bag);
+    } on ApiException {
+      // nothing answered about the to-go question: the row says so
     }
     try {
       final board = await widget.api.board();
@@ -635,6 +644,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quote times saved')));
   }
 
+  Future<void> _bagQuestion() async {
+    final saved = await showDialog<BagQuestion>(
+      context: context,
+      builder: (_) => BagQuestionDialog(api: widget.api, token: widget.token, question: _bag!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _bag = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('To-go question saved')));
+  }
+
   Future<void> _tableTimers() async {
     final saved = await showDialog<TableTimers>(
       context: context,
@@ -672,6 +691,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     return voids.needsManager
         ? "A sent dish is voided with a reason and a manager's PIN · $reasons"
         : 'A sent dish is voided with a reason alone · $reasons';
+  }
+
+  /// One line on the to-go question: what it offers, or that nothing is asked.
+  String get _bagSummary {
+    final bag = _bag;
+    if (bag == null) return 'The hub has not answered about the to-go question (an older hub: update it)';
+    if (!bag.asks) return 'Off: a to-go order is sent with nothing asked';
+    return 'Asked before a to-go order is sent: ${[for (final choice in bag.choices) choice.name].join(', ')}';
   }
 
   /// One line on the timers: each stage's minutes to amber and to red, a dash for never.
@@ -894,14 +921,28 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          // what a to-go order is promised, and what it is asked before it is sent
           Card(
-            child: ListTile(
-              key: const ValueKey('quote-times'),
-              leading: const Icon(Icons.timer_outlined),
-              title: const Text('Quote times'),
-              subtitle: Text(_quotesSummary),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _quoteTimes,
+            child: Column(
+              children: [
+                ListTile(
+                  key: const ValueKey('quote-times'),
+                  leading: const Icon(Icons.timer_outlined),
+                  title: const Text('Quote times'),
+                  subtitle: Text(_quotesSummary),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _quoteTimes,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  key: const ValueKey('to-go-question'),
+                  leading: const Icon(Icons.shopping_bag_outlined),
+                  title: const Text('To-go question'),
+                  subtitle: Text(_bagSummary),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _bag == null ? null : _bagQuestion,
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

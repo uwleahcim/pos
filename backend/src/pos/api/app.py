@@ -40,6 +40,7 @@ from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
 from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
+from ..orders.bag import bag_ops
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
@@ -62,6 +63,7 @@ from ..settings import (
     DEVICE,
     EXTENSION,
     SettingStore,
+    clean_bag,
     clean_bill,
     clean_coursing,
     clean_desk_phones,
@@ -305,6 +307,19 @@ class CoursingIn(BaseModel):
 class VoidReasonIn(BaseModel):
     id: str | None = Field(None, description="left out for a reason new on the screen: the hub names it from the name")
     name: str
+
+
+class BagChoiceIn(BaseModel):
+    id: str | None = Field(None, description="left out for a choice new on the screen: the hub names it from the name")
+    name: str
+
+
+class BagIn(BaseModel):
+    """The one question asked before a to-go order is sent: whether it is asked, its words and its choices."""
+
+    enabled: bool = True
+    question: str = Field("", description="the question's words; the standard ones when left empty")
+    choices: list[BagChoiceIn] = Field(default_factory=list)
 
 
 class VoidsIn(BaseModel):
@@ -895,7 +910,9 @@ def create_app(
         fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
         # a check marked tax exempt: a manager's PIN, the organisation and its certificate, before any money
         fresh, refused_exemptions = exempt_ops(app.state.tokens, store, fresh)
-        refused += refused_exemptions
+        # what goes in the bag with a to-go order: the answer is tidied, or left out when it cannot be read
+        fresh, refused_bags = bag_ops(fresh)
+        refused += refused_exemptions + refused_bags
         # The numbers left on counted dishes: weighed, stored and taken off as one step, so two screens cannot
         # both sell the last one. While no dish has a number nothing is held and nothing is read.
         with app.state.menu.counting():
@@ -1304,6 +1321,23 @@ def create_app(
         settings: SettingStore = app.state.settings
         write_setting("bill", {**settings.get("bill"), **body.model_dump(exclude_unset=True)}, clean_bill)
         return bill_setting()
+
+    @app.get("/settings/bag")
+    def read_bag() -> dict[str, Any]:
+        """The one question asked before a to-go order is first sent: `enabled`, whether it is asked;
+        `question`, its words; `choices`, what the customer may want in the bag, each `{id, name}` in the
+        order the buttons show. "Nothing" is always an answer. The answer is the order's `bag` field
+        (`pos.orders.bag`), and the takeout station's ticket lists it."""
+        settings: SettingStore = app.state.settings
+        return settings.get("bag")
+
+    @app.put("/settings/bag")
+    def write_bag(body: BagIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns the question on or off, words it and lists its choices. A choice sent without an id
+        is new and gets one from its name; the rest keep theirs, since answers on orders carry them. Every
+        screen asks by it from its next to-go order."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("bag", body.model_dump(), clean_bag)
 
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")
