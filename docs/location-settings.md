@@ -48,6 +48,8 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   "Split for 2"), twelve at most (see `kitchen-notes.md`).
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
+- **Kitchen screens**: the minutes a ticket has been in the kitchen when a station's screen turns it amber,
+  and red (see `kitchen-screens.md`).
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick
   from; under it, the **Voids and comps report**, which also lists the dishes taken off a check before they
   were sent (see `voids.md`).
@@ -182,6 +184,9 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   the wall-clock ms it began (from the stamps in the order log). Nothing in the floor's answer moves with
   the clock, so it is still answered `304` until an order or a setting changes; the terminal runs the
   countdown.
+- `GET /settings/kitchen_screens` and `PUT /settings/kitchen_screens` (the manager Bearer token): `{"warn":
+  10, "late": 20}`, the minutes after which a ticket on a station's screen turns amber and red; details in
+  `kitchen-screens.md`.
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
 - `GET /settings/quotes`, `PUT /settings/quotes` and `PUT /settings/rush`: see "On the wire" in

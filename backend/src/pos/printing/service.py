@@ -806,6 +806,26 @@ class PrintService:
                     self.held.drop(held.order_id)
         return jobs
 
+    def not_yet(self) -> Callable[[OrderState], frozenset[str]]:
+        """For a station's screen (`pos.printing.screen`): given an order, its sent dishes that are not in the
+        kitchen yet, because the order was sent ahead of its time and its tickets still wait. That is what is
+        on hold, read once for all the orders. A location with no printer puts nothing on hold, so there the
+        clock alone says: every sent dish of an order whose time is still ahead."""
+        if self.printers:
+            try:
+                held = {waits.order_id: waits.lines for waits in self.held.all()}
+            except Exception:  # noqa: BLE001 - what waits cannot be read: the screen shows the dish early
+                held = {}
+            return lambda state: held.get(state.order_id, frozenset())
+        now = self._now()
+
+        def by_the_clock(state: OrderState) -> frozenset[str]:
+            if not is_to_go(state) or lead_delay(state, now) <= 0:
+                return frozenset()
+            return frozenset(line.line_id for line in state.lines.values() if line.fired_at is not None)
+
+        return by_the_clock
+
     def pack_sheet(self, state: OrderState) -> PackSheet | None:
         """The pack sheet of a to-go order as the log has it now (`pos.printing.pack`): every dish on it, in
         the words the takeout station's ticket uses, the ones nobody sent apart; who it is for and when, what

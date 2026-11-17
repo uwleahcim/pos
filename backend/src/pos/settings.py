@@ -53,6 +53,8 @@
   bag, by name in the order the buttons show (chopsticks, forks and napkins to start). "Nothing" is always
   an answer. An answer on an order carries each choice's id and the name it had then, so a choice can be
   renamed or dropped later.
+- `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
+  has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
   show): what a server would otherwise type on a dish again and again, such as "Rush" or "Split for 2". A
   tap puts the words in the dish's note, so an order carries the words themselves and a note can be reworded
@@ -146,6 +148,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
     "waste": {"reasons": STANDARD_WASTE_REASONS},
+    # Minutes a ticket has been in the kitchen before a station's screen turns it amber, and then red.
+    "kitchen_screens": {"warn": 10, "late": 20},
     # Who may do what, as the hub did before the table could be changed: only a manager or an owner approves
     # a void or a discount and opens the back office; servers and bartenders take tables, hosts give them out.
     "powers": {"roles": STANDARD_POWERS},
@@ -639,6 +643,25 @@ def clean_table_timers(data: Mapping[str, Any]) -> dict[str, Any]:
         if 0 < stages[stage]["late"] <= stages[stage]["warn"]:
             raise ValueError(f"the late time for {stage} must come after its warning")
     return {"enabled": enabled, "stages": stages}
+
+
+def clean_kitchen_screens(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The colours of a ticket on a station's screen, checked: the whole minutes it has been in the kitchen
+    when it turns amber (`warn`) and red (`late`); 0 for never. Amber comes before red. One left out keeps
+    the default. Raises ValueError on a bad value."""
+    times = dict(DEFAULTS["kitchen_screens"])
+    for name in ("warn", "late"):
+        if name not in data or data[name] is None:
+            continue
+        value = data[name]
+        if isinstance(value, bool) or not isinstance(value, int | float) or value != int(value):
+            raise ValueError(f"the {name} time must be a whole number of minutes")
+        if not 0 <= value <= TIMER_MAX:
+            raise ValueError(f"the {name} time is 0 (never) to {TIMER_MAX} minutes")
+        times[name] = int(value)
+    if 0 < times["late"] <= times["warn"]:
+        raise ValueError("red must come after amber")
+    return times
 
 
 def fallback_loop(fallbacks: Mapping[str, list[str]]) -> list[str] | None:

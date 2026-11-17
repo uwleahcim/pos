@@ -299,7 +299,8 @@ void main() {
       find.text('Big order: the kitchen starts it 10 minutes sooner. Still for ${clockTime(at)}.'),
       findsOneWidget,
     );
-    expect(find.text('#7 Linda · ${clockTime(at)}'), findsOneWidget);
+    // (an order for later says its day too once that is tomorrow: three hours on, late in the evening)
+    expect(find.text('#7 Linda · ${whenFor(at, DateTime.now())}'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(TextButton, 'Pay & send'));
     await tester.pumpAndSettle();

@@ -97,6 +97,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list
 from .history import add_history
+from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .prep import add_prep
@@ -2042,6 +2043,7 @@ def create_app(
     add_waitlist(app)
     add_day_report(app)
     add_prep(app)
+    add_kitchen(app)
     add_sales_report(app)
     add_today(app)
     add_guest_list(app)

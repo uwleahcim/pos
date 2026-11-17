@@ -630,6 +630,82 @@ class Hub {
   final prepPrints = <(String, String?)>[];
   String? refusePrep;
 
+  /// The stations' screens (`GET /kitchen/screen?stations=`, docs/kitchen-screens.md): every ticket in the
+  /// kitchen, as the hub words it, each line with the `stations` that make it and the ones that `made` it. A
+  /// screen is answered with the tickets that have a dish of its stations, the finished ones under `recent`.
+  /// Null is a hub older than the screens (404). A `done` operation marks the dishes it names, as on the hub.
+  /// [kitchenMinutes] is the setting (`GET/PUT /settings/kitchen_screens`), with the token the last save
+  /// carried and a reason to refuse the next save with.
+  List<Map<String, dynamic>>? kitchen = [];
+
+  /// A reason the hub refuses the marks it is sent with, while this is set.
+  String? refuseMarks;
+  Map<String, dynamic> kitchenMinutes = {'warn': 10, 'late': 20};
+  String? kitchenMinutesAuth;
+  String? refuseKitchenMinutes;
+
+  /// The screen of [codes] as the hub answers it.
+  Map<String, dynamic> _kitchenScreen(List<String> codes) {
+    final open = <Map<String, dynamic>>[], made = <Map<String, dynamic>>[];
+    for (final ticket in kitchen!) {
+      final rows = <Map<String, dynamic>>[];
+      for (final line in (ticket['lines'] as List).cast<Map<String, dynamic>>()) {
+        final here = [
+          for (final station in line['stations'] as List)
+            if (codes.contains(station)) station,
+        ];
+        if (here.isEmpty) continue;
+        final said = [
+          for (final station in line['made'] as List? ?? const [])
+            if (here.contains(station)) station,
+        ];
+        final done = said.length == here.length;
+        if (done && line['void'] == true) continue;
+        rows.add({...line, 'stations': here, 'made': said, 'done': done, 'done_ms': done ? line['done_ms'] : null});
+      }
+      if (rows.isEmpty) continue;
+      final all = rows.every((row) => row['done'] == true);
+      final listed = {...ticket, 'id': '${ticket['order_id']}:${ticket['since_ms']}', 'lines': rows};
+      if (all) {
+        listed['done_ms'] = rows.map((row) => row['done_ms'] as int? ?? 0).reduce(max);
+        made.add(listed);
+      } else {
+        open.add(listed);
+      }
+    }
+    open.sort((a, b) => (a['since_ms'] as int).compareTo(b['since_ms'] as int));
+    made.sort((a, b) => (b['done_ms'] as int).compareTo(a['done_ms'] as int));
+    final names = {for (final station in stations['stations'] as List) (station as Map)['code']: station['name']};
+    return {
+      'stations': [
+        for (final code in [...codes]..sort()) {'code': code, 'name': names[code] ?? code},
+      ],
+      ...kitchenMinutes,
+      'tickets': open,
+      'recent': made.take(10).toList(),
+    };
+  }
+
+  /// A station's word on some dishes of an order: made, or not after all.
+  void _made(String orderId, List<Map<String, dynamic>> ops) {
+    for (final op in ops) {
+      if (op['kind'] != 'done') continue;
+      final data = (op['data'] as Map).cast<String, dynamic>();
+      final at = int.parse((op['hlc'] as String).split('-').first);
+      for (final ticket in kitchen ?? const <Map<String, dynamic>>[]) {
+        if (ticket['order_id'] != orderId) continue;
+        for (final line in (ticket['lines'] as List).cast<Map<String, dynamic>>()) {
+          if (!(data['line_ids'] as List).contains(line['line_id'])) continue;
+          if (!(line['stations'] as List).contains(data['station'])) continue;
+          final said = {...(line['made'] as List? ?? const [])};
+          data['done'] == false ? said.remove(data['station']) : said.add(data['station']);
+          line['made'] = said.toList();
+          line['done_ms'] = at;
+        }
+      }
+    }
+  }
+
   /// The orders whose pack sheet was printed (`POST /orders/{id}/pack-sheet`); null is a hub older than pack
   /// sheets (404), and [refusePack] a reason to refuse the next with.
   List<String>? packSheets = [];
@@ -1419,8 +1495,21 @@ class Hub {
       sent.addAll(ops.map((op) => (id, op)));
       batches.add(ops);
       _apply(id, ops);
+      if (refuseMarks == null) _made(id, ops);
       _moveOnFloor(id, ops);
-      final refused = _exempt(id, ops);
+      final refused = [
+        ..._exempt(id, ops),
+        if (refuseMarks != null)
+          for (final op in ops)
+            if (op['kind'] == 'done')
+              {
+                'op_id': op['op_id'],
+                'error': 'invalid_op',
+                'problems': [
+                  {'code': 'bad_request', 'message': refuseMarks},
+                ],
+              },
+      ];
       final left = {for (final r in refused) r['op_id']};
       return json({
         'accepted': [
@@ -1465,6 +1554,10 @@ class Hub {
     }
     if (path == '/orders/ahead') {
       return ahead == null ? json({'detail': 'no such order'}, 404) : json(ahead!);
+    }
+    if (path == '/kitchen/screen') {
+      if (kitchen == null) return json({'detail': 'Not Found'}, 404);
+      return json(_kitchenScreen((request.url.queryParameters['stations'] ?? '').split(',')));
     }
     if (path == '/orders/ahead/prep') {
       if (prep == null) return json({'detail': 'Not Found'}, 404);
@@ -1704,6 +1797,18 @@ class Hub {
           'rush': minutes > 0 ? {'minutes': minutes, 'until': until, 'by': 'Mike'} : null,
         };
         return json(quotes);
+      case '/settings/kitchen_screens':
+        if (kitchen == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          kitchenMinutesAuth = request.headers['authorization'];
+          if (refuseKitchenMinutes != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseKitchenMinutes},
+            }, 422);
+          }
+          kitchenMinutes = {...kitchenMinutes, ...jsonDecode(request.body) as Map<String, dynamic>};
+        }
+        return json(kitchenMinutes);
       case '/settings/table_timers':
         if (tableTimers == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

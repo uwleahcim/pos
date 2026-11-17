@@ -135,7 +135,7 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
     live = [line_id for line_id, line in state.lines.items() if line.status == "active"]
     kinds = ["add_line"] * 4 + ["set_field"] * 2 + ["fire"]
     if live:
-        kinds += ["set_line"] * 3 + ["void_line", "allergy", "move_line"]
+        kinds += ["set_line"] * 3 + ["void_line", "allergy", "move_line", "done"]
     if state.applied:
         kinds += ["close", "reopen", "void_order"] if rng.random() < 0.08 else ["close"]
     else:
@@ -186,6 +186,10 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
         return replica.emit(order_id, kind, line_id=rng.choice(live), to=to, **flag)
     if kind == "fire":
         return replica.emit(order_id, kind, course=rng.choice(COURSES + ["*"]), **flag)
+    if kind == "done":  # a station's screen marks dishes made, or takes its word back
+        ids = rng.sample(live, rng.randint(1, min(2, len(live))))
+        made = rng.random() < 0.8
+        return replica.emit(order_id, kind, station=rng.choice(["wok", "fryer"]), line_ids=ids, done=made, **flag)
     if kind == "allergy":  # told for a seat or the table, changed, or taken off again
         allergens = rng.sample(ALLERGENS, rng.randint(0, 2))
         return replica.emit(order_id, kind, seat=rng.choice([None, 1, 2, 3]), allergens=allergens, **flag)

@@ -9,6 +9,7 @@ import '../faces.dart';
 import '../frames.dart';
 import '../phone.dart';
 import '../print_relay.dart';
+import '../printers.dart';
 import '../push.dart';
 import '../settings.dart';
 import 'smoothness_card.dart';
@@ -57,6 +58,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _signOutAfterSend = widget.settings.signOutAfterSend;
   late String _opensOn = widget.settings.opensOn;
   late bool _pickupBoard = widget.settings.pickupBoard;
+  late final List<String> _kitchen = [...widget.settings.kitchenStations];
+  StationList? _stations; // the location's stations, to pick a kitchen screen's from; null until the hub says
+  bool _noStations = false; // the hub did not say
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -71,6 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     widget.camera?.addListener(_changed);
     unawaited(_askFaces());
+    unawaited(_askStations());
     unawaited(_checkReadiness());
   }
 
@@ -117,6 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
     await widget.settings.saveOpensOn(_opensOn);
     await widget.settings.savePickupBoard(_pickupBoard);
+    await widget.settings.saveKitchenStations(_kitchen);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -132,6 +138,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else {
       Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _askStations() async {
+    final api = widget.api;
+    if (api == null) return;
+    try {
+      final stations = await api.printStations();
+      if (mounted) setState(() => _stations = stations);
+    } on ApiException {
+      if (mounted) setState(() => _noStations = true);
+    }
+  }
+
+  /// The stations a kitchen screen can stand at: the location's, and any this device was already set to.
+  List<({String code, String name})> get _offered => [
+    for (final station in _stations?.stations ?? const <StationInfo>[]) (code: station.code, name: station.name),
+    for (final code in _kitchen)
+      if (_stations?.byCode(code) == null) (code: code, name: code),
+  ];
+
+  /// "Wok", "Wok and Fryer", "Wok, Fryer and Sushi bar": the stations picked, by name.
+  String get _kitchenNames {
+    final names = [
+      for (final station in _offered)
+        if (_kitchen.contains(station.code)) station.name,
+    ];
+    if (names.length < 2) return names.join();
+    return '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
   }
 
   Future<void> _askFaces() async {
@@ -319,7 +353,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     key: const ValueKey('pickup-board-line'),
                   ),
                   value: _pickupBoard,
-                  onChanged: (on) => setState(() => _pickupBoard = on),
+                  // (one or the other: a board for the customers shows no kitchen tickets)
+                  onChanged: (on) => setState(() {
+                    _pickupBoard = on;
+                    if (on) _kitchen.clear();
+                  }),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // A kitchen screen: what this screen shows while nobody is signed in, at a station; kept with Save.
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.soup_kitchen_outlined, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text('Kitchen screen', style: theme.textTheme.titleMedium)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _kitchen.isNotEmpty
+                            ? 'While nobody is signed in, this screen lists what $_kitchenNames '
+                                  '${_kitchen.length == 1 ? 'has' : 'have'} to make, and a tap marks a dish made. '
+                                  'Staff, in its corner, brings up the sign-in pad.'
+                            : _offered.isNotEmpty
+                            ? 'For a screen at a station in the kitchen: while nobody is signed in it lists what '
+                                  'the station has to make, and a tap marks a dish made. Pick the station it '
+                                  'stands at.'
+                            : _stations != null
+                            ? 'For a screen at a station in the kitchen. The menu names no station yet.'
+                            : _noStations || widget.api == null
+                            ? 'For a screen at a station in the kitchen. The stations could not be read from '
+                                  'the hub: come back here once it answers.'
+                            : 'For a screen at a station in the kitchen. Asking the hub for the stations…',
+                        key: const ValueKey('kitchen-screen-line'),
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      if (_offered.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final station in _offered)
+                              FilterChip(
+                                key: ValueKey('kitchen-station:${station.code}'),
+                                label: Text(station.name),
+                                selected: _kitchen.contains(station.code),
+                                onSelected:
+                                    !_kitchen.contains(station.code) && _kitchen.length >= Settings.kitchenStationsMax
+                                    ? null
+                                    : (on) => setState(() {
+                                        if (on) {
+                                          _kitchen.add(station.code);
+                                          _pickupBoard = false;
+                                        } else {
+                                          _kitchen.remove(station.code);
+                                        }
+                                      }),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
