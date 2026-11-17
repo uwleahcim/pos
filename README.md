@@ -78,6 +78,9 @@ merges after any disconnect.
 - The guest list (every customer who ordered with a phone number in the last 12 months: visits, what they
   spent, the last visit and favourite dishes; the regulars, the guests who stopped coming and the new ones
   each a list; for a manager): `docs/guest-list.md`
+- Notes for the shift and the manager's log (a manager's note comes up once for each person after they
+  sign in: the specials, what is out; a manager sees who has read it; the managers' own log is kept by
+  subject, searched, and struck out, never deleted): `docs/shift-notes.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

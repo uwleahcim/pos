@@ -188,6 +188,50 @@ class Hub {
   int? refuseGuests;
   int? refuseGuest;
 
+  /// Notes for the shift (docs/shift-notes.md). [shiftNotes] are the notes that are up, the newest first,
+  /// each as the hub answers it plus `seen_by`: the ids of the staff who have seen it. Null is a hub older
+  /// than the notes. `GET /notes` answers them for one person (each ask is in [notesAsks]) and
+  /// `POST /notes/seen` marks them ([notesSeenPosts]; [refuseNotesSeen] answers with a status instead and
+  /// marks nothing). A manager's calls ([notesAuth] is the token of the last) read the board with who has
+  /// seen each of [notesStaff], put a note up ([notesWritten]), change one ([notesChanged]: new words show
+  /// it to everybody again) and take one down ([notesDown]), which moves it to [notesEarlier].
+  /// [refuseNotes] answers every manager's call with a status and [refuseNote] one write with a reason.
+  List<Map<String, dynamic>>? shiftNotes = [];
+  List<Map<String, dynamic>> notesEarlier = [];
+  Map<String, String> notesStaff = {'s1': 'Amy', 's2': 'Ben', 's3': 'Mike', 's4': 'Holly'};
+  final notesAsks = <String>[];
+  final notesSeenPosts = <(String, List<String>)>[];
+  final notesWritten = <Map<String, dynamic>>[];
+  final notesChanged = <(String, Map<String, dynamic>)>[];
+  final notesDown = <String>[];
+  String? notesAuth;
+  int? refuseNotes;
+  int? refuseNotesSeen;
+  (int, String, String)? refuseNote;
+
+  /// The manager's log (docs/shift-notes.md). [logbook] holds the entries, the newest first; null is a hub
+  /// older than the log. `GET /logbook` answers [logPage] of them at a time, by subject and by the words
+  /// asked for (each ask's query is in [logAsks]), `POST /logbook` writes one at the top ([logWritten]) and
+  /// `POST /logbook/<id>/strike` strikes one out ([logStruck]). [logAuth] is the token of the last call and
+  /// [refuseLog] answers with a status instead.
+  List<Map<String, dynamic>>? logbook = [];
+  int logPage = 50;
+  final logAsks = <Map<String, String>>[];
+  final logWritten = <Map<String, dynamic>>[];
+  final logStruck = <String>[];
+  String? logAuth;
+  int? refuseLog;
+  static const logSubjects = [
+    ('guests', 'Guests'),
+    ('staff', 'Staff'),
+    ('kitchen', 'Kitchen'),
+    ('bar', 'Bar'),
+    ('repairs', 'Repairs'),
+    ('deliveries', 'Deliveries'),
+    ('money', 'Money'),
+    ('other', 'Other'),
+  ];
+
   /// A check's history (docs/check-history.md). [histories] answers `GET /orders/<id>/history` by the order
   /// asked for; one it has nothing for is `unknown_id`, and null is a hub older than the history. Each ask
   /// is in [historyAsks] and the token of the last one in [historyAuth]; [refuseHistory] answers with a
@@ -602,9 +646,212 @@ class Hub {
     return http.Response.bytes(response.bodyBytes, 200, headers: {...response.headers, 'etag': etag});
   }
 
+  static final _note = RegExp(r'^/notes/([^/]+)$');
+  static final _strike = RegExp(r'^/logbook/([^/]+)/strike$');
+
+  Map<String, dynamic> _noteOut(Map<String, dynamic> note) => {
+    for (final entry in note.entries)
+      if (entry.key != 'seen_by') entry.key: entry.value,
+  };
+
+  Map<String, dynamic> _notesFor(String staffId) => {
+    'notes': [
+      for (final note in shiftNotes!)
+        {..._noteOut(note), 'seen': (note['seen_by'] as List? ?? const []).contains(staffId)},
+    ],
+    'unseen': shiftNotes!.where((note) => !(note['seen_by'] as List? ?? const []).contains(staffId)).length,
+    'now_ms': clockNow,
+  };
+
+  /// Notes for the shift: what one person reads and marks, and a manager's board and changes.
+  http.Response _notes(http.Request request) {
+    final path = request.url.path;
+    if (shiftNotes == null) return json({'detail': 'Not Found'}, 404);
+    if (path == '/notes' && request.method == 'GET') {
+      final staffId = request.url.queryParameters['staff_id'] ?? '';
+      notesAsks.add(staffId);
+      return json(_notesFor(staffId));
+    }
+    if (path == '/notes/seen') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final staffId = body['staff_id'] as String;
+      final ids = [...(body['note_ids'] as List).cast<String>()];
+      if (refuseNotesSeen != null) {
+        return json({
+          'detail': {'error': 'read_only'},
+        }, refuseNotesSeen!);
+      }
+      notesSeenPosts.add((staffId, ids));
+      for (final note in shiftNotes!) {
+        final seen = note['seen_by'] as List? ?? (note['seen_by'] = <String>[]);
+        if (ids.contains(note['id']) && !seen.contains(staffId)) seen.add(staffId);
+      }
+      return json(_notesFor(staffId));
+    }
+    // the rest is a manager's
+    notesAuth = request.headers['authorization'];
+    if (refuseNotes != null) {
+      return json({
+        'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+      }, refuseNotes!);
+    }
+    if (path == '/notes/board') {
+      return json({
+        'notes': [
+          for (final note in shiftNotes!)
+            {
+              ..._noteOut(note),
+              'seen': [
+                for (final id in (note['seen_by'] as List? ?? const []).cast<String>())
+                  if (notesStaff.containsKey(id)) {'staff_id': id, 'name': notesStaff[id], 'at_ms': note['at_ms']},
+              ],
+              'waiting': [
+                for (final entry in notesStaff.entries)
+                  if (!(note['seen_by'] as List? ?? const []).contains(entry.key)) entry.value,
+              ],
+            },
+        ],
+        'earlier': [for (final note in notesEarlier) _noteOut(note)],
+        'staff': notesStaff.length,
+        'most': 12,
+        'text_max': 500,
+        'earlier_days': 14,
+        'now_ms': clockNow,
+      });
+    }
+    if (path == '/notes' && request.method == 'POST') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      notesWritten.add(body);
+      if (refuseNote != null) {
+        return json({
+          'detail': {'error': refuseNote!.$2, 'message': refuseNote!.$3},
+        }, refuseNote!.$1);
+      }
+      final note = <String, dynamic>{
+        'id': 'n${notesWritten.length}',
+        'text': body['text'],
+        'by': 'Mike',
+        'at_ms': clockNow,
+        'until_ms': body['lasts'] == 'stays' ? null : clockNow + 12 * 3600 * 1000,
+        'lasts': body['lasts'],
+        'edited_ms': null,
+        'seen_by': <String>['s3'],
+      };
+      shiftNotes!.insert(0, note);
+      return json(_noteOut(note));
+    }
+    final id = _note.firstMatch(path)?.group(1);
+    final note = shiftNotes!.where((n) => n['id'] == id).firstOrNull;
+    if (note == null) {
+      final ended = notesEarlier.any((n) => n['id'] == id);
+      return json({
+        'detail': ended
+            ? {'error': 'ended', 'message': 'This note has come down. Write it again as a new note.'}
+            : {'error': 'unknown_note', 'message': 'There is no such note.'},
+      }, ended ? 409 : 404);
+    }
+    if (request.method == 'PUT') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      notesChanged.add((id!, body));
+      if (body['text'] != note['text']) {
+        note['edited_ms'] = clockNow;
+        note['seen_by'] = <String>['s3'];
+      }
+      note['text'] = body['text'];
+      note['lasts'] = body['lasts'];
+      note['until_ms'] = body['lasts'] == 'stays' ? null : clockNow + 12 * 3600 * 1000;
+      return json(_noteOut(note));
+    }
+    if (request.method == 'DELETE') {
+      notesDown.add(id!);
+      shiftNotes!.remove(note);
+      notesEarlier.insert(0, {
+        ...note,
+        'ended_ms': clockNow,
+        'removed_by': 'Mike',
+        'seen_count': (note['seen_by'] as List? ?? const []).length,
+      });
+      return json({..._noteOut(note), 'removed_ms': clockNow, 'removed_by': 'Mike'});
+    }
+    return json({'detail': 'Method Not Allowed'}, 405);
+  }
+
+  /// The manager's log: a page of it by subject and by words, a new entry, an entry struck out.
+  http.Response _logbook(http.Request request) {
+    final path = request.url.path;
+    if (logbook == null) return json({'detail': 'Not Found'}, 404);
+    logAuth = request.headers['authorization'];
+    if (refuseLog != null) {
+      return json({
+        'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+      }, refuseLog!);
+    }
+    final strike = _strike.firstMatch(path)?.group(1);
+    if (strike != null) {
+      final entry = logbook!.where((e) => e['id'] == strike).firstOrNull;
+      if (entry == null) {
+        return json({
+          'detail': {'error': 'unknown_entry', 'message': 'There is no such entry.'},
+        }, 404);
+      }
+      logStruck.add(strike);
+      entry['struck_ms'] ??= clockNow;
+      entry['struck_by'] = 'Mike';
+      return json(entry);
+    }
+    if (request.method == 'POST') {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      logWritten.add(body);
+      final at = DateTime.fromMillisecondsSinceEpoch(clockNow).subtract(const Duration(hours: 4));
+      final entry = <String, dynamic>{
+        'id': 'e-new-${logWritten.length}',
+        'subject': body['subject'],
+        'subject_name': logSubjects.firstWhere((s) => s.$1 == body['subject']).$2,
+        'text': body['text'],
+        'by': 'Mike',
+        'at_ms': clockNow,
+        'day': at.toIso8601String().substring(0, 10),
+        'struck_ms': null,
+        'struck_by': '',
+      };
+      logbook!.insert(0, entry);
+      return json(entry);
+    }
+    final query = request.url.queryParameters;
+    logAsks.add(query);
+    final words = (query['q'] ?? '').toLowerCase().split(' ').where((w) => w.isNotEmpty).toList();
+    bool holds(Map<String, dynamic> e) => words.every((w) => '${e['text']} ${e['by']}'.toLowerCase().contains(w));
+    final counts = <String, int>{};
+    for (final entry in logbook!) {
+      if (entry['struck_ms'] == null && holds(entry)) {
+        counts[entry['subject'] as String] = (counts[entry['subject']] ?? 0) + 1;
+      }
+    }
+    var found = [
+      for (final entry in logbook!)
+        if ((query['subject'] == null || entry['subject'] == query['subject']) && holds(entry)) entry,
+    ];
+    final before = query['before'];
+    if (before != null) {
+      final at = found.indexWhere((e) => e['id'] == before);
+      found = at < 0 ? [] : found.sublist(at + 1);
+    }
+    return json({
+      'subjects': [
+        for (final (id, name) in logSubjects) {'id': id, 'name': name, 'count': counts[id] ?? 0},
+      ],
+      'count': counts.values.fold<int>(0, (sum, n) => sum + n),
+      'entries': found.take(logPage).toList(),
+      'more': found.length > logPage,
+      'text_max': 2000,
+    });
+  }
+
   Future<http.Response> answer(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);
     if (path == '/signin' && request.method == 'POST') {
       final body = jsonDecode(request.body) as Map;
       final tagUid = body['tag_uid'] as String?;

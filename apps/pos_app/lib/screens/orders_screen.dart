@@ -17,6 +17,7 @@ import '../photos.dart';
 import '../print_relay.dart';
 import '../roster.dart';
 import '../session.dart';
+import '../shift_notes.dart';
 import '../switching.dart';
 import '../tags.dart';
 import '../settings.dart';
@@ -32,6 +33,8 @@ import 'menu_editor.dart';
 import 'order_screen.dart';
 import 'rush.dart';
 import 'server_picker.dart';
+import 'shift_notes_dialog.dart';
+import 'shift_notes_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'tab_dialog.dart';
@@ -106,6 +109,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
   bool _quotesStale = true; // the hub said a setting changed, or nothing was read yet
   // Whether the location uses the time clock: read with the quotes, for the Time clock entry of the menu.
   bool _clockOn = false;
+  // Notes for the shift (docs/shift-notes.md): what the person at the screen has not seen yet comes up once,
+  // over the floor or the list, never over an open check. They are read at each sign-in, when the hub says
+  // the notes changed, and now and then while it cannot say.
+  bool _notesStale = true;
+  DateTime _notesRead = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _notesFor; // who is signed in, as the notes last heard; null while nobody is
+  bool _notesBusy = false; // a reading is out, or the notes are on the screen
+  int _notesUp = 0; // how many are up: the menu then offers them to read again
+  // What "Got it" was tapped on here, until the hub has kept it: shown once even when the hub was slow to hear.
+  final _notesGot = <String>{};
   DateTime _quotesRead = DateTime.fromMillisecondsSinceEpoch(0);
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
@@ -131,6 +144,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _opensOn = widget.settings.opensOn;
     _floor = widget.settings.opensOnFloor;
     _staffId = widget.session.staff?.staffId;
+    _notesFor = _staffId;
     _rosterRead = _readRoster();
     _orderRequests = widget.phone?.orderRequests ?? 0;
     _answers = widget.phone?.answers ?? 0;
@@ -141,11 +155,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     });
     _live = widget.api.live.changes.listen((change) {
       if (change.settings || change.everything) _quotesStale = true;
+      if (change.notes || change.everything) _notesStale = true;
       if (_inFront && change.anyOrder) _reader();
+      if (_inFront && change.notes) unawaited(_readNotes());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
     widget.session.addListener(_onOpensOn);
+    widget.session.addListener(_onNotesSession);
     widget.phone?.addListener(_onPhone);
     widget.deskPhones?.addListener(_onDeskPhone);
     // A desk phone picked up just before someone signed in: its call is still waiting, if it is fresh.
@@ -172,6 +189,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     widget.outbox.removeListener(_onOutbox);
     widget.settings.removeListener(_onOpensOn);
     widget.session.removeListener(_onOpensOn);
+    widget.session.removeListener(_onNotesSession);
     widget.phone?.removeListener(_onPhone);
     widget.deskPhones?.removeListener(_onDeskPhone);
     super.dispose();
@@ -263,6 +281,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _read() async {
     _poll.asked();
     unawaited(_readQuotes());
+    unawaited(_readNotes());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -310,6 +329,84 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // nothing answers: the menu keeps the entry it had
     }
+  }
+
+  /// Somebody else took the screen (a sign-in on a locked screen, a hands-free switch), or the same person
+  /// came back to it: their notes are read at the next chance.
+  void _onNotesSession() {
+    final id = widget.session.staff?.staffId;
+    if (id == _notesFor) return;
+    _notesFor = id;
+    if (id == null) return;
+    _notesStale = true;
+    if (mounted && _inFront) unawaited(_readNotes());
+  }
+
+  static String _noteKey(String staffId, ShiftNote note) => '$staffId/${note.id}/${note.editedMs ?? note.atMs}';
+
+  /// The notes for the shift, for whoever is signed in: the ones they have not seen come up once, with one
+  /// button, and the hub is told they have seen them. Only while the floor or the list is in front: an open
+  /// check or a form is not interrupted, and the notes wait until this screen is back. A hub older than the
+  /// notes, or one that does not answer, shows nothing.
+  Future<void> _readNotes() async {
+    final staff = widget.session.staff;
+    if (staff == null || _notesBusy) return;
+    final now = DateTime.now();
+    if (!_notesStale && now.difference(_notesRead) < const Duration(minutes: 2)) return;
+    _notesStale = false;
+    _notesRead = now;
+    _notesBusy = true;
+    try {
+      final mine = await widget.api.shiftNotes(staff.staffId);
+      if (!mounted) return;
+      final up = mine?.notes.length ?? 0;
+      if (up != _notesUp) setState(() => _notesUp = up);
+      final unseen = mine?.unseen ?? const <ShiftNote>[];
+      final fresh = [
+        for (final note in unseen)
+          if (!_notesGot.contains(_noteKey(staff.staffId, note))) note,
+      ];
+      if (fresh.isNotEmpty) {
+        // whoever took the screen meanwhile gets their own notes at the next reading
+        if (!_inFront || widget.session.staff?.staffId != staff.staffId) {
+          _notesStale = true;
+          return;
+        }
+        final got = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => ShiftNotesDialog(notes: fresh),
+        );
+        if (!mounted) return;
+        // the screen locked under the notes and somebody else tapped the button: this person has not seen them
+        if (got != true || widget.session.staff?.staffId != staff.staffId) {
+          _notesStale = true;
+          return;
+        }
+        _notesGot.addAll([for (final note in fresh) _noteKey(staff.staffId, note)]);
+      }
+      final tell = [
+        for (final note in unseen)
+          if (_notesGot.contains(_noteKey(staff.staffId, note))) note.id,
+      ];
+      if (tell.isEmpty) return;
+      await widget.api.notesSeen(staff.staffId, tell);
+      _notesGot.removeWhere((key) => key.startsWith('${staff.staffId}/'));
+    } on ApiException {
+      // nothing answers, or the hub could not keep it: asked again in a while, not at once
+    } finally {
+      _notesBusy = false;
+    }
+  }
+
+  /// The notes that are up, to read again. A manager writes and changes them from there, with their PIN.
+  Future<void> _notes() {
+    _notesStale = true; // read again on the way back: a manager may have changed them
+    return Navigator.of(context).push(
+      PosPageRoute<void>(
+        builder: (_) => ShiftNotesScreen(api: widget.api, device: widget.settings.device, staff: widget.session.staff),
+      ),
+    );
   }
 
   /// The time clock for whoever is at the screen: it asks for their own PIN, signed in or not.
@@ -1054,6 +1151,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _refresh();
         }),
       ),
+      if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       if (const {'manager', 'owner'}.contains(widget.session.staff?.role) && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),

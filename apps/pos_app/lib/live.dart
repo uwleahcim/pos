@@ -8,7 +8,13 @@ import 'api.dart';
 
 /// What the hub said changed since it last said anything.
 class LiveChange {
-  const LiveChange({this.orders = const {}, this.everything = false, this.menu = false, this.settings = false});
+  const LiveChange({
+    this.orders = const {},
+    this.everything = false,
+    this.menu = false,
+    this.settings = false,
+    this.notes = false,
+  });
 
   /// The orders that changed, by id.
   final Set<String> orders;
@@ -23,6 +29,9 @@ class LiveChange {
   /// A location setting was written (the courses, the quote times, ...).
   final bool settings;
 
+  /// A note for the shift was put up, changed or taken down (docs/shift-notes.md).
+  final bool notes;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -31,7 +40,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -232,6 +241,7 @@ class LiveFeed extends ChangeNotifier {
             everything: json['everything'] == true,
             menu: topics.contains('menu'),
             settings: topics.contains('settings'),
+            notes: topics.contains('notes'),
           ),
         );
     }

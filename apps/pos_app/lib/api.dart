@@ -23,6 +23,7 @@ import 'printers.dart';
 import 'roster.dart';
 import 'sales_report.dart';
 import 'settings.dart';
+import 'shift_notes.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
 import 'voids.dart';
@@ -1017,6 +1018,75 @@ class PosApi {
           ),
         ),
       );
+
+  // Notes for the shift and the manager's log (docs/shift-notes.md). -----------------------------------------
+
+  /// The notes that are up, the newest first, each with whether [staffId] has seen it. Null from a hub
+  /// older than the notes.
+  Future<MyNotes?> shiftNotes(String staffId) async {
+    try {
+      return MyNotes.fromJson(await _get('/notes', query: {'staff_id': staffId}));
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// [staffId] has seen these notes: the hub does not show them to that person again. Answers their notes
+  /// as they stand now.
+  Future<MyNotes> notesSeen(String staffId, Iterable<String> noteIds) async => MyNotes.fromJson(
+    await _post('/notes/seen', {
+      'staff_id': staffId,
+      'note_ids': [...noteIds],
+    }),
+  );
+
+  /// A manager's list of the notes (token from [adminSession]): the ones that are up, each with who has
+  /// seen it and who has not yet, and the ones that came down lately.
+  Future<NotesBoard> notesBoard(String token) async =>
+      NotesBoard.fromJson(await _get('/notes/board', headers: _bearer(token)));
+
+  /// A manager puts a note up. [lasts] is `tonight` (it comes down when the night is over) or `stays`.
+  /// 409 `too_many` when as many are up as the hub allows.
+  Future<ShiftNote> writeNote(String token, {required String text, required String lasts}) async =>
+      ShiftNote.fromJson(await _post('/notes', {'text': text, 'lasts': lasts}, headers: _bearer(token)));
+
+  /// A manager changes a note that is up. New words show it to everybody again. 409 `ended` for one that
+  /// has come down meanwhile.
+  Future<ShiftNote> changeNote(String token, String noteId, {required String text, required String lasts}) async =>
+      ShiftNote.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/notes/$noteId'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode({'text': text, 'lasts': lasts}),
+          ),
+        ),
+      );
+
+  /// A manager takes a note down. The hub keeps it; nobody is shown it any more.
+  Future<void> takeNoteDown(String token, String noteId) =>
+      _withFailover((base) => _client.delete(Uri.parse('$base/notes/$noteId'), headers: _bearer(token)));
+
+  /// The manager's log, the newest entry first (manager token): of one [subject] or of all, holding every
+  /// word of [find], from before the entry named [before] (the last one of the page read before).
+  Future<Logbook> logbook(String token, {String? subject, String find = '', String? before}) async => Logbook.fromJson(
+    await _get(
+      '/logbook',
+      query: {'subject': ?subject, if (find.trim().isNotEmpty) 'q': find.trim(), 'before': ?before},
+      headers: _bearer(token),
+    ),
+  );
+
+  /// A manager writes an entry in the log, under one of the hub's subjects.
+  Future<LogEntry> writeLogEntry(String token, {required String subject, required String text, String? device}) async =>
+      LogEntry.fromJson(
+        await _post('/logbook', {'subject': subject, 'text': text, 'device': device ?? ''}, headers: _bearer(token)),
+      );
+
+  /// A manager strikes an entry out. It stays in the log, readable, with who struck it and when.
+  Future<LogEntry> strikeLogEntry(String token, String entryId) async =>
+      LogEntry.fromJson(await _post('/logbook/$entryId/strike', const <String, dynamic>{}, headers: _bearer(token)));
 
   // A check's history (docs/check-history.md). ---------------------------------------------------------------
 

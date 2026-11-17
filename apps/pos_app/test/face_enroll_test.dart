@@ -10,6 +10,7 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 import 'package:pos_app/tags.dart';
 
 import 'hub.dart';
+import 'location_rows.dart';
 
 class FrameCamera extends EventCamera {
   int frames = 0;
@@ -181,6 +182,7 @@ void main() {
     expect(t.hub.handsFree, {'switch': false, 'away_seconds': 60});
     expect(t.hub.faceAuth, 'Bearer tok-admin');
     expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('hands-free-switch'))).value, isFalse);
+    await bringUp(tester, 'hands-free-away');
     await tester.tap(find.byKey(const ValueKey('hands-free-away')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('5 minutes').last);
@@ -255,6 +257,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await bringUp(tester, 'faces-enabled');
     expect(find.textContaining('The hub has not answered about face sign-in'), findsOneWidget);
     expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('faces-enabled'))).onChanged, isNull);
   });
