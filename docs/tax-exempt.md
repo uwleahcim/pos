@@ -17,7 +17,9 @@ lock, like a reason that needs a manager).
 
 1. **Who it is for.** Type the **organisation** (60 letters at most) and the **certificate number** (40 at
    most), from their certificate of exemption. Neither can be left empty.
-2. **Manager PIN.** A manager types their PIN on the spot, as for a comp. A server's PIN is refused.
+2. **Manager PIN.** A manager types their PIN on the spot, as for a comp. A server's PIN is refused, unless
+   the location handed the servers "Approve a tax-exempt check" under Location › Who may do what
+   (`roles.md`).
 
 The check then says **Tax exempt · Winchester PTA** where "Sales tax 7%" stood, with 0.00, and its total is
 without the tax. Whatever is rung in afterwards is not taxed either, nor is a charge on the check (a

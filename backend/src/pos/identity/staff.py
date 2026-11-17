@@ -11,17 +11,14 @@ import hmac
 import os
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any
+
+from .powers import holds
 
 LOCK_AFTER = 5
 LOCK_SECONDS = 60.0
-
-TAKES_TABLES = frozenset({"server", "bartender", "manager", "owner"})
-"""The roles a table can be given to: the people who serve one."""
-ASSIGNS_TABLES = frozenset({"host", "manager", "owner"})
-"""The roles that seat a party for someone else, or hand a seated table to another server. Everyone who
-takes tables gets a table by opening it themselves."""
 
 
 @dataclass(frozen=True)
@@ -131,16 +128,20 @@ def demo_directory() -> Directory:
     )
 
 
-def roster(directory: Directory) -> list[dict[str, object]]:
+def roster(directory: Directory, powers: Mapping[str, Any] | None = None) -> list[dict[str, object]]:
     """The staff by name and role, for the screens that put a name to a table: who a table can be given to
-    and who may give one. Nothing a sign-in is checked against (PIN, tag, face) is in it."""
+    (`take_tables` in the location's table of `powers`, `pos/identity/powers.py`: the people who serve one,
+    to start the servers and the bartenders) and who may seat a party for someone else or hand a seated
+    table over (`assign_tables`: to start the hosts). A manager and an owner do both. Everyone who takes
+    tables gets one by opening it themselves. With no table given, the standard one. Nothing a sign-in is
+    checked against (PIN, tag, face) is in it."""
     return [
         {
             "staff_id": s.staff_id,
             "name": s.name,
             "role": s.role,
-            "takes_tables": s.role in TAKES_TABLES,
-            "assigns_tables": s.role in ASSIGNS_TABLES,
+            "takes_tables": holds(powers, s.role, "take_tables"),
+            "assigns_tables": holds(powers, s.role, "assign_tables"),
         }
         for s in directory.all()
     ]

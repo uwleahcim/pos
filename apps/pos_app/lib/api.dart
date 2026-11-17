@@ -21,6 +21,7 @@ import 'kitchen_notes.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'phone.dart';
+import 'powers.dart';
 import 'pricing.dart';
 import 'printers.dart';
 import 'roster.dart';
@@ -1660,9 +1661,54 @@ class PosApi {
 
   // Menu editor: a manager's PIN buys a token for an hour; every other call carries it. -----------------
 
-  /// A token for the menu editor; 403 when the PIN is not a manager's.
-  Future<Map<String, dynamic>> adminSession({required String device, required String pin}) =>
-      _post('/admin/session', {'device': device, 'pin': pin});
+  /// A token for the back office; 403 when the PIN's owner may not open it. With [power], when they may not
+  /// do that one thing (docs/roles.md): a manager and an owner always may, and so may a role the location
+  /// handed the power to. The answer says which `powers` its owner holds (a hub older than the table says
+  /// nothing: there only a manager gets a token).
+  Future<Map<String, dynamic>> adminSession({required String device, required String pin, String? power}) =>
+      _post('/admin/session', {'device': device, 'pin': pin, 'power': ?power});
+
+  /// Who may do what at this location, as this app last read it ([readPowers]); until then, and with a hub
+  /// older than the table, the standard one: what the hub did before the table could be changed.
+  final ValueNotifier<Powers> powers = ValueNotifier(Powers.standard);
+
+  /// The location's table of who may do what, as the hub has it now; null from a hub older than the table.
+  /// [powers] follows.
+  Future<Powers?> powersTable() async {
+    try {
+      return powers.value = Powers.fromJson(await _get('/settings/powers'));
+    } on ApiException catch (err) {
+      if (err.status != 404) rethrow;
+      powers.value = Powers.standard; // a hub older than the table does what the standard one says
+      return null;
+    }
+  }
+
+  /// Reads the location's table of who may do what into [powers]. With no backend answering it stays as it
+  /// was last read: the hub weighs every step itself, so a table that is behind only shows an entry too
+  /// many or too few.
+  Future<Powers> readPowers() async {
+    try {
+      await powersTable();
+    } on ApiException {
+      // keeps what it has
+    }
+    return powers.value;
+  }
+
+  /// A manager or an owner (token from [adminSession]) hands powers out, or takes them back.
+  Future<Powers> savePowers(String token, Powers next) async {
+    final saved = Powers.fromJson(
+      await _withFailover(
+        (base) => _client.put(
+          Uri.parse('$base/settings/powers'),
+          headers: {'content-type': 'application/json', ..._bearer(token)},
+          body: jsonEncode(next.toJson()),
+        ),
+      ),
+    );
+    return powers.value = saved;
+  }
 
   /// The whole menu by kind, its revision, and what the backend's checks find.
   Future<Map<String, dynamic>> adminMenu(String token) =>
@@ -1808,6 +1854,7 @@ class PosApi {
     _live?.dispose();
     _client.close();
     connection.dispose();
+    powers.dispose();
   }
 }
 

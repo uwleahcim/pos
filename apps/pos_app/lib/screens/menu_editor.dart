@@ -58,7 +58,7 @@ class _MenuEditorScreenState extends State<MenuEditorScreen> {
     final token = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => ManagerPinDialog(api: widget.api, device: widget.settings.device),
+      builder: (_) => ManagerPinDialog(api: widget.api, device: widget.settings.device, power: 'menu'),
     );
     if (token == null) return false;
     _token = token;
@@ -1922,7 +1922,9 @@ String _slug(String name) => name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+')
 
 // --- dialogs --------------------------------------------------------------------------------------------
 
-/// A manager's PIN for a session token (`/admin/session`): the menu editor, the quote times.
+/// A PIN for a session token (`/admin/session`): the menu editor, the quote times, Location. A manager's
+/// or an owner's always; anyone else's when the location handed their role the [power] the session is for
+/// (docs/roles.md). The hub decides; the box only says whose PIN it takes.
 class ManagerPinDialog extends StatefulWidget {
   const ManagerPinDialog({
     super.key,
@@ -1930,11 +1932,21 @@ class ManagerPinDialog extends StatefulWidget {
     required this.device,
     this.action = 'Open the editor',
     this.what = 'edit the menu',
+    this.power = 'menu',
+    this.onPowers,
   });
   final PosApi api;
   final String device;
   final String action; // the button
   final String what; // "Only a manager can <what>"
+
+  /// What the session is opened for: the hub refuses a PIN whose owner may not do it. Null for Location,
+  /// which opens for anyone with something to do there.
+  final String? power;
+
+  /// Told what the PIN's owner may do, as the hub answered, before the box closes with the token; null from
+  /// a hub older than the table, where only a manager gets a token.
+  final ValueChanged<Set<String>?>? onPowers;
 
   @override
   State<ManagerPinDialog> createState() => _ManagerPinDialogState();
@@ -1955,15 +1967,21 @@ class _ManagerPinDialogState extends State<ManagerPinDialog> {
     if (_busy || _pin.text.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final json = await widget.api.adminSession(device: widget.device, pin: _pin.text);
+      final json = await widget.api.adminSession(device: widget.device, pin: _pin.text, power: widget.power);
+      final holds = json['powers'] as List?;
+      widget.onPowers?.call(holds == null ? null : {...holds.cast<String>()});
       if (mounted) Navigator.of(context).pop(json['token'] as String);
     } on ApiException catch (err) {
+      if (!mounted) return;
+      final power = widget.power;
+      final powers = widget.api.powers.value;
       setState(() {
         _busy = false;
         _pin.clear();
         _message = switch (err.status) {
           401 => 'Wrong PIN',
-          403 => 'Only a manager can ${widget.what}',
+          403 when power == null && powers.pinTitle(null) == 'PIN' => 'Nothing under Location is open to this PIN',
+          403 => 'Only ${power == null ? 'a manager' : powers.whose(power)} can ${widget.what}',
           423 => 'Too many tries. Wait a minute.',
           _ => err.message,
         };
@@ -1973,7 +1991,7 @@ class _ManagerPinDialogState extends State<ManagerPinDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Manager PIN'),
+    title: Text(widget.api.powers.value.pinTitle(widget.power)),
     content: SizedBox(
       width: 280,
       child: TextField(
@@ -1981,7 +1999,7 @@ class _ManagerPinDialogState extends State<ManagerPinDialog> {
         autofocus: true,
         obscureText: true,
         keyboardType: TextInputType.number,
-        decoration: InputDecoration(labelText: 'PIN', errorText: _message),
+        decoration: InputDecoration(labelText: 'PIN', errorText: _message, errorMaxLines: 3),
         onSubmitted: (_) => _submit(),
       ),
     ),

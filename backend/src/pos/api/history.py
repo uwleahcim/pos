@@ -17,14 +17,14 @@ from ..identity.photos import PhotoStore
 from ..identity.staff import Directory
 from ..menu.service import MenuService
 from ..orders.history import history
-from .auth import manager_from
+from .auth import holder_from
 
 
 def add_history(app: FastAPI) -> None:
     @app.get("/orders/{order_id}/history")
     def read_history(order_id: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         """Everything that happened to one check, oldest first: who did what, at which screen and when."""
-        manager_from(app.state.tokens, authorization)
+        holder_from(app.state, authorization, "history")
         store = app.state.store
         state = store.view(order_id)
         if state is None:

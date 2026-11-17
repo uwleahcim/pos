@@ -8,6 +8,7 @@ import '../desk_phone.dart';
 import '../faces.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
+import '../powers.dart';
 import '../printers.dart';
 import '../table_timers.dart';
 import '../tags.dart';
@@ -25,6 +26,7 @@ import 'face_enroll_dialog.dart';
 import 'guests_screen.dart';
 import 'kitchen_notes_dialog.dart';
 import 'logbook_screen.dart';
+import 'powers_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
@@ -52,6 +54,7 @@ class LocationSettingsScreen extends StatefulWidget {
     super.key,
     required this.api,
     required this.token,
+    this.holds,
     this.staffId,
     this.device,
     this.camera,
@@ -60,6 +63,11 @@ class LocationSettingsScreen extends StatefulWidget {
 
   final PosApi api;
   final String token;
+
+  /// What the owner of the PIN that opened this screen may do (docs/roles.md), as the hub answered with the
+  /// token: the screen shows the rows for those powers and no others. Null from a hub older than the table,
+  /// where only a manager gets a token: everything.
+  final Set<String>? holds;
 
   /// Who is signed in at this terminal: who an entry of the waste log written from here is by.
   final String? staffId;
@@ -150,8 +158,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   bool _ticketWordsBusy = false;
   String? _ticketWordsMessage;
   ClockSetting? _clock; // the time clock as the hub has it; null from an older hub, which has none
+  Powers? _powers; // who may do what as the hub has it; null until it answers (an older hub has no table)
   bool _clockBusy = false;
   String? _clockMessage;
+
+  /// Whether the PIN that opened this screen may do [power]: its rows show, the others do not.
+  bool _may(String power) => widget.holds?.contains(power) ?? true;
+
+  /// The rows of one card with a line between each two.
+  static List<Widget> _divided(List<Widget> rows) => [
+    for (final (index, row) in rows.indexed) ...[if (index > 0) const Divider(height: 1), row],
+  ];
 
   @override
   void initState() {
@@ -244,6 +261,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _clock = clock);
     } on ApiException {
       // nothing answered about the time clock: the card says so
+    }
+    if (_may(settingsPower)) {
+      try {
+        final powers = await widget.api.powersTable();
+        if (mounted) setState(() => _powers = powers);
+      } on ApiException {
+        // nothing answered about who may do what: the row says so
+      }
     }
     await _loadFaces();
     await _loadPrinters();
@@ -717,6 +742,22 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Void rules saved')));
   }
 
+  /// One line on who may do what: what the table hands out beyond how it started.
+  String get _powersLine =>
+      _powers?.summary ?? 'The hub has not answered about who may do what (an older hub: update it)';
+
+  /// The table of who may do what, on its own screen; back here the row says what it hands out now.
+  Future<void> _whoMayDoWhat() async {
+    final saved = await Navigator.of(context).push(
+      MaterialPageRoute<Powers>(
+        builder: (_) => PowersScreen(api: widget.api, token: widget.token, powers: _powers!),
+      ),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _powers = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Who may do what saved')));
+  }
+
   /// The 86 board: what is sold out and what is running low, read again each time it is opened.
   Future<void> _openBoard() async {
     final rows = await showDialog<List<BoardRow>>(
@@ -806,7 +847,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           // first, above the settings: it is what a manager comes to look at in the middle of service
           Card(
             child: Column(
-              children: [
+              children: _divided([
                 ListTile(
                   key: const ValueKey('board'),
                   leading: const Icon(Icons.inventory_2_outlined),
@@ -819,344 +860,386 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _openBoard,
                 ),
-                const Divider(height: 1),
                 // and what a manager comes to look at when service is over
-                ListTile(
-                  key: const ValueKey('day-report'),
-                  leading: const Icon(Icons.summarize_outlined),
-                  title: const Text('The day'),
-                  subtitle: const Text('Sales, the money taken, what came off and what is still open'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => DayReportScreen(api: widget.api, token: widget.token, device: widget.device),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('sales-report'),
-                  leading: const Icon(Icons.insights_outlined),
-                  title: const Text('Sales'),
-                  subtitle: const Text('Any days, beside the same days the weeks before'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => SalesScreen(api: widget.api, token: widget.token),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('dishes-report'),
-                  leading: const Icon(Icons.format_list_numbered),
-                  title: const Text('Dishes sold'),
-                  subtitle: const Text('Best to worst, with their sizes and options'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => DishesScreen(api: widget.api, token: widget.token),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('guests-report'),
-                  leading: const Icon(Icons.people_outline),
-                  title: const Text('Guests'),
-                  subtitle: const Text('Phone customers: visits, what they spent, favourites'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => GuestsScreen(api: widget.api, token: widget.token),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                // not a sale: what the kitchen made or bought and did not sell
-                ListTile(
-                  key: const ValueKey('waste-report'),
-                  leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('Waste'),
-                  subtitle: const Text('What was made and not sold, by reason, by dish and by day'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => WasteScreen(
-                        api: widget.api,
-                        staffId: widget.staffId ?? '',
-                        device: widget.device,
-                        token: widget.token,
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('day-report'),
+                    leading: const Icon(Icons.summarize_outlined),
+                    title: const Text('The day'),
+                    subtitle: const Text('Sales, the money taken, what came off and what is still open'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => DayReportScreen(api: widget.api, token: widget.token, device: widget.device),
                       ),
                     ),
                   ),
-                ),
-              ],
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('sales-report'),
+                    leading: const Icon(Icons.insights_outlined),
+                    title: const Text('Sales'),
+                    subtitle: const Text('Any days, beside the same days the weeks before'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => SalesScreen(api: widget.api, token: widget.token),
+                      ),
+                    ),
+                  ),
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('dishes-report'),
+                    leading: const Icon(Icons.format_list_numbered),
+                    title: const Text('Dishes sold'),
+                    subtitle: const Text('Best to worst, with their sizes and options'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => DishesScreen(api: widget.api, token: widget.token),
+                      ),
+                    ),
+                  ),
+                if (_may('guests'))
+                  ListTile(
+                    key: const ValueKey('guests-report'),
+                    leading: const Icon(Icons.people_outline),
+                    title: const Text('Guests'),
+                    subtitle: const Text('Phone customers: visits, what they spent, favourites'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => GuestsScreen(api: widget.api, token: widget.token),
+                      ),
+                    ),
+                  ),
+                // not a sale: what the kitchen made or bought and did not sell
+                if (_may('waste'))
+                  ListTile(
+                    key: const ValueKey('waste-report'),
+                    leading: const Icon(Icons.delete_sweep_outlined),
+                    title: const Text('Waste'),
+                    subtitle: const Text('What was made and not sold, by reason, by dish and by day'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => WasteScreen(
+                          api: widget.api,
+                          staffId: widget.staffId ?? '',
+                          device: widget.device,
+                          token: widget.token,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_may('reports') && !_may(settingsPower)) _adjustmentsRow(context),
+              ]),
             ),
           ),
-          const SizedBox(height: 12),
           // what the managers tell the staff, and each other
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  key: const ValueKey('shift-notes'),
-                  leading: const Icon(Icons.sticky_note_2_outlined),
-                  title: const Text('Notes for the shift'),
-                  subtitle: const Text('What everybody sees once after signing in: the specials, what is out'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) =>
-                          ShiftNotesScreen(api: widget.api, device: widget.device ?? '', token: widget.token),
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('logbook'),
-                  leading: const Icon(Icons.menu_book_outlined),
-                  title: const Text("Manager's log"),
-                  subtitle: const Text('What happened in a shift, by subject, for the next manager'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => LogbookScreen(api: widget.api, token: widget.token, device: widget.device ?? ''),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
+          if (_may('notes') || _may('logbook')) ...[
+            const SizedBox(height: 12),
+            Card(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SwitchListTile(
-                    key: const ValueKey('coursing-enabled'),
-                    value: _enabled,
-                    onChanged: (on) => setState(() => _enabled = on),
-                    title: const Text('Course the dishes'),
-                    subtitle: Text(
-                      _enabled
-                          ? 'Each dish goes to a course that is held and fired on its own'
-                          : 'Every dish is sent together; the order screen shows no courses',
+                children: _divided([
+                  if (_may('notes'))
+                    ListTile(
+                      key: const ValueKey('shift-notes'),
+                      leading: const Icon(Icons.sticky_note_2_outlined),
+                      title: const Text('Notes for the shift'),
+                      subtitle: const Text('What everybody sees once after signing in: the specials, what is out'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              ShiftNotesScreen(api: widget.api, device: widget.device ?? '', token: widget.token),
+                        ),
+                      ),
                     ),
-                  ),
-                  if (_enabled) ...[
+                  if (_may('logbook'))
+                    ListTile(
+                      key: const ValueKey('logbook'),
+                      leading: const Icon(Icons.menu_book_outlined),
+                      title: const Text("Manager's log"),
+                      subtitle: const Text('What happened in a shift, by subject, for the next manager'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              LogbookScreen(api: widget.api, token: widget.token, device: widget.device ?? ''),
+                        ),
+                      ),
+                    ),
+                ]),
+              ),
+            ),
+          ],
+          if (_may('time_clock') && !_may(settingsPower)) ...[
+            const SizedBox(height: 12),
+            Card(child: _hoursRow(context)),
+          ],
+          if (_may(settingsPower)) ...[
+            const SizedBox(height: 12),
+            // who may do what: the one thing here only a manager or an owner ever opens
+            Card(
+              child: ListTile(
+                key: const ValueKey('powers'),
+                leading: const Icon(Icons.admin_panel_settings_outlined),
+                title: const Text('Who may do what'),
+                subtitle: Text(_powersLine, maxLines: 3, overflow: TextOverflow.ellipsis),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _powers == null ? null : _whoMayDoWhat,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SwitchListTile(
+                      key: const ValueKey('coursing-enabled'),
+                      value: _enabled,
+                      onChanged: (on) => setState(() => _enabled = on),
+                      title: const Text('Course the dishes'),
+                      subtitle: Text(
+                        _enabled
+                            ? 'Each dish goes to a course that is held and fired on its own'
+                            : 'Every dish is sent together; the order screen shows no courses',
+                      ),
+                    ),
+                    if (_enabled) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        child: Text(
+                          'In the order the kitchen serves them. The star marks where a new dish goes.',
+                          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                      ReorderableListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        buildDefaultDragHandles: false,
+                        itemCount: _rows.length,
+                        onReorderItem: _reorder,
+                        itemBuilder: (context, i) => _courseRow(context, i),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            key: const ValueKey('course-add'),
+                            onPressed: _add,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add course'),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (_message != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                        child: Text(_message!, style: TextStyle(color: scheme.error)),
+                      ),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          FilledButton(
+                            key: const ValueKey('coursing-save'),
+                            onPressed: _busy ? null : _save,
+                            child: const Text('Save'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // what a to-go order is promised, and what it is asked before it is sent
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    key: const ValueKey('quote-times'),
+                    leading: const Icon(Icons.timer_outlined),
+                    title: const Text('Quote times'),
+                    subtitle: Text(_quotesSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _quoteTimes,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('to-go-question'),
+                    leading: const Icon(Icons.shopping_bag_outlined),
+                    title: const Text('To-go question'),
+                    subtitle: Text(_bagSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _bag == null ? null : _bagQuestion,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('kitchen-notes'),
+                    leading: const Icon(Icons.edit_note_outlined),
+                    title: const Text('Kitchen notes'),
+                    subtitle: Text(_kitchenNotesSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _kitchenNotes == null ? null : _kitchenNotesList,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('waste-reasons'),
+                    leading: const Icon(Icons.delete_sweep_outlined),
+                    title: const Text('Waste reasons'),
+                    subtitle: Text(_wasteReasonsSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _wasteReasons == null ? null : _wasteReasonsList,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                key: const ValueKey('table-timers'),
+                leading: const Icon(Icons.timelapse_outlined),
+                title: const Text('Table timers'),
+                subtitle: Text(_timersSummary),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _timers == null ? null : _tableTimers,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    key: const ValueKey('voids'),
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Voids'),
+                    subtitle: Text(_voidsSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _voids == null ? null : _voidRules,
+                  ),
+                  const Divider(height: 1),
+                  _adjustmentsRow(context),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            _clockCard(context),
+            const SizedBox(height: 12),
+            _printersCard(context),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.phone_in_talk_outlined),
+                      title: const Text('Desk phones'),
+                      subtitle: Text(_pbxLine),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                       child: Text(
-                        'In the order the kitchen serves them. The star marks where a new dish goes.',
+                        'A call taken on a linked phone opens the caller\'s order on that screen, as if the screen had '
+                        'taken the call. The device is the name that screen shows under Settings.',
                         style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                     ),
-                    ReorderableListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      buildDefaultDragHandles: false,
-                      itemCount: _rows.length,
-                      onReorderItem: _reorder,
-                      itemBuilder: (context, i) => _courseRow(context, i),
-                    ),
+                    if (_phones.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                        child: Text('No desk phone is linked yet.', style: theme.textTheme.bodyMedium),
+                      ),
+                    for (var i = 0; i < _phones.length; i++) _phoneRow(context, i),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: TextButton.icon(
-                          key: const ValueKey('course-add'),
-                          onPressed: _add,
+                          key: const ValueKey('desk-add'),
+                          onPressed: _addPhone,
                           icon: const Icon(Icons.add),
-                          label: const Text('Add course'),
+                          label: const Text('Add phone'),
                         ),
+                      ),
+                    ),
+                    if (_phonesMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                        child: Text(_phonesMessage!, style: TextStyle(color: scheme.error)),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          FilledButton(
+                            key: const ValueKey('desk-phones-save'),
+                            onPressed: _phonesBusy ? null : _savePhones,
+                            child: const Text('Save'),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                  if (_message != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                      child: Text(_message!, style: TextStyle(color: scheme.error)),
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        FilledButton(
-                          key: const ValueKey('coursing-save'),
-                          onPressed: _busy ? null : _save,
-                          child: const Text('Save'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-          // what a to-go order is promised, and what it is asked before it is sent
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  key: const ValueKey('quote-times'),
-                  leading: const Icon(Icons.timer_outlined),
-                  title: const Text('Quote times'),
-                  subtitle: Text(_quotesSummary),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _quoteTimes,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('to-go-question'),
-                  leading: const Icon(Icons.shopping_bag_outlined),
-                  title: const Text('To-go question'),
-                  subtitle: Text(_bagSummary),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _bag == null ? null : _bagQuestion,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('kitchen-notes'),
-                  leading: const Icon(Icons.edit_note_outlined),
-                  title: const Text('Kitchen notes'),
-                  subtitle: Text(_kitchenNotesSummary),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _kitchenNotes == null ? null : _kitchenNotesList,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('waste-reasons'),
-                  leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('Waste reasons'),
-                  subtitle: Text(_wasteReasonsSummary),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _wasteReasons == null ? null : _wasteReasonsList,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              key: const ValueKey('table-timers'),
-              leading: const Icon(Icons.timelapse_outlined),
-              title: const Text('Table timers'),
-              subtitle: Text(_timersSummary),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _timers == null ? null : _tableTimers,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  key: const ValueKey('voids'),
-                  leading: const Icon(Icons.block_outlined),
-                  title: const Text('Voids'),
-                  subtitle: Text(_voidsSummary),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _voids == null ? null : _voidRules,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  key: const ValueKey('adjustments-report'),
-                  leading: const Icon(Icons.receipt_long_outlined),
-                  title: const Text('Voids and comps report'),
-                  subtitle: const Text('What came off the checks: by reason, by person and by manager'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => AdjustmentsScreen(api: widget.api, token: widget.token),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _clockCard(context),
-          const SizedBox(height: 12),
-          _printersCard(context),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.phone_in_talk_outlined),
-                    title: const Text('Desk phones'),
-                    subtitle: Text(_pbxLine),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                    child: Text(
-                      'A call taken on a linked phone opens the caller\'s order on that screen, as if the screen had '
-                      'taken the call. The device is the name that screen shows under Settings.',
-                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                    ),
-                  ),
-                  if (_phones.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                      child: Text('No desk phone is linked yet.', style: theme.textTheme.bodyMedium),
-                    ),
-                  for (var i = 0; i < _phones.length; i++) _phoneRow(context, i),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        key: const ValueKey('desk-add'),
-                        onPressed: _addPhone,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add phone'),
-                      ),
-                    ),
-                  ),
-                  if (_phonesMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                      child: Text(_phonesMessage!, style: TextStyle(color: scheme.error)),
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        FilledButton(
-                          key: const ValueKey('desk-phones-save'),
-                          onPressed: _phonesBusy ? null : _savePhones,
-                          child: const Text('Save'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          _facesCard(context),
-          const SizedBox(height: 12),
-          _handsFreeCard(context),
+            const SizedBox(height: 12),
+            _facesCard(context),
+            const SizedBox(height: 12),
+            _handsFreeCard(context),
+          ],
         ],
       );
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('Location settings')),
+      appBar: AppBar(title: Text(_may(settingsPower) ? 'Location settings' : 'Location')),
       body: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
       ),
     );
   }
+
+  /// What came off the checks, with the reports: in the voids' card for a manager, and with the other
+  /// reports for someone who reads the reports and does not see the settings.
+  Widget _adjustmentsRow(BuildContext context) => ListTile(
+    key: const ValueKey('adjustments-report'),
+    leading: const Icon(Icons.receipt_long_outlined),
+    title: const Text('Voids and comps report'),
+    subtitle: const Text('What came off the checks: by reason, by person and by manager'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AdjustmentsScreen(api: widget.api, token: widget.token),
+      ),
+    ),
+  );
+
+  /// The way to the hours: under the time clock's switches for a manager, by itself for someone who was
+  /// handed the hours and not the settings.
+  Widget _hoursRow(BuildContext context) => ListTile(
+    key: const ValueKey('time-clock-hours'),
+    leading: const Icon(Icons.schedule),
+    title: const Text('Hours'),
+    subtitle: const Text('Who is on the clock, what each person worked, and corrections'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TimeClockScreen(api: widget.api, token: widget.token, device: widget.device),
+      ),
+    ),
+  );
 
   /// The time clock: whether the location uses it (off until a manager turns it on), whether a break counts
   /// as time worked, the day the pay week starts on, and the way to the hours. Each saves as it is changed. A
@@ -1226,18 +1309,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               ),
             ),
           const Divider(height: 1),
-          ListTile(
-            key: const ValueKey('time-clock-hours'),
-            leading: const Icon(Icons.schedule),
-            title: const Text('Hours'),
-            subtitle: const Text('Who is on the clock, what each person worked, and corrections'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => TimeClockScreen(api: widget.api, token: widget.token, device: widget.device),
-              ),
-            ),
-          ),
+          _hoursRow(context),
         ],
       ),
     );

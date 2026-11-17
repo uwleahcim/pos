@@ -14,6 +14,7 @@ import '../moves.dart';
 import '../outbox.dart';
 import '../phone.dart';
 import '../photos.dart';
+import '../powers.dart';
 import '../print_relay.dart';
 import '../roster.dart';
 import '../session.dart';
@@ -325,6 +326,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _quotesStale = false;
     _quotesRead = now;
     unawaited(_readClockSetting());
+    unawaited(_readPowers());
     try {
       final quotes = await widget.api.quotes();
       if (!mounted || identical(quotes, _quotes)) return;
@@ -333,6 +335,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // nothing answers, or a hub with no quotes: the strip keeps what it showed
     }
+  }
+
+  /// Who may do what (docs/roles.md), for the entries of the menu: read with the quote times, when the hub
+  /// says a setting changed and now and then. When the table changed, so may have who takes tables and who
+  /// gives them out, and the staff list is read again.
+  Future<void> _readPowers() async {
+    final before = widget.api.powers.value;
+    final now = await widget.api.readPowers();
+    if (!mounted || now == before) return;
+    setState(() {});
+    unawaited(_readRoster());
   }
 
   /// The waitlist, for the count on its button: read when the hub says the list changed, and now and then
@@ -508,7 +521,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   /// A manager says the kitchen is behind, or that it has caught up: minutes on every new quote, on every
-  /// screen, until the night is over. Anyone may tap; the hub takes it from a manager's PIN only.
+  /// screen, until the night is over. The hub takes it from the PIN of a manager, or of someone the
+  /// location handed the rush to.
   Future<void> _rush() async {
     final token = await showDialog<String>(
       context: context,
@@ -517,6 +531,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         device: widget.settings.device,
         action: 'Set the rush',
         what: 'add minutes to the quotes',
+        power: 'rush',
       ),
     );
     if (token == null || !mounted) return;
@@ -727,8 +742,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ]);
   }
 
-  /// What a manager sets for the whole location (coursing, quote times), behind the manager PIN.
+  /// What a manager sets for the whole location (coursing, quote times) and reads of it (the day, the
+  /// sales), behind a PIN. The screen shows what the PIN's owner may open (docs/roles.md): everything to a
+  /// manager, and to anyone else what the location handed their role.
   Future<void> _location() async {
+    Set<String>? holds;
     final token = await showDialog<String>(
       context: context,
       builder: (_) => ManagerPinDialog(
@@ -736,6 +754,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
         device: widget.settings.device,
         action: 'Open location settings',
         what: 'change location settings',
+        power: null,
+        onPowers: (powers) => holds = powers,
       ),
     );
     if (token == null || !mounted) return;
@@ -744,6 +764,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         builder: (_) => LocationSettingsScreen(
           api: widget.api,
           token: token,
+          holds: holds,
           staffId: widget.session.staff?.staffId,
           device: widget.settings.device,
           camera: widget.camera,
@@ -1305,7 +1326,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         : dueFirst(checks.where((row) => inChip(chip, row.$1, now)), (row) => row.$1);
     final sorts = chip != null || checks.any((row) => row.$1.isTakeout && row.$1.isOpen);
     final showsTabs = tabsOnly || tabs.isNotEmpty;
-    final manages = const {'manager', 'owner'}.contains(widget.session.staff?.role);
+    // What the menu offers follows what the person signed in may do (docs/roles.md).
+    final powers = widget.api.powers.value;
+    final role = widget.session.staff?.role;
+    final manages = alwaysRoles.contains(role); // a manager finds a check of any day
     final rush = _quotes?.rush;
     // The waitlist: its button stands in the bar wherever there is room, and on a phone while a party is
     // waiting or for whoever gives tables out; everybody else on a phone finds it in the menu.
@@ -1327,11 +1351,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       ('Waste', Icons.delete_sweep_outlined, _waste),
-      if (const {'manager', 'owner'}.contains(widget.session.staff?.role) && (_quotes?.takesRush ?? false))
+      if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
-      if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
-        ('Location', Icons.storefront_outlined, _location),
-      if (const {'manager', 'owner'}.contains(widget.session.staff?.role))
+      if (powers.opensLocation(role)) ('Location', Icons.storefront_outlined, _location),
+      if (powers.holds(role, 'menu'))
         (
           'Menu editor',
           Icons.edit_note,

@@ -31,7 +31,7 @@ from ..identity.tags import sign_in_by_tag
 from ..identity.tokens import Grant
 from ..settings import SettingStore
 from ..timeclock import PUNCHES, ReadOnlyError, Refused, Shift, TimeClock
-from .auth import manager_from
+from .auth import holder_from
 
 WINDOW_MAX_MS = 400 * 86_400_000
 """The longest stretch one report reads: a little over a year."""
@@ -73,7 +73,7 @@ def add_time_clock(app: FastAPI) -> None:
         return settings.get("time_clock")
 
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "time_clock")
 
     def refused(err: Refused) -> HTTPException:
         status = 404 if err.code == "unknown_shift" else 422 if err.code.startswith("bad_") else 409

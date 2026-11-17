@@ -22,7 +22,6 @@ from typing import Any
 
 DISCOUNT_KINDS = ("percent", "amount", "comp")
 SCOPES = ("line", "check")
-APPROVERS = frozenset({"manager", "owner"})
 APPROVAL_TTL = 10 * 60
 """Seconds a manager's approval stays good for: long enough to finish the discount, not a whole shift."""
 

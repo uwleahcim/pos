@@ -3,7 +3,8 @@ can pick one from."""
 
 from __future__ import annotations
 
-from pos.identity.staff import ASSIGNS_TABLES, TAKES_TABLES, Directory, Staff, demo_directory, roster
+from pos.identity.powers import holds
+from pos.identity.staff import Directory, Staff, demo_directory, roster
 
 from .test_menu_orders import client, payload
 
@@ -40,7 +41,7 @@ def test_kitchen_and_cashier_neither_take_nor_give_tables():
         Directory([Staff.with_pin("k", "Wok", "kitchen", "1"), Staff.with_pin("c", "Till", "cashier", "2")])
     )
     assert all(not s["takes_tables"] and not s["assigns_tables"] for s in listed)
-    assert "host" in ASSIGNS_TABLES and "host" not in TAKES_TABLES
+    assert holds(None, "host", "assign_tables") and not holds(None, "host", "take_tables")
     assert any(s.role == "host" for s in demo_directory().all())  # the demo staff has one to try it with
 
 

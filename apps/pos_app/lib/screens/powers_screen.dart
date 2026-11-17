@@ -1,0 +1,215 @@
+import 'package:flutter/material.dart';
+
+import '../api.dart';
+import '../powers.dart';
+
+/// Who may do what (docs/roles.md): each power with the roles it is handed to, as buttons. A manager or an
+/// owner taps a role to hand it a power or to take it back, and saves; the hub holds it from then on, for
+/// every screen. Managers and owners hold every power always and have no buttons: nothing here can leave
+/// the location with nobody who may void a dish or open this screen.
+class PowersScreen extends StatefulWidget {
+  const PowersScreen({super.key, required this.api, required this.token, required this.powers});
+
+  final PosApi api;
+  final String token;
+
+  /// The table as the hub has it.
+  final Powers powers;
+
+  @override
+  State<PowersScreen> createState() => _PowersScreenState();
+}
+
+class _PowersScreenState extends State<PowersScreen> {
+  late Powers _now = widget.powers;
+  String? _message;
+  bool _busy = false;
+
+  /// How many buttons stand differently from the table as the hub has it.
+  int get _changes {
+    var count = 0;
+    for (final power in powersById.keys) {
+      final was = widget.powers.handedTo(power).toSet();
+      final now = _now.handedTo(power).toSet();
+      count += was.difference(now).length + now.difference(was).length;
+    }
+    return count;
+  }
+
+  /// The table as it started, before anybody changed it: what the standard one hands out, and no more.
+  Powers get _asItStarted =>
+      Powers({..._now.roles, for (final power in powersById.keys) power: Powers.standard.handedTo(power)});
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final saved = await widget.api.savePowers(widget.token, _now);
+      if (mounted) Navigator.of(context).pop(saved);
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = switch (err.status) {
+          401 => 'The PIN has run out. Go back and open Location again.',
+          403 => 'Only a manager or an owner changes who may do what.',
+          _ => err.detail?['message'] as String? ?? err.message,
+        };
+      });
+    }
+  }
+
+  Future<bool> _confirmLeave() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Leave without saving?'),
+        content: const Text('Your changes to who may do what are not saved.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep editing')),
+          FilledButton(
+            key: const ValueKey('powers-discard'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Discard changes'),
+          ),
+        ],
+      ),
+    );
+    return leave ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final changes = _changes;
+    final started = _now == _asItStarted;
+    return PopScope(
+      canPop: changes == 0,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final navigator = Navigator.of(context);
+        if (await _confirmLeave()) navigator.pop();
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Who may do what')),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              children: [
+                Text(
+                  'Managers and owners may do all of this, always. Tap a role to hand it a power, or to '
+                  'take it back.',
+                  key: const ValueKey('powers-intro'),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+                for (final group in powerGroups) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
+                    child: Text(group.name, style: theme.textTheme.titleSmall?.copyWith(color: scheme.primary)),
+                  ),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final (index, power) in group.powers.indexed) ...[
+                          if (index > 0) const Divider(height: 1),
+                          _row(context, power),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                // at the foot of the list, out of the way: it undoes every hand-out at once
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: TextButton.icon(
+                      key: const ValueKey('powers-reset'),
+                      onPressed: _busy || started ? null : () => setState(() => _now = _asItStarted),
+                      icon: const Icon(Icons.restart_alt),
+                      label: const Text('Put it back as it started'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_message != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      _message!,
+                      key: const ValueKey('powers-message'),
+                      style: TextStyle(color: scheme.error),
+                    ),
+                  ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    key: const ValueKey('powers-save'),
+                    onPressed: _busy || changes == 0 ? null : _save,
+                    child: Text(changes == 0 ? 'Save' : 'Save $changes ${changes == 1 ? 'change' : 'changes'}'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// One power: what it is, a line on what it lets a person do, and a button per role.
+  Widget _row(BuildContext context, Power power) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      key: ValueKey('power:${power.id}'),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(power.name, style: theme.textTheme.titleMedium),
+          Text(power.about, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              // a lit button is filled and ticked: who holds a power has to read at a glance
+              for (final role in handedRoles)
+                FilterChip(
+                  key: ValueKey('power:${power.id}:$role'),
+                  label: Text(roleLabel(role)),
+                  selected: _now.holds(role, power.id),
+                  showCheckmark: true,
+                  checkmarkColor: scheme.onPrimary,
+                  selectedColor: scheme.primary,
+                  labelStyle: _now.holds(role, power.id)
+                      ? theme.chipTheme.labelStyle?.copyWith(color: scheme.onPrimary, fontWeight: FontWeight.w700)
+                      : null,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onSelected: _busy ? null : (on) => setState(() => _now = _now.hand(power.id, role, on: on)),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}

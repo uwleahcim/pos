@@ -23,7 +23,7 @@ from ..identity.tokens import Grant
 from ..orders.day import day_report
 from ..printing.day import day_paper
 from ..printing.service import PrintService
-from .auth import manager_from
+from .auth import holder_from
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -37,7 +37,7 @@ class PrintDayIn(BaseModel):
 
 def add_day_report(app: FastAPI) -> None:
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "reports")
 
     def the_day(asked: str | None, now_ms: int) -> date:
         if asked is None:

@@ -24,9 +24,9 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from ..identity.powers import May, standard
 from ..identity.tokens import Tokens
 from ..sync.oplog import Op, OpStore, OrderState, apply
-from .adjustments import APPROVERS
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -37,11 +37,16 @@ HUB_ONLY = ("approval", "approved_by", "reason_name")
 
 
 def void_ops(
-    rules: Callable[[], Mapping[str, Any]], tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op]
+    rules: Callable[[], Mapping[str, Any]],
+    tokens: Tokens,
+    store: OpStore | PgOpStore,
+    ops: list[Op],
+    may: May = standard,
 ) -> tuple[list[Op], list[dict[str, Any]]]:
     """Check every new void of a sent dish against the location's void rules before it is stored. `rules`
-    reads them, and is asked only when a batch holds such a void. The operations earlier in the same batch
-    count: a dish added, sent and voided in one batch (a terminal back from an outage) is a sent dish."""
+    reads them, and is asked only when a batch holds such a void. `may` says whether a role holds the power
+    to approve one (`void`) at this location. The operations earlier in the same batch count: a dish added,
+    sent and voided in one batch (a terminal back from an outage) is a sent dish."""
     if not any(op.kind == "void_line" for op in ops):
         return ops, []
     in_place: dict[tuple[str, str], int] = {}  # (order, line) -> how many the line this batch puts in its place holds
@@ -65,7 +70,7 @@ def void_ops(
             if sent and in_place.get((op.order_id, line_id), 0) < line.qty:
                 if current is None:
                     current = rules()
-                problems = _problems(current, tokens, op, data)
+                problems = _problems(current, tokens, op, data, may)
                 if problems:
                     refused.append({"op_id": op.op_id, "error": "invalid_void", "problems": problems})
                     stays.add((op.order_id, line_id))
@@ -85,7 +90,7 @@ def void_ops(
     return kept, refused
 
 
-def _problems(rules: Mapping[str, Any], tokens: Tokens, op: Op, data: dict[str, Any]) -> list[dict[str, str]]:
+def _problems(rules: Mapping[str, Any], tokens: Tokens, op: Op, data: dict[str, Any], may: May) -> list[dict[str, str]]:
     """What stops this void of a sent dish; when nothing does, `data` gains what the hub adds to it: the
     reason's name as the location has it now and, when a manager approved, who."""
     problems = []
@@ -94,7 +99,7 @@ def _problems(rules: Mapping[str, Any], tokens: Tokens, op: Op, data: dict[str, 
         problems.append({"code": "unknown_reason", "message": "a void of a sent dish needs a reason from the list"})
     token = op.data.get("approval")
     grant = tokens.verify(token) if isinstance(token, str) else None
-    approved = grant is not None and grant.role in APPROVERS and grant.scope == f"void:{op.order_id}"
+    approved = grant is not None and grant.scope == f"void:{op.order_id}" and may(grant.role, "void")
     if rules.get("approval", "manager") != "none" and not approved:
         problems.append({"code": "needs_approval", "message": "a void of a sent dish needs a manager's PIN"})
     if problems:

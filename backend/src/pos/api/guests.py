@@ -25,7 +25,7 @@ from fastapi import FastAPI, Header, HTTPException
 from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
 from ..sync.oplog import phone_digits
-from .auth import manager_from
+from .auth import holder_from
 
 
 def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
@@ -33,7 +33,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
     app.state.visit_memo = memo
 
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "guests")
 
     def visits_of(entries: list[Any], now_ms: int) -> Any:
         """The visits among these orders that can count in the year the list reads."""

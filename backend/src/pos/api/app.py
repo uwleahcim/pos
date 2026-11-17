@@ -32,6 +32,7 @@ from ..devices import DevicesSeen
 from ..floor import FloorPlan, load_floor, table_status
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
+from ..identity.powers import May, clean_powers, holds, standard, table
 from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
@@ -39,7 +40,7 @@ from ..identity.tokens import Tokens
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
-from ..orders.adjustments import APPROVAL_TTL, APPROVERS, PricingRules, load_rules
+from ..orders.adjustments import APPROVAL_TTL, PricingRules, load_rules
 from ..orders.bag import bag_ops
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
@@ -86,7 +87,7 @@ from ..tax import TaxProfile, load_profile
 from ..timeclock import TimeClock, default_clock_store
 from ..waitlist import Waitlist, default_wait_store
 from ..waste import WasteLog, default_waste_store
-from .auth import manager_from
+from .auth import holder_from, manager_from, powers_of
 from .conditional import ConditionalGet
 from .day import add_day_report
 from .faces import add_face_signin
@@ -271,8 +272,9 @@ class PriceIn(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    """A manager's PIN on the spot, for one purpose on one order: a discount or a charge (`adjust`), the
-    void of a dish the kitchen already has (`void`), or marking the check tax exempt (`exempt`)."""
+    """A PIN on the spot, for one purpose on one order: a discount or a charge (`adjust`), the void of a dish
+    the kitchen already has (`void`), or marking the check tax exempt (`exempt`). A manager's, an owner's,
+    or that of anyone whose role the location handed that power to."""
 
     device: str
     pin: str
@@ -317,6 +319,13 @@ class VoidReasonIn(BaseModel):
 class BagChoiceIn(BaseModel):
     id: str | None = Field(None, description="left out for a choice new on the screen: the hub names it from the name")
     name: str
+
+
+class PowersIn(BaseModel):
+    """Who may do what: for each power named, the roles it is handed to besides the managers and the owners.
+    A power left out stays as it is."""
+
+    roles: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class KitchenNotesIn(BaseModel):
@@ -548,15 +557,17 @@ ADJUSTMENTS = frozenset({"discount", "remove_discount", "charge", "remove_charge
 
 
 def adjust_ops(
-    rules: PricingRules, tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op]
+    rules: PricingRules, tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op], may: May = standard
 ) -> tuple[list[Op], list[dict[str, Any]]]:
     """Check every new discount and charge against the location's rules before it is stored. A manager's
     approval travels as a token (`approval`, from POST /approvals, good for one order) and is swapped for
     `approved_by`, who it was, so the check and the reports name the manager; nothing a terminal says about
-    approval on its own is kept. An adjustment the rules refuse (an unknown reason, over its cap, no manager
-    when one is needed, a second discount on a dish that does not stack) is left out and reported with its
-    problems, like a refused line; the rest of the batch goes through. The line operations earlier in the
-    same batch count (a terminal back from an outage sends a void and a later discount together)."""
+    approval on its own is kept. `may` says whether a role holds the power to approve one (`adjust`) at this
+    location: a manager and an owner always, and whoever the location handed it to. An adjustment the rules
+    refuse (an unknown reason, over its cap, no manager when one is needed, a second discount on a dish that
+    does not stack) is left out and reported with its problems, like a refused line; the rest of the batch
+    goes through. The line operations earlier in the same batch count (a terminal back from an outage sends
+    a void and a later discount together)."""
     out: list[Op] = []
     refused: list[dict[str, Any]] = []
     active: dict[str, dict[str, dict[str, Any]]] = {}  # order -> live discounts by id, as this batch leaves them
@@ -572,7 +583,7 @@ def adjust_ops(
             continue
         data = {k: v for k, v in op.data.items() if k not in ("approval", "approved_by")}
         grant = tokens.verify(op.data["approval"]) if isinstance(op.data.get("approval"), str) else None
-        approved = grant is not None and grant.role in APPROVERS and grant.scope == f"adjust:{op.order_id}"
+        approved = grant is not None and grant.scope == f"adjust:{op.order_id}" and may(grant.role, "adjust")
         if grant is not None and approved:
             data["approved_by"] = {"staff_id": grant.staff_id, "name": grant.name}
         ident = data.get("discount_id" if op.kind.endswith("discount") else "charge_id")
@@ -909,6 +920,10 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
+    def may(role: str, power: str) -> bool:
+        """Whether a role holds a power at this location now (`pos/identity/powers.py`)."""
+        return holds(powers_of(app.state), role, power)
+
     @app.post("/orders/{order_id}/ops", status_code=202)
     def append_ops(order_id: str, ops: list[OpIn]) -> dict[str, Any]:
         store: OpStore | PgOpStore = app.state.store
@@ -924,9 +939,9 @@ def create_app(
         fresh, refused_moves = carry_ops(store, [op.to_op() for op in ops if op.op_id not in store])
         fresh, refused = price_lines(app.state.menu, fresh)
         refused = refused_moves + refused
-        fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh)
+        fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh, may)
         # a check marked tax exempt: a manager's PIN, the organisation and its certificate, before any money
-        fresh, refused_exemptions = exempt_ops(app.state.tokens, store, fresh)
+        fresh, refused_exemptions = exempt_ops(app.state.tokens, store, fresh, may)
         # what goes in the bag with a to-go order: the answer is tidied, or left out when it cannot be read
         fresh, refused_bags = bag_ops(fresh)
         refused += refused_exemptions + refused_bags
@@ -934,7 +949,7 @@ def create_app(
         # both sell the last one. While no dish has a number nothing is held and nothing is read.
         with app.state.menu.counting():
             fresh, refused_counts, taken = count_ops(app.state.menu, store, fresh)
-            fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh)
+            fresh, refused_adjustments = adjust_ops(app.state.pricing, app.state.tokens, store, fresh, may)
             fresh, refused_payments = pay_ops(fresh)
             fresh = number_orders(app.state.numbers, fresh)
             refused += refused_voids + refused_counts + refused_adjustments + refused_payments
@@ -1159,10 +1174,11 @@ def create_app(
 
     @app.put("/settings/rush")
     def write_rush(body: RushIn, authorization: str | None = Header(None)) -> dict[str, Any]:
-        """A manager says the kitchen is behind: `minutes` more on every quote made from now on, on every
-        terminal, until the night is over (four in the morning, the location's time); 0 takes it off. Orders
-        already promised keep their time. Answers with the quotes as `GET /settings/quotes` now gives them."""
-        manager = manager_from(app.state.tokens, authorization)
+        """A manager, or whoever holds the power `rush`, says the kitchen is behind: `minutes` more on every
+        quote made from now on, on every terminal, until the night is over (four in the morning, the
+        location's time); 0 takes it off. Orders already promised keep their time. Answers with the quotes as
+        `GET /settings/quotes` now gives them."""
+        manager = holder_from(app.state, authorization, "rush")
         until = int(localtime.night_end().timestamp() * 1000)
         write_setting("rush", body.model_dump(), lambda data: {**clean_rush(data), "until": until, "by": manager.name})
         return quotes_now()
@@ -1371,6 +1387,23 @@ def create_app(
         manager_from(app.state.tokens, authorization)
         return write_setting("kitchen_notes", body.model_dump(), clean_kitchen_notes)
 
+    @app.get("/settings/powers")
+    def read_powers() -> dict[str, Any]:
+        """Who may do what: `roles`, for each power the roles it is handed to; the `powers` in order with what
+        each is for; the roles a power can be `handed` to; and the ones that `always` hold every power (the
+        managers and the owners, whom no setting takes one from). Open like the other settings: a screen reads
+        it to show each person what they may open."""
+        return table(powers_of(app.state))
+
+    @app.put("/settings/powers")
+    def write_powers(body: PowersIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager or an owner hands powers to the other roles, or takes them back. Only they change this
+        table, whatever it says. It holds from the next call on: a session or an approval already given is
+        weighed against the table as it stands when it is used."""
+        manager_from(app.state.tokens, authorization)
+        current = app.state.settings.get("powers")["roles"]
+        return table(write_setting("powers", {"roles": {**current, **body.roles}}, clean_powers))
+
     # Desk phones: what the screens collect, and how the hub stands with the PBX ---------------------------------
     @app.get("/phones/answered")
     async def read_answered(
@@ -1498,8 +1531,11 @@ def create_app(
 
     @app.post("/approvals")
     def approve(body: ApprovalIn) -> dict[str, Any]:
-        """A manager's PIN for a discount or a charge on one order. The answer is a short-lived token the
-        terminal puts on the operation as `approval`; the hub records who it was, never the token."""
+        """A PIN on the spot for one thing on one order: a discount or a charge (`adjust`), the void of a sent
+        dish (`void`), marking the check tax exempt (`exempt`). A manager's or an owner's always, and that of
+        anyone whose role the location handed that power to (`GET /settings/powers`); 403 `not_allowed` for
+        anyone else. The answer is a short-lived token the terminal puts on the operation as `approval`; the
+        hub records who it was, never the token."""
         directory: Directory = app.state.staff
         try:
             found = directory.by_pin(body.pin, device=body.device)
@@ -1507,8 +1543,8 @@ def create_app(
             raise HTTPException(423, {"error": "locked", "seconds": round(err.seconds_left)}) from err
         if found is None:
             raise HTTPException(401, {"error": "unknown_credential"})
-        if found.role not in APPROVERS:
-            raise HTTPException(403, {"error": "not_allowed", "role": found.role})
+        if not holds(powers_of(app.state), found.role, body.purpose):
+            raise HTTPException(403, {"error": "not_allowed", "role": found.role, "power": body.purpose})
         token, grant = app.state.tokens.issue(
             found.staff_id, found.name, found.role, APPROVAL_TTL, scope=f"{body.purpose}:{body.order_id}"
         )
@@ -1708,10 +1744,12 @@ def create_app(
 
     @app.get("/staff")
     def read_staff() -> Response:
-        """The staff by name and role: who a table can be given to (`takes_tables`: the servers, bartenders and
-        managers) and who may seat a party for someone else or hand a table over (`assigns_tables`: the hosts
-        and managers). A server is given a table by opening it; a host picks the server as the party is sat."""
-        return polled({"staff": roster(app.state.staff)})
+        """The staff by name and role: who a table can be given to (`takes_tables`: to start the servers,
+        bartenders and managers) and who may seat a party for someone else or hand a table over
+        (`assigns_tables`: to start the hosts and managers). The location's table of powers says who it is
+        now (`GET /settings/powers`, `take_tables` and `assign_tables`). A server is given a table by opening
+        it; a host picks the server as the party is sat."""
+        return polled({"staff": roster(app.state.staff, powers_of(app.state))})
 
     @app.get("/staff/{staff_id}/preferences")
     def read_preferences(staff_id: str) -> dict[str, Any]:
