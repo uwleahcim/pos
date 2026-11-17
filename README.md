@@ -51,6 +51,10 @@ merges after any disconnect.
 - The waitlist (the parties waiting for a table in the order they came: name, guests, the wait they were
   told, a phone number and a note; the wait turns amber, then red; Seat brings up the floor map and the
   table tapped is theirs; tonight's list only, and no names kept after it): `docs/waitlist.md`
+- Who may do what (a table under Location where a manager or an owner hands any of fourteen powers to the
+  servers, bartenders, hosts, cashiers or the kitchen, or takes them back: approving a void or a comp, the
+  reports, the guest list, the hours, the menu; it starts as the rules always were, and a manager and an
+  owner always may do everything): `docs/roles.md`
 - Tax-exempt checks (a manager marks a check exempt from sales tax with their PIN; the organisation and its
   certificate number stay with the check, print on the bill and are listed in the day's report; every sale
   stays in the sales): `docs/tax-exempt.md`

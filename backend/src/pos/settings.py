@@ -59,6 +59,9 @@
 - `waste`: why food is written into the waste log (`reasons`, a list of short words in the order the buttons
   show, at least one): dropped, burnt, made wrong. An entry of the log carries the words themselves
   (`pos.waste`), so a reason can be reworded or dropped later.
+- `powers`: who may do what (`pos/identity/powers.py`): `roles`, for each power (approve a void, read the
+  sales, change the menu) the roles it is handed to besides the managers and the owners, who hold every
+  power always. To start it says what the hub did before the table could be changed.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -78,6 +81,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from .floor.plan import STAGES
+from .identity.powers import STANDARD as STANDARD_POWERS
 from .printing.ticket import AUTO, DIALECTS
 from .sync.pgstore import ReadOnlyError
 
@@ -139,6 +143,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
     "waste": {"reasons": STANDARD_WASTE_REASONS},
+    # Who may do what, as the hub did before the table could be changed: only a manager or an owner approves
+    # a void or a discount and opens the back office; servers and bartenders take tables, hosts give them out.
+    "powers": {"roles": STANDARD_POWERS},
 }
 WEEK_STARTS = ("mon", "sun")
 RUSH_MAX = 120

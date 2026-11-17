@@ -33,7 +33,7 @@ from .. import localtime
 from ..identity.tokens import Grant
 from ..orders.dishes import dishes_report
 from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, sales_reports, span_ms
-from .auth import manager_from
+from .auth import holder_from
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
 HOUR_MS = 3_600_000
@@ -44,7 +44,7 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
     app.state.sale_memo = memo
 
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "reports")
 
     def a_day(asked: str) -> date:
         try:

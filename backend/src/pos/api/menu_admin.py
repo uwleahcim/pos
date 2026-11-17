@@ -16,21 +16,22 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from ..identity.powers import held, holds, opens_back_office
 from ..identity.staff import Directory, Locked
 from ..identity.tokens import Grant, Tokens
 from ..menu import admin
 from ..menu.defs import Definitions, StaleMenu
 from ..menu.service import MenuService
 from ..menu.sheet import export_workbook, import_workbook
-from .auth import manager_from
+from .auth import holder_from, powers_of
 
-MENU_EDITORS = frozenset({"manager", "owner"})
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 class SessionIn(BaseModel):
     device: str
     pin: str
+    power: str | None = Field(None, max_length=40, description="what the session is opened for, e.g. `rush`")
 
 
 class ChangesIn(BaseModel):
@@ -51,7 +52,7 @@ def add_menu_admin(app: FastAPI) -> None:
     app.state.tokens = getattr(app.state, "tokens", None) or Tokens()
 
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "menu")
 
     def save(menu: MenuService, defs: Definitions, grant: Grant, revision: int | None) -> dict[str, Any]:
         checked = _checked(defs)
@@ -69,7 +70,10 @@ def add_menu_admin(app: FastAPI) -> None:
 
     @app.post("/admin/session")
     def start_session(body: SessionIn) -> dict[str, Any]:
-        """A manager's PIN for a token the editor sends with each call. Lasts an hour."""
+        """A PIN for a token the back office sends with each call. Lasts an hour. A manager's or an owner's
+        always; anyone else's when their role holds `power` at this location (`GET /settings/powers`), or,
+        with no `power` named, anything the back office is for. The answer says which `powers` they hold, so
+        a screen shows them only what they may open. Each call weighs the token against the table again."""
         directory: Directory = app.state.staff
         try:
             found = directory.by_pin(body.pin, device=body.device)
@@ -77,8 +81,10 @@ def add_menu_admin(app: FastAPI) -> None:
             raise HTTPException(423, {"error": "locked", "seconds": round(err.seconds_left)}) from err
         if found is None:
             raise HTTPException(401, {"error": "unknown_credential"})
-        if found.role not in MENU_EDITORS:
-            raise HTTPException(403, {"error": "not_allowed", "role": found.role})
+        powers = powers_of(app.state)
+        allowed = opens_back_office(powers, found.role) if body.power is None else holds(powers, found.role, body.power)
+        if not allowed:
+            raise HTTPException(403, {"error": "not_allowed", "role": found.role, "power": body.power})
         token, grant = app.state.tokens.issue(found.staff_id, found.name, found.role)
         return {
             "token": token,
@@ -86,6 +92,7 @@ def add_menu_admin(app: FastAPI) -> None:
             "name": grant.name,
             "role": grant.role,
             "expires": grant.expires,
+            "powers": held(powers, grant.role),
         }
 
     @app.get("/admin/menu")

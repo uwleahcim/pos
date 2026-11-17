@@ -30,11 +30,12 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .. import localtime
+from ..identity.powers import holds
 from ..identity.staff import Directory
 from ..settings import WASTE_REASON_MAX, WASTE_REASONS_MAX, SettingStore, clean_waste
 from ..sync.pgstore import ReadOnlyError as SettingsReadOnly
 from ..waste import MAX_DAYS, NAME_MAX, NOTE_MAX, QTY_MAX, ReadOnlyError, Refused, WasteLog
-from .auth import MANAGERS, manager_from
+from .auth import holder_from, manager_from, powers_of
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -146,7 +147,7 @@ def add_waste_log(app: FastAPI) -> None:
         token = (authorization or "").removeprefix("Bearer ").strip()
         grant = app.state.tokens.verify(token) if token else None
         try:
-            if grant is not None and grant.role in MANAGERS:
+            if grant is not None and holds(powers_of(app.state), grant.role, "waste"):
                 entry = log().strike(entry_id, by_id=grant.staff_id, by=grant.name, manager=True)
             else:
                 staff_id, staff_name = known(body.staff_id)
@@ -164,7 +165,7 @@ def add_waste_log(app: FastAPI) -> None:
         authorization: str | None = Header(None),
     ) -> dict[str, Any]:
         """The waste of a span of days added up by day, by reason and by dish."""
-        manager_from(app.state.tokens, authorization)
+        holder_from(app.state, authorization, "waste")
         if first is None and last is None:
             today = localtime.service_day_of(log().now_ms())
             span = (today, today)

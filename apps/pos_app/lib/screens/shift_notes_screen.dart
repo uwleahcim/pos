@@ -45,7 +45,7 @@ class _ShiftNotesScreenState extends State<ShiftNotesScreen> {
   bool _old = false; // the hub is older than the notes
   int _asked = 0;
 
-  bool get _mayManage => _token != null || const {'manager', 'owner'}.contains(widget.staff?.role);
+  bool get _mayManage => _token != null || widget.api.powers.value.holds(widget.staff?.role, 'notes');
   DateTime get _now => widget.now?.call() ?? DateTime.now();
 
   @override
@@ -108,6 +108,7 @@ class _ShiftNotesScreenState extends State<ShiftNotesScreen> {
         device: widget.device,
         action: 'Change the notes',
         what: 'write or change the notes',
+        power: 'notes',
       ),
     );
     if (token == null || !mounted) return false;

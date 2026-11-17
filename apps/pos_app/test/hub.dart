@@ -11,6 +11,7 @@ import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
+import 'package:pos_app/powers.dart';
 import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
@@ -240,6 +241,33 @@ class Hub {
   int? refuseNotes;
   int? refuseNotesSeen;
   (int, String, String)? refuseNote;
+
+  /// Who may do what (docs/roles.md). [powers] is the table `GET /settings/powers` answers, for each power
+  /// the roles it is handed to; null is a hub older than the table, where only Mike's PIN opens or approves
+  /// anything. `PUT` lays the powers it names over it ([powersAuth] keeps its token; only Mike's is taken;
+  /// [refusePowers] answers 422 with these words instead). [people] are the staff the pretend hub knows by
+  /// PIN: `POST /admin/session` gives each a token of their own (`tok-admin` for Mike, `tok-<id>` for the
+  /// rest) when the table hands their role the `power` asked for, or with none asked anything a session is
+  /// for, and says which powers they hold ([sessionsFor] keeps each `power` asked); `POST /approvals` takes
+  /// their PIN by the same table.
+  Map<String, List<String>>? powers = {for (final id in powersById.keys) id: Powers.standard.handedTo(id)};
+  String? powersAuth;
+  String? refusePowers;
+  final sessionsFor = <String?>[];
+  static const people = {
+    '9999': ('s3', 'Mike', 'manager'),
+    '1111': ('s1', 'Amy', 'server'),
+    '2222': ('s2', 'Ben', 'bartender'),
+    '3333': ('s4', 'Holly', 'host'),
+  };
+
+  /// What a role holds by [powers], as the hub lists it with a session: every power for a manager, and the
+  /// settings after them.
+  List<String> heldBy(String role) => [
+    for (final id in powersById.keys)
+      if (Powers(powers ?? Powers.standard.roles).holds(role, id)) id,
+    if (alwaysRoles.contains(role)) settingsPower,
+  ];
 
   /// The waste log (docs/waste-log.md). [waste] holds today's entries, the newest first; null is a hub older
   /// than the log. `GET /waste` answers them with [wasteReasons]. `POST /waste` writes one at the top by
@@ -1801,15 +1829,46 @@ class Hub {
             for (final device in devices) {'device': device, 'seen_ms': 1730000000000},
           ],
         });
+      case '/settings/powers':
+        if (powers == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          powersAuth = request.headers['authorization'];
+          if (powersAuth != 'Bearer tok-admin') {
+            return json({
+              'detail': {'error': 'not_allowed', 'power': 'settings'},
+            }, powersAuth == null ? 401 : 403);
+          }
+          if (refusePowers != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refusePowers},
+            }, 422);
+          }
+          final named = (jsonDecode(request.body) as Map<String, dynamic>)['roles'] as Map<String, dynamic>;
+          powers = {...powers!, for (final entry in named.entries) entry.key: List<String>.from(entry.value as List)};
+        }
+        return json({'roles': powers, 'handed': handedRoles, 'always': alwaysRoles.toList()});
       case '/admin/session':
-        final pin = (jsonDecode(request.body) as Map)['pin'] as String;
+        final body = jsonDecode(request.body) as Map;
+        final pin = body['pin'] as String;
         pins.add(pin);
-        if (pin != '9999') {
+        final power = body['power'] as String?;
+        sessionsFor.add(power);
+        // a PIN the pretend hub does not know is nobody's it lets in, as it always was
+        final (id, name, role) = people[pin] ?? ('', '', 'nobody');
+        final held = heldBy(role);
+        final allowed = power == null ? held.any({...sessionPowers, settingsPower}.contains) : held.contains(power);
+        if (powers == null ? pin != '9999' : !allowed) {
           return json({
-            'detail': {'error': 'not_allowed'},
+            'detail': {'error': 'not_allowed', 'role': role, 'power': ?power},
           }, 403);
         }
-        return json({'token': 'tok-admin', 'name': 'Mike', 'role': 'manager'});
+        return json({
+          'token': pin == '9999' ? 'tok-admin' : 'tok-$id',
+          'staff_id': id,
+          'name': name,
+          'role': role,
+          if (powers != null) 'powers': held,
+        });
       case '/floor':
         return json(floor ?? fixture('floor'));
       case '/menu':
@@ -1845,22 +1904,19 @@ class Hub {
         photosPut.add(photo);
         return json({'photo_id': photo['photo_id'], 'bytes': 7}, 202);
       case '/approvals':
-        // a manager's PIN for a discount on one order: Mike (9999) approves, anyone else is no manager
+        // a PIN for a discount on one order: Mike (9999) approves, and whoever the table hands the purpose
+        // to; anyone else is no manager
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         pins.add(body['pin'] as String);
-        purposes.add(body['purpose'] as String? ?? 'adjust');
-        if (body['pin'] != '9999') {
+        final purpose = body['purpose'] as String? ?? 'adjust';
+        purposes.add(purpose);
+        final (id, name, role) = people[body['pin']] ?? ('s1', 'Amy', 'server');
+        if (!people.containsKey(body['pin']) || !heldBy(role).contains(purpose)) {
           return json({
-            'detail': {'error': 'not_allowed', 'role': 'server'},
+            'detail': {'error': 'not_allowed', 'role': role, 'power': purpose},
           }, 403);
         }
-        return json({
-          'approval': 'tok-${body['order_id']}',
-          'staff_id': 's3',
-          'name': 'Mike',
-          'role': 'manager',
-          'expires': 1,
-        });
+        return json({'approval': 'tok-${body['order_id']}', 'staff_id': id, 'name': name, 'role': role, 'expires': 1});
     }
     return json({'revision': 0});
   }

@@ -436,7 +436,8 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<void> _add(ChosenLine line) => _append('add_line', _lineData(line, seat: _seat, course: _course));
 
   /// The check's whole history, for a manager (docs/check-history.md): every step, who did it, at which
-  /// screen and when. Anyone may ask; the hub tells it to a manager's PIN only.
+  /// screen and when. Anyone may ask; the hub tells it to the PIN of a manager, or of someone the location
+  /// handed the history to (docs/roles.md).
   Future<void> _history() async {
     final token = await showDialog<String>(
       context: context,
@@ -445,6 +446,7 @@ class _OrderScreenState extends State<OrderScreen> {
         device: widget.api.settings.device,
         action: 'Show the history',
         what: "read a check's history",
+        power: 'history',
       ),
     );
     if (token == null || !mounted) return;

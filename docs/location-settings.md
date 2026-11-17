@@ -7,8 +7,10 @@ and edited only with a manager's session token.
 
 ## Where
 
-Orders screen › **Location** (managers and owners only, the manager PIN again, like the menu editor). The
-screen holds:
+Orders screen › **Location** (the manager PIN again, like the menu editor). The settings are a manager's
+and an owner's, always. The reports, the guest list, the waste log, the notes, the log and the hours can be
+handed to other roles under **Who may do what** (see `roles.md`); whoever was handed one finds Location in
+the menu, and behind their own PIN only the rows they may open. The screen holds:
 
 - **Sold out and running low**, first, because it is what a manager looks at during service: how many
   dishes are sold out and how many have a number left, and the list of them with the fewest left at the top
@@ -27,6 +29,9 @@ screen holds:
   a setting either.
 - **Manager's log**, under it: what happened in a shift, by subject, for the next manager (see
   `shift-notes.md`).
+- **Who may do what**: which roles besides the managers and the owners may approve a void, a discount or a
+  tax-exempt check, read the reports and the rest: fourteen powers, each with a button per role (see
+  `roles.md`).
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

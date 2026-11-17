@@ -2,7 +2,9 @@
 
 Taking a dish off after the kitchen has it is money leaving the register after the food was made. Since
 2026-11-15 it takes a reason, by default a manager's PIN, and it shows in a report. The rules are a location
-setting on the hub; the app asks first and the hub refuses anything the rules do not allow.
+setting on the hub; the app asks first and the hub refuses anything the rules do not allow. Whose PIN it
+takes besides a manager's and an owner's is the power "Approve a void" under Location › Who may do what
+(`roles.md`): nobody else's, until the location hands it out.
 
 **A dish the kitchen has not seen is not a void.** It comes off the check with nothing asked, as before
 (the log keeps it as `removed`), and the report lists it under "Taken off before sending" (see "The

@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from ..identity.staff import Directory
 from ..identity.tokens import Grant
 from ..notes import ReadOnlyError, Refused, ShiftNotes
-from .auth import manager_from
+from .auth import holder_from
 
 
 class NoteIn(BaseModel):
@@ -60,7 +60,10 @@ def add_shift_notes(app: FastAPI) -> None:
         return app.state.notes
 
     def manager(authorization: str | None) -> Grant:
-        return manager_from(app.state.tokens, authorization)
+        return holder_from(app.state, authorization, "notes")
+
+    def keeper(authorization: str | None) -> Grant:
+        return holder_from(app.state, authorization, "logbook")
 
     def refused(err: Refused) -> HTTPException:
         status = 404 if err.code.startswith("unknown_") else 409 if err.code in ("too_many", "ended") else 422
@@ -146,7 +149,7 @@ def add_shift_notes(app: FastAPI) -> None:
         authorization: str | None = Header(None),
     ) -> dict[str, Any]:
         """The manager's log, the newest entry first, by subject, with a search."""
-        manager(authorization)
+        keeper(authorization)
         try:
             return notes().log_read(subject=subject or None, q=q, before=before or None, limit=limit)
         except Refused as err:
@@ -155,7 +158,7 @@ def add_shift_notes(app: FastAPI) -> None:
     @app.post("/logbook")
     def write_entry(body: EntryIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager writes an entry in the log."""
-        grant = manager(authorization)
+        grant = keeper(authorization)
         try:
             entry = notes().log_write(body.subject, body.text, by_id=grant.staff_id, by=grant.name, device=body.device)
         except Refused as err:
@@ -167,7 +170,7 @@ def add_shift_notes(app: FastAPI) -> None:
     @app.post("/logbook/{entry_id}/strike")
     def strike_entry(entry_id: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager strikes an entry out. It stays in the log, readable."""
-        grant = manager(authorization)
+        grant = keeper(authorization)
         try:
             entry = notes().log_strike(entry_id, by=grant.name)
         except Refused as err:

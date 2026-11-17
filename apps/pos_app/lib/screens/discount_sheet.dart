@@ -308,8 +308,9 @@ class _DiscountSheetState extends State<DiscountSheet> {
   }
 }
 
-/// A manager's PIN on the spot, for one discount or charge on one order (`POST /approvals`). Pops the
-/// approval token the operation carries; the hub records who the manager was, never the token.
+/// A PIN on the spot, for one discount or charge on one order (`POST /approvals`): a manager's, or that of
+/// someone the location handed the approval to (docs/roles.md). Pops the approval token the operation
+/// carries; the hub records who approved, never the token.
 class ApprovalDialog extends StatefulWidget {
   const ApprovalDialog({
     super.key,
@@ -369,7 +370,7 @@ class _ApprovalDialogState extends State<ApprovalDialog> {
         _pin.clear();
         _message = switch (err.status) {
           401 => 'Wrong PIN',
-          403 => 'Only a manager can approve this',
+          403 => 'Only ${widget.api.powers.value.whose(widget.purpose)} can approve this',
           423 => 'Too many tries. Wait a minute.',
           _ => err.message,
         };
@@ -379,14 +380,14 @@ class _ApprovalDialogState extends State<ApprovalDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Manager PIN'),
+    title: Text(widget.api.powers.value.pinTitle(widget.purpose)),
     content: SizedBox(
       width: 280,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${widget.what} needs a manager.'),
+          Text('${widget.what} needs ${widget.api.powers.value.whose(widget.purpose)}.'),
           const SizedBox(height: 10),
           TextField(
             key: const ValueKey('approval-pin'),
@@ -394,7 +395,7 @@ class _ApprovalDialogState extends State<ApprovalDialog> {
             autofocus: true,
             obscureText: true,
             keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'PIN', errorText: _message),
+            decoration: InputDecoration(labelText: 'PIN', errorText: _message, errorMaxLines: 3),
             onSubmitted: (_) => _submit(),
           ),
         ],

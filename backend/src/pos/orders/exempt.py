@@ -26,9 +26,9 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from ..identity.powers import May, standard
 from ..identity.tokens import Tokens
 from ..sync.oplog import ORDER_FIELDS, Op, OpStore, OrderState, apply
-from .adjustments import APPROVERS
 
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
@@ -64,7 +64,9 @@ def exemption_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def exempt_ops(tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
+def exempt_ops(
+    tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op], may: May = standard
+) -> tuple[list[Op], list[dict[str, Any]]]:
     """Check every new mark of a check as tax exempt before it is stored. A mark the rules refuse is left
     out and reported with its problems, like a refused discount; whatever else its operation says of the
     order (a `create` with its table and guests) goes through without it. The operations earlier in the
@@ -80,7 +82,7 @@ def exempt_ops(tokens: Tokens, store: OpStore | PgOpStore, ops: list[Op]) -> tup
             state = states[op.order_id] = store.state(op.order_id)
         if _marks(op):
             data = {k: v for k, v in op.data.items() if k not in HUB_ONLY}
-            problems = _problems(tokens, state, op, data)
+            problems = _problems(tokens, state, op, data, may)
             if problems:
                 refused.append({"op_id": op.op_id, "error": "invalid_exemption", "problems": problems})
                 del data[FIELD]
@@ -99,7 +101,7 @@ def _marks(op: Op) -> bool:
     return op.kind in ("create", "set_field") and FIELD in op.data
 
 
-def _problems(tokens: Tokens, state: OrderState, op: Op, data: dict[str, Any]) -> list[dict[str, str]]:
+def _problems(tokens: Tokens, state: OrderState, op: Op, data: dict[str, Any], may: May) -> list[dict[str, str]]:
     """What stops this mark; when nothing does, `data` holds the mark as the hub writes it: the two things
     typed, who marked it and when, and the manager who approved."""
     wanted = data[FIELD]
@@ -125,7 +127,7 @@ def _problems(tokens: Tokens, state: OrderState, op: Op, data: dict[str, Any]) -
         problems.append({"code": "paid", "message": message})
     token = op.data.get("approval")
     grant = tokens.verify(token) if isinstance(token, str) else None
-    if grant is None or grant.role not in APPROVERS or grant.scope != f"exempt:{op.order_id}":
+    if grant is None or grant.scope != f"exempt:{op.order_id}" or not may(grant.role, "exempt"):
         problems.append({"code": "needs_approval", "message": "Marking a check tax exempt needs a manager's PIN."})
     if problems or grant is None:
         return problems

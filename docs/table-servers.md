@@ -68,7 +68,9 @@ way you left it on whichever device you sign in on next. It changes nothing for 
 
 ## Who is who
 
-The hub decides who takes tables and who gives them out, by each person's role:
+The hub decides who takes tables and who gives them out, by each person's role. This is how it starts; a
+manager or an owner can change it for the servers, bartenders, hosts, cashiers and the kitchen under
+Location › **Who may do what** (the powers "Take tables" and "Give tables out", see [roles.md](roles.md)):
 
 | Role | Takes tables | Gives tables out |
 | --- | --- | --- |

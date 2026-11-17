@@ -24,7 +24,9 @@ Tap **Discount** on an open check.
    the same dish, or over the whole check on top of one, is refused unless both reasons stack.
 4. **Manager PIN.** For a reason that needs one, the manager types their PIN on the spot. The PIN is
    checked by the hub (five misses lock the terminal for a minute, as at sign-in); the check and the
-   reports then name the manager. A server's PIN is refused.
+   reports then name the manager. A server's PIN is refused, unless the location handed the servers
+   "Approve a discount or a comp" under Location › Who may do what (`roles.md`); the box then says whose
+   PIN it takes.
 
 At the foot of the sheet, under "Sales tax", **Tax exempt** marks the whole check exempt from sales tax for
 an organisation with a certificate, with a manager's PIN (`tax-exempt.md`).
