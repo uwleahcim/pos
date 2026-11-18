@@ -28,6 +28,7 @@ import '../takeout.dart';
 import '../to_go_stages.dart';
 import '../reservations.dart' show Booking;
 import '../waitlist.dart';
+import 'booked_table_dialog.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
@@ -1025,6 +1026,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final there = plan.checksAt(to.id);
     var queue = moveTableOps(checks.map((check) => check.orderId), to.id, by: staff);
     var merged = false;
+    if (there.isEmpty) {
+      final go = await _bookedOk(plan, to, go: 'Move ${from.label} here');
+      if (go != true || !mounted) return; // still moving: another table can be tapped
+    }
     if (there.isNotEmpty) {
       // both sides as they stand, with what this screen has yet to send: one check means every dish moves
       Future<Order> read(String id) async => withLocalOps(await widget.api.order(id), widget.outbox.localOps(id));
@@ -1134,12 +1139,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// its size filled in: how many guests, and for a host or manager whose table it is; a server who seats
   /// it takes the check. A table that is seated asks whether the party joins it: its guests are added to that
   /// table's check, and no new check is opened. Either way the list is told where the party sat.
-  Future<void> _seatPartyAt(FloorPlan plan, TableSpot to) async {
+  ///
+  /// A free table that is booked for somebody else asks first ([_bookedOk]); with [warned], it has asked
+  /// already.
+  Future<void> _seatPartyAt(FloorPlan plan, TableSpot to, {bool warned = false}) async {
     final party = _seatingParty;
     if (party == null) return;
     final staff = widget.session.staff;
     final there = plan.checksAt(to.id);
     if (there.isEmpty) {
+      if (!warned) {
+        final go = await _bookedOk(plan, to, go: 'Seat ${party.name} here', but: party is Booking ? party.id : null);
+        if (go != true || !mounted) return; // still seating: another table can be tapped
+      }
       final roster = await _rosterNow();
       if (!mounted) return;
       final assigns = roster.assigns(staff?.staffId);
@@ -1198,6 +1210,31 @@ class _OrdersScreenState extends State<OrdersScreen> {
     await _partySeated(party, to, first.orderId, done: '${party.name} joined ${to.label}');
   }
 
+  /// A free table that is booked asks before somebody sits down there or a check is moved to it
+  /// (docs/reservations.md): who it is kept for and for when. It warns, and refuses nothing. [go] is what
+  /// going on is called; [but] is the reservation of the party being seated, whose own table needs no
+  /// question. Answers `true` to go on, which a table nobody is waiting for answers without asking; a
+  /// [TableHold] to seat that reservation's party instead (offered with [seats]); null to leave the table
+  /// alone.
+  Future<Object?> _bookedOk(
+    FloorPlan plan,
+    TableSpot table, {
+    required String go,
+    bool seats = false,
+    String? but,
+  }) async {
+    final now = widget.api.nowMs();
+    final holds = [
+      for (final hold in plan.keptAt(table.id, now))
+        if (hold.id != but) hold,
+    ];
+    if (holds.isEmpty) return true;
+    return showDialog<Object>(
+      context: context,
+      builder: (_) => BookedTableDialog(table: table, holds: holds, nowMs: now, go: go, seats: seats),
+    );
+  }
+
   /// Tells the list that [party] sat down at [at], on the check [orderId]. The check is opened whatever the
   /// list answers: the guests are at the table. A list that cannot be told keeps the party, and says so.
   /// [done] is what to say when all went well; nothing when the screen shows it anyway (the check opens, or
@@ -1210,6 +1247,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     try {
       if (party is Booking) {
         final book = await widget.api.seatBooking(staff.staffId, party.id, table: at.id, orderId: orderId);
+        unawaited(_floorKey.currentState?.refresh()); // the table is no longer kept for them
         final sat = book.booking;
         // another screen sat them first: the book keeps where that screen put them
         words = sat != null && sat.seatedTable.isNotEmpty && sat.seatedTable != at.id
@@ -1249,6 +1287,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     List<OrderOps> queue;
     var merged = false;
     if (there.isEmpty) {
+      final go = await _bookedOk(plan, to, go: 'Seat ${tab.tabLabel} here');
+      if (go != true || !mounted) return; // still seating: another table can be tapped
       final roster = await _rosterNow();
       if (!mounted) return;
       final assigns = roster.assigns(staff?.staffId);
@@ -1395,6 +1435,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
       );
       if (picked == null || !mounted) return;
       if (picked.isNotEmpty) return _open(picked);
+    }
+    if (checks.isEmpty) {
+      // A table kept for a reservation asks first; the party walking in may be the one it is booked for.
+      final go = await _bookedOk(plan, table, go: 'Seat a walk-in', seats: true);
+      if (go == null || !mounted) return;
+      if (go is TableHold) {
+        setState(() => _seatingParty = Booking.ofHold(go, table));
+        return _seatPartyAt(plan, table, warned: true);
+      }
     }
     // A server takes a table by opening it. A host or manager says whose it is as they seat the party.
     final roster = await _rosterNow();

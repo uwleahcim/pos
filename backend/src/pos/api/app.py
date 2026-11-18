@@ -1210,7 +1210,11 @@ def create_app(
         A check with dishes the kitchen marked made that have not gone out says how many (`ready`) and when the
         last of them was made (`ready_ms`), for the mark that tells a server the food is up; how long the map
         shows it is the map's to say.
-        Nothing here moves with the clock: an answer stays the same until an order or a setting changes."""
+        `holds` are the tables booked for today: under each table's id, the reservations still standing that
+        hold it, the earliest first, each with its `name`, `size` and `time` and the moments the map counts
+        against (`pos.reservations.Booking.as_hold`); a table nobody booked is not in it.
+        Nothing here moves with the clock: an answer stays the same until an order, a setting or the
+        reservation book changes (and when a new day of service begins)."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
@@ -1228,6 +1232,7 @@ def create_app(
                     ready=lambda state: ready_of(state, skips=app.state.printing.skips),
                 ),
                 "moves": True,  # a table's check can move and merge here (pos.orders.moves)
+                "holds": app.state.reservations.holds(),
                 "cursor": store.cursor,
             }
         )

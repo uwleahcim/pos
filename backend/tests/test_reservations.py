@@ -389,6 +389,80 @@ def test_two_reservations_of_one_table_close_together_are_told_about_each_other(
     assert all(b["clash"] is None for b in read(c)["booked"])
 
 
+def held(c: TestClient) -> dict[str, list[str]]:
+    """The tables the floor map is told are held, each with whose they are."""
+    return {table: [hold["name"] for hold in holds] for table, holds in c.get("/floor").json()["holds"].items()}
+
+
+def test_the_floor_map_is_told_which_tables_are_held_today():
+    c, wall = hub()
+    assert c.get("/floor").json()["holds"] == {}
+    chen = add(c, "Chen", 4, "18:30", table="A7", phone="781 555 0101", note="booth by the window")
+    hold = c.get("/floor").json()["holds"]["A7"][0]
+    # whose it is and for when, and the moments the map counts against: an hour and a half before (somebody
+    # sat there then would still be eating), a quarter before, a quarter after, an hour and a half after
+    assert hold == {
+        "id": chen["id"],
+        "name": "Chen",
+        "size": 4,
+        "at_ms": at(18, 30),
+        "time": "18:30",
+        "arrived_ms": None,
+        "held_ms": at(17),
+        "soon_ms": at(18, 15),
+        "late_ms": at(18, 45),
+        "until_ms": at(20),
+    }
+    assert at(18, 30) - hold["held_ms"] == hold["until_ms"] - at(18, 30) == HOLD_MIN * MINUTE
+    # the guest's number and the note stay in the book
+    assert "781" not in str(hold) and "booth" not in str(hold)
+    # two of one table stand in the order of their times; no table held, and another day, are not on the map
+    okafor = add(c, "Okafor", 6, "17:00", table="A7")
+    add(c, "Garcia", 2, "19:00")
+    add(c, "Silva", 2, "18:00", table="B5")
+    add(c, "Weekend", 2, "18:00", day=SAT, table="A8")
+    assert held(c) == {"A7": ["Okafor", "Chen"], "B5": ["Silva"]}
+    # a party that is here says so
+    wall.now = at(18, 20)
+    c.post(f"/reservations/{chen['id']}/arrived", json=WHO)
+    assert c.get("/floor").json()["holds"]["A7"][1]["arrived_ms"] == at(18, 20)
+    # one that sat down (wherever), was called off or did not show holds nothing; put back, it holds again
+    c.post(f"/reservations/{chen['id']}/seat", json={**WHO, "table": "A8", "order_id": "o-1"})
+    assert held(c) == {"A7": ["Okafor"], "B5": ["Silva"]}
+    c.post(f"/reservations/{okafor['id']}/cancel", json={**WHO, "why": "no_show"})
+    assert held(c) == {"B5": ["Silva"]}
+    c.post(f"/reservations/{okafor['id']}/back", json=WHO)
+    assert held(c) == {"A7": ["Okafor"], "B5": ["Silva"]}
+    # moved to another table, the hold moves with it
+    c.put(
+        f"/reservations/{okafor['id']}",
+        json={**WHO, "name": "Okafor", "size": 6, "day": MON, "time": "17:00", "table": "A1"},
+    )
+    assert held(c) == {"A1": ["Okafor"], "B5": ["Silva"]}
+
+
+def test_the_floor_reads_the_same_until_the_book_changes_or_the_day_does():
+    c, wall = hub()
+    add(c, "Chen", 4, "18:30", table="A7")
+    add(c, "Weekend", 2, "18:00", day=TUE, table="A8")
+    first = c.get("/floor")
+    etag = first.headers["etag"]
+    # the afternoon goes by, the table's time comes and passes: nothing the hub says changes, so a screen
+    # that asks again is told it has it
+    for now in (at(17), at(18, 20), at(18, 50), at(23, 30)):
+        wall.now = now
+        assert c.get("/floor", headers={"If-None-Match": etag}).status_code == 304
+    # a change to the book is a change to the floor
+    add(c, "Garcia", 2, "19:00", table="B5")
+    again = c.get("/floor", headers={"If-None-Match": etag})
+    assert again.status_code == 200 and set(again.json()["holds"]) == {"A7", "B5"}
+    # half past midnight is still Monday's service; after four it is Tuesday, and Tuesday's tables are held
+    wall.now = at(0, 30, day=17)
+    assert set(c.get("/floor").json()["holds"]) == {"A7", "B5"}
+    wall.now = at(5, day=17)
+    assert held(c) == {"A8": ["Weekend"]}
+
+
 def test_a_day_that_is_over_is_only_read_and_its_names_are_not_kept_for_ever():
     store = BookStore()
     book, wall = book_at(at(15), store)
@@ -486,6 +560,7 @@ def test_the_book_is_kept_in_postgres():
         again = PgBookStore(DSN)  # another process: the hub after a restart
         try:
             later, wall2 = book_at(at(19, 5), again)
+            assert {table: [h["name"] for h in holds] for table, holds in later.holds().items()} == {"A7": ["Okafor"]}
             told = later.book()
             assert [(b["name"], b["size"], b["time"], b["table"]) for b in told["booked"]] == [
                 ("Okafor", 7, "20:00", "A7")

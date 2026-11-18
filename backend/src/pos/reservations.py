@@ -125,6 +125,24 @@ class Booking:
             "ended_by": self.ended_by,
         }
 
+    def as_hold(self) -> dict[str, Any]:
+        """What the floor map is told of a reservation that holds a table: whose it is, how many and for
+        when, whether the party is here, and the moments the map counts against. The table is kept from
+        `held_ms` (somebody sat there then would still be eating at its time) until `until_ms`. No number
+        and no note: those stay in the book."""
+        return {
+            "id": self.booking_id,
+            "name": self.name,
+            "size": self.size,
+            "at_ms": self.at_ms,
+            "time": self.time,
+            "arrived_ms": self.arrived_ms,
+            "held_ms": self.at_ms - HOLD_MIN * MINUTE_MS,
+            "soon_ms": self.at_ms - SOON_MIN * MINUTE_MS,
+            "late_ms": self.at_ms + LATE_MIN * MINUTE_MS,
+            "until_ms": self.at_ms + HOLD_MIN * MINUTE_MS,
+        }
+
 
 class BookStore:
     """The reservations, in memory: tests, and a laptop with no database."""
@@ -534,6 +552,17 @@ class Reservations:
         )
         self.store.put(standing)
         return standing
+
+    def holds(self) -> dict[str, list[dict[str, Any]]]:
+        """The tables held today, for the floor map: under each table's id, the standing reservations of
+        today that hold it, in the order of their times (`Booking.as_hold`). One that sat down, was cancelled
+        or did not show holds nothing. The answer says nothing about what time it is: the map counts the
+        moments in it against the clock itself, so a book nobody changed reads the same all day."""
+        held: dict[str, list[dict[str, Any]]] = {}
+        for booking in self._of_day(self.today()):
+            if booking.status == "booked" and booking.table:
+                held.setdefault(booking.table, []).append(booking.as_hold())
+        return held
 
     @staticmethod
     def _clashes(booked: Sequence[Booking]) -> dict[str, Booking]:

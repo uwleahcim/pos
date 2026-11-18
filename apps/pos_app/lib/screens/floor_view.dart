@@ -11,6 +11,7 @@ import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
 import '../roster.dart';
+import 'booked_table_dialog.dart' show holdColors;
 import 'ready_mark.dart';
 import 'theme.dart';
 
@@ -96,7 +97,8 @@ class FloorViewState extends State<FloorView> {
       if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
     });
     _live = widget.api.live.changes.listen((change) {
-      if (_inFront && change.anyOrder) _reader();
+      // a table booked, a reservation changed or ended: the tables kept for today come with the floor
+      if (_inFront && (change.anyOrder || change.reservations)) _reader();
     });
     _second = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_inFront) _tick();
@@ -363,6 +365,7 @@ class FloorViewState extends State<FloorView> {
                                       left: left,
                                       top: top,
                                       checks: plan.checksAt(t.id),
+                                      holds: plan.holds[t.id] ?? const [],
                                       clock: _clock,
                                       ringed: rings.has(t.id),
                                       faded: faded(t.id),
@@ -467,10 +470,32 @@ class FloorViewState extends State<FloorView> {
             ),
           ),
         ),
-        const _Legend(),
+        _Legend(booked: plan.holds.isNotEmpty),
       ],
     );
   }
+}
+
+/// What a booked table says of its reservations at one moment: the one that comes next, how its time
+/// stands, and how many more of today are still to come after it.
+typedef _HoldLook = ({TableHold hold, TimerLevel level, int more});
+
+/// The look of [holds] (one table's, the earliest first) at [nowMs]; null once none is still to come. A
+/// table that is [seated] says nothing of a reservation hours away, whose party finds it free again: only
+/// of one the table is being kept for by now.
+_HoldLook? _holdLook(List<TableHold> holds, int nowMs, {bool seated = false}) {
+  TableHold? next;
+  var more = 0;
+  for (final hold in holds) {
+    if (nowMs >= hold.untilMs) continue;
+    if (next == null) {
+      next = hold;
+    } else {
+      more++;
+    }
+  }
+  if (next == null || (seated && !next.keptAt(nowMs))) return null;
+  return (hold: next, level: next.levelAt(nowMs), more: more);
 }
 
 /// The tables with a check that is [server]'s.
@@ -1001,6 +1026,7 @@ class _TablePositioned extends StatelessWidget {
     required this.clock,
     required this.ringed,
     required this.onTap,
+    this.holds = const [],
     this.faded = false,
     this.moving = false,
     this.onHeld,
@@ -1009,6 +1035,9 @@ class _TablePositioned extends StatelessWidget {
   final TableSpot table;
   final double left, top;
   final List<TableCheck> checks;
+
+  /// The reservations of today that hold this table, the earliest first (docs/reservations.md).
+  final List<TableHold> holds;
 
   /// The table is being moved: it is outlined until the table it goes to is tapped.
   final bool moving;
@@ -1151,6 +1180,30 @@ class _TablePositioned extends StatelessWidget {
                                     ],
                                   ),
                                 ),
+                              // booked for today: the time, and on a free table whose it is. It follows the
+                              // clock only where its colour turns and where its time is long past. It is
+                              // drawn smaller sooner than it makes the table's own name smaller.
+                              if (holds.isNotEmpty)
+                                _Ticking<_HoldLook?>(
+                                  clock: clock,
+                                  read: (now) => _holdLook(holds, now, seated: check != null),
+                                  builder: (context, look) => look == null
+                                      ? const SizedBox.shrink()
+                                      : ConstrainedBox(
+                                          // (a round table is narrower where the booking is written)
+                                          constraints: BoxConstraints(maxWidth: (table.round ? 0.78 : 1) * w - 8),
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            child: _HoldMark(
+                                              key: ValueKey('table-hold:${table.id}'),
+                                              look: look,
+                                              named: check == null,
+                                              ink: textColor,
+                                              line: border,
+                                            ),
+                                          ),
+                                        ),
+                                ),
                             ],
                           ),
                         ),
@@ -1166,6 +1219,81 @@ class _TablePositioned extends StatelessWidget {
     );
   }
 }
+
+/// On a table booked for today: the time it is booked for, plain while that is ahead, amber when it is near
+/// and red when it is past with nobody seated; "here" once the party came in and waits. With [named], whose
+/// it is and how many ("Chen 4p"), which a free table has the room for. "+1" says the table is booked once
+/// more after this.
+class _HoldMark extends StatelessWidget {
+  const _HoldMark({super.key, required this.look, required this.named, required this.ink, required this.line});
+
+  final _HoldLook look;
+  final bool named;
+
+  /// The colour the table writes in, and the colour of its edge: what a time still ahead is drawn in.
+  final Color ink, line;
+
+  /// The most letters of a name a table has the room for.
+  static const _letters = 9;
+
+  @override
+  Widget build(BuildContext context) {
+    final (:hold, :level, :more) = look;
+    final plain = !hold.isHere && level == TimerLevel.ok;
+    final (fill, text) = plain ? (null, ink) : holdColors(context, here: hold.isHere, level: level);
+    final name = hold.name.characters.length > _letters ? '${hold.name.characters.take(_letters - 1)}…' : hold.name;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 1.5),
+          padding: const EdgeInsets.symmetric(horizontal: 3.5, vertical: 0.5),
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(5),
+            border: plain ? Border.all(color: line, width: 0.8) : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(bookedIcon, size: 8, color: text),
+              const SizedBox(width: 1.5),
+              Text(
+                '${hold.isHere ? 'here' : hold.time}${more > 0 ? ' +$more' : ''}',
+                semanticsLabel:
+                    'booked for ${hold.time}, ${hold.label}'
+                    '${hold.isHere
+                        ? ', the party is here'
+                        : level == TimerLevel.late
+                        ? ', past its time'
+                        : level == TimerLevel.warn
+                        ? ', nearly its time'
+                        : ''}'
+                    '${more > 0 ? ', and booked $more more ${more == 1 ? 'time' : 'times'} today' : ''}',
+                style: TextStyle(
+                  fontSize: 8.5,
+                  height: 1.1,
+                  fontWeight: FontWeight.w800,
+                  color: text,
+                  fontFeatures: PosTheme.tabular,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (named)
+          Text(
+            '$name ${hold.size}p',
+            key: ValueKey('table-hold-name:${hold.id}'),
+            style: TextStyle(fontSize: 8.5, height: 1.25, fontWeight: FontWeight.w600, color: ink),
+          ),
+      ],
+    );
+  }
+}
+
+/// The mark of a table that is booked, on the map and under it.
+const bookedIcon = Icons.event_rounded;
 
 /// Another server's table, or the badge on it, while "Mine" is on: fainter, and nothing else about it changes.
 /// What is not faded is drawn as it always was, with no layer of its own.
@@ -1461,7 +1589,14 @@ class _MyTableRow extends StatelessWidget {
 }
 
 class _Legend extends StatelessWidget {
-  const _Legend();
+  const _Legend({this.booked = false});
+
+  /// A table is booked for today: the legend says what the time on a table means. On a day with no
+  /// reservation it keeps the room.
+  final bool booked;
+
+  /// The narrowest screen whose legend has the room for "Booked" beside the rest, in one row.
+  static const _bookedFrom = 480.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1505,6 +1640,20 @@ class _Legend extends StatelessWidget {
           dot('seated', 'Seated'),
           dot('waiting', 'Course held'),
           dot('fired', 'All fired'),
+          // on a phone the row is full: the calendar on a table says it by itself there
+          if (booked && MediaQuery.sizeOf(context).width >= _bookedFrom)
+            Padding(
+              key: const ValueKey('legend-booked'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(bookedIcon, size: 15, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 5),
+                  Text('Booked', style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
         ],
       ),
     );

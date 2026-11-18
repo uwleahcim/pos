@@ -23,6 +23,9 @@ the book (404 `unknown_staff` for an id the hub does not know). Every change ans
 reservation's day as it stands now and the `booking` that changed, and tells the screens on the change feed
 (`reservations`).
 
+The floor map reads the tables held today with the floor itself (`holds` of `GET /floor`), and reads it again
+when the feed says `reservations`.
+
 404 `unknown_booking`, `unknown_table`; 409 `not_booked` (it sat down or was taken out; put it back first),
 `not_today` (seating, here and no-show are for today's reservations), `day_over`, `too_many`.
 """

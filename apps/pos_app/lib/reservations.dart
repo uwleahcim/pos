@@ -1,3 +1,4 @@
+import 'floor.dart' show TableHold, TableSpot;
 import 'table_timers.dart' show TimerLevel;
 import 'takeout.dart' show dayName;
 import 'waitlist.dart' show ArrivingParty, guestWords;
@@ -70,6 +71,21 @@ class Booking implements ArrivingParty {
       clashAtMs: clash is Map ? _ms(clash['at_ms']) : null,
     );
   }
+
+  /// The reservation a table on the floor map is held for ([hold], at [table]), to seat its party from the
+  /// map: what the map was told of it, which is all that seating it needs.
+  factory Booking.ofHold(TableHold hold, TableSpot table) => Booking(
+    id: hold.id,
+    name: hold.name,
+    size: hold.size,
+    atMs: hold.atMs,
+    time: hold.time,
+    table: table.id,
+    tableLabel: table.label,
+    soonMs: hold.soonMs,
+    lateMs: hold.lateMs,
+    arrivedMs: hold.arrivedMs,
+  );
 
   @override
   final String id;
