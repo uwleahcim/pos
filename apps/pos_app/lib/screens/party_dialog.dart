@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../waitlist.dart';
-import 'theme.dart';
+import 'guests_picker.dart';
 
 /// A party for the waitlist (docs/waitlist.md): asked when one is put on the list, and again to put right
 /// what it told the host. A name and how many they are; the wait they were told, a phone number and a note
@@ -127,54 +127,11 @@ class _PartyDialogState extends State<PartyDialog> {
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 12),
-              // How many: the numbers most parties are, and a step either way for the rest.
-              Row(
-                children: [
-                  IconButton.filledTonal(
-                    key: const ValueKey('party-fewer'),
-                    tooltip: 'One guest fewer',
-                    onPressed: _size > 1 ? () => setState(() => _size--) : null,
-                    icon: const Icon(Icons.remove),
-                  ),
-                  Expanded(
-                    child: Text(
-                      guestWords(_size),
-                      key: const ValueKey('party-size'),
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleLarge?.copyWith(fontFeatures: PosTheme.tabular),
-                    ),
-                  ),
-                  IconButton.filledTonal(
-                    key: const ValueKey('party-more'),
-                    tooltip: 'One guest more',
-                    onPressed: _size < list.mostGuests ? () => setState(() => _size++) : null,
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // One row on the narrowest phone too: each number takes its share of the width.
-              Row(
-                children: [
-                  for (final (at, preset) in const [1, 2, 3, 4, 5, 6, 8].indexed) ...[
-                    if (at > 0) const SizedBox(width: 4),
-                    Expanded(
-                      child: ChoiceChip(
-                        key: ValueKey('party-size:$preset'),
-                        label: SizedBox(
-                          width: double.infinity,
-                          child: Text('$preset', textAlign: TextAlign.center),
-                        ),
-                        labelPadding: EdgeInsets.zero,
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        visualDensity: VisualDensity.compact,
-                        showCheckmark: false,
-                        selected: _size == preset,
-                        onSelected: (_) => setState(() => _size = preset),
-                      ),
-                    ),
-                  ],
-                ],
+              GuestsPicker(
+                prefix: 'party',
+                size: _size,
+                most: list.mostGuests,
+                onChanged: (size) => setState(() => _size = size),
               ),
               const SizedBox(height: 14),
               Text('Wait told', style: label),

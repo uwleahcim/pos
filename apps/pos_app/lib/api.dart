@@ -35,6 +35,7 @@ import 'takeout.dart';
 import 'timeclock.dart';
 import 'today.dart';
 import 'voids.dart';
+import 'reservations.dart';
 import 'waitlist.dart';
 import 'waste.dart';
 
@@ -1385,6 +1386,95 @@ class PosApi {
   /// A party that went off the list tonight is put back where it stood.
   Future<Waitlist> partyBack(String staffId, String partyId) async =>
       Waitlist.fromJson(await _post('/waitlist/$partyId/back', {'staff_id': staffId}));
+
+  // The reservation book (docs/reservations.md). -------------------------------------------------------------
+
+  /// A day's reservations ([day] as `2026-11-21`; the hub's today when null): the tables still booked, in
+  /// the order of their times, the reservations that ended, and the days ahead that have any. The very same
+  /// object as last time while nobody changed it. With no backend answering, today's book is the one last
+  /// read. Null from a hub older than the book.
+  Future<Book?> reservations({String? day}) async {
+    try {
+      return await _repeated(
+        '/reservations',
+        Book.fromJson,
+        query: day == null ? null : {'day': day},
+        remember: day == null ? 'reservations' : null,
+      );
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  static Map<String, dynamic> _booking(
+    String staffId,
+    String name,
+    int size,
+    String day,
+    String time,
+    String phone,
+    String note,
+    String table,
+  ) => {
+    'staff_id': staffId,
+    'name': name,
+    'size': size,
+    'day': day,
+    'time': time,
+    'phone': phone,
+    'note': note,
+    'table': table,
+  };
+
+  /// [staffId] books a table for [day] (`2026-11-21`, a day of service) at [time] (`18:30` on the
+  /// restaurant's clock), holding [table] when one is named. Answers that day's book as it stands, with the
+  /// new [Book.booking]. 422 with the hub's reason for what it does not take.
+  Future<Book> addBooking(
+    String staffId, {
+    required String name,
+    required int size,
+    required String day,
+    required String time,
+    String phone = '',
+    String note = '',
+    String table = '',
+  }) async => Book.fromJson(await _post('/reservations', _booking(staffId, name, size, day, time, phone, note, table)));
+
+  /// Puts a standing reservation right. Answers the book of the day it is for now. 409 `not_booked` for
+  /// one that sat down or was taken out of the book meanwhile.
+  Future<Book> changeBooking(
+    String staffId,
+    String bookingId, {
+    required String name,
+    required int size,
+    required String day,
+    required String time,
+    String phone = '',
+    String note = '',
+    String table = '',
+  }) async => Book.fromJson(
+    await _put('/reservations/$bookingId', _booking(staffId, name, size, day, time, phone, note, table)),
+  );
+
+  /// The party of a reservation of today is here and waits for its table; with [on] false, it is not.
+  Future<Book> bookingArrived(String staffId, String bookingId, {bool on = true}) async =>
+      Book.fromJson(await _post('/reservations/$bookingId/arrived', {'staff_id': staffId, 'on': on}));
+
+  /// The party sat down at [table]; [orderId] is the check opened for it. A party another screen sat first
+  /// stays where that screen put it: [Book.booking] says where.
+  Future<Book> seatBooking(String staffId, String bookingId, {required String table, String orderId = ''}) async =>
+      Book.fromJson(
+        await _post('/reservations/$bookingId/seat', {'staff_id': staffId, 'table': table, 'order_id': orderId}),
+      );
+
+  /// The reservation ended without a table: [why] is `cancelled` or `no_show`.
+  Future<Book> cancelBooking(String staffId, String bookingId, {String why = 'cancelled'}) async =>
+      Book.fromJson(await _post('/reservations/$bookingId/cancel', {'staff_id': staffId, 'why': why}));
+
+  /// A reservation that ended stands in the book again, for the time it had.
+  Future<Book> bookingBack(String staffId, String bookingId) async =>
+      Book.fromJson(await _post('/reservations/$bookingId/back', {'staff_id': staffId}));
 
   // A check's history (docs/check-history.md). ---------------------------------------------------------------
 

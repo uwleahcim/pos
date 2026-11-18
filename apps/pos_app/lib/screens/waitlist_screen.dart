@@ -18,6 +18,11 @@ class SeatParty {
   final WaitParty party;
 }
 
+/// The waitlist was left for the reservation book (docs/reservations.md).
+class OpenReservations {
+  const OpenReservations();
+}
+
 /// The waitlist (docs/waitlist.md): the parties waiting for a table tonight, in the order they came. Each
 /// says how long it has waited beside the wait it was told, amber when that time is nearly up and red once
 /// it has passed. A party is put on the list with **Add party**, sits down with **Seat** (the floor map
@@ -25,7 +30,7 @@ class SeatParty {
 /// went off the list tonight are underneath, each with a way back onto it.
 ///
 /// The hub keeps the list and tells this screen when another one changed it. Pops a [SeatParty] when a party
-/// is to be seated; nothing otherwise.
+/// is to be seated and an [OpenReservations] for the reservation book; nothing otherwise.
 class WaitlistScreen extends StatefulWidget {
   const WaitlistScreen({super.key, required this.api, required this.staffId, this.list, this.nowMs});
 
@@ -264,6 +269,26 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
               ),
           ],
         ),
+        actions: [
+          // The way over to the reservation book: by its name where there is room for it.
+          if (width < 600)
+            IconButton(
+              key: const ValueKey('waitlist-reservations'),
+              tooltip: 'Reservations',
+              onPressed: () => Navigator.of(context).pop(const OpenReservations()),
+              icon: const Icon(Icons.event_available_outlined),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextButton.icon(
+                key: const ValueKey('waitlist-reservations'),
+                onPressed: () => Navigator.of(context).pop(const OpenReservations()),
+                icon: const Icon(Icons.event_available_outlined),
+                label: const Text('Reservations'),
+              ),
+            ),
+        ],
       ),
       floatingActionButton: _older
           ? null

@@ -51,6 +51,10 @@ merges after any disconnect.
 - The waitlist (the parties waiting for a table in the order they came: name, guests, the wait they were
   told, a phone number and a note; the wait turns amber, then red; Seat brings up the floor map and the
   table tapped is theirs; tonight's list only, and no names kept after it): `docs/waitlist.md`
+- Reservations (the book of tables booked for today and the days ahead: name, guests, day and time, a
+  table to hold, a phone number and a note; a time turns amber, then red; Seat brings up the floor map and
+  the table tapped is theirs; cancelled and no-show, with a way back; no deposit, and nothing sent to the
+  guest): `docs/reservations.md`
 - Who may do what (a table under Location where a manager or an owner hands any of fourteen powers to the
   servers, bartenders, hosts, cashiers or the kitchen, or takes them back: approving a void or a comp, the
   reports, the guest list, the hours, the menu; it starts as the rules always were, and a manager and an
