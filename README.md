@@ -89,6 +89,10 @@ merges after any disconnect.
 - Dishes sold, best to worst (every dish over the same days, how many and for how much beside the days
   before, best or worst first, with the sizes it went out in and every choice made on it; a dish on the menu
   that sold none is listed too): `docs/dishes-sold.md`
+- Kitchen times (how long the kitchen takes over the same days, read off what the kitchen screens mark:
+  the average ticket, the middle one, the longest and how many were late, beside the days before; each
+  station, hour and day, the dishes from the slowest, and the longest tickets by name):
+  `docs/kitchen-times.md`
 - The guest list (every customer who ordered with a phone number in the last 12 months: visits, what they
   spent, the last visit and favourite dishes; the regulars, the guests who stopped coming and the new ones
   each a list; for a manager): `docs/guest-list.md`

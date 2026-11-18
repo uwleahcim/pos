@@ -415,7 +415,14 @@ void main() {
       await pumpLocation(tester, holds: {'assign_tables', 'reports'});
       expect(find.text('Location'), findsOneWidget);
       expect(find.text('Location settings'), findsNothing);
-      for (final key in ['board', 'day-report', 'sales-report', 'dishes-report', 'adjustments-report']) {
+      for (final key in [
+        'board',
+        'day-report',
+        'sales-report',
+        'dishes-report',
+        'kitchen-times-report',
+        'adjustments-report',
+      ]) {
         expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
       }
       for (final key in [
@@ -446,7 +453,7 @@ void main() {
         'notes': ['shift-notes'],
         'logbook': ['logbook'],
         'time_clock': ['time-clock-hours'],
-        'reports': ['day-report', 'sales-report', 'dishes-report', 'adjustments-report'],
+        'reports': ['day-report', 'sales-report', 'dishes-report', 'kitchen-times-report', 'adjustments-report'],
       };
       for (final power in rows.keys) {
         await pumpLocation(tester, holds: {power});
@@ -477,6 +484,7 @@ void main() {
         'day-report',
         'sales-report',
         'dishes-report',
+        'kitchen-times-report',
         'guests-report',
         'waste-report',
         'shift-notes',

@@ -27,6 +27,7 @@ import 'face_enroll_dialog.dart';
 import 'guests_screen.dart';
 import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
+import 'kitchen_times_screen.dart';
 import 'logbook_screen.dart';
 import 'powers_screen.dart';
 import 'printers_screen.dart';
@@ -937,6 +938,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => DishesScreen(api: widget.api, token: widget.token),
+                      ),
+                    ),
+                  ),
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('kitchen-times-report'),
+                    leading: const Icon(Icons.timer_outlined),
+                    title: const Text('Kitchen times'),
+                    subtitle: const Text('How long tickets take, by station, hour and dish'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => KitchenTimesScreen(api: widget.api, token: widget.token),
                       ),
                     ),
                   ),

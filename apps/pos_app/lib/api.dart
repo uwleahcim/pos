@@ -19,6 +19,7 @@ import 'floor.dart';
 import 'guests_report.dart';
 import 'kitchen_notes.dart';
 import 'kitchen_screen.dart';
+import 'kitchen_times.dart';
 import 'kitchen_word.dart';
 import 'live.dart';
 import 'menu.dart';
@@ -1537,6 +1538,18 @@ class PosApi {
   Future<DishesReport> dishesReport(String token, {String? from, String? to}) async => DishesReport.fromJson(
     await _get(
       '/reports/dishes',
+      query: {'from': ?from, 'to': ?to},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 90),
+    ),
+  );
+
+  /// How long the kitchen took in a span of days, and in as many days whole weeks earlier (manager token):
+  /// its tickets as the kitchen screens marked them, by station, hour, day and dish (docs/kitchen-times.md).
+  /// The days are asked as [salesReport] asks them, and it waits as long. 404 from a hub older than it.
+  Future<KitchenTimes> kitchenTimes(String token, {String? from, String? to}) async => KitchenTimes.fromJson(
+    await _get(
+      '/reports/kitchen',
       query: {'from': ?from, 'to': ?to},
       headers: _bearer(token),
       timeout: const Duration(seconds: 90),

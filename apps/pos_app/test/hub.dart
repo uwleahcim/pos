@@ -218,6 +218,17 @@ class Hub {
   String? dishesAuth;
   int? refuseDishes;
 
+  /// How long the kitchen took over a span of days (docs/kitchen-times.md). [kitchenTimes] answers
+  /// `GET /reports/kitchen` by the days asked for, written as [sales] writes them; a span it has nothing for
+  /// timed nothing, and null is a hub older than the report. Each ask is in [kitchenTimesAsks] and the token
+  /// of the last one in [kitchenTimesAuth]. [refuseKitchenTimes] answers with a status instead. While
+  /// [kitchenTimesHeld] is set no answer goes out until a test completes it.
+  Map<String, Map<String, dynamic>>? kitchenTimes = {};
+  Completer<void>? kitchenTimesHeld;
+  final kitchenTimesAsks = <String>[];
+  String? kitchenTimesAuth;
+  int? refuseKitchenTimes;
+
   /// The guest list (docs/guest-list.md). [guests] answers `GET /reports/guests`; null is a hub older than
   /// the list. [guestDetails] answers `GET /reports/guests/<digits>` by the number asked for; one it has
   /// nothing for is `no_guest`. How often the list was asked is [guestsAsks], the numbers read closely are
@@ -1974,6 +1985,33 @@ class Hub {
               'before': {'first': name(first.subtract(back)), 'last': name(last.subtract(back))},
               'dishes': <Object>[],
               'categories': <Object>[],
+              'max_days': 92,
+              'now_ms': clockNow,
+            },
+      );
+    }
+    if (path == '/reports/kitchen') {
+      if (kitchenTimes == null) return json({'detail': 'Not Found'}, 404);
+      kitchenTimesAuth = request.headers['authorization'];
+      if (refuseKitchenTimes != null) {
+        return json({
+          'detail': {'error': refuseKitchenTimes == 422 ? 'too_long' : 'sign_in', 'message': salesRefusal},
+        }, refuseKitchenTimes!);
+      }
+      final from = request.url.queryParameters['from'], to = request.url.queryParameters['to'];
+      final asked = from == null && to == null ? '' : '${from ?? to}..${to ?? from}';
+      kitchenTimesAsks.add(asked);
+      if (kitchenTimesHeld != null) await kitchenTimesHeld!.future;
+      final first = DateTime.parse('${from ?? to ?? dayRunning}T00:00:00Z');
+      final last = DateTime.parse('${to ?? from ?? dayRunning}T00:00:00Z');
+      final back = Duration(days: 7 * ((last.difference(first).inDays + 7) ~/ 7));
+      String name(DateTime day) => day.toIso8601String().substring(0, 10);
+      return json(
+        kitchenTimes![asked] ??
+            {
+              'span': {'first': name(first), 'last': name(last), 'running': name(last) == dayRunning},
+              'before': {'first': name(first.subtract(back)), 'last': name(last.subtract(back))},
+              'late_min': 0,
               'max_days': 92,
               'now_ms': clockNow,
             },
