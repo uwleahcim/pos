@@ -57,6 +57,50 @@ def test_demo_directory_from_environment(monkeypatch):
     assert len(demo_directory()) == 4
 
 
+def test_a_slip_in_the_staff_list_does_not_keep_the_hub_from_starting(monkeypatch, caplog):
+    # an entry with a part missing, an empty one, an id taken twice: left out, and the rest sign in
+    monkeypatch.setenv(
+        "POS_STAFF", "s3:Mike:manager:9999,d1:Tom:driver,,d2::driver:5555, d3:Wei:driver:6666 ,s3:Max:host:7777"
+    )
+    with caplog.at_level("WARNING"):
+        d = demo_directory()
+    assert [(s.staff_id, s.name, s.role) for s in d.all()] == [("s3", "Mike", "manager"), ("d3", "Wei", "driver")]
+    assert d.by_pin("6666", device="x").name == "Wei"
+    assert [r.getMessage().split()[2] for r in caplog.records if "left out" in r.getMessage()] == ["2", "4", "6"]
+    # what is said never repeats an entry: there is a PIN in each
+    assert not any(pin in caplog.text for pin in ("9999", "5555", "6666", "7777"))
+
+    # nothing in it reads: the demo staff, so somebody can still sign in, and the log says so
+    caplog.clear()
+    monkeypatch.setenv("POS_STAFF", "Tom the driver")
+    with caplog.at_level("WARNING"):
+        assert len(demo_directory()) == 4
+    assert "the demo staff signs in" in caplog.text
+
+    # an empty line is no list at all
+    caplog.clear()
+    monkeypatch.setenv("POS_STAFF", "")
+    with caplog.at_level("WARNING"):
+        assert len(demo_directory()) == 4
+    assert caplog.text == ""
+
+
+def test_a_staff_list_with_no_manager_or_an_unknown_role_is_said_in_the_log(monkeypatch, caplog):
+    monkeypatch.setenv("POS_STAFF", "a:Ann:server:1234,d1:Tom:drivr:4444")
+    with caplog.at_level("WARNING"):
+        d = demo_directory()
+    assert len(d) == 2  # kept as typed: it is the owner's list
+    assert "Tom has the role 'drivr'" in caplog.text
+    assert "no manager and no owner" in caplog.text
+    assert not any(pin in caplog.text for pin in ("1234", "4444"))
+
+    caplog.clear()
+    monkeypatch.setenv("POS_STAFF", "o:Mei:owner:1234,d1:Tom:driver:4444")
+    with caplog.at_level("WARNING"):
+        assert len(demo_directory()) == 2
+    assert caplog.text == ""
+
+
 def test_photo_store_dedupes_caps_and_limits_size():
     store = PhotoStore(keep=2)
     for i in range(3):

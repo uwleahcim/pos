@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import time
@@ -15,7 +16,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .powers import holds
+from .powers import ALWAYS, HANDED, holds
+
+log = logging.getLogger(__name__)
 
 LOCK_AFTER = 5
 LOCK_SECONDS = 60.0
@@ -110,14 +113,33 @@ class Directory:
 
 
 def demo_directory() -> Directory:
-    """Phase 0 staff. POS_STAFF overrides it: `id:name:role:pin,...` in the environment, never in the repo."""
+    """Phase 0 staff. POS_STAFF overrides it: `id:name:role:pin,...` in the environment, never in the repo
+    (on a hub, a line in /opt/pos/.env). The list is the whole staff: whoever is not in it cannot sign in.
+
+    A hub has to start whatever was typed there. An entry that does not read (not four parts, one of them
+    empty, an id already taken) is left out and said in the log; a list in which nothing reads leaves the
+    demo staff. A role the hub does not know and a list with no manager or owner in it are said in the log
+    too, and kept: the first holds no power, the second leaves nobody to approve a void or open Location."""
     spec = os.environ.get("POS_STAFF")
-    if spec:
-        staff = []
-        for entry in spec.split(","):
-            staff_id, name, role, pin = entry.strip().split(":")
-            staff.append(Staff.with_pin(staff_id, name, role, pin))
-        return Directory(staff)
+    staff: dict[str, Staff] = {}
+    for place, entry in enumerate((spec or "").split(","), 1):
+        if not entry.strip():
+            continue
+        parts = [part.strip() for part in entry.split(":")]
+        if len(parts) != 4 or not all(parts) or parts[0] in staff:
+            # never the entry itself: there is a PIN in it
+            log.warning("POS_STAFF: entry %d is left out (id:name:role:pin, each id once)", place)
+            continue
+        staff_id, name, role, pin = parts
+        if role not in ALWAYS and role not in HANDED:
+            log.warning("POS_STAFF: %s has the role %r, which holds no power here", name, role)
+        staff[staff_id] = Staff.with_pin(staff_id, name, role, pin)
+    if staff:
+        if not any(s.role in ALWAYS for s in staff.values()):
+            log.warning("POS_STAFF names no manager and no owner: nobody can approve a void or open Location")
+        return Directory(list(staff.values()))
+    if spec and spec.strip():
+        log.warning("POS_STAFF names nobody the hub can read: the demo staff signs in")
     return Directory(
         [
             Staff.with_pin("s1", "Amy", "server", "1111"),
