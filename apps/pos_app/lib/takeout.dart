@@ -323,6 +323,8 @@ String whenFor(int ms, DateTime now) {
 /// A to-go order's stage in words. One that was brought to the customer ([delivery]) was not picked up.
 String stageLabel(String stage, {bool delivery = false}) => switch (stage) {
   'ready' => 'Ready',
+  // a delivery that left with its driver; an order the customer comes for is never out
+  'out' => delivery ? 'Out' : '',
   'picked_up' => delivery ? 'Delivered' : 'Picked up',
   _ => '',
 };

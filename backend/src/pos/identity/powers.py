@@ -11,8 +11,9 @@ Two rules keep the table safe to change:
 - **The settings themselves are never handed out** (`SETTINGS`): the location's settings, the printers, the
   staff's tags and faces, and this table. Only a manager or an owner changes who may do what.
 
-So the setting only ever hands a power to more roles: the servers, the bartenders, the hosts, the cashiers
-and the kitchen (`HANDED`). To start, the table says what the hub did before there was one.
+So the setting only ever hands a power to more roles: the servers, the bartenders, the hosts, the cashiers,
+the kitchen and the drivers (`HANDED`). To start, the table says what the hub did before there was one;
+a driver, a role that came with deliveries (docs/delivery.md), starts with the one power that came with it.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any
 
 ALWAYS = frozenset({"manager", "owner"})
 """The roles that hold every power, whatever the setting says."""
-HANDED = ("server", "bartender", "host", "cashier", "kitchen")
+HANDED = ("server", "bartender", "host", "cashier", "kitchen", "driver")
 """The roles a power can be handed to, in the order the screen lists them."""
 SETTINGS = "settings"
 """The power no setting hands out: the location's settings and this table."""
@@ -50,6 +51,9 @@ POWERS: tuple[Power, ...] = (
         "take_tables", "a table can be theirs: the floor map offers them as a server", ("server", "bartender"), False
     ),
     Power("assign_tables", "seat a party for someone else and hand a table over", ("host",), False),
+    Power(
+        "deliver", "a delivery can be handed to them: the Deliveries screen offers them as a driver", ("driver",), False
+    ),
     Power("rush", "say the kitchen is behind: minutes on every new quote for tonight"),
     Power("notes", "write, change and take down the notes for the shift, and see who has read them"),
     Power("logbook", "read and write the manager's log"),

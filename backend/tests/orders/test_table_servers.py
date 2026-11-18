@@ -19,6 +19,7 @@ def test_the_staff_list_says_who_takes_tables_and_who_gives_them_out():
         "role": "server",
         "takes_tables": True,
         "assigns_tables": False,
+        "delivers": False,  # who a delivery can be handed to: tests/orders/test_drivers.py
     }
     assert (staff["Ben"]["takes_tables"], staff["Ben"]["assigns_tables"]) == (True, False)  # the bartender
     assert (staff["Mike"]["takes_tables"], staff["Mike"]["assigns_tables"]) == (True, True)  # a manager does both
@@ -32,7 +33,7 @@ def test_the_staff_list_says_who_takes_tables_and_who_gives_them_out():
 def test_the_staff_list_holds_nothing_a_sign_in_is_checked_against():
     amy = Staff.with_pin("s1", "Amy", "server", "1111", tag_uid="04A1B2C3")
     (listed,) = roster(Directory([amy]))
-    assert set(listed) == {"staff_id", "name", "role", "takes_tables", "assigns_tables"}
+    assert set(listed) == {"staff_id", "name", "role", "takes_tables", "assigns_tables", "delivers"}
     assert not {amy.pin_hash, amy.pin_salt, amy.tag_uid, "1111"} & {str(v) for v in listed.values()}
 
 

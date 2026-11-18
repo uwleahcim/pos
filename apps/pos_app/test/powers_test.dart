@@ -105,6 +105,7 @@ const everything = {
   'history',
   'take_tables',
   'assign_tables',
+  'deliver',
   'rush',
   'notes',
   'logbook',
@@ -133,19 +134,20 @@ Future<void> typePin(WidgetTester tester, String pin, String button) async {
 
 void main() {
   group('the table', () {
-    test('starts as the hub always was: only the tables are handed out', () {
+    test('starts as the hub always was: only the tables are handed out, and the deliveries to drivers', () {
       const table = Powers.standard;
       for (final role in handedRoles) {
         for (final power in powersById.keys) {
           final usual =
               (power == 'take_tables' && (role == 'server' || role == 'bartender')) ||
-              (power == 'assign_tables' && role == 'host');
+              (power == 'assign_tables' && role == 'host') ||
+              (power == 'deliver' && role == 'driver');
           expect(table.holds(role, power), usual, reason: '$role, $power');
         }
         expect(table.opensLocation(role), isFalse);
       }
       expect(table.summary, 'As it started: managers and owners approve and open the back office');
-      expect(powersById.length, 14);
+      expect(powersById.length, 15);
     });
 
     test('a manager and an owner hold everything whatever it says, and nobody else the settings', () {
@@ -244,8 +246,9 @@ void main() {
           }
         }
       }
-      // five roles to hand a power to, and no button for a manager or an owner: theirs is not the table's
-      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(14));
+      // six roles to hand a power to, and no button for a manager or an owner: theirs is not the table's
+      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(15));
+      expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(15));
       expect(find.widgetWithText(FilterChip, 'Managers'), findsNothing);
       expect(find.widgetWithText(FilterChip, 'Owners'), findsNothing);
       // nothing to save, and nothing to put back

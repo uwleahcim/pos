@@ -71,6 +71,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "en": "Hi {name}, order #{no} from {location} will be with you around {time}. Sorry for the wait.",
         "zh": "{name}您好，{location}的订单 #{no} 预计{time}送到，请见谅。",
     },
+    # a delivery that left with its driver: the text a delivery gets in place of "ready for pickup"
+    "out": {
+        "en": "Hi {name}, order #{no} from {location} is on its way.",
+        "zh": "{name}您好，{location}的订单 #{no} 已出发，正在配送途中。",
+    },
     "pay": {"en": " Please pay at pickup.", "zh": "请在取餐时付款。"},
 }
 
@@ -99,8 +104,9 @@ def text_for(
 
 class Notifier:
     """Watches the operations the hub stores: an order marked ready (`stage` set to `ready`) gets its ready
-    text, once (an order that is delivered gets none: the text says to come for it); a promised time moved
-    later on an order the kitchen has not finished gets the new time. The time an order is given as it is
+    text, once (an order that is delivered gets none: the text says to come for it; it is told that it is
+    on its way when it leaves with its driver, `stage` set to `out`, the first time only); a promised time
+    moved later on an order the kitchen has not finished gets the new time. The time an order is given as it is
     first sent to the kitchen is its quote, not a delay: the terminal settles it then (a big order takes
     longer), and whoever took the order has told the customer. Nor is the later time of an order that was
     just changed from pickup to delivery: the customer asked for that."""
@@ -131,11 +137,14 @@ class Notifier:
             if is_delivery(after.fields):
                 return None  # it is brought to them: nobody is told to come and get it
             return text_for("ready", after, location=self.location, unpaid=self._unpaid(after))
+        if after.fields.get("stage") == "out" and before.fields.get("stage") != "out" and is_delivery(after.fields):
+            # taken back and handed to a driver again, it has been told already: `out_at` says it left before
+            return None if before.fields.get("out_at") else text_for("out", after, location=self.location)
         was, now = before.fields.get("promised_at"), after.fields.get("promised_at")
         if before.first is not None and isinstance(was, int) and isinstance(now, int) and now > was:
             first_send = not before.fired and bool(after.fired)
             # an order that just became a delivery takes longer because the customer asked for that
             asked = is_delivery(after.fields) and not is_delivery(before.fields)
-            if not first_send and not asked and after.fields.get("stage") not in ("ready", "picked_up"):
+            if not first_send and not asked and after.fields.get("stage") not in ("ready", "out", "picked_up"):
                 return text_for("delayed", after, location=self.location, at=datetime.fromtimestamp(now / 1000))
         return None

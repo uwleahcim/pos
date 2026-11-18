@@ -105,14 +105,18 @@ def codes(answer: dict) -> list[list[str]]:
 def test_the_table_starts_as_the_hub_always_was():
     roles = SettingStore().get("powers")["roles"]
     assert roles == STANDARD == DEFAULTS["powers"]["roles"]
-    # nothing is handed out to start but the tables: servers and bartenders take them, hosts give them out
+    # nothing is handed out to start but the tables: servers and bartenders take them, hosts give them out.
+    # A driver, the role that came with deliveries, starts with the one power that came with it
+    # (docs/delivery.md): nobody who was on the staff before holds anything new.
     assert {power: handed for power, handed in roles.items() if handed} == {
         "take_tables": ["server", "bartender"],
         "assign_tables": ["host"],
+        "deliver": ["driver"],
     }
     assert held(None, "server") == held(None, "bartender") == ["take_tables"]
     assert held(None, "host") == ["assign_tables"]
     assert held(None, "cashier") == held(None, "kitchen") == []
+    assert held(None, "driver") == ["deliver"]
     assert clean_powers(DEFAULTS["powers"]) == DEFAULTS["powers"]
 
 
@@ -191,6 +195,7 @@ def test_any_screen_reads_the_table_with_what_it_needs_to_draw_it():
         "exempt",
         "take_tables",
         "assign_tables",
+        "deliver",
     ]
 
 

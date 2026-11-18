@@ -29,6 +29,7 @@ class _PowersScreenState extends State<PowersScreen> {
   int get _changes {
     var count = 0;
     for (final power in powersById.keys) {
+      if (!_now.knows(power)) continue;
       final was = widget.powers.handedTo(power).toSet();
       final now = _now.handedTo(power).toSet();
       count += was.difference(now).length + now.difference(was).length;
@@ -37,8 +38,7 @@ class _PowersScreenState extends State<PowersScreen> {
   }
 
   /// The table as it started, before anybody changed it: what the standard one hands out, and no more.
-  Powers get _asItStarted =>
-      Powers({..._now.roles, for (final power in powersById.keys) power: Powers.standard.handedTo(power)});
+  Powers get _asItStarted => _now.asItStarted;
 
   Future<void> _save() async {
     setState(() {
@@ -107,7 +107,8 @@ class _PowersScreenState extends State<PowersScreen> {
                   key: const ValueKey('powers-intro'),
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
-                for (final group in powerGroups) ...[
+                // a power this hub has never heard of (it is older than the app) has no row
+                for (final group in powerGroups.where((g) => g.powers.any((p) => _now.knows(p.id)))) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
                     child: Text(group.name, style: theme.textTheme.titleSmall?.copyWith(color: scheme.primary)),
@@ -117,7 +118,7 @@ class _PowersScreenState extends State<PowersScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        for (final (index, power) in group.powers.indexed) ...[
+                        for (final (index, power) in group.powers.where((p) => _now.knows(p.id)).indexed) ...[
                           if (index > 0) const Divider(height: 1),
                           _row(context, power),
                         ],
@@ -192,7 +193,7 @@ class _PowersScreenState extends State<PowersScreen> {
             runSpacing: 8,
             children: [
               // a lit button is filled and ticked: who holds a power has to read at a glance
-              for (final role in handedRoles)
+              for (final role in _now.offered)
                 FilterChip(
                   key: ValueKey('power:${power.id}:$role'),
                   label: Text(roleLabel(role)),

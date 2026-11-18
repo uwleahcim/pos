@@ -42,6 +42,10 @@ services:
       # caller's order is looked up (POS_TIMEZONE); the times on tickets and in texts (TZ).
       POS_TIMEZONE: ${POS_TIMEZONE:-America/New_York}
       TZ: ${POS_TIMEZONE:-America/New_York}
+      # The location's staff, `id:name:role:pin` for each person, comma-separated (docs/table-servers.md,
+      # docs/delivery.md for a driver). It is the whole list: whoever is not in it cannot sign in, so name a
+      # manager. Empty: the demo staff. `hubctl update` after changing it.
+      POS_STAFF: ${POS_STAFF:-}
       # The PBX's manager interface, for desk phones linked to screens (docs/desk-phones.md): `pbx` is the
       # tunnel service below, which `hubctl pbx link` sets up. Empty: no PBX, the watcher stays off.
       POS_AMI_HOST: ${POS_AMI_HOST:-}

@@ -29,8 +29,9 @@ merges after any disconnect.
   big orders, ready texts): `docs/counter-mode.md`
 - Delivery orders (Pickup or Delivery on the to-go form, the address and a note for the driver, the
   address of a customer's last delivery already filled in, Delivery's own quote, DELIVERY on every ticket
-  and where it goes on the bill, Delivered in place of Picked up; no fee, and drivers come next):
-  `docs/delivery.md`
+  and where it goes on the bill, Delivered in place of Picked up; an order handed to a driver is Out, the
+  customer is told it is on its way, and the Deliveries screen says what waits and what each driver has
+  out; no fee, and a driver's runs for the shift come next): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one

@@ -79,6 +79,11 @@ class Hub {
   /// it answers: the quotes it keeps, and that word.
   bool delivers = true;
   Map<String, dynamic> get quotesOut => {...quotes, if (delivers) 'delivers': true};
+
+  /// Whether it keeps a to-go order's step as it is told (ready, out with a driver, delivered and closed),
+  /// as the real hub does, so a screen that reads the orders again shows it. Off, a step is only among
+  /// what was [sent], which is all the tests of the list of checks look at.
+  bool keepsStages = false;
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
 
@@ -298,6 +303,45 @@ class Hub {
   /// for, and says which powers they hold ([sessionsFor] keeps each `power` asked); `POST /approvals` takes
   /// their PIN by the same table.
   Map<String, List<String>>? powers = {for (final id in powersById.keys) id: Powers.standard.handedTo(id)};
+
+  /// The roles it hands powers to. A hub older than drivers (docs/delivery.md) knows [firstRoles] and has
+  /// no `deliver` in its table: see [olderThanDrivers].
+  List<String> handed = handedRoles;
+
+  /// Makes it a hub from before drivers: five roles, no `deliver` in the table, a staff list that says
+  /// nothing of who delivers.
+  void olderThanDrivers() {
+    handed = firstRoles;
+    powers = {...?powers}..remove('deliver');
+    roster = [
+      for (final row in roster ?? const <Map<String, dynamic>>[]) {...row}..remove('delivers'),
+    ];
+  }
+
+  /// Makes its staff a restaurant's that delivers: Tom and Wei are drivers, Mike the manager can take one
+  /// out too, and nobody else is offered.
+  void withDrivers() {
+    roster = [
+      for (final row in roster ?? const <Map<String, dynamic>>[]) {...row, 'delivers': row['role'] == 'manager'},
+      {
+        'staff_id': 'd1',
+        'name': 'Tom',
+        'role': 'driver',
+        'takes_tables': false,
+        'assigns_tables': false,
+        'delivers': true,
+      },
+      {
+        'staff_id': 'd2',
+        'name': 'Wei',
+        'role': 'driver',
+        'takes_tables': false,
+        'assigns_tables': false,
+        'delivers': true,
+      },
+    ];
+  }
+
   String? powersAuth;
   String? refusePowers;
   final sessionsFor = <String?>[];
@@ -2463,7 +2507,7 @@ class Hub {
           final named = (jsonDecode(request.body) as Map<String, dynamic>)['roles'] as Map<String, dynamic>;
           powers = {...powers!, for (final entry in named.entries) entry.key: List<String>.from(entry.value as List)};
         }
-        return json({'roles': powers, 'handed': handedRoles, 'always': alwaysRoles.toList()});
+        return json({'roles': powers, 'handed': handed, 'always': alwaysRoles.toList()});
       case '/admin/session':
         final body = jsonDecode(request.body) as Map;
         final pin = body['pin'] as String;
@@ -2722,6 +2766,16 @@ class Hub {
         case 'set_field' when data.containsKey('bag'):
           // what goes in the bag of a to-go order, answered
           (order['fields'] as Map)['bag'] = data['bag'];
+        case 'set_field' when keepsStages && (data.containsKey('stage') || data.containsKey('driver')):
+          // a to-go order's step, and who a delivery left with (docs/delivery.md)
+          // a map of its own: the one a test wrote may hold no nulls, and coming back names nobody
+          order['fields'] = <String, dynamic>{
+            ...(order['fields'] as Map).cast<String, dynamic>(),
+            for (final field in const ['stage', 'driver', 'driver_id', 'out_at'])
+              if (data.containsKey(field)) field: data[field],
+          };
+        case 'close' when keepsStages:
+          order['status'] = 'closed';
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';

@@ -348,6 +348,13 @@ class Order {
 
   /// Brought to the customer by the restaurant's own driver (docs/delivery.md). A table's check never is.
   bool get isDelivery => isTakeout && fields['handover'] == 'delivery';
+
+  /// A delivery that left with a driver and is on its way: who has it ([driver], by name, and
+  /// [driverId]) and when it left ([outAt], ms). Deliveries handed over in one go left at the same moment.
+  bool get isOut => isDelivery && stage == 'out';
+  String get driver => fields['driver']?.toString() ?? '';
+  String get driverId => fields['driver_id']?.toString() ?? '';
+  int? get outAt => (fields['out_at'] as num?)?.toInt();
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
   List<Line> get activeLines => lines.where((l) => l.isActive).toList();

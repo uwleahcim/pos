@@ -22,7 +22,8 @@ Each step is a dict:
   `tab` true for a bar tab);
 - `table`, `server`, `guests`, `stage`, `promised` (ms), `quoted` (minutes), `split`: `was`, `now`; a
   `stage` of an order that is brought to the customer says `delivery` true (it was delivered, not picked
-  up);
+  up), and one that says it left (`now` is `out`) names the `driver` it left with;
+- `driver`: `was`, `now`: a delivery on its way was handed from one driver to another;
 - `merged`: `other` (the check this one's dishes went to) and `other_table`;
 - `field`: `field` (customer_name, phone, note, order_type, channel, event_guests, handover, address,
   event_note), `was`, `now`; `event_note` says `catering` too: false when the note is for the driver;
@@ -211,7 +212,13 @@ def history(
                 if was == now:
                     continue
                 if name == "stage" and is_delivery(state.fields):
-                    step("stage", was=was, now=now, delivery=True)  # it was brought, not picked up
+                    # it was brought, not picked up; `out` says who it left with
+                    left = {"driver": state.fields.get("driver")} if now == "out" else {}
+                    step("stage", was=was, now=now, delivery=True, **left)
+                elif name == "driver":
+                    # handed from one driver to another on the way; leaving and coming back are `stage` steps
+                    if now and before_fields.get("stage") == "out" and state.fields.get("stage") == "out":
+                        step("driver", was=was, now=now)
                 elif name in OWN_STEP:
                     step(OWN_STEP[name], was=was, now=now)
                 elif name == "merged_into" and isinstance(now, str):
