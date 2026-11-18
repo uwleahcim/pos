@@ -532,6 +532,67 @@ class Hub {
     'waited_minutes': null,
   };
 
+  /// The reservation book (docs/reservations.md). [bookings] are its reservations, each as the hub answers
+  /// it ([booking] makes one); null is a hub older than the book, which the tests written before it run
+  /// against. The hub's day of service is [bookToday]. `GET /reservations` answers a day's book (each day
+  /// asked for is in [bookAsks], null for today's) and every change that came is in [bookPosts], as its
+  /// method and path and what it carried. [refuseBook] answers the next change with a status and a reason,
+  /// and [bookDown] fails every call of the book as if no hub answered, while the rest of the hub goes on.
+  List<Map<String, dynamic>>? bookings;
+  String bookToday = '2026-11-16';
+  final bookAsks = <String?>[];
+  final bookPosts = <(String, Map<String, dynamic>)>[];
+  (int, String, String)? refuseBook;
+  bool bookDown = false;
+
+  /// The moment a table is booked for: [time] ("18:30") in [day]'s service ("2026-11-16"), where a time
+  /// before four in the morning is after that day's midnight.
+  static int bookedAt(String day, String time) {
+    final on = DateTime.parse(day);
+    final hour = int.parse(time.split(':')[0]), minute = int.parse(time.split(':')[1]);
+    return DateTime(on.year, on.month, on.day + (hour < 4 ? 1 : 0), hour, minute).millisecondsSinceEpoch;
+  }
+
+  /// A standing reservation as the hub answers it.
+  static Map<String, dynamic> booking(
+    String id,
+    String name,
+    int size, {
+    String day = '2026-11-16',
+    required String time,
+    String table = '',
+    String phone = '',
+    String note = '',
+    String by = 'Holly',
+    int? arrivedMs,
+  }) {
+    final at = bookedAt(day, time);
+    return {
+      'id': id,
+      'name': name,
+      'size': size,
+      'phone': phone,
+      'note': note,
+      'at_ms': at,
+      'day': day,
+      'time': time,
+      'table': table,
+      'table_label': table,
+      'made_ms': at - 86400000,
+      'by': by,
+      'status': 'booked',
+      'soon_ms': at - 15 * 60000,
+      'late_ms': at + 15 * 60000,
+      'arrived_ms': arrivedMs,
+      'seated_ms': null,
+      'seated_table': '',
+      'seated_label': '',
+      'order_id': '',
+      'ended_ms': null,
+      'ended_by': '',
+    };
+  }
+
   /// The manager's log (docs/shift-notes.md). [logbook] holds the entries, the newest first; null is a hub
   /// older than the log. `GET /logbook` answers [logPage] of them at a time, by subject and by the words
   /// asked for (each ask's query is in [logAsks]), `POST /logbook` writes one at the top ([logWritten]) and
@@ -1223,6 +1284,172 @@ class Hub {
     return json(_waitOut(party));
   }
 
+  static final _bookingPath = RegExp(r'^/reservations/([^/]+)(?:/(arrived|seat|cancel|back))?$');
+
+  /// A day's book as the hub answers it, with the [changed] reservation a change was made to.
+  Map<String, dynamic> _bookOut(String day, [Map<String, dynamic>? changed]) {
+    int at(Map<String, dynamic> b) => b['at_ms'] as int;
+    int ended(Map<String, dynamic> b) => (b['seated_ms'] ?? b['ended_ms']) as int;
+    final ofDay = [
+      for (final b in bookings!)
+        if (b['day'] == day) b,
+    ];
+    final booked = [
+      for (final b in ofDay)
+        if (b['status'] == 'booked') b,
+    ]..sort((a, b) => at(a).compareTo(at(b)));
+    final earlier = [
+      for (final b in ofDay)
+        if (b['status'] != 'booked') b,
+    ]..sort((a, b) => ended(b).compareTo(ended(a)));
+    Map<String, dynamic> out(Map<String, dynamic> b) {
+      final near = [
+        for (final other in booked)
+          if (b['status'] == 'booked' && b['table'] != '' && other['id'] != b['id'] && other['table'] == b['table'])
+            if ((at(other) - at(b)).abs() < 90 * 60000) other,
+      ]..sort((x, y) => (at(x) - at(b)).abs().compareTo((at(y) - at(b)).abs()));
+      return {
+        ...b,
+        'clash': near.isEmpty ? null : {'id': near.first['id'], 'name': near.first['name'], 'at_ms': at(near.first)},
+      };
+    }
+
+    final ahead = <String, (int, int)>{};
+    for (final b in bookings!) {
+      final on = b['day'] as String;
+      if (b['status'] != 'booked' || on.compareTo(bookToday) < 0) continue;
+      final (parties, guests) = ahead[on] ?? (0, 0);
+      ahead[on] = (parties + 1, guests + (b['size'] as int));
+    }
+    int count(String status) => earlier.where((b) => b['status'] == status).length;
+    return {
+      'day': day,
+      'today': bookToday,
+      'booked': [for (final b in booked) out(b)],
+      'earlier': [for (final b in earlier) out(b)],
+      'counts': {
+        'booked': booked.length,
+        'guests': booked.fold<int>(0, (sum, b) => sum + (b['size'] as int)),
+        'seated': count('seated'),
+        'cancelled': count('cancelled'),
+        'no_show': count('no_show'),
+      },
+      'ahead': [
+        for (final on in ahead.keys.toList()..sort()) {'day': on, 'parties': ahead[on]!.$1, 'guests': ahead[on]!.$2},
+      ],
+      'whys': [
+        {'id': 'cancelled', 'name': 'Cancelled'},
+        {'id': 'no_show', 'name': 'No-show'},
+      ],
+      'hold_minutes': 90,
+      'most_guests': 60,
+      'most_ahead_days': 366,
+      'name_max': 24,
+      'note_max': 80,
+      'booking': ?(changed == null ? null : out(changed)),
+    };
+  }
+
+  /// A day's book as this hub answers it.
+  Map<String, dynamic> bookFor(String day) => _bookOut(day);
+
+  /// The reservation book: a day of it, and each change to a reservation.
+  http.Response _reservations(http.Request request) {
+    final path = request.url.path;
+    if (bookings == null) return json({'detail': 'Not Found'}, 404);
+    if (bookDown) throw const SocketException('down');
+    http.Response refused(int status, String error, String message) => json({
+      'detail': {'error': error, 'message': message},
+    }, status);
+    if (path == '/reservations' && request.method == 'GET') {
+      final day = request.url.queryParameters['day'];
+      bookAsks.add(day);
+      return json(_bookOut(day ?? bookToday));
+    }
+    final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
+    bookPosts.add(('${request.method} $path', body));
+    final refuse = refuseBook;
+    if (refuse != null) {
+      refuseBook = null;
+      return refused(refuse.$1, refuse.$2, refuse.$3);
+    }
+    final who = notesStaff[body['staff_id']];
+    if (who == null) return refused(404, 'unknown_staff', 'Nobody here has this id.');
+    Map<String, dynamic> told(Map<String, dynamic> b) {
+      final day = body['day'] as String, time = (body['time'] as String).padLeft(5, '0');
+      final at = bookedAt(day, time);
+      return b..addAll({
+        'name': (body['name'] as String).trim(),
+        'size': body['size'],
+        'phone': body['phone'] ?? '',
+        'note': body['note'] ?? '',
+        'at_ms': at,
+        'day': day,
+        'time': time,
+        'table': body['table'] ?? '',
+        'table_label': body['table'] ?? '',
+        'soon_ms': at - 15 * 60000,
+        'late_ms': at + 15 * 60000,
+        if (day != bookToday) 'arrived_ms': null,
+      });
+    }
+
+    if (path == '/reservations') {
+      if ((body['name'] as String).trim().isEmpty) return refused(422, 'no_name', 'The name cannot be left empty.');
+      if ((body['day'] as String).compareTo(bookToday) < 0) {
+        return refused(422, 'past_day', 'A table is booked for today or a later day.');
+      }
+      final made = told(booking('b${bookings!.length + 1}', '', 1, time: '12:00', by: who))..['made_ms'] = clockNow;
+      bookings!.add(made);
+      return json(_bookOut(made['day'] as String, made));
+    }
+    final match = _bookingPath.firstMatch(path);
+    final b = match == null ? null : bookings!.where((b) => b['id'] == match.group(1)).firstOrNull;
+    if (match == null || b == null) return refused(404, 'unknown_booking', 'This reservation is not in the book.');
+    final standing = b['status'] == 'booked';
+    final gone = refused(409, 'not_booked', "${b['name']}'s reservation is not standing. Put it back first.");
+    final notToday = refused(409, 'not_today', 'This reservation is for another day.');
+    final today = b['day'] == bookToday;
+    switch (match.group(2)) {
+      case null:
+        if (!standing) return gone;
+        told(b);
+      case 'arrived':
+        if (!standing) return gone;
+        if (!today) return notToday;
+        b['arrived_ms'] = body['on'] == false ? null : b['arrived_ms'] ?? clockNow;
+      case 'seat':
+        if (b['status'] != 'seated') {
+          if (!standing) return gone;
+          if (!today) return notToday;
+          b.addAll({
+            'status': 'seated',
+            'seated_ms': clockNow,
+            'seated_table': body['table'],
+            'seated_label': body['table'],
+            'order_id': body['order_id'] ?? '',
+            'ended_by': who,
+          });
+        }
+      case 'cancel':
+        final why = body['why'] as String? ?? 'cancelled';
+        if (b['status'] == 'seated') return gone;
+        if (why == 'no_show' && !today) return notToday;
+        if (b['status'] != why) b.addAll({'status': why, 'ended_ms': clockNow, 'ended_by': who});
+      case 'back':
+        b.addAll({
+          'status': 'booked',
+          'seated_ms': null,
+          'seated_table': '',
+          'seated_label': '',
+          'order_id': '',
+          'ended_ms': null,
+          'ended_by': '',
+        });
+    }
+    return json(_bookOut(b['day'] as String, b));
+  }
+
   static final _note = RegExp(r'^/notes/([^/]+)$');
   static final _strike = RegExp(r'^/logbook/([^/]+)/strike$');
 
@@ -1429,6 +1656,7 @@ class Hub {
     if (path == '/orders') return json({'orders': orders});
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
     if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);
+    if (path == '/reservations' || path.startsWith('/reservations/')) return _reservations(request);
     if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);
     if (path == '/waste' || path.startsWith('/waste/') || path == '/reports/waste') return _waste(request);
     if (path == '/signin' && request.method == 'POST') {

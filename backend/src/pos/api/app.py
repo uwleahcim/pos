@@ -63,6 +63,7 @@ from ..printing.ticket import DEMO
 from ..push.apns import ApnsSender, sender_from_env
 from ..push.devices import PushDevices, clean_device, default_push_devices
 from ..push.relay import PushRelay
+from ..reservations import Reservations, default_book_store
 from ..settings import (
     DEVICE,
     EXTENSION,
@@ -101,6 +102,7 @@ from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .prep import add_prep
+from .reservations import add_reservations
 from .sales import add_sales_report
 from .timeclock import add_time_clock
 from .today import add_today
@@ -792,6 +794,7 @@ def create_app(
     notes: ShiftNotes | None = None,
     waste: WasteLog | None = None,
     waitlist: Waitlist | None = None,
+    reservations: Reservations | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -880,6 +883,8 @@ def create_app(
     app.state.waste = waste if waste is not None else WasteLog(default_waste_store())
     # The waitlist: the parties waiting for a table tonight, and how each went off the list.
     app.state.waitlist = waitlist if waitlist is not None else Waitlist(default_wait_store())
+    # The reservation book: the tables booked ahead, a day at a time, and how each booking ended.
+    app.state.reservations = reservations if reservations is not None else Reservations(default_book_store())
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
@@ -2041,6 +2046,7 @@ def create_app(
     add_shift_notes(app)
     add_waste_log(app)
     add_waitlist(app)
+    add_reservations(app)
     add_day_report(app)
     add_prep(app)
     add_kitchen(app)

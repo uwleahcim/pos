@@ -25,6 +25,7 @@ import '../settings.dart';
 import '../check_search.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
+import '../reservations.dart' show Booking;
 import '../waitlist.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
@@ -49,6 +50,7 @@ import 'time_clock_card.dart';
 import 'today_screen.dart';
 import 'waste_screen.dart';
 import 'to_go_chips.dart';
+import 'reservations_screen.dart';
 import 'waitlist_screen.dart';
 
 /// The home screen: the floor map (tap a table to seat it or open its check), or the list of open checks.
@@ -232,7 +234,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       _floor = floor;
       _moving = null; // a table is moved on the map: leaving it leaves the move
       _seating = null; // and so is a tab seated there
-      _seatingParty = null; // and a party off the waitlist
+      _seatingParty = null; // and a party off the waitlist or out of the reservation book
     });
   }
 
@@ -390,6 +392,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     _waitStale = true;
     unawaited(_readWait());
+    if (left is OpenReservations) unawaited(_reservations());
+  }
+
+  /// The reservation book (docs/reservations.md): the tables booked for today and the days ahead. **Seat**
+  /// on a reservation of today brings the floor map up, and the next table tapped is theirs
+  /// ([_seatPartyAt]), as for a party off the waitlist.
+  Future<void> _reservations() async {
+    final staff = widget.session.staff;
+    if (staff == null) return;
+    final left = await Navigator.of(context).push<Object?>(
+      PosPageRoute(
+        builder: (_) => ReservationsScreen(api: widget.api, staffId: staff.staffId, waitlist: _wait != null),
+      ),
+    );
+    if (!mounted) return;
+    if (left is SeatBooking) {
+      setState(() {
+        _seatingParty = left.booking;
+        _seating = null;
+        _moving = null;
+        _floor = true;
+      });
+    }
+    if (left is OpenWaitlist) unawaited(_waitlist());
   }
 
   Future<void> _readClockSetting() async {
@@ -1095,8 +1121,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (seating.thenSignOut) unawaited(Future.microtask(widget.session.signOut));
   }
 
-  /// The party off the waitlist being seated: the next table tapped on the floor map is where it sits down.
-  WaitParty? _seatingParty;
+  /// The party being seated, off the waitlist or out of the reservation book: the next table tapped on the
+  /// floor map is where it sits down.
+  ArrivingParty? _seatingParty;
 
   /// The party being seated was given a place: [to]. A free table takes it like a party walking in, with
   /// its size filled in: how many guests, and for a host or manager whose table it is; a server who seats
@@ -1170,23 +1197,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// list answers: the guests are at the table. A list that cannot be told keeps the party, and says so.
   /// [done] is what to say when all went well; nothing when the screen shows it anyway (the check opens, or
   /// the table is said to be its server's).
-  Future<void> _partySeated(WaitParty party, TableSpot at, String orderId, {String? done}) async {
+  Future<void> _partySeated(ArrivingParty party, TableSpot at, String orderId, {String? done}) async {
     final staff = widget.session.staff;
     if (staff == null) return;
     final messenger = ScaffoldMessenger.of(context);
     String? words;
     try {
-      final list = await widget.api.seatParty(staff.staffId, party.id, table: at.id, orderId: orderId);
-      if (mounted) setState(() => _wait = list);
-      final sat = list.party;
-      // another screen sat them first: the list keeps where that screen put them
-      words = sat != null && sat.table.isNotEmpty && sat.table != at.id
-          ? '${party.name} was already seated at ${sat.tableLabel}. The list keeps that table.'
-          : done;
+      if (party is Booking) {
+        final book = await widget.api.seatBooking(staff.staffId, party.id, table: at.id, orderId: orderId);
+        final sat = book.booking;
+        // another screen sat them first: the book keeps where that screen put them
+        words = sat != null && sat.seatedTable.isNotEmpty && sat.seatedTable != at.id
+            ? '${party.name} was already seated at ${sat.seatedLabel}. The book keeps that table.'
+            : done;
+      } else {
+        final list = await widget.api.seatParty(staff.staffId, party.id, table: at.id, orderId: orderId);
+        if (mounted) setState(() => _wait = list);
+        final sat = list.party;
+        // another screen sat them first: the list keeps where that screen put them
+        words = sat != null && sat.table.isNotEmpty && sat.table != at.id
+            ? '${party.name} was already seated at ${sat.tableLabel}. The list keeps that table.'
+            : done;
+      }
     } on ApiException {
-      words =
-          '${party.name} is at ${at.label}, but the waitlist could not be told. '
-          'Take them off the list when the hub is back.';
+      words = party is Booking
+          ? '${party.name} is at ${at.label}, but the reservation book could not be told. '
+                'Take the reservation out of the book when the hub is back.'
+          : '${party.name} is at ${at.label}, but the waitlist could not be told. '
+                'Take them off the list when the hub is back.';
     }
     if (mounted) _armClock();
     if (words != null) messenger.showSnackBar(SnackBar(key: const ValueKey('party-seated'), content: Text(words)));
@@ -1421,6 +1459,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
       if (wait != null && !waitInBar) ('Waitlist', Icons.groups_2_outlined, _waitlist),
+      // The reservation book: in a phone's menu; where the bar has every button out it is one tap past the
+      // waitlist's, which leads to it, so the bar keeps its room.
+      if (small) ('Reservations', Icons.event_available_outlined, _reservations),
       (
         _showClosed ? 'Hide closed' : 'Show closed',
         _showClosed ? Icons.visibility_off : Icons.visibility,
@@ -1603,7 +1644,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
           if (_floor && _seatingParty != null)
             MovingBar.words(
-              'Seating ${_seatingParty!.label}. Tap their table.',
+              switch (_seatingParty!) {
+                Booking(:final label, :final tableLabel) when tableLabel.isNotEmpty =>
+                  'Seating $label. Table $tableLabel is held for them: tap it, or another.',
+                final party => 'Seating ${party.label}. Tap their table.',
+              },
               key: const ValueKey('seating-party-bar'),
               onCancel: _endSeating,
             ),

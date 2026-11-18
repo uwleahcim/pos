@@ -21,6 +21,9 @@ waited longer than it was told, so the whole floor sees it without opening the l
 Anyone signed in can open the list, add a party and seat one. No PIN is asked: on a busy night whoever is
 at the door keeps it.
 
+**Reservations**, at the top right of the list, opens the reservation book (`reservations.md`): the tables
+booked for today and the days ahead. The book has **Waitlist** at its top right, to come back.
+
 ## Adding a party
 
 **Add party**, at the bottom of the list.
@@ -116,7 +119,7 @@ it as any check opened by mistake.
 - A suggested wait worked out from the tables.
 - The party's name on the check or on the table.
 - A report of waits over many days.
-- Reservations (a party for a time later today or another day).
+- A booked party on this list: reservations have their own book (`reservations.md`), one tap from here.
 - Waitlist guests going onto the guest list.
 
 ## For developers
@@ -130,7 +133,8 @@ it as any check opened by mistake.
   `read_only`. The answer carries no clock, so an unchanged list is a 304; `due_ms` and `amber_ms` are
   stamped by the hub and the app counts against `PosApi.nowMs()`.
 - App: `lib/waitlist.dart` (`Waitlist`, `WaitParty`, `WaitCounts`, `waitWords`),
-  `lib/screens/waitlist_screen.dart` (`WaitlistScreen`, pops a `SeatParty`),
+  `lib/screens/waitlist_screen.dart` (`WaitlistScreen`, pops a `SeatParty`, or an `OpenReservations` for
+  the reservation book),
   `lib/screens/party_dialog.dart` (`PartyDialog`), `PosApi.waitlist`, `addParty`, `changeParty`,
   `partyCalled`, `seatParty`, `partyLeft`, `partyBack`; `LiveChange.waitlist`; in
   `lib/screens/orders_screen.dart` the button, `_seatingParty`, `_seatPartyAt` and `_partySeated`.

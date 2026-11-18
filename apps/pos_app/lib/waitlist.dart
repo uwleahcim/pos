@@ -13,8 +13,21 @@ List<Map<String, dynamic>> _rows(Object? value) => [
       if (row is Map) row.cast<String, dynamic>(),
 ];
 
+/// A party that is about to sit down: one off the waitlist, or one with a reservation
+/// (docs/reservations.md). The floor map seats either the same way.
+abstract interface class ArrivingParty {
+  String get id;
+  String get name;
+
+  /// How many guests.
+  int get size;
+
+  /// "Chen, party of 4".
+  String get label;
+}
+
 /// One party on the list.
-class WaitParty {
+class WaitParty implements ArrivingParty {
   const WaitParty({
     required this.id,
     required this.name,
@@ -57,10 +70,13 @@ class WaitParty {
     waitedMinutes: _ms(json['waited_minutes']),
   );
 
+  @override
   final String id;
+  @override
   final String name;
 
   /// How many guests.
+  @override
   final int size;
   final String phone;
 
@@ -100,6 +116,7 @@ class WaitParty {
   bool get isSeated => status == 'seated';
 
   /// "Chen, party of 4".
+  @override
   String get label => '$name, party of $size';
 
   /// The whole minutes they have waited at [nowMs] (the hub's clock).
