@@ -7,9 +7,9 @@ every paper, so nobody packs it for the shelf.
 
 When the bag leaves, it is **handed to a driver**: the order says who has it and since when, and the
 **Deliveries** screen shows what is waiting to leave and what each driver has out (see
-[Drivers](#drivers)). A driver's runs for a shift come next. Nothing here is about money: there is no
-delivery fee and no tip (payments are parked), and a delivery is a sale like any other, counted in every
-report as a to-go order is.
+[Drivers](#drivers)). **Runs** says what each driver took out over the day, run by run (see
+[Runs](#runs)). Nothing here is about money: there is no delivery fee and no tip yet, and a delivery is a
+sale like any other, counted in every report as a to-go order is.
 
 (Orders that come from a delivery app are something else: they arrive on their own channel, in a later
 phase.)
@@ -172,8 +172,8 @@ one under the other on a phone and side by side on a tablet:
 - **Waiting**: the deliveries that have not left, the packed ones first and then by the time promised.
   Each says its number and name, **READY** or "cooking", where it goes, the note for the driver, when it
   was promised and whether it is paid. Tap the bags that are leaving together (they light up), then
-  **Out with…** at the foot and the driver's name. Bags sent in one go are **one run**: they left at the
-  same minute with the same driver. One the kitchen does not have yet ("not sent yet", or one for a later
+  **Out with…** at the foot and the driver's name. Bags sent in one go are **one run** (see
+  [Runs](#runs)). One the kitchen does not have yet ("not sent yet", or one for a later
   time) cannot be tapped. A bag can leave while it still says "cooking": nobody has to tap Ready first.
 - **Out**: under each driver's name, what they have out and since when, the bag that left first at the
   top, the driver who has been out the longest first. Each card says where it goes, the customer's phone
@@ -188,6 +188,44 @@ The screen follows the hub: what another screen does shows here within a moment.
 keeps its last picture and says it may be behind; what is tapped is kept and sent when the hub is back,
 like any change to a check.
 
+### Runs
+
+**Runs**, in the bar of the Deliveries screen, says what each driver took out over the day.
+
+- At the top, the day and what it came to: "6 runs · 5 delivered · 1 came back · 2 out".
+- Under each driver's name, their runs in the order they left: "Run 1 · left 17:35 · 2 bags · 30 min".
+  Under each run, every bag with its number, the customer's name, where it went and what became of it:
+  - **delivered 17:52 · 17 min**: when it was marked delivered, and how long after it left.
+  - **came back 19:02**: it was brought back. If it left again, it is a bag of that later run as well,
+    with whoever took it then.
+  - **handed to Mike 19:14**: another driver took it over on the way. From then on it is in a run of
+    theirs.
+  - **voided 19:12**: the order was voided while it was out.
+  - **still out**. A run with a bag still out says "out now" and has a coloured edge.
+- Whoever left first is first. A driver who is signed in finds their own runs first, under **You**.
+- The arrows beside the day step to the days before and back. A day is a day of service, four in the
+  morning to four the next: a bag that left at half past midnight belongs to the evening before.
+
+**What a run is.** The bags a driver left with in one go: the ones sent together on the Deliveries
+screen, and the ones tapped **Out** one after the other on the list of checks, each within five minutes
+of the one before. Once one of them has been delivered, the next bag that leaves with that driver starts
+a new run, however soon it leaves.
+
+**What the times are.** They are when somebody tapped. "Delivered" is the moment the bag was marked
+delivered: at the door, on the driver's phone, or back at the counter. A run's time is from its first bag
+leaving to its last one being marked. To read how long the drives take, have Delivered tapped at the door.
+
+**What is in no run.** A delivery marked delivered with nobody named as its driver (straight from Ready to
+Delivered, or its check closed at the counter) is counted in a line under the totals: "2 deliveries were
+marked delivered with no driver named." A check closed while its bag was out counts as delivered at the
+moment it was closed.
+
+**No money.** No amount is on this screen: not what the bags came to and not what was collected. Anyone
+signed in can open it, as anyone can open the list of checks, which says the same names and addresses.
+
+Nothing is stored for the runs. The hub reads them off each order's own history every time, so they cannot
+disagree with the history of a check.
+
 ### The history
 
 The check's history (`check-history.md`) says "Left with Tom", "Handed from Tom to Wei" when an order that
@@ -199,9 +237,8 @@ it and when.
 - **No fee and no tip.** Nothing is added to the check for the trip. (The pricing rules have had an
   automatic delivery fee since discounts were built, `discounts.md`, but it is for orders of the type
   `delivery`, which no screen makes. An order taken here stays a to-go order, so no fee goes on by itself.
-  Whether the restaurant charges for delivery, and how much, is the owner's to say.)
-- **No report of a driver's runs yet.** What a driver took out over a shift is the next step. Until then
-  the history of each check says who took it and when.
+  A delivery fee by distance or by the time of the drive is the next step.)
+- **The runs are on the screen only.** They are not printed, and there is no file of them.
 - **No money with the driver.** Nothing counts what a driver collected at doors or owes the drawer, and
   there is no driver's fee or tip. Taking the money for a delivery is recorded as on any to-go order, by
   whoever marks it delivered.
@@ -219,6 +256,9 @@ Drivers likewise: an app on a hub from before drivers has no **Out** step and no
 menu (that hub's staff list names nobody who delivers), a delivery goes from Ready to Delivered as it did,
 and Who may do what shows no Drivers button and no "Take deliveries out", so nothing is saved that the hub
 would refuse.
+
+Runs likewise: on a hub from before the runs, the Runs screen says "This hub does not list runs yet.
+Update the hub."
 
 ## For developers
 
@@ -266,3 +306,24 @@ Drivers:
   `Order.isOut`, and `Powers.handed`, `knows` and `offered` for a hub older than drivers. The Deliveries
   screen is worked out from `GET /orders?status=open`; there is no endpoint of its own.
 - Tests: `backend/tests/orders/test_drivers.py`, `apps/pos_app/test/drivers_test.dart`.
+
+Runs:
+
+- `GET /deliveries/runs?day=YYYY-MM-DD` (`pos.api.runs`; the running day of service without `day`), with
+  no token, like `GET /orders`, which says the same names and addresses. It answers `drivers` (each with
+  `runs`, `delivered`, `back`, `out` and the `list` of runs), the same counts over everybody, and
+  `no_driver`. A run has `left_ms`, `ended_ms` (null while a bag is out), `minutes` and `bags`; a bag has
+  the order's id, number, name and address, `left_ms`, `outcome` (`delivered`, `back`, `out`, `handed`
+  with `to`, `void`), `at_ms` and `minutes`. No amount of money is in it.
+- Nothing is stored: `pos.orders.runs.runs_report` replays the log of every order of the day that is or
+  was a delivery (`legs_of`). A **leg** is each time an order became `stage: out` with a driver, until it
+  was delivered, came back, changed driver or was voided; it left at the `out_at` carried by the operation
+  that sent it out (at that operation's own time when it carries none, as one handed on along the way) and
+  counts on the day of service it left in. A **run** is one
+  driver's legs that each left within `RUN_GAP_MS` (five minutes) of the one before, with none of them
+  delivered yet. Drivers are told apart by `driver_id`, by name only for one named without an id.
+- The answer does not say when it was read, so an answer that has not changed keeps its `ETag` and a
+  screen that asks again is sent nothing.
+- App: `lib/runs.dart` (the answer and its words), `lib/screens/runs_screen.dart`, `PosApi.runs` (null
+  from a hub older than the runs), opened by `deliveries-runs` on the Deliveries screen.
+- Tests: `backend/tests/orders/test_runs.py`, `apps/pos_app/test/runs_test.dart`.

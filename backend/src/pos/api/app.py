@@ -104,6 +104,7 @@ from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .prep import add_prep
 from .reservations import add_reservations
+from .runs import add_runs
 from .sales import add_sales_report
 from .timeclock import add_time_clock
 from .today import add_today
@@ -2077,6 +2078,7 @@ def create_app(
     add_today(app)
     add_guest_list(app)
     add_history(app)
+    add_runs(app)
     return app
 
 

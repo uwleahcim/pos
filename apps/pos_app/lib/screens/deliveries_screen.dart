@@ -13,6 +13,7 @@ import '../takeout.dart';
 import '../to_go_stages.dart';
 import 'driver_picker.dart';
 import 'hand_over.dart';
+import 'runs_screen.dart';
 
 /// The deliveries (docs/delivery.md): the orders that are brought to the customer, on one screen. At the
 /// top the ones that have not left: tap the bags that are leaving together and hand them to a driver.
@@ -22,6 +23,8 @@ import 'hand_over.dart';
 ///
 /// A driver who is signed in sees their own bags first. Nothing here is about money beyond what the list
 /// of checks already says of an order.
+///
+/// "Runs" in the bar opens what each driver took out over the day ([RunsScreen]).
 ///
 /// It reads the open orders when the hub says one changed, and now and then while the hub cannot say. With
 /// the hub away it keeps its last picture and says it may be behind; what is tapped here is queued like
@@ -278,7 +281,22 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       ],
     ];
     return Scaffold(
-      appBar: AppBar(title: const Text('Deliveries')),
+      appBar: AppBar(
+        title: const Text('Deliveries'),
+        actions: [
+          // what each driver took out over the day, bag by bag
+          TextButton(
+            key: const ValueKey('deliveries-runs'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => RunsScreen(api: widget.api, session: widget.session),
+              ),
+            ),
+            child: const Text('Runs'),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
       body: !_read && !_away
           ? const Center(child: CircularProgressIndicator())
           : Column(

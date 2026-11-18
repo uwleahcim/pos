@@ -30,6 +30,7 @@ import 'powers.dart';
 import 'pricing.dart';
 import 'printers.dart';
 import 'roster.dart';
+import 'runs.dart';
 import 'sales_report.dart';
 import 'settings.dart';
 import 'shift_notes.dart';
@@ -589,6 +590,18 @@ class PosApi {
   Future<PrepList?> prepList(String day) async {
     try {
       return await _repeated('/orders/ahead/prep', PrepList.fromJson, query: {'day': day});
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// The runs of [day] (`2026-11-16`), of the day of service that is running without one
+  /// (docs/delivery.md): every driver who took a delivery out, their runs and what became of each bag. No
+  /// money is in it. Null from a hub older than the runs.
+  Future<RunsReport?> runs({String? day}) async {
+    try {
+      return await _repeated('/deliveries/runs', RunsReport.fromJson, query: day == null ? null : {'day': day});
     } on ApiException catch (err) {
       if (err.status == 404 || err.status == 405) return null;
       rethrow;

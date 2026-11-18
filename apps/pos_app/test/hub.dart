@@ -807,6 +807,12 @@ class Hub {
   final prepPrints = <(String, String?)>[];
   String? refusePrep;
 
+  /// The drivers' runs it lists, by day of service (`GET /deliveries/runs?day=`, docs/delivery.md); asked
+  /// with no day, the ones of [runsToday], the day it says is running. A day it has none for is a day nobody
+  /// delivered on. Null is a hub older than the runs (404).
+  Map<String, Map<String, dynamic>>? runs = {};
+  String runsToday = '2026-11-16';
+
   /// The stations' screens (`GET /kitchen/screen?stations=`, docs/kitchen-screens.md): every ticket in the
   /// kitchen, as the hub words it, each line with the `stations` that make it and the ones that `made` it. A
   /// screen is answered with the tickets that have a dish of its stations, the finished ones under `recent`.
@@ -1954,6 +1960,14 @@ class Hub {
       if (kitchen == null || !kitchenPassKnown) return json({'detail': 'Not Found'}, 404);
       final watched = (request.url.queryParameters['stations'] ?? '').split(',').where((code) => code.isNotEmpty);
       return json(_kitchenScreen(watched.toList(), pass: true));
+    }
+    if (path == '/deliveries/runs') {
+      if (runs == null) return json({'detail': 'Not Found'}, 404);
+      final day = request.url.queryParameters['day'] ?? runsToday;
+      return json(
+        runs![day] ??
+            {'day': day, 'runs': 0, 'delivered': 0, 'back': 0, 'out': 0, 'no_driver': 0, 'drivers': <dynamic>[]},
+      );
     }
     if (path == '/orders/ahead/prep') {
       if (prep == null) return json({'detail': 'Not Found'}, 404);
