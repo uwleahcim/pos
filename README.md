@@ -31,7 +31,9 @@ merges after any disconnect.
   address of a customer's last delivery already filled in, Delivery's own quote, DELIVERY on every ticket
   and where it goes on the bill, Delivered in place of Picked up; an order handed to a driver is Out, the
   customer is told it is on its way, and the Deliveries screen says what waits and what each driver has
-  out; Runs says what each driver took out over the day, run by run; no fee yet): `docs/delivery.md`
+  out; Runs says what each driver took out over the day, run by run; a delivery fee by how far it goes or
+  how long the drive is, picked on the order from the location's own prices, off until they are set):
+  `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
