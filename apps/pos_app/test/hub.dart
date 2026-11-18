@@ -576,8 +576,10 @@ class Hub {
     String note = '',
     String by = 'Holly',
     int? arrivedMs,
+    int? atMs,
   }) {
-    final at = bookedAt(day, time);
+    // [atMs] is for a test that runs by the real clock: the moment itself, with [time] as its words
+    final at = atMs ?? bookedAt(day, time);
     return {
       'id': id,
       'name': name,
@@ -601,6 +603,37 @@ class Hub {
       'order_id': '',
       'ended_ms': null,
       'ended_by': '',
+    };
+  }
+
+  /// The tables booked for today, as the hub tells the floor map (`holds` of `GET /floor`): under each
+  /// table, the standing reservations of [bookToday] that hold it, the earliest first.
+  Map<String, List<Map<String, dynamic>>> get tableHolds {
+    final held = [
+      for (final b in bookings ?? const <Map<String, dynamic>>[])
+        if (b['day'] == bookToday && b['status'] == 'booked' && b['table'] != '') b,
+    ]..sort((a, b) => (a['at_ms'] as int).compareTo(b['at_ms'] as int));
+    final holds = <String, List<Map<String, dynamic>>>{};
+    for (final b in held) {
+      holds.putIfAbsent(b['table'] as String, () => []).add(holdOf(b));
+    }
+    return holds;
+  }
+
+  /// What the floor map is told of a reservation that holds a table: no number and no note.
+  static Map<String, dynamic> holdOf(Map<String, dynamic> booking) {
+    final at = booking['at_ms'] as int;
+    return {
+      'id': booking['id'],
+      'name': booking['name'],
+      'size': booking['size'],
+      'at_ms': at,
+      'time': booking['time'],
+      'arrived_ms': booking['arrived_ms'],
+      'held_ms': at - 90 * 60000,
+      'soon_ms': at - 15 * 60000,
+      'late_ms': at + 15 * 60000,
+      'until_ms': at + 90 * 60000,
     };
   }
 
@@ -2379,7 +2412,8 @@ class Hub {
           if (powers != null) 'powers': held,
         });
       case '/floor':
-        return json(floor ?? fixture('floor'));
+        // a hub with a reservation book says which tables are booked for today
+        return json({...floor ?? fixture('floor'), if (bookings != null) 'holds': tableHolds});
       case '/menu':
         return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
       case '/menu/revision':

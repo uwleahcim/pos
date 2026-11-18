@@ -150,6 +150,82 @@ class TableCheck {
   );
 }
 
+/// A table booked for today (docs/reservations.md): whose it is, how many and for when, as the hub told the
+/// floor. The hub stamps every moment with its own clock, and the map counts them against that clock: an
+/// answer nobody changed stays the same all day.
+class TableHold {
+  const TableHold({
+    required this.id,
+    required this.name,
+    required this.size,
+    required this.atMs,
+    required this.heldMs,
+    required this.soonMs,
+    required this.lateMs,
+    required this.untilMs,
+    this.time = '',
+    this.arrivedMs,
+  });
+
+  factory TableHold.fromJson(Map<String, dynamic> json) {
+    int? ms(Object? value) => value is num ? value.toInt() : null;
+    final at = ms(json['at_ms']) ?? 0;
+    return TableHold(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      size: ms(json['size']) ?? 1,
+      atMs: at,
+      time: json['time'] as String? ?? '',
+      arrivedMs: ms(json['arrived_ms']),
+      heldMs: ms(json['held_ms']) ?? at - _kept,
+      soonMs: ms(json['soon_ms']) ?? at - _near,
+      lateMs: ms(json['late_ms']) ?? at + _near,
+      untilMs: ms(json['until_ms']) ?? at + _kept,
+    );
+  }
+
+  // What a hub that named no moments would mean: an hour and a half each way, a quarter of an hour near.
+  static const _kept = 90 * 60000, _near = 15 * 60000;
+
+  /// The reservation, as the book knows it.
+  final String id;
+  final String name;
+
+  /// How many guests.
+  final int size;
+
+  /// The time the table is booked for, and that time on the restaurant's clock ("18:30").
+  final int atMs;
+  final String time;
+
+  /// When the party came in, for one that waits for its table; null when it has not.
+  final int? arrivedMs;
+
+  /// The table is kept for the party from [heldMs], since whoever sat down there then would still be eating
+  /// at its time, until [untilMs]; after that the map says no more about it.
+  final int heldMs;
+  final int untilMs;
+
+  /// When its time is near (amber from then), and when it is past with nobody seated (red from then).
+  final int soonMs;
+  final int lateMs;
+
+  bool get isHere => arrivedMs != null;
+
+  /// "Chen, party of 4".
+  String get label => '$name, party of $size';
+
+  /// The table is being kept for this party at [nowMs]: somebody else sat there is in its way.
+  bool keptAt(int nowMs) => nowMs >= heldMs && nowMs < untilMs;
+
+  /// How its time stands at [nowMs]: still ahead, near (amber), or past with nobody seated (red).
+  TimerLevel levelAt(int nowMs) => nowMs >= lateMs
+      ? TimerLevel.late
+      : nowMs >= soonMs
+      ? TimerLevel.warn
+      : TimerLevel.ok;
+}
+
 class FloorPlan {
   const FloorPlan({
     required this.width,
@@ -160,6 +236,7 @@ class FloorPlan {
     this.courses = Course.defaults,
     this.timers = TableTimers.off,
     this.moves = false,
+    this.holds = const {},
   });
   factory FloorPlan.fromJson(Map<String, dynamic> json) => FloorPlan(
     width: (json['width'] as num).toDouble(),
@@ -174,6 +251,15 @@ class FloorPlan {
         e.key: (e.value as List).map((c) => TableCheck.fromJson(c as Map<String, dynamic>)).toList(),
     },
     moves: json['moves'] == true,
+    holds: {
+      if (json['holds'] case final Map<dynamic, dynamic> holds)
+        for (final e in holds.entries)
+          if (e.value case final List<dynamic> rows when rows.isNotEmpty)
+            '${e.key}': [
+              for (final row in rows)
+                if (row is Map) TableHold.fromJson(row.cast()),
+            ],
+    },
   );
   final double width, height;
   final List<Room> rooms;
@@ -191,6 +277,24 @@ class FloorPlan {
   /// Whether a table's check can move to another table and merge with its check: the hub says so, and one
   /// older than moving does not.
   final bool moves;
+
+  /// The tables booked for today, by table id: the reservations still standing that hold each, the earliest
+  /// first. Empty from a hub older than the book on the map, and for a table nobody booked.
+  final Map<String, List<TableHold>> holds;
+
+  /// What is still to come of the table's reservations at [nowMs], the earliest first: the ones whose
+  /// table is still kept. One an hour and a half past its time with nobody seated is no longer among them.
+  List<TableHold> holdsAt(String tableId, int nowMs) => [
+    for (final hold in holds[tableId] ?? const <TableHold>[])
+      if (nowMs < hold.untilMs) hold,
+  ];
+
+  /// The reservations the table is being kept for at [nowMs]: whoever else sits there now is in their
+  /// way. Empty for a table that is not booked, or booked for a time still far off.
+  List<TableHold> keptAt(String tableId, int nowMs) => [
+    for (final hold in holds[tableId] ?? const <TableHold>[])
+      if (hold.keptAt(nowMs)) hold,
+  ];
 
   /// The table each open check is at, by order id.
   Map<String, String> get tableOf => {
@@ -261,5 +365,6 @@ class FloorPlan {
     courses: courses,
     timers: timers,
     moves: moves,
+    holds: holds,
   );
 }

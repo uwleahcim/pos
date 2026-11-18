@@ -5,7 +5,9 @@ table is booked with a name, how many they are, a day and a time, and a phone nu
 hold when there is one. When the party comes, **Seat** brings up the floor map and the next table tapped is
 theirs, with the guests already filled in.
 
-Since 18 November 2026 (the Toast comparison, row 15). Hub and app; nothing to turn on.
+Since 18 November 2026 (the Toast comparison, row 15). Hub and app; nothing to turn on. The same day, part
+two: a table booked for today says so on the floor map, and asks before somebody else is sat there
+([On the floor map](#on-the-floor-map)).
 
 ## Where it is
 
@@ -90,6 +92,49 @@ sat at, with who seated them.
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The book keeps that table."
 
+## On the floor map
+
+**A table booked for today says so on the map**, from the morning on:
+
+- **A free table** shows a small calendar with the time it is booked for, and under it whose it is and how
+  many: "18:30", "Chen 4p". A long name is cut short.
+- **A table that is seated** shows the time under its check, without the name, once the table is wanted:
+  from an hour and a half before. The people sitting there are in a booked party's way. It says nothing of
+  a reservation hours off: whoever sat down at three is gone before a table booked for seven.
+- The time is drawn as in the book: **plain** until a quarter of an hour before it, **amber** from then,
+  **red** from a quarter of an hour after it with nobody seated.
+- **"here"** in place of the time: the party was marked Here and waits for this table.
+- **"18:30 +1"**: the table is booked once more later today.
+- Under the map, **Booked** joins the legend on a day with a table booked, on tablets and Macs. A phone's
+  legend is full, and the calendar on the table says it there.
+- The booking is drawn smaller sooner than it makes the table's own name smaller.
+
+The mark goes when the party is seated (at this table or another), when the reservation is cancelled or
+marked a no-show, and by itself an hour and a half after its time. The book still lists a reservation nobody
+marked. A reservation with no table held is in the book and not on the map.
+
+### Before somebody else sits there
+
+**A free table is kept for its party from an hour and a half before its time until an hour and a half after
+it.** Tapped in that time, it asks first: "A8 is booked", with the time, the party, and how far off it is
+("in 25 min", "20 min ago", "here since 18:22").
+
+- **Seat**, beside the party: these are them. The table asks the guests (filled in) and the server as for
+  any party, the check opens, and the book marks them seated at that table. It is the quickest way to seat a
+  booked party: tap their table.
+- **Seat a walk-in**: somebody else sits there. The reservation stays in the book, and the table goes on
+  saying it is booked.
+- **Cancel**: the table is left alone.
+
+A table kept for two parties (one late, one soon) names both, each with its own Seat.
+
+The same question comes when a party off the waitlist, another booked party or a bar tab is being seated at
+that table, and when a check is moved to it. It then names what is about to happen ("Seat Garcia here",
+"Move A7 here") and offers no other party. A booked party seated at its own table is not asked about.
+
+**The map warns and refuses nothing.** A table booked for eight takes a walk-in at five with no question:
+they are gone by then. A table that is seated is never asked about: a tap opens its check.
+
 ## The ones that ended
 
 Under the standing reservations is a line that counts the day's others: "2 seated · 1 cancelled ·
@@ -108,6 +153,9 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 - **Names and numbers are kept for 30 days after the day**, then taken off the hub the next time a table is
   booked. How many they were, the time and how it ended stay.
 - **Nothing is sent to the guest.** The book sends no text and no e-mail, and nothing in it leaves the hub.
+- **The floor map is told little.** For each table held today: the name, how many and the time. Not the
+  phone number and not the note, which stay in the book. With the hub away the map shows the booked tables
+  as it last read them.
 - **The book is kept on the hub.** With the hub away the screen shows today's book as it was last read and
   says so; booking and changing wait for the hub. Seating still opens the check at the table, and the
   screen says the book could not be told: take the reservation out when the hub is back.
@@ -118,10 +166,11 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 
 ## Not built
 
-- **Booked tables marked on the floor map**, and a warning when a walk-in is sat at a table held for
-  somebody soon. This is the next step.
 - Tonight's reservations counted on the waitlist's button, and **Book a table** from the caller's popup
   when a guest phones.
+- On the map: the name on a table that is seated, the booked tables in the list beside the map while Mine
+  is on, a count of late reservations in the bar over the map, and a table that says "booked" while a
+  reservation is being made. How long a table is kept (an hour and a half each way) is fixed, not a setting.
 - **Booking by the guests themselves** (a web page), and a **text or e-mail to confirm or remind**. Both
   need an outside service the hub does not have.
 - **Deposits** and card holds: payments are parked.
@@ -151,4 +200,15 @@ mistake, the check opened at the table stays as it is: close or void it as any c
   `LiveChange.reservations`; `ArrivingParty` in `lib/waitlist.dart` is what a `WaitParty` and a `Booking`
   share, so `lib/screens/orders_screen.dart` seats either with `_seatingParty`, `_seatPartyAt` and
   `_partySeated`.
-- Tests: `backend/tests/test_reservations.py`, `apps/pos_app/test/reservations_test.dart`.
+- The floor map: `Reservations.holds()` (hub) is `holds` of `GET /floor`: under each table's id, today's
+  standing reservations that hold it, the earliest first, each as `Booking.as_hold()` (`id`, `name`, `size`,
+  `at_ms`, `time`, `arrived_ms`, and the moments `held_ms`, `soon_ms`, `late_ms`, `until_ms`; `held_ms` and
+  `until_ms` are `HOLD_MIN` before and after). The answer says nothing of the time, so it stays the same
+  (304) until the book, an order or a setting changes, or a new day of service begins. App: `TableHold`,
+  `FloorPlan.holds`, `holdsAt` and `keptAt` in `lib/floor.dart`; `_HoldMark` and `_holdLook` in
+  `lib/screens/floor_view.dart`, which follows the clock through `_Ticking` and reads the floor again on
+  `LiveChange.reservations`; `lib/screens/booked_table_dialog.dart` (`BookedTableDialog`, `holdWhenWords`,
+  `holdColors`); `_bookedOk` in `lib/screens/orders_screen.dart`, asked by `_onTable`, `_seatPartyAt`,
+  `_seatAt` and `_moveTo` for a free table; `Booking.ofHold` seats the party from the map.
+- Tests: `backend/tests/test_reservations.py`, `apps/pos_app/test/reservations_test.dart`,
+  `apps/pos_app/test/booked_tables_test.dart`.
