@@ -29,6 +29,7 @@ from typing import Any
 from .. import localtime
 from ..sync.oplog import Op, OrderState, apply, is_delivery
 
+DAY_MS = 24 * 60 * 60 * 1000
 RUN_GAP_MS = 5 * 60 * 1000
 """Bags that leave with one driver within this long of each other are one run."""
 
@@ -58,6 +59,12 @@ def _ms(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
+def _same(a: tuple[str, str], b: tuple[str, str]) -> bool:
+    """Whether two (id, name) are one driver: by the id the hub knows them by, however the name was
+    spelled; by the name for one a screen named without an id."""
+    return a[0] == b[0] if a[0] or b[0] else a[1] == b[1]
+
+
 def legs_of(ops: Iterable[Op], order_id: str) -> tuple[OrderState, list[Leg], int | None]:
     """The order as its log leaves it, every time it left with a driver (oldest first), and the moment it
     was marked delivered with nobody having taken it out (a hub's own way from ready to delivered), None for
@@ -82,7 +89,7 @@ def legs_of(ops: Iterable[Op], order_id: str) -> tuple[OrderState, list[Leg], in
         brought = state.status != "void" and is_delivery(fields)
         going = brought and stage == "out"
         who = (_text(fields.get("driver_id")), _text(fields.get("driver")))
-        if out is not None and (not going or who != (out.driver_id, out.driver)):
+        if out is not None and (not going or not _same(who, (out.driver_id, out.driver))):
             # it is no longer out with whoever had it: say what became of it
             if going:
                 out.end, out.to = HANDED, who[1]
@@ -94,11 +101,13 @@ def legs_of(ops: Iterable[Op], order_id: str) -> tuple[OrderState, list[Leg], in
                 out.end = BACK
             out.end_ms = max(at, out.left_ms)
             out = None
+        elif out is not None and who[1]:
+            out.driver = who[1]  # as last named
         if going and out is None:
-            # the moment the screen said it left; one handed on along the way left its new driver's hands now
-            said = _ms(fields.get("out_at"))
-            fresh = was_stage != "out" or not legs or said != legs[-1].left_ms
-            out = Leg(order_id, who[0], who[1], said if said is not None and fresh else at)
+            # the moment the screen that sent it out said it left; without one (it was handed on along the
+            # way, or an older screen sent it), or with one that cannot be right, when the hub's log says so
+            said = _ms(op.data.get("out_at"))
+            out = Leg(order_id, who[0], who[1], said if said is not None and abs(said - at) < DAY_MS else at)
             legs.append(out)
         if not brought or stage != "picked_up":
             alone = None  # not delivered, or no longer

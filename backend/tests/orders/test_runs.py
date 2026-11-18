@@ -251,6 +251,30 @@ def test_a_driver_is_told_apart_by_who_they_are_not_by_how_they_were_spelled():
     ]
 
 
+def test_a_bag_leaves_when_the_screen_said_so_and_when_the_log_says_so_without():
+    h = Hub(now=at(18))
+    bag(h, "o1", at(18))
+    # tapped at 18:40 on a phone that got through to the hub two minutes later: it left at 18:40
+    h.op("o1", "set_field", at(18, 42), stage="out", out_at=at(18, 40), **TOM)
+    came_back(h, "o1", at(18, 50))
+    # sent out again by a screen that says no time: the log's own time, not the one it left at before
+    h.op("o1", "set_field", at(19), stage="out", **TOM)
+    delivered(h, "o1", at(19, 20))
+    # a time that cannot be right is not believed
+    bag(h, "o2", at(18, 5))
+    h.op("o2", "set_field", at(19, 30), stage="out", out_at=at(19, 30) // 1000, **WEI)
+    report = runs(h)
+    assert told(report) == [
+        ("Tom", 1, "o1", "back", 10),
+        ("Tom", 2, "o1", "delivered", 20),
+        ("Wei", 1, "o2", "out", None),
+    ]
+    assert [run["left_ms"] for d in report["drivers"] for run in d["list"]] == [at(18, 40), at(19), at(19, 30)]
+    # named again while out, spelled another way: the same driver, and no hand-over
+    h.op("o2", "set_field", at(19, 35), driver="Wei L.", driver_id="d2")
+    assert told(runs(h))[-1] == ("Wei L.", 1, "o2", "out", None)
+
+
 def test_an_order_the_customer_comes_for_and_a_table_are_no_part_of_it():
     h = Hub(now=at(18))
     h.to_go("o1", at(18), name="Kim")
