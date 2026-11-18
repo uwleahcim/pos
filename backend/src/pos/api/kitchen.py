@@ -9,6 +9,12 @@ the calls.
   that station has made it. Its own `done` names `PASS`: the dish went out.
 - `GET /settings/kitchen_screens`, `PUT /settings/kitchen_screens` (manager token): the minutes after which a
   ticket turns amber (`warn`) and red (`late`); 0 for never.
+- `GET /reports/kitchen?from=YYYY-MM-DD&to=YYYY-MM-DD` (the `reports` power): how long the kitchen took on
+  those days of service, read off the marks (`pos.printing.took`): every station's tickets together, the
+  sends that went out, each station, each hour, each day, the slowest dishes and the longest tickets, with
+  the totals of as many days whole weeks earlier to hold beside them. The days are asked as the sales
+  report's are. Reading it changes nothing; what each order's log says is remembered while the log stays as
+  it was, so a long span is slow only the first time.
 
 A cook marks a dish made with a `done` operation on the order, through `POST /orders/{id}/ops` like every
 other change to an order (`pos.sync.oplog`): there is no call of its own for it.
@@ -23,11 +29,14 @@ from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
+from ..orders.sales import MAX_DAYS, OrderMemo, comparison, span_ms
 from ..printing.screen import KEEP_MS, kitchen_screen
 from ..printing.service import PrintService
+from ..printing.took import kitchen_of, kitchen_times
 from ..settings import STATION, SettingStore, clean_kitchen_screens
 from ..sync.pgstore import ReadOnlyError
-from .auth import manager_from
+from .auth import holder_from, manager_from
+from .sales import DAY, orders_between, the_span
 
 STATIONS_MAX = 8
 """The most stations one screen stands for: two woks and a fryer, not the whole kitchen (that is the pass)."""
@@ -46,6 +55,10 @@ class KitchenScreensIn(BaseModel):
 
 
 def add_kitchen(app: FastAPI) -> None:
+    # what each order's log says of the kitchen, kept while the log stays as it was: some 300 bytes a dish
+    memo = OrderMemo(lambda state, taxes, rules, one: kitchen_of(state), keep=40_000)
+    app.state.kitchen_memo = memo
+
     def listed(stations: str, most: int, message: str, *, none: bool = False) -> list[str]:
         codes = list(dict.fromkeys(code.strip() for code in stations.split(",") if code.strip()))
         if (not codes and not none) or len(codes) > most or not all(STATION.match(code) for code in codes):
@@ -100,6 +113,36 @@ def add_kitchen(app: FastAPI) -> None:
         the longest in the kitchen first. Each line says where it is cooked and whether that station has made
         it (`cooks`), and is `done` once the pass sent it out; `recent` is the last tickets that went out."""
         return answer(listed(stations, PASS_MAX, "Name the stations by their codes.", none=True), passing=True)
+
+    @app.get("/reports/kitchen")
+    def read_kitchen_times(
+        first: str | None = Query(None, alias="from", pattern=DAY, description="the first day of service"),
+        last: str | None = Query(None, alias="to", pattern=DAY, description="the last day of service"),
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """How long the kitchen took over a span of days, by what its screens marked: `span` with the tickets
+        every station made (`made`), the sends that went out (`out`), each of the `stations`, `hours` and
+        `days`, the slowest `dishes` and the `slowest` tickets; `before`, the totals of the days to hold
+        beside it; and `late_min`, the minutes from which a ticket counts as late (0: none do)."""
+        holder_from(app.state, authorization, "reports")
+        store = app.state.store
+        now_ms = store.now_ms()
+        span = the_span(first, last, now_ms)
+        before = comparison(*span)
+        picked = orders_between(app, *span_ms(before[0], span[1]))
+        printing: PrintService = app.state.printing
+        settings: SettingStore = app.state.settings
+        report = kitchen_times(
+            memo.each(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing),
+            span,
+            before,
+            now_ms=now_ms,
+            takeout=printing.takeout_station(),
+            skips=printing.skips,
+            station_names=printing.station_names() if printing.station_names is not None else {},
+            late_min=int(settings.get("kitchen_screens")["late"]),
+        )
+        return {**report, "max_days": MAX_DAYS, "now_ms": now_ms}
 
     @app.get("/settings/kitchen_screens")
     def read_kitchen_screens() -> dict[str, Any]:

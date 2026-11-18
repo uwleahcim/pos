@@ -18,6 +18,9 @@ and on its table on the floor map (see "What the servers see").
 A kitchen screen **chimes when a ticket comes in**, the way a printer is heard across the kitchen (see "The
 sound").
 
+What the cooks mark also adds up to a report for the manager, **how long the kitchen takes**: by station,
+hour, day and dish, over any days (`kitchen-times.md`).
+
 ## What a cook sees
 
 The station's name at the top with how many tickets are waiting, and under it the tickets, **the longest in
@@ -243,7 +246,6 @@ The device is still a POS screen.
 - A flash when a ticket comes in, a choice of chimes, a chime that repeats until the ticket is looked at, or
   a volume of its own in the app.
 - A chime for a ticket that leaves because its order was voided whole.
-- How long the kitchen takes, as a report.
 - Text as large as a television across the room needs: the screen follows the device's own text size.
 - Chinese for the words of the screen itself.
 

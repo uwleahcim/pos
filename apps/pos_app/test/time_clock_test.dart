@@ -12,6 +12,7 @@ import 'package:pos_app/settings.dart';
 import 'package:pos_app/timeclock.dart';
 
 import 'hub.dart';
+import 'location_rows.dart';
 import 'idle_lock_test.dart' show Desk, amy, pumpApp;
 
 /// The time clock (docs/time-clock.md): a person clocks in and out and takes breaks with their own PIN, from
@@ -628,7 +629,7 @@ void main() {
     Future<Terminal> pumpLocation(WidgetTester tester, Map<String, dynamic>? setting) async {
       final t = await terminal(tester);
       t.hub.timeClock = setting;
-      tester.view.physicalSize = const Size(1100, 2600); // the cards build as they come into view
+      tester.view.physicalSize = wholeLocation; // the cards build as they come into view
       await tester.pumpWidget(
         MaterialApp(
           home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1'),

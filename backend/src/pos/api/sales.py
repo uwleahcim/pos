@@ -73,31 +73,35 @@ def orders_between(app: FastAPI, since: int, until: int) -> list[OrderEntry]:
     return [e for e in entries.values() if e.first_ms is not None and e.first_ms < until]
 
 
+def a_day(asked: str) -> date:
+    try:
+        return date.fromisoformat(asked)
+    except ValueError as err:
+        raise HTTPException(422, {"error": "bad_value", "message": "That is not a day."}) from err
+
+
+def the_span(first: str | None, last: str | None, now_ms: int) -> tuple[date, date]:
+    """The days a report over a span was asked for (`from`, `to`): the day that is running when neither is
+    given, that one day when one is. 422 for a first day after the last and for more than `MAX_DAYS` days."""
+    if first is None and last is None:
+        today = localtime.service_day_of(now_ms)
+        return today, today
+    days = (a_day(first or last or ""), a_day(last or first or ""))
+    if days[0] > days[1]:
+        raise HTTPException(422, {"error": "bad_value", "message": "The first day is after the last."})
+    if (days[1] - days[0]).days + 1 > MAX_DAYS:
+        raise HTTPException(
+            422, {"error": "too_long", "message": f"At most {MAX_DAYS} days at a time.", "max_days": MAX_DAYS}
+        )
+    return days
+
+
 def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
     memo = memo if memo is not None else SaleMemo()
     app.state.sale_memo = memo
 
     def manager(authorization: str | None) -> Grant:
         return holder_from(app.state, authorization, "reports")
-
-    def a_day(asked: str) -> date:
-        try:
-            return date.fromisoformat(asked)
-        except ValueError as err:
-            raise HTTPException(422, {"error": "bad_value", "message": "That is not a day."}) from err
-
-    def the_span(first: str | None, last: str | None, now_ms: int) -> tuple[date, date]:
-        if first is None and last is None:
-            today = localtime.service_day_of(now_ms)
-            return today, today
-        days = (a_day(first or last or ""), a_day(last or first or ""))
-        if days[0] > days[1]:
-            raise HTTPException(422, {"error": "bad_value", "message": "The first day is after the last."})
-        if (days[1] - days[0]).days + 1 > MAX_DAYS:
-            raise HTTPException(
-                422, {"error": "too_long", "message": f"At most {MAX_DAYS} days at a time.", "max_days": MAX_DAYS}
-            )
-        return days
 
     def sold_in(before: tuple[date, date], span: tuple[date, date]) -> Iterator[Sale]:
         """What each order comes to that can count in either span, or was paid in either."""

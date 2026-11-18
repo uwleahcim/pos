@@ -46,7 +46,7 @@ A change holds on every screen from the moment it is saved.
 | **Write the notes for the shift** | Put a note up for everybody, change it, take it down, and see who has read it (`shift-notes.md`) | Nobody |
 | **Keep the manager's log** | Read and write what happened in a shift | Nobody |
 | **Run the waste log** | Read the waste totals, and strike out anyone's entry of any day (`waste-log.md`) | Nobody |
-| **See the reports** | Today, the day, sales, dishes sold, and what came off the checks; print the day (`today.md`, `day-report.md`, `sales-report.md`, `dishes-sold.md`) | Nobody |
+| **See the reports** | Today, the day, sales, dishes sold, kitchen times, and what came off the checks; print the day (`today.md`, `day-report.md`, `sales-report.md`, `dishes-sold.md`, `kitchen-times.md`) | Nobody |
 | **See the guest list** | Phone customers: their numbers, visits and what they spent (`guest-list.md`) | Nobody |
 | **See and correct the hours** | Everyone's hours on the time clock, and corrections to a shift (`time-clock.md`) | Nobody |
 | **Edit the menu** | Dishes, prices and options, in the menu editor (`menus.md`) | Nobody |
@@ -61,8 +61,8 @@ the voids and comps report still names who approved each one.
 - **In the menu of the Orders screen** (the three dots): **Kitchen rush** for whoever may set it, **Menu
   editor** for whoever may edit the menu, and **Location** for whoever has anything to open there.
 - **Location** still asks for a PIN, as it always did. It then shows what that PIN's owner may open and
-  nothing else: a host handed the reports finds Sold out and running low, The day, Sales, Dishes sold and
-  the Voids and comps report, and none of the settings. A manager finds everything, as before.
+  nothing else: a host handed the reports finds Sold out and running low, The day, Sales, Dishes sold,
+  Kitchen times and the Voids and comps report, and none of the settings. A manager finds everything, as before.
 - **A PIN on a check.** Where a void, a discount or a tax-exempt check asks for a PIN, the box says whose it
   takes: "Voiding Duck (Kitchen error) needs a manager or a bartender." While nobody else holds the power it
   says "Manager PIN" and "needs a manager", as before. The check and the reports name whoever approved.
