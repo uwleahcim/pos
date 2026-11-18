@@ -106,6 +106,9 @@ merges after any disconnect.
 - The pickup board (a screen facing the pickup shelf lists the to-go orders being made and the ones ready,
   by number and first name and nothing else; a switch on the device, the board standing where the sign-in
   pad stands, with Staff in its corner for the pad): `docs/pickup-board.md`
+- Kitchen screens (a screen at a station lists what the station has to make, in the words of its paper
+  ticket, coloured by how long it has waited; a tap marks a dish made and Recall brings a finished ticket
+  back; a mark changes nothing of the check; the paper prints as before): `docs/kitchen-screens.md`
 - Catering orders and the orders ahead (a to-go order for any later day, with the guests, pickup or
   delivery, the address and a note; a deposit with the rest still due, and Pay for the rest; the list of
   checks says the day and what is left to pay; Orders ahead lists what was promised for a later time by

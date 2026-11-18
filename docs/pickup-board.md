@@ -46,7 +46,8 @@ The board follows the stages the staff already use on the list of checks (`count
 ## Turning it on
 
 On the device that faces the shelf: **Settings › Pickup board**, turn the switch on, then **Save**. Each
-device keeps its own switch.
+device keeps its own switch. A device is the pickup board or a station's kitchen screen
+(`kitchen-screens.md`), never both: turning the board on takes the device's stations away.
 
 From then on that device shows the board whenever nobody is signed in on it, where another device shows
 the sign-in pad.
@@ -104,8 +105,8 @@ The device is still a POS screen.
   of `to_go_stages.dart`, so the board and the chips can never disagree), `firstName`, `boardChanges`
   (the next moment an order sent ahead starts cooking: the board looks again then, not by the second).
 - `lib/screens/pickup_board_screen.dart`: `PickupBoardScreen` (draws again only when what the board says
-  changed) and `PickupBoardGate`, which stands where the sign-in pad stands, in the home and in the
-  `LockLayer`, and shows the board or the pad.
+  changed). `lib/screens/standing_gate.dart`: `StandingGate`, which stands where the sign-in pad stands, in
+  the home and in the `LockLayer`, and shows the board (or a station's kitchen screen) or the pad.
 - `Settings.pickupBoard` (the preference `pickup_board`), `savePickupBoard`. `SignInScreen.onBoard` is the
   pad's way back.
 - Tests: `apps/pos_app/test/pickup_board_test.dart`.

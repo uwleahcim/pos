@@ -269,6 +269,8 @@ still known as a Star by step 3, without its model.
   order's first tickets (`_pack_with`). Each true or false; one left out of a `PUT` stays as it is.
 - `GET /settings/ticket_skips`, `PUT /settings/ticket_skips` (manager): `screens` as `{device, stations}`,
   the stations each screen prints no ticket at (`ticket-skips.md`).
+- `GET /kitchen/screen?stations=`: what the screen of those stations has to make, routed by the same rules
+  as the paper (`kitchen-screens.md`). The tickets print whether or not a station has a screen.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with

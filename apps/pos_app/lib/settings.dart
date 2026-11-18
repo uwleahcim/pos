@@ -17,11 +17,13 @@ class Settings extends ChangeNotifier {
     this.signOutAfterSend = false,
     String opensOn = floorMap,
     this.pickupBoard = false,
+    List<String> kitchenStations = const [],
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
        lockMinutes = cleanLockMinutes(lockMinutes),
-       opensOn = cleanOpensOn(opensOn);
+       opensOn = cleanOpensOn(opensOn),
+       _kitchenStations = cleanStations(kitchenStations);
 
   static Future<Settings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -44,6 +46,7 @@ class Settings extends ChangeNotifier {
       signOutAfterSend: prefs.getBool('sign_out_after_send') ?? false,
       opensOn: prefs.getString('opens_on') ?? floorMap,
       pickupBoard: prefs.getBool('pickup_board') ?? false,
+      kitchenStations: prefs.getStringList('kitchen_stations') ?? const [],
       phone: phone,
       prefs: prefs,
     );
@@ -97,6 +100,26 @@ class Settings extends ChangeNotifier {
   /// being made and the ones ready, by number and first name, for the customers at the shelf. The sign-in
   /// pad is one tap away. Off is how a device starts.
   bool pickupBoard;
+
+  /// A kitchen screen (docs/kitchen-screens.md): while nobody is signed in, this screen lists what these
+  /// stations have to make, by their codes, and a cook marks each dish made. Empty is how a device starts:
+  /// it is no kitchen screen. A screen is one or the other, never this and a pickup board.
+  List<String> get kitchenStations => List.unmodifiable(_kitchenStations);
+  List<String> _kitchenStations;
+
+  /// The most stations one screen stands for, as the hub has it.
+  static const kitchenStationsMax = 8;
+
+  /// Station codes as the device keeps them: each once, none empty, no more than the hub answers for.
+  static List<String> cleanStations(Iterable<String> codes) => [
+    ...{
+      for (final code in codes)
+        if (code.trim().isNotEmpty) code.trim(),
+    },
+  ].take(kitchenStationsMax).toList();
+
+  /// Whether this screen stands as something while nobody is signed in: a kitchen screen or the pickup board.
+  bool get stands => _kitchenStations.isNotEmpty || pickupBoard;
 
   PhoneSettings _phone;
 
@@ -162,7 +185,23 @@ class Settings extends ChangeNotifier {
     pickupBoard = on;
     if (on) {
       await _prefs?.setBool('pickup_board', true);
+      // (one or the other: a board for the customers shows no kitchen tickets)
+      _kitchenStations = [];
+      await _prefs?.remove('kitchen_stations');
     } else {
+      await _prefs?.remove('pickup_board');
+    }
+    notifyListeners();
+  }
+
+  /// Makes this screen the kitchen screen of these stations; of none, it is a kitchen screen no longer.
+  Future<void> saveKitchenStations(Iterable<String> codes) async {
+    _kitchenStations = cleanStations(codes);
+    if (_kitchenStations.isEmpty) {
+      await _prefs?.remove('kitchen_stations');
+    } else {
+      await _prefs?.setStringList('kitchen_stations', _kitchenStations);
+      pickupBoard = false;
       await _prefs?.remove('pickup_board');
     }
     notifyListeners();

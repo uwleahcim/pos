@@ -18,6 +18,7 @@ import 'faces.dart';
 import 'floor.dart';
 import 'guests_report.dart';
 import 'kitchen_notes.dart';
+import 'kitchen_screen.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'orders_ahead.dart';
@@ -520,6 +521,39 @@ class PosApi {
       rethrow;
     }
   }
+
+  /// The screen of these stations, by their codes (docs/kitchen-screens.md): the tickets they still have to
+  /// make and the last ones they finished. Null from a hub older than the screens.
+  Future<KitchenBoard?> kitchenScreen(List<String> stations) async {
+    try {
+      return await _repeated('/kitchen/screen', KitchenBoard.fromJson, query: {'stations': stations.join(',')});
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// After how many minutes in the kitchen a ticket on a station's screen turns amber and red. Null from a
+  /// hub older than the screens.
+  Future<KitchenMinutes?> kitchenMinutes() async {
+    try {
+      return KitchenMinutes.fromJson(await _get('/settings/kitchen_screens'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets those minutes for every station's screen.
+  Future<KitchenMinutes> saveKitchenMinutes(String token, KitchenMinutes minutes) async => KitchenMinutes.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/kitchen_screens'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(minutes.toJson()),
+      ),
+    ),
+  );
 
   /// The prep list of [day] (a day of service, `2026-11-21`; docs/catering.md): what its orders ahead need
   /// made, added up for each station. Null from a hub older than the list.

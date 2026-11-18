@@ -76,7 +76,7 @@ def carry_ops(store: OpStore | PgOpStore, ops: list[Op]) -> tuple[list[Op], list
             if not line.active:
                 refuse(op, "invalid_line", "gone", "That dish is no longer on the check it was to come from.")
                 continue
-            data = {k: v for k, v in op.data.items() if k not in CARRIED and k != "sent"}
+            data = {k: v for k, v in op.data.items() if k not in CARRIED and k not in ("sent", "done")}
             data.update({name: getattr(line, name) for name in CARRIED})
             table = source.fields.get("table")
             data["from"] = {
@@ -88,6 +88,8 @@ def carry_ops(store: OpStore | PgOpStore, ops: list[Op]) -> tuple[list[Op], list
             }
             if line.fired_at is not None:
                 data["sent"] = str(line.fired_at)
+                if line.done:
+                    data["done"] = dict(line.done)  # what its stations had made stays made
             arriving.add((op.order_id, str(op.data.get("line_id")), *came))
             op = replace(op, data=data)
         elif op.kind == "move_line":

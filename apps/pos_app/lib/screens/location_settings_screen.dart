@@ -10,6 +10,7 @@ import '../kitchen_notes.dart';
 import '../menu.dart';
 import '../powers.dart';
 import '../printers.dart';
+import '../kitchen_screen.dart';
 import '../table_timers.dart';
 import '../tags.dart';
 import '../takeout.dart';
@@ -24,6 +25,7 @@ import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'guests_screen.dart';
+import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
 import 'logbook_screen.dart';
 import 'powers_screen.dart';
@@ -147,6 +149,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   String? _handsFreeMessage;
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
+  KitchenMinutes? _kitchenMinutes; // when a station's screen turns a ticket amber and red; null likewise
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
@@ -226,6 +229,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _timers = timers);
     } on ApiException {
       // an older hub without table timers: the card says so
+    }
+    try {
+      final minutes = await widget.api.kitchenMinutes();
+      if (mounted) setState(() => _kitchenMinutes = minutes);
+    } on ApiException {
+      // no answer: the row says so
     }
     try {
       final voids = await widget.api.voidRules();
@@ -733,6 +742,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Table timers saved')));
   }
 
+  Future<void> _kitchenScreens() async {
+    final saved = await showDialog<KitchenMinutes>(
+      context: context,
+      builder: (_) => KitchenMinutesDialog(api: widget.api, token: widget.token, minutes: _kitchenMinutes!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _kitchenMinutes = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kitchen screens saved')));
+  }
+
   Future<void> _voidRules() async {
     final saved = await showDialog<VoidRules>(
       context: context,
@@ -1133,6 +1152,21 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 subtitle: Text(_timersSummary),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _timers == null ? null : _tableTimers,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                key: const ValueKey('kitchen-screens'),
+                leading: const Icon(Icons.soup_kitchen_outlined),
+                title: const Text('Kitchen screens'),
+                subtitle: Text(
+                  _kitchenMinutes == null
+                      ? 'The hub has not answered about kitchen screens (an older hub: update it)'
+                      : '${_kitchenMinutes!.summary}. A device becomes a station\'s screen in its own Settings.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _kitchenMinutes == null ? null : _kitchenScreens,
               ),
             ),
             const SizedBox(height: 12),

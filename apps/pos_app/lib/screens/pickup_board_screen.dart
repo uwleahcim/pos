@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../live.dart';
 import '../pickup_board.dart';
-import '../settings.dart';
 import 'theme.dart';
 
 /// The pickup board (docs/pickup-board.md): a screen facing the pickup shelf. It lists the to-go orders the
@@ -285,89 +284,6 @@ class _BoardTile extends StatelessWidget {
             style: TextStyle(fontSize: unit * 0.7, fontWeight: FontWeight.w500, color: text),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// What a screen shows while nobody is signed in on it: the sign-in pad or, on a device set to be a pickup
-/// board (`Settings.pickupBoard`), the board, with the pad one tap away for the staff.
-///
-/// [pad] builds the sign-in pad; it is handed the way back to the board, for its bar. A pad nobody touches
-/// for [backAfter] goes back to the board by itself, so the shelf's screen never stays on a PIN pad because
-/// somebody tapped Staff and walked off. Signing in takes the whole of this away, pad and board.
-class PickupBoardGate extends StatefulWidget {
-  const PickupBoardGate({
-    super.key,
-    required this.settings,
-    required this.api,
-    required this.pad,
-    this.backAfter = const Duration(minutes: 1),
-  });
-
-  final Settings settings;
-  final PosApi api;
-  final Widget Function(BuildContext context, VoidCallback? toBoard) pad;
-  final Duration backAfter;
-
-  @override
-  State<PickupBoardGate> createState() => _PickupBoardGateState();
-}
-
-class _PickupBoardGateState extends State<PickupBoardGate> {
-  bool _staff = false; // one of the staff asked for the pad
-  Timer? _back;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.settings.addListener(_onSettings);
-  }
-
-  @override
-  void dispose() {
-    widget.settings.removeListener(_onSettings);
-    _back?.cancel();
-    super.dispose();
-  }
-
-  // The switch was just turned on, from Settings behind the pad: the board comes up when Settings closes.
-  void _onSettings() {
-    if (mounted) setState(() {});
-  }
-
-  void _toPad() {
-    setState(() => _staff = true);
-    _touched();
-  }
-
-  void _toBoard() {
-    _back?.cancel();
-    if (mounted) setState(() => _staff = false);
-  }
-
-  /// Somebody is at the pad: the minute starts over.
-  void _touched() {
-    if (!_staff) return;
-    _back?.cancel();
-    _back = Timer(widget.backAfter, _toBoard);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.settings.pickupBoard) return widget.pad(context, null);
-    if (!_staff) return PickupBoardScreen(key: const ValueKey('pickup-board'), api: widget.api, onStaff: _toPad);
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _touched(),
-      child: Focus(
-        canRequestFocus: false,
-        skipTraversal: true,
-        onKeyEvent: (_, _) {
-          _touched(); // a PIN typed on a keyboard, a tag held to the reader
-          return KeyEventResult.ignored;
-        },
-        child: widget.pad(context, _toBoard),
       ),
     );
   }

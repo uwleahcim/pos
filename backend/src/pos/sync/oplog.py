@@ -53,6 +53,9 @@ KINDS = frozenset(
         # An allergy a guest told the server of, for one seat or (no seat) the whole table: the allergens by
         # the menu's codes and whatever else was said, in words. One with neither takes the allergy off.
         "allergy",  # data: seat?, allergens?, note?, by?, by_id?
+        # A station's screen says it has made dishes, or takes that back (pos.printing.screen). It is the
+        # kitchen's own word beside the check: no dish, price or payment changes by it.
+        "done",  # data: station, line_ids, done? (false takes it back), by?, by_id?
     }
 )
 """Any kind may also carry `offline: true` in its data: the terminal stamped it while no backend answered
@@ -177,6 +180,10 @@ class Line:
     # For a dish that came from another check: `order_id`, `line_id` and the `table` that check stood at.
     moved_from: dict[str, Any] | None = None
     arrived_sent: bool = False  # it came already sent: the kitchen has it on a ticket of the other check
+    # The stations whose screen marked this dish made, each with when (wall-clock ms); a station that took
+    # its word back is not in it. `done_stamps` is the last word of each station, to tell which stands.
+    done: dict[str, int] = field(default_factory=dict)
+    done_stamps: dict[str, HLC] = field(default_factory=dict)
     added_at: HLC | None = None  # when it came onto the check: what a floor map times an unsent dish from
     fired_at: HLC | None = None  # the fire that sent this line to the kitchen
     stamps: dict[str, HLC] = field(default_factory=dict)
@@ -389,6 +396,7 @@ class OrderState:
                     "moved_to": line.moved_to,
                     "moved_from": line.moved_from,
                     "allergy": self.allergy_conflicts(line),
+                    "done": dict(sorted(line.done.items())),
                 }
                 for line in self.ordered_lines()
             },
@@ -455,6 +463,9 @@ def apply(state: OrderState, op: Op) -> None:
             # it came from another check already sent: the kitchen has it, on that check's ticket, so no
             # fire here sends it again and nothing about it is late
             line.fired_at, line.arrived_sent, line.modified_after_fire = sent, True, False
+            # and what its stations had already made of it stays made: nothing comes back onto a screen
+            line.done = _made(data.get("done"))
+            line.done_stamps = dict.fromkeys(line.done, op.hlc)
         state.lines[line_id] = line
 
     elif kind == "set_line":
@@ -540,6 +551,21 @@ def apply(state: OrderState, op: Op) -> None:
                 }
             else:
                 state.allergies.pop(key, None)
+
+    elif kind == "done":
+        station, ids = data.get("station"), data.get("line_ids")
+        if isinstance(station, str) and station and isinstance(ids, list | tuple):
+            made = data.get("done") is not False
+            for line_id in ids:
+                line = state.lines.get(line_id) if isinstance(line_id, str) else None
+                # the latest word of a station on a dish stands; a dish this check never had is not marked
+                if line is None or line.done_stamps.get(station, _MIN) > op.hlc:
+                    continue
+                line.done_stamps[station] = op.hlc
+                if made:
+                    line.done[station] = op.hlc.wall_ms
+                else:
+                    line.done.pop(station, None)
 
     elif kind == "fire":
         course = data.get("course", "*")
@@ -675,6 +701,18 @@ def _checks(value: Any) -> list[int] | None:
     listed = value if isinstance(value, list | tuple) else [value]
     numbers = {n for n in listed if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= MAX_CHECKS}
     return sorted(numbers) or None
+
+
+def _made(value: Any) -> dict[str, int]:
+    """The stations that had made a dish before it changed checks, each with when, as the hub read them
+    from the check it came from; anything else is nobody."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        station: at
+        for station, at in value.items()
+        if isinstance(station, str) and station and isinstance(at, int) and not isinstance(at, bool)
+    }
 
 
 def _rank(value: Any) -> float | None:

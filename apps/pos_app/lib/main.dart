@@ -25,10 +25,10 @@ import 'ringer.dart';
 import 'screens/lock_layer.dart';
 import 'screens/orders_screen.dart';
 import 'screens/phone_bar.dart';
-import 'screens/pickup_board_screen.dart';
 import 'screens/reader_keys.dart';
 import 'screens/settings_screen.dart';
 import 'screens/signin_screen.dart';
+import 'screens/standing_gate.dart';
 import 'screens/tap_focus.dart';
 import 'screens/text_arrows.dart';
 import 'screens/theme.dart';
@@ -291,10 +291,12 @@ class _PosAppState extends State<PosApp> {
                         onOrder: canOrder ? _orderForCaller : null,
                         child: LockLayer(
                           session: session,
-                          // (a pickup board stands over the pad too: the shelf's screen locked itself)
-                          pad: (context) => PickupBoardGate(
+                          // (a pickup board or a kitchen screen stands over the pad too: the screen on the
+                          // wall locked itself)
+                          pad: (context) => StandingGate(
                             settings: settings,
                             api: api,
+                            outbox: widget.outbox,
                             pad: (context, toBoard) => SignInScreen(
                               session: session,
                               settings: settings,
@@ -325,11 +327,13 @@ class _PosAppState extends State<PosApp> {
                 );
               } else if (!session.signedIn && !session.locked) {
                 // (a screen locked for standing idle keeps what was open, under the pad the lock lays over it)
-                // On a device that is a pickup board the board stands here, the pad one tap behind it.
-                screen = PickupBoardGate(
+                // On a device that is a pickup board or a station's kitchen screen, that stands here, the pad
+                // one tap behind it.
+                screen = StandingGate(
                   key: const ValueKey('sign-in'),
                   settings: settings,
                   api: api,
+                  outbox: widget.outbox,
                   pad: (_, toBoard) => SignInScreen(
                     session: session,
                     settings: settings,

@@ -45,7 +45,7 @@ void main() {
 
   testWidgets('Settings says how smoothly the device draws, and starts the count over', (tester) async {
     // tall enough for every card of the settings screen above this one (the list builds only what shows)
-    await tester.binding.setSurfaceSize(const Size(800, 1800));
+    await tester.binding.setSurfaceSize(const Size(800, 2400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     var clock = DateTime(2026, 11, 12, 18, 2);
     final frames = FrameWatch(now: () => clock);
