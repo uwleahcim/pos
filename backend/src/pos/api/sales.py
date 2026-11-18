@@ -9,15 +9,19 @@
   shifts that began in those days, by how many people, how many shifts nobody clocked out of, and
   `net_per_hour`, the net sales for each hour worked.
 
+- `GET /reports/sales/sheet?from=&to=` (manager token), the same days asked the same way, as a table for a
+  spreadsheet (docs/sales-report.md, "For the accountant"): `columns`, `rows` (a line for each day) and
+  `total`, every cell a string; `running` while the last day is not over. Nothing is held beside it.
+
 - `GET /reports/dishes?from=&to=` (manager token), the same days asked the same way: `dishes`, every dish
   sold in them or on the menu, most sold first, each with how many and for how much, the same for the days
   before (`before_count`, `before_amount`), its `sizes`, the names `typed` for an off-menu dish and its
   `options` (each under the `group` it belongs to); `categories`, the same added up by menu and category;
   and `span` and `before`, the days and what all their dishes come to (`pos.orders.dishes`).
 
-Reading either changes nothing and nothing is written down: both are reckoned from the log. What each check
-comes to is remembered in memory while its log stays as it was (`pos.orders.sales.SaleMemo`), so the first
-reading of a long span takes a few seconds and the next ones do not, whichever of the two is read.
+Reading any of them changes nothing and nothing is written down: all are reckoned from the log. What each
+check comes to is remembered in memory while its log stays as it was (`pos.orders.sales.SaleMemo`), so the
+first reading of a long span takes a few seconds and the next ones do not, whichever of them is read.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from .. import localtime
 from ..identity.tokens import Grant
 from ..orders.dishes import dishes_report
-from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, sales_reports, span_ms
+from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, day_sheet, sales_reports, span_ms
 from ..sync.oplog import OrderEntry
 from .auth import holder_from
 
@@ -126,6 +130,22 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
         for report in reports:
             report["clock"] = clock_part(app, report["since_ms"], report["until_ms"], report["sales"]["net"])
         return {"span": reports[0], "before": reports[1], "max_days": MAX_DAYS, "now_ms": now_ms}
+
+    @app.get("/reports/sales/sheet")
+    def read_sales_sheet(
+        first: str | None = Query(None, alias="from", pattern=DAY, description="the first day of service"),
+        last: str | None = Query(None, alias="to", pattern=DAY, description="the last day of service"),
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """A span of days as a table for a spreadsheet: a line for each day with its checks and guests, the
+        dishes sold (by menu where there are several), comps and discounts, net sales, charges, gratuity,
+        the sales tax, the total, the checks charged no tax, the voids and the money taken by how it was
+        paid; and a line of totals. Every sale and every payment of the days is in it."""
+        manager(authorization)
+        now_ms = app.state.store.now_ms()
+        span = the_span(first, last, now_ms)
+        sheet = day_sheet(sold_in(span, span), *span, defs=app.state.menu.defs, now_ms=now_ms)
+        return {**sheet, "max_days": MAX_DAYS, "now_ms": now_ms}
 
     @app.get("/reports/dishes")
     def read_dishes(

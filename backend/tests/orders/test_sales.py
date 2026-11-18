@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from pos.orders.sales import MAX_DAYS, SaleMemo, comparison, sale_of, sales_report, sales_reports
+from pos.orders.sales import MAX_DAYS, SaleMemo, comparison, day_sheet, sale_of, sales_report, sales_reports
 from pos.tax import massachusetts
 
 from .test_day import BEER, DSN, EGGROLL, PUPU, WINGS, Hub, added, at, evening, money, prepaid
@@ -336,6 +336,263 @@ def test_what_is_remembered_is_bounded_read_in_pieces_and_dropped_under_other_ru
     assert sum(asked) == 10
 
 
+# The same days as a table for a spreadsheet: a line a day, for the accountant. ------------------------------
+
+SHEET = [
+    "Day",
+    "Checks",
+    "Guests",
+    "Dinner",
+    "Lunch",
+    "Dishes sold",
+    "Comps and discounts",
+    "Net sales",
+    "Charges",
+    "Gratuity",
+    "Sales tax",
+    "Total",
+    "Tax-exempt checks",
+    "Tax-exempt sales",
+    "Tax not charged",
+    "Voids after sending",
+    "Voids after sending, amount",
+    "Checks voided whole",
+    "Checks voided whole, amount",
+    "Cash",
+    "Card",
+    "Paid elsewhere",
+    "Money taken",
+]
+PAID = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
+
+
+def sheet(h: Hub, first: str | None = None, last: str | None = None) -> dict:
+    params = {name: day for name, day in (("from", first), ("to", last)) if day}
+    answer = h.c.get("/reports/sales/sheet", params=params, headers=h.manager())
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def lines(answer: dict) -> dict[str, dict[str, str]]:
+    """Each line of a sheet under its day ("Total" for the last), each cell under its column's name."""
+    assert all(len(row) == len(answer["columns"]) for row in [*answer["rows"], answer["total"]])
+    return {row[0]: dict(zip(answer["columns"], row, strict=True)) for row in [*answer["rows"], answer["total"]]}
+
+
+def test_the_sheet_is_for_managers_and_its_days_are_asked_like_the_sales():
+    h = Hub()
+    assert h.c.get("/reports/sales/sheet").status_code == 401
+    assert h.c.get("/reports/sales/sheet", headers={"authorization": "Bearer nobody"}).status_code == 401
+    for params in ({"from": "yesterday"}, {"to": "2026-02-30"}, {"from": "2026-11-16", "to": "2026-11-15"}):
+        assert h.c.get("/reports/sales/sheet", params=params, headers=h.manager()).status_code == 422, params
+    long = h.c.get("/reports/sales/sheet", params={"from": "2026-08-16", "to": "2026-11-16"}, headers=h.manager())
+    assert long.status_code == 422 and long.json()["detail"]["error"] == "too_long"
+    quarter = sheet(h, "2026-08-17", "2026-11-16")  # 92 days exactly: a line for each, sold on or not
+    assert len(quarter["rows"]) == 92 and quarter["max_days"] == 92
+    assert set(quarter["total"][1:]) == {"0", "0.00"}
+    today = sheet(h)  # nothing asked: the day that is running
+    assert (today["first"], today["last"], today["running"]) == ("2026-11-16", "2026-11-16", True)
+    assert [row[0] for row in today["rows"]] == ["2026-11-16"] and today["now_ms"] == at(21)
+    assert sheet(h, "2026-11-15")["running"] is False
+
+
+def test_the_sheet_is_a_line_for_each_day_and_a_line_of_totals_every_cell_as_text():
+    h = week_before(evening())
+    before = h.store.cursor
+    answer = sheet(h, "2026-11-09", "2026-11-17")
+    assert h.store.cursor == before  # reading changes nothing
+    assert answer["columns"] == SHEET
+    assert [row[0] for row in answer["rows"]] == [f"2026-11-{n:02d}" for n in range(9, 18)]
+    assert answer["total"][0] == "Total"
+    for row in [*answer["rows"], answer["total"]]:
+        assert all(isinstance(cell, str) and "\t" not in cell and "\n" not in cell for cell in row)
+    monday = lines(answer)["2026-11-16"]
+    assert monday == {
+        "Day": "2026-11-16",
+        "Checks": "4",
+        "Guests": "8",
+        "Dinner": "58.60",
+        "Lunch": "0.00",
+        "Dishes sold": "58.60",
+        "Comps and discounts": "2.00",  # what came off is written as it is, with no minus sign
+        "Net sales": "56.60",
+        "Charges": "0.00",
+        "Gratuity": "0.00",
+        "Sales tax": "3.96",
+        "Total": "60.56",
+        "Tax-exempt checks": "0",
+        "Tax-exempt sales": "0.00",
+        "Tax not charged": "0.00",
+        "Voids after sending": "1",
+        "Voids after sending, amount": "3.50",
+        "Checks voided whole": "1",
+        "Checks voided whole, amount": "2.95",
+        "Cash": "25.00",
+        "Card": "8.84",
+        "Paid elsewhere": "18.14",
+        "Money taken": "51.98",
+    }
+    quiet = lines(answer)["2026-11-12"]  # a day nothing was sold on is a line of zeroes, not a gap
+    assert set(quiet.values()) == {"2026-11-12", "0", "0.00"}
+
+
+def as_the_day_reads(h: Hub, day: str, line: dict[str, str]) -> None:
+    """This line of a sheet says what the day's report says of the day."""
+    report = h.report(day)
+    assert (line["Checks"], line["Guests"]) == (str(report["checks"]), str(report["guests"])), day
+    for column, figure in (
+        ("Dishes sold", "gross"),
+        ("Comps and discounts", "discounts"),
+        ("Net sales", "net"),
+        ("Charges", "charges"),
+        ("Gratuity", "gratuity"),
+        ("Sales tax", "tax"),
+        ("Total", "total"),
+    ):
+        assert line[column] == report["sales"][figure], (day, column)
+    exempted = report["tax_exempt"]
+    assert (line["Tax-exempt checks"], line["Tax-exempt sales"], line["Tax not charged"]) == (
+        str(exempted["count"]),
+        exempted["sales"],
+        exempted["tax"],
+    ), day
+    for column, figure in (("Voids after sending", "voids"), ("Checks voided whole", "voided_checks")):
+        assert (line[column], line[f"{column}, amount"]) == (str(report[figure]["count"]), report[figure]["amount"]), (
+            day,
+            column,
+        )
+    taken = {PAID[row["method"]]: row["amount"] for row in report["money"]["taken"]}
+    assert {name: line[name] for name in PAID.values()} == {name: taken.get(name, "0.00") for name in PAID.values()}
+    assert line["Money taken"] == report["money"]["taken_total"], day
+    by_menu = {row["name"]: row["amount"] for row in report["menus"]}
+    assert {name: line[name] for name in ("Dinner", "Lunch")} == {
+        name: by_menu.get(name, "0.00") for name in ("Dinner", "Lunch")
+    }, day
+
+
+def test_each_line_of_the_sheet_reads_what_the_days_report_reads_for_that_day():
+    h = week_before(evening())
+    answer = lines(sheet(h, "2026-11-09", "2026-11-17"))
+    for day in (f"2026-11-{n:02d}" for n in range(9, 18)):
+        as_the_day_reads(h, day, answer[day])
+    for day in ("2026-11-09", "2026-11-15", "2026-11-16", "2026-11-17"):  # and a day asked alone is that line
+        alone = sheet(h, day, day)
+        assert lines(alone)[day] == answer[day]
+        assert alone["total"][1:] == alone["rows"][0][1:]
+
+
+def test_the_totals_are_the_lines_added_up_and_read_what_the_sales_read():
+    h = week_before(evening())
+    answer = sheet(h, "2026-11-09", "2026-11-17")
+    for i, column in enumerate(answer["columns"][1:], start=1):
+        assert money(answer["total"][i]) == sum(money(row[i]) for row in answer["rows"]), column
+    total, span = lines(answer)["Total"], sales(h, "2026-11-09", "2026-11-17")["span"]
+    assert (total["Checks"], total["Guests"]) == (str(span["checks"]), str(span["guests"])) == ("9", "15")
+    for column, figure in (
+        ("Dishes sold", "gross"),
+        ("Comps and discounts", "discounts"),
+        ("Net sales", "net"),
+        ("Charges", "charges"),
+        ("Gratuity", "gratuity"),
+        ("Sales tax", "tax"),
+        ("Total", "total"),
+    ):
+        assert total[column] == span["sales"][figure], column
+    assert total["Money taken"] == span["money"]["taken_total"] == "78.09"
+    assert {PAID[row["method"]]: row["amount"] for row in span["money"]["taken"]} == {
+        name: total[name] for name in PAID.values()
+    }
+    assert money(total["Dinner"]) + money(total["Lunch"]) == money(total["Dishes sold"])  # the menus split it
+    for line in lines(answer).values():  # and every line adds up the way the sales do
+        assert money(line["Net sales"]) == money(line["Dishes sold"]) - money(line["Comps and discounts"])
+        assert money(line["Total"]) == sum(money(line[c]) for c in ("Net sales", "Charges", "Gratuity", "Sales tax"))
+        assert money(line["Money taken"]) == sum(money(line[name]) for name in PAID.values())
+
+
+def test_charges_a_gratuity_and_a_check_charged_no_tax_are_on_the_line_of_their_day():
+    from .test_exempt import exempt  # it reads the sales with this module's own helpers
+
+    h = Hub(now=at(17))
+    h.table("o1", at(17), table="9", guests=6)  # a party of six: the gratuity adds itself
+    h.ring("o1", "L1", PUPU, at(17, 1), qty=3)
+    h.op("o2", "create", at(17, 30), order_type="delivery", customer_name="Lee", channel="phone")  # with its fee
+    h.ring("o2", "L1", WINGS, at(17, 31))
+    h.table("o3", at(18), table="4")
+    h.ring("o3", "L1", EGGROLL, at(18, 1), qty=2)
+    assert exempt(h, "o3", at(18, 5))["refused"] == []
+    h.now = at(21)
+    line = lines(sheet(h))["2026-11-16"]
+    assert (line["Charges"], line["Gratuity"]) == ("4.00", "9.15")
+    assert (line["Tax-exempt checks"], line["Tax-exempt sales"], line["Tax not charged"]) == ("1", "7.00", "0.49")
+    assert money(line["Total"]) == sum(money(line[c]) for c in ("Net sales", "Charges", "Gratuity", "Sales tax"))
+    as_the_day_reads(h, "2026-11-16", line)
+
+
+def test_what_came_off_and_the_money_are_on_the_line_of_the_day_they_happened():
+    h = evening()
+    h.op("y2", "reopen", at(21, 2))
+    h.op("y2", "void_line", at(21, 3), line_id="L1", reason="kitchen-error", by="Amy")  # yesterday's tab, tonight
+    answer = lines(sheet(h, "2026-11-15", "2026-11-16"))
+    sunday, monday = answer["2026-11-15"], answer["2026-11-16"]
+    assert (sunday["Voids after sending"], sunday["Voids after sending, amount"]) == ("0", "0.00")
+    assert (monday["Voids after sending"], monday["Voids after sending, amount"]) == ("2", "10.00")
+    # the tab was paid by card on Monday (6.96 of the 8.84): Monday's money, whatever is left of Sunday's sale
+    assert (sunday["Dishes sold"], sunday["Card"], monday["Card"]) == ("2.50", "0.00", "8.84")
+    for day in ("2026-11-15", "2026-11-16"):
+        as_the_day_reads(h, day, answer[day])
+    # an order rung and paid on Saturday for Monday: Saturday's money, Monday's sale
+    h = prepaid()
+    total = h.check("c1")["total"]
+    answer = lines(sheet(h, "2026-11-14", "2026-11-16"))
+    assert (answer["2026-11-14"]["Checks"], answer["2026-11-14"]["Money taken"]) == ("0", total)
+    assert (answer["2026-11-16"]["Checks"], answer["2026-11-16"]["Total"]) == ("1", total)
+    assert (answer["2026-11-16"]["Money taken"], answer["Total"]["Money taken"]) == ("0.00", total)
+    # a check voided whole after money was taken on it: no sale, the check said as voided, the money still there
+    h = Hub(now=at(18))
+    h.to_go("o1", at(18))
+    h.ring("o1", "L1", WINGS, at(18, 1))
+    h.pay("o1", at(18, 2), "5.00", "cash")
+    h.op("o1", "void_order", at(18, 5))
+    line = lines(sheet(h))["2026-11-16"]
+    assert (line["Checks"], line["Dishes sold"], line["Total"]) == ("0", "0.00", "0.00")
+    assert (line["Checks voided whole"], line["Checks voided whole, amount"], line["Cash"]) == ("1", "8.95", "5.00")
+    as_the_day_reads(h, "2026-11-16", line)
+
+
+def test_a_dish_that_left_the_menu_has_its_column_so_the_menus_still_add_up():
+    h = Hub(now=at(18))
+    h.table("o1", at(18))
+    h.ring("o1", "L1", WINGS, at(18, 1))
+    gone = {"unit_price": "11.00", "tax_class": "prepared_food", "name": "Last year's special", "item": "GONE"}
+    h.op("o1", "add_line", at(18, 2), line_id="L2", item="Special", qty=1, priced=gone, by="Amy", by_id="s1")
+    answer = sheet(h)
+    assert answer["columns"][3:7] == ["Dinner", "Lunch", "Off the menu now", "Dishes sold"]
+    line = lines(answer)["2026-11-16"]
+    assert (line["Dinner"], line["Lunch"], line["Off the menu now"], line["Dishes sold"]) == (
+        "8.95",
+        "0.00",
+        "11.00",
+        "19.95",
+    )
+
+
+def test_the_sheet_can_be_reckoned_straight_from_the_orders():
+    h = week_before(evening())
+    state = h.c.app.state
+    sold = [sale_of(h.store.view(o), state.taxes, state.pricing) for o in h.store.order_ids()]
+    straight = day_sheet(sold, date(2026, 11, 9), date(2026, 11, 17), defs=state.menu.defs, now_ms=h.now)
+    first = sheet(h, "2026-11-09", "2026-11-17")
+    assert {k: v for k, v in first.items() if k not in ("max_days", "now_ms")} == straight
+    assert sheet(h, "2026-11-09", "2026-11-17") == first  # and the same from what the hub remembers
+    h.op("o4", "void_line", at(21, 10), line_id="L2", reason="kitchen-error", by="Amy")  # a check that changed
+    again = lines(sheet(h, "2026-11-09", "2026-11-17"))["2026-11-16"]
+    assert (again["Voids after sending"], again["Voids after sending, amount"], again["Dishes sold"]) == (
+        "2",
+        "19.45",
+        "42.65",
+    )
+
+
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
 def test_the_sales_are_the_same_from_postgres():
     import psycopg
@@ -348,6 +605,7 @@ def test_the_sales_are_the_same_from_postgres():
         memory = week_before(evening())
         for first, last in ((None, None), ("2026-11-09", "2026-11-17"), ("2026-11-15", "2026-11-15")):
             assert sales(h, first, last) == sales(memory, first, last)
+            assert sheet(h, first, last) == sheet(memory, first, last)
         assert sales(h)["span"]["turn"] == {"tables": 2, "minutes": 61}
     finally:
         h.store.close()

@@ -320,6 +320,7 @@ DOORS = [
     ("waste", "get", "/reports/waste", None),
     ("reports", "get", "/reports/day", None),
     ("reports", "get", "/reports/sales", None),
+    ("reports", "get", "/reports/sales/sheet", None),
     ("reports", "get", "/reports/dishes", None),
     ("reports", "get", "/reports/today", None),
     ("guests", "get", "/reports/guests", None),

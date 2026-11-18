@@ -15,10 +15,10 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..orders.day import PAID_AS
 from .ticket import DIALECTS
 
 ZERO = Decimal(0)
-PAID_AS = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
 KINDS = {"dine_in": "Tables", "tab": "Bar tabs", "takeout": "To go", "delivery": "Delivery"}
 
 

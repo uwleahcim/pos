@@ -42,6 +42,8 @@ from .voids import void_rows
 ZERO = Decimal("0.00")
 METHODS = ("cash", "card", "elsewhere")
 """How a payment can have been taken, in the order the report lists them; anything else follows by name."""
+PAID_AS = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
+"""What each is called on paper and in a table."""
 
 
 def order_day(state: OrderState) -> date | None:

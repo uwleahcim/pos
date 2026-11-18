@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../day_report.dart';
@@ -13,7 +14,8 @@ import 'theme.dart';
 /// headline figures first (net sales, checks, guests, the average check and guest, how long a table stood,
 /// and the hours worked where the time clock is used), then what the checks come to, each day, each hour,
 /// each category and kind of order, the money taken and the comps. The hub does every sum. One column, so
-/// it reads the same on a phone.
+/// it reads the same on a phone. Under what the checks come to, the days shown can be copied as a table for
+/// a spreadsheet, a line a day: what a bookkeeper enters.
 class SalesScreen extends StatefulWidget {
   const SalesScreen({
     super.key,
@@ -49,6 +51,12 @@ class _SalesScreenState extends State<SalesScreen> {
   int _maxDays = 92;
   final _scroll = ScrollController();
 
+  /// The days shown, copied as a table (docs/sales-report.md, "For the accountant"): while the hub is
+  /// asked, and what came of the last asking, until other days are read.
+  bool _copying = false;
+  String? _copied;
+  String? _copyError;
+
   @override
   void initState() {
     super.initState();
@@ -63,7 +71,11 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _load() async {
     final ask = ++_asked;
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _copying = false;
+      _copied = _copyError = null;
+    });
     final (from, to) = spanOf(_choice, widget.now(), first: _other?.start, last: _other?.end);
     try {
       final report = await widget.api.salesReport(widget.token, from: from, to: to);
@@ -76,6 +88,36 @@ class _SalesScreenState extends State<SalesScreen> {
       if (!mounted || ask != _asked) return;
       setState(() => _error = reportError(err, 'the sales report'));
     }
+  }
+
+  /// Puts the days of [span] on the clipboard as a table: the names of the columns, a line a day and the
+  /// totals, as the hub lays them out. Nothing is copied for days that are no longer the ones shown.
+  Future<void> _copy(SalesSpan span) async {
+    if (_copying) return;
+    final ask = _asked;
+    setState(() {
+      _copying = true;
+      _copied = _copyError = null;
+    });
+    String? copied, error;
+    try {
+      final sheet = await widget.api.salesSheet(widget.token, from: dayName(span.first), to: dayName(span.last));
+      if (!mounted || ask != _asked) return;
+      await Clipboard.setData(ClipboardData(text: sheet.text));
+      copied = [sheet.copied, if (sheet.running) 'Today is not over, so its line will still change.'].join(' ');
+    } on ApiException catch (err) {
+      error = err.status == 404
+          ? 'This hub is older than this table. Update the hub, then copy again.'
+          : reportError(err, 'this table');
+    } on PlatformException {
+      error = 'This device would not take it on its clipboard.';
+    }
+    if (!mounted || ask != _asked) return;
+    setState(() {
+      _copying = false;
+      _copied = copied;
+      _copyError = error;
+    });
   }
 
   void _pick(SalesChoice choice) {
@@ -260,6 +302,31 @@ class _SalesScreenState extends State<SalesScreen> {
         key: const ValueKey('sales-tax'),
       ),
       ReportLine('Total', dollars(span.total), strong: true, key: const ValueKey('sales-total')),
+      ListTile(
+        key: const ValueKey('sales-sheet'),
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.table_chart_outlined),
+        title: Text(many ? 'Copy each day for the accountant' : 'Copy the day for the accountant'),
+        subtitle: Text(
+          _copyError ??
+              _copied ??
+              'A line a day to paste into a spreadsheet: sales, tax, comps, voids and the money taken.',
+          key: const ValueKey('sales-sheet-said'),
+          style: _copyError != null ? TextStyle(color: scheme.error) : null,
+        ),
+        trailing: _copying
+            ? const SizedBox.square(
+                key: ValueKey('sales-sheet-busy'),
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                _copied != null ? Icons.check : Icons.copy,
+                key: ValueKey('sales-sheet-${_copied != null ? 'done' : 'copy'}'),
+              ),
+        onTap: _copying ? null : () => _copy(span),
+      ),
       if (span.days.length > 1) ...[
         const Divider(height: 28),
         _Heading('By day', dollars(span.net), key: const ValueKey('sales-by-day')),

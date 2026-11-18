@@ -88,7 +88,8 @@ merges after any disconnect.
   `docs/day-report.md`
 - Sales over any days (one day, the 7 or 28 just gone, or any days up to 92, each figure beside the same
   days whole weeks earlier: net sales, checks, guests, the averages, a table's time, and the sales by day,
-  hour, category and kind of order): `docs/sales-report.md`
+  hour, category and kind of order; and the same days copied as a table for the accountant, a line a day
+  with the tax, comps, voids and the money taken): `docs/sales-report.md`
 - Dishes sold, best to worst (every dish over the same days, how many and for how much beside the days
   before, best or worst first, with the sizes it went out in and every choice made on it; a dish on the menu
   that sold none is listed too): `docs/dishes-sold.md`

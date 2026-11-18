@@ -27,6 +27,10 @@ The figures add up:
 - A bar tab that never sat down is a kind of its own in `kinds` (`tab`), apart from the tables, and is no
   table's turn; one that was given a table is that table's check.
 - `money.taken` is every payment recorded in the span, by how it was paid, whatever check it was for.
+
+`day_sheet` is the same days laid out for a spreadsheet, a line a day and a line of totals under them: the
+figures a bookkeeper enters (docs/sales-report.md, "For the accountant"). Every figure in it is one the
+sales or the day's report shows, and every sale and every payment is in it.
 """
 
 from __future__ import annotations
@@ -47,7 +51,8 @@ from ..sync.oplog import OrderEntry, OrderState, is_tab
 from ..tax import TaxProfile
 from .adjustments import PricingRules
 from .check import _money, check_for
-from .day import METHODS, ZERO, _guests, _Menu, _most_first, _Tally, kind_of, order_day
+from .day import METHODS, PAID_AS, ZERO, _guests, _Menu, _most_first, _Tally, kind_of, order_day
+from .voids import void_rows
 
 MAX_DAYS = 92
 """The longest span one reading adds up: a quarter of a year."""
@@ -157,6 +162,8 @@ class Sale:
     stood_ms: int | None = None  # a table's check, closed: from opened to closed
     lines: tuple[Sold, ...] = ()
     """The dishes sold, added up by dish, menu entry, hour of the day and the way each was sold."""
+    voids: tuple[tuple[int, Decimal], ...] = ()  # each void of a sent dish: when, and what it was worth
+    voided: Decimal = ZERO  # a check voided whole: what its dishes came to
 
 
 def sale_of(
@@ -176,9 +183,10 @@ def sale_of(
         for payment in state.payments.values()
         if payment.stamp is not None
     )
-    if state.status == "void":
-        return Sale(its_day, True, payments)
+    voids = tuple((row["at_ms"], Decimal(row["amount"])) for row in void_rows(state))
     check = check_for(state, taxes, rules)
+    if state.status == "void":
+        return Sale(its_day, True, payments, voids=voids, voided=Decimal(check["subtotal"]))
     kind = kind_of(state, check)
     charges = gratuity = ZERO
     for charge in check["charges"]:
@@ -231,6 +239,7 @@ def sale_of(
         exempt=Decimal(check["tax_exempt"]["tax"]) if check.get("tax_exempt") else None,
         stood_ms=stood,
         lines=tuple(Sold(*key[:3], amount, qty, *key[3:]) for key, (amount, qty) in lines.items()),
+        voids=voids,
     )
 
 
@@ -323,16 +332,28 @@ class SaleMemo(OrderMemo):
         return self.each(entries, views, taxes=taxes, rules=rules)
 
 
+def _a_day() -> dict[str, Any]:
+    """One day of a span with nothing on it yet: its sales as the span adds them up, the checks charged no
+    tax, what came off, and the money taken by how it was paid."""
+    return {
+        "checks": 0,
+        "guests": 0,
+        **dict.fromkeys(("gross", "discounts", "charges", "gratuity", "tax", "total"), ZERO),
+        "exempt": {"count": 0, "sales": ZERO, "tax": ZERO},
+        "voids": {"count": 0, "amount": ZERO},  # sent dishes voided in the day, on whatever check
+        "voided_checks": {"count": 0, "amount": ZERO},  # the day's checks voided whole
+        "taken": {},  # how it was paid -> how much
+        "sold": {},  # (dish, menu entry) -> what it sold for
+    }
+
+
 class _Span:
     """What one span of days comes to, added up one order at a time."""
 
     def __init__(self, first: date, last: date) -> None:
         self.first, self.last = first, last
         self.since, self.until = span_ms(first, last)
-        self.days = {
-            first + timedelta(days=i): {"checks": 0, "guests": 0, "gross": ZERO, "discounts": ZERO, "total": ZERO}
-            for i in range((last - first).days + 1)
-        }
+        self.days = {first + timedelta(days=i): _a_day() for i in range((last - first).days + 1)}
         self.checks = self.guests = 0
         self.guest_net = ZERO
         self.sums = dict.fromkeys(("gross", "discounts", "charges", "gratuity", "tax", "total"), ZERO)
@@ -343,11 +364,25 @@ class _Span:
         self.exempt = {"count": 0, "sales": ZERO, "tax": ZERO}  # the checks marked tax exempt
 
     def paid(self, sale: Sale) -> None:
-        """The money taken on this order during the span, whatever day the order counts on."""
+        """The money taken on this order during the span, whatever day the order counts on, and the sent
+        dishes voided on it during the span: each on the day it happened."""
         for at_ms, method, amount in sale.payments:
             if self.since <= at_ms < self.until:
                 self.taken.add(method, amount, method=method)
                 self.taken_total += amount
+                taken = self.days[localtime.service_day_of(at_ms)]["taken"]
+                taken[method] = taken.get(method, ZERO) + amount
+        for at_ms, amount in sale.voids:
+            if self.since <= at_ms < self.until:
+                voids = self.days[localtime.service_day_of(at_ms)]["voids"]
+                voids["count"] += 1
+                voids["amount"] += amount
+
+    def voided(self, sale: Sale) -> None:
+        """One check of the span voided whole: no sale, and said as what it is."""
+        voided = self.days[sale.day]["voided_checks"]
+        voided["count"] += 1
+        voided["amount"] += sale.voided
 
     def sold(self, sale: Sale) -> None:
         """One check of the span, not voided whole."""
@@ -373,7 +408,15 @@ class _Span:
         day["guests"] += sale.guests
         day["gross"] += sale.gross
         day["discounts"] += sale.off
+        day["charges"] += sale.charges
+        day["gratuity"] += sale.gratuity
+        day["tax"] += sale.tax
         day["total"] += sale.total
+        if sale.exempt is not None:
+            day["exempt"]["count"] += 1
+            day["exempt"]["sales"] += sale.total
+            day["exempt"]["tax"] += sale.exempt
+        sold_that_day = day["sold"]
         self.kinds.add(sale.kind, ZERO, kind=sale.kind, guests=0)
         kind = self.kinds.rows[sale.kind]
         kind["guests"] += sale.guests
@@ -384,6 +427,8 @@ class _Span:
             sold = self.lines.setdefault((line.item, line.entry, line.hour), [ZERO, 0])
             sold[0] += line.amount
             sold[1] += line.qty
+            dish = (line.item, line.entry)
+            sold_that_day[dish] = sold_that_day.get(dish, ZERO) + line.amount
 
     def report(self, menu: _Menu, now_ms: int) -> dict[str, Any]:
         menus, categories, hours = _Tally(), _Tally(), _Tally()
@@ -454,6 +499,116 @@ class _Span:
             },
         }
 
+    def sheet(self, menu: _Menu, now_ms: int) -> dict[str, Any]:
+        """The span as a table for a spreadsheet: `columns`, the name of each; `rows`, a line for each day
+        of the span, sold on or not; and `total`, the line that adds them up. Amounts are plain figures with
+        two decimals and what came off a sale is written as it is (no minus sign), so a spreadsheet adds
+        the columns as they stand. Where the location has more than one menu, a column for each splits the
+        dishes sold; the money taken has a column for each way of paying."""
+        named: dict[tuple[str | None, str], str] = {}
+
+        def by_menu(sold: Mapping[tuple[str | None, str], Decimal]) -> dict[str, Decimal]:
+            split: dict[str, Decimal] = {}
+            for dish, amount in sold.items():
+                code = named.get(dish)
+                if code is None:
+                    code = named[dish] = menu.of({"item": dish[0], "entry_id": dish[1]})[0]
+                split[code] = split.get(code, ZERO) + amount
+            return split
+
+        splits = {day: by_menu(row["sold"]) for day, row in self.days.items()}
+        # every menu of the location, sold on or not, so that one month's columns are the next month's
+        menus = list(menu.defs.menus)
+        menus += sorted({code for split in splits.values() for code in split} - set(menus))
+        if len(menus) < 2:
+            menus = []  # one menu is the dishes sold, which has its column
+        methods = [*METHODS, *sorted({how for row in self.days.values() for how in row["taken"]} - set(METHODS))]
+
+        def menu_name(code: str) -> str:
+            its = menu.defs.menus.get(code)
+            return (menu._text(its.names, code) if its is not None else "") or "Off the menu now"
+
+        def figures(row: Mapping[str, Any], split: Mapping[str, Decimal]) -> list[int | Decimal]:
+            taken = row["taken"]
+            return [
+                row["checks"],
+                row["guests"],
+                *(split.get(code, ZERO) for code in menus),
+                row["gross"],
+                row["discounts"],
+                row["gross"] - row["discounts"],
+                row["charges"],
+                row["gratuity"],
+                row["tax"],
+                row["total"],
+                row["exempt"]["count"],
+                row["exempt"]["sales"],
+                row["exempt"]["tax"],
+                row["voids"]["count"],
+                row["voids"]["amount"],
+                row["voided_checks"]["count"],
+                row["voided_checks"]["amount"],
+                *(taken.get(how, ZERO) for how in methods),
+                sum(taken.values(), ZERO),
+            ]
+
+        def written(name: str, line: Sequence[int | Decimal]) -> list[str]:
+            return [name, *(str(n) if isinstance(n, int) else str(n.quantize(CENT)) for n in line)]
+
+        lines = {day: figures(row, splits[day]) for day, row in self.days.items()}
+        total = [sum(column[1:], column[0]) for column in zip(*lines.values(), strict=True)]
+        return {
+            "first": self.first.isoformat(),
+            "last": self.last.isoformat(),
+            "running": self.since <= now_ms < self.until,
+            "columns": [
+                "Day",
+                "Checks",
+                "Guests",
+                *(_cell(menu_name(code)) for code in menus),
+                "Dishes sold",
+                "Comps and discounts",
+                "Net sales",
+                "Charges",
+                "Gratuity",
+                "Sales tax",
+                "Total",
+                "Tax-exempt checks",
+                "Tax-exempt sales",
+                "Tax not charged",
+                "Voids after sending",
+                "Voids after sending, amount",
+                "Checks voided whole",
+                "Checks voided whole, amount",
+                *(_cell(PAID_AS.get(how, how)) for how in methods),
+                "Money taken",
+            ],
+            "rows": [written(day.isoformat(), line) for day, line in lines.items()],
+            "total": written("Total", total),
+        }
+
+
+def _cell(words: str) -> str:
+    """A name as one cell of a table: nothing in it that ends a cell or a line."""
+    return " ".join(words.split())
+
+
+def _added_up(sales: Iterable[Sale], spans: Sequence[tuple[date, date]]) -> list[_Span]:
+    """Each of `spans` (first day, last day; no day in two of them) added up in one pass over the orders'
+    sales given."""
+    sums = [_Span(first, last) for first, last in spans]
+    for sale in sales:
+        for span in sums:
+            span.paid(sale)
+        for span in sums:
+            if sale.day in span.days:
+                if sale.void:
+                    span.voided(sale)
+                else:
+                    span.sold(sale)
+                break
+    return sums
+
 
 def sales_reports(
     sales: Iterable[Sale],
@@ -466,18 +621,15 @@ def sales_reports(
     orders' sales given: every order opened before the latest span's service ended and changed since the
     earliest began, and every order promised for a day in between. An order that belongs to no day of any
     span costs a look and counts only for the money taken on it."""
-    sums = [_Span(first, last) for first, last in spans]
-    for sale in sales:
-        for span in sums:
-            span.paid(sale)
-        if sale.void:
-            continue
-        for span in sums:
-            if sale.day in span.days:
-                span.sold(sale)
-                break
     menu = _Menu(defs)
-    return [span.report(menu, now_ms) for span in sums]
+    return [span.report(menu, now_ms) for span in _added_up(sales, spans)]
+
+
+def day_sheet(sales: Iterable[Sale], first: date, last: date, *, defs: Definitions, now_ms: int) -> dict[str, Any]:
+    """The days `first`..`last` as a table for a spreadsheet, a line a day and a line of totals
+    (`_Span.sheet`), from the same orders' sales `sales_reports` is given for those days. A day's line reads
+    what the day's report reads for it, and the totals what the sales of the span read."""
+    return _added_up(sales, [(first, last)])[0].sheet(_Menu(defs), now_ms)
 
 
 def sales_report(

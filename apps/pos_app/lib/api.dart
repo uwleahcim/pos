@@ -1554,6 +1554,18 @@ class PosApi {
     ),
   );
 
+  /// The days [from] to [to] as a table for a spreadsheet (manager token): a line a day and a line of totals
+  /// (docs/sales-report.md, "For the accountant"). The days are asked as [salesReport] asks them, and it
+  /// waits as long: the same checks are read. 404 from a hub older than the table.
+  Future<SalesSheet> salesSheet(String token, {String? from, String? to}) async => SalesSheet.fromJson(
+    await _get(
+      '/reports/sales/sheet',
+      query: {'from': ?from, 'to': ?to},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 90),
+    ),
+  );
+
   /// The dishes sold in a span of days and in as many days whole weeks earlier (manager token), each with its
   /// sizes and options (docs/dishes-sold.md). The days are asked as [salesReport] asks them, and it waits as
   /// long: the same checks are read. 404 from a hub older than the list.
