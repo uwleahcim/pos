@@ -244,6 +244,10 @@ class Book {
 
   bool get isToday => day == today;
 
+  /// The booked tables of today that are still to sit down, in the order of their times; none in the book
+  /// of another day. What the waitlist's button counts.
+  List<Booking> get toCome => isToday ? booked : const [];
+
   /// A day that is over: its book is read, and nothing in it changes.
   bool get isOver => day.compareTo(today) < 0;
 
@@ -289,6 +293,25 @@ String callerTableWhat(Booking booking, {String asName = ''}) {
       if (!same && booking.name.isNotEmpty) 'for ${booking.name}',
     ].join(' '),
     guestWords(booking.size),
+  ].join(' · ');
+}
+
+/// How many of today's booked tables are still to sit down: "1 booked table to come". What the waitlist's
+/// button and the waitlist say of the book.
+String bookedToComeWords(int tables) => tables == 1 ? '1 booked table to come' : '$tables booked tables to come';
+
+/// The next of today's reservations in a line, its time first so a narrow screen cuts what matters least:
+/// "Next at 18:30: Chen, 4 guests · table A8". "Here for 18:30: …" once the party came in and waits for its
+/// table, and "Due since 18:30: …" when the time is past with nobody seated.
+String nextBookedWords(Booking booking, int nowMs) {
+  final lead = booking.isHere
+      ? 'Here for'
+      : booking.levelAt(nowMs) == TimerLevel.late
+      ? 'Due since'
+      : 'Next at';
+  return [
+    '$lead ${booking.time}: ${[if (booking.name.isNotEmpty) booking.name, guestWords(booking.size)].join(', ')}',
+    if (booking.tableLabel.isNotEmpty) 'table ${booking.tableLabel}',
   ].join(' · ');
 }
 

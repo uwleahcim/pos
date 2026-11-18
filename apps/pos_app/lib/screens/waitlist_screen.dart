@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../live.dart';
+import '../reservations.dart' show Book;
 import '../table_timers.dart' show TimerLevel;
 import '../takeout.dart' show clockTime;
 import '../waitlist.dart';
+import 'booked_mark.dart';
 import 'party_dialog.dart';
 import 'theme.dart';
 
@@ -29,10 +31,13 @@ class OpenReservations {
 /// comes up for its table), and a tap on it offers the rest: called, change, left, no-show. The ones that
 /// went off the list tonight are underneath, each with a way back onto it.
 ///
+/// At the top, when tables are booked for today that are still to sit down, a row says how many and which
+/// is next (docs/reservations.md): a walk-in is told a wait with the book in sight. It leads to the book.
+///
 /// The hub keeps the list and tells this screen when another one changed it. Pops a [SeatParty] when a party
 /// is to be seated and an [OpenReservations] for the reservation book; nothing otherwise.
 class WaitlistScreen extends StatefulWidget {
-  const WaitlistScreen({super.key, required this.api, required this.staffId, this.list, this.nowMs});
+  const WaitlistScreen({super.key, required this.api, required this.staffId, this.list, this.book, this.nowMs});
 
   final PosApi api;
 
@@ -41,6 +46,9 @@ class WaitlistScreen extends StatefulWidget {
 
   /// The list as the screen underneath last read it, shown until the hub answers.
   final Waitlist? list;
+
+  /// Today's reservation book as the screen underneath last read it, likewise.
+  final Book? book;
 
   /// The hub's clock; the app's reading of it when null.
   final int Function()? nowMs;
@@ -53,6 +61,7 @@ enum _Do { seat, called, change, left, noShow }
 
 class _WaitlistScreenState extends State<WaitlistScreen> {
   late Waitlist? _list = widget.list;
+  late Book? _book = widget.book; // today's reservations, for the row of booked tables still to come
   bool _away = false; // no hub answers: the list is what was last read
   bool _older = false; // the hub that answers has no waitlist
   bool _earlier = false; // the parties that went off the list are shown
@@ -71,7 +80,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
       if (_poll.due()) unawaited(_reader.now(must: false));
     });
     _live = widget.api.live.changes.listen((change) {
-      if (change.waitlist || change.everything) _reader();
+      if (change.waitlist || change.reservations || change.everything) _reader();
     });
     unawaited(_reader.now());
     _armClock();
@@ -88,8 +97,22 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
 
   int _now() => (widget.nowMs ?? widget.api.nowMs)();
 
+  /// Today's book, for the row of booked tables. A hub that does not answer, or one older than the book,
+  /// leaves the row as it was: the list is what this screen is for.
+  Future<void> _readBook() async {
+    try {
+      final book = await widget.api.reservations();
+      if (!mounted || identical(book, _book)) return;
+      setState(() => _book = book);
+      _armClock();
+    } on ApiException {
+      // the row keeps what it showed
+    }
+  }
+
   Future<void> _read() async {
     _poll.asked();
+    unawaited(_readBook());
     try {
       final list = await widget.api.waitlist();
       if (!mounted) return;
@@ -114,8 +137,9 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
   void _armClock() {
     _clock?.cancel();
     final now = _now();
-    final next = _list?.nextChange(now);
-    if (next == null) return;
+    final turns = [?_list?.nextChange(now), ?_book?.nextChange(now)];
+    if (turns.isEmpty) return;
+    final next = turns.reduce((a, b) => a < b ? a : b);
     final wait = Duration(milliseconds: (next - now).clamp(1000, 60000) + 200);
     _clock = Timer(wait, () {
       if (!mounted) return;
@@ -252,6 +276,7 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
     final waiting = list?.waiting ?? const <WaitParty>[];
     final earlier = list?.earlier ?? const <WaitParty>[];
     final counts = list?.counts ?? const WaitCounts();
+    final toCome = _book?.toCome ?? const [];
     final muted = theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
     final width = MediaQuery.sizeOf(context).width;
     final side = width > 744 ? (width - 720) / 2 : 12.0;
@@ -338,6 +363,16 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
                     // A tablet keeps the rows a hand's width: a name and its Seat button stay together.
                     padding: EdgeInsets.fromLTRB(side, 10, side, 88),
                     children: [
+                      if (toCome.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: BookedToCome(
+                            key: const ValueKey('waitlist-booked'),
+                            toCome: toCome,
+                            nowMs: now,
+                            onTap: () => Navigator.of(context).pop(const OpenReservations()),
+                          ),
+                        ),
                       if (waiting.isEmpty)
                         Padding(
                           key: const ValueKey('waitlist-empty'),

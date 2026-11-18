@@ -889,7 +889,7 @@ void main() {
       await pumpFloorWith(tester, amy, size: const Size(390, 800));
       await tester.tap(find.byTooltip('More'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Reservations'));
+      await tester.tap(find.text('Reservations · 3 to come')); // today's, still to sit down
       await tester.pumpAndSettle();
       expect(find.byType(ReservationsScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -1050,7 +1050,8 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('More'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Reservations'));
+      expect(tester.takeException(), isNull); // the row with its count fits the menu
+      await tester.tap(find.text('Reservations · 3 to come'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tapKey(tester, 'booking-seat:b2');
