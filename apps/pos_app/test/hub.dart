@@ -209,6 +209,17 @@ class Hub {
   int? refuseSales;
   String salesRefusal = 'sign in with a manager PIN';
 
+  /// The same days as a table for a spreadsheet (docs/sales-report.md, "For the accountant"). [sheets]
+  /// answers `GET /reports/sales/sheet` by the days asked for, written as [sales] writes them; a span it has
+  /// nothing for reads a line of zeroes for each of its days, and null is a hub older than the table. Each
+  /// ask is in [sheetAsks] and the token of the last one in [sheetAuth]. [refuseSheet] answers with a status
+  /// instead. While [sheetHeld] is set no answer goes out until a test completes it.
+  Map<String, Map<String, dynamic>>? sheets = {};
+  Completer<void>? sheetHeld;
+  final sheetAsks = <String>[];
+  String? sheetAuth;
+  int? refuseSheet;
+
   /// Dishes sold over a span of days (docs/dishes-sold.md). [dishes] answers `GET /reports/dishes` by the
   /// days asked for, written as [sales] writes them; a span it has nothing for lists no dish, and null is a
   /// hub older than the list. Each ask is in [dishesAsks] and the token of the last one in [dishesAuth].
@@ -2080,6 +2091,38 @@ class Hub {
         }, refuseToday!);
       }
       return json(today!);
+    }
+    if (path == '/reports/sales/sheet') {
+      if (sheets == null) return json({'detail': 'Not Found'}, 404);
+      sheetAuth = request.headers['authorization'];
+      if (refuseSheet != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseSheet!);
+      }
+      final from = request.url.queryParameters['from'], to = request.url.queryParameters['to'];
+      final asked = from == null && to == null ? '' : '${from ?? to}..${to ?? from}';
+      sheetAsks.add(asked);
+      if (sheetHeld != null) await sheetHeld!.future;
+      final first = DateTime.parse('${from ?? to ?? dayRunning}T00:00:00Z');
+      final last = DateTime.parse('${to ?? from ?? dayRunning}T00:00:00Z');
+      String name(DateTime day) => day.toIso8601String().substring(0, 10);
+      return json(
+        sheets![asked] ??
+            {
+              'first': name(first),
+              'last': name(last),
+              'running': name(last) == dayRunning,
+              'columns': ['Day', 'Checks', 'Total'],
+              'rows': [
+                for (var day = first; !day.isAfter(last); day = day.add(const Duration(days: 1)))
+                  [name(day), '0', '0.00'],
+              ],
+              'total': ['Total', '0', '0.00'],
+              'max_days': 92,
+              'now_ms': clockNow,
+            },
+      );
     }
     if (path == '/reports/sales') {
       if (sales == null) return json({'detail': 'Not Found'}, 404);

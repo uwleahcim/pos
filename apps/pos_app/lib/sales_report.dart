@@ -206,6 +206,64 @@ class SalesReport {
   int get weeksBack => (span.dayCount + 6) ~/ 7;
 }
 
+/// A span of days as a table for a spreadsheet (`GET /reports/sales/sheet`; docs/sales-report.md, "For the
+/// accountant"): a line for each day and a line of totals. The hub lays it out and does every sum; here it
+/// is only written out as text.
+class SalesSheet {
+  const SalesSheet({
+    required this.columns,
+    required this.rows,
+    this.total = const [],
+    this.running = false,
+    this.maxDays = 92,
+  });
+
+  factory SalesSheet.fromJson(Map<String, dynamic> json) {
+    List<String> line(Object? cells) => [
+      if (cells is List)
+        for (final cell in cells) '$cell',
+    ];
+    return SalesSheet(
+      columns: line(json['columns']),
+      rows: [
+        if (json['rows'] is List)
+          for (final row in json['rows'] as List) line(row),
+      ],
+      total: line(json['total']),
+      running: json['running'] == true,
+      maxDays: json['max_days'] is num ? (json['max_days'] as num).toInt() : 92,
+    );
+  }
+
+  /// The name of each column, the day first.
+  final List<String> columns;
+
+  /// A line for each day of the span, sold on or not.
+  final List<List<String>> rows;
+
+  /// The line that adds them up.
+  final List<String> total;
+
+  /// The day that is running is one of them: its line will still move.
+  final bool running;
+  final int maxDays;
+
+  /// The table as a spreadsheet takes it from the clipboard: the names, a line a day, then the totals, the
+  /// cells of a line a tab apart. A cell never holds a tab or the end of a line.
+  String get text => [
+    columns,
+    ...rows,
+    if (total.isNotEmpty) total,
+  ].map((line) => line.map((cell) => cell.replaceAll(RegExp(r'\s+'), ' ')).join('\t')).join('\n');
+
+  /// What was copied and what to do with it, for the person who asked.
+  String get copied {
+    final one = rows.length == 1 && total.isEmpty;
+    return 'Copied ${rows.length} ${rows.length == 1 ? 'day' : 'days'}${total.isEmpty ? '' : ' and the totals'}. '
+        'Paste ${one ? 'it' : 'them'} into a spreadsheet.';
+  }
+}
+
 /// How a figure stands against the one before: [words] ("up 12.4%", "down 3%", "the same", "nothing
 /// before"), and [up] true, false, or null when it is neither or cannot be said.
 typedef Change = ({String words, bool? up});

@@ -46,7 +46,7 @@ A change holds on every screen from the moment it is saved.
 | **Write the notes for the shift** | Put a note up for everybody, change it, take it down, and see who has read it (`shift-notes.md`) | Nobody |
 | **Keep the manager's log** | Read and write what happened in a shift | Nobody |
 | **Run the waste log** | Read the waste totals, and strike out anyone's entry of any day (`waste-log.md`) | Nobody |
-| **See the reports** | Today, the day, sales, dishes sold, kitchen times, and what came off the checks; print the day (`today.md`, `day-report.md`, `sales-report.md`, `dishes-sold.md`, `kitchen-times.md`) | Nobody |
+| **See the reports** | Today, the day, sales, dishes sold, kitchen times, and what came off the checks; print the day; copy the sales of any days as a table for the accountant (`today.md`, `day-report.md`, `sales-report.md`, `dishes-sold.md`, `kitchen-times.md`) | Nobody |
 | **See the guest list** | Phone customers: their numbers, visits and what they spent (`guest-list.md`) | Nobody |
 | **See and correct the hours** | Everyone's hours on the time clock, and corrections to a shift (`time-clock.md`) | Nobody |
 | **Edit the menu** | Dishes, prices and options, in the menu editor (`menus.md`) | Nobody |
