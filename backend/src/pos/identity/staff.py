@@ -25,7 +25,7 @@ LOCK_SECONDS = 60.0
 class Staff:
     staff_id: str
     name: str
-    role: str  # server | bartender | host | manager | owner | kitchen | cashier
+    role: str  # server | bartender | host | manager | owner | kitchen | cashier | driver
     pin_salt: str
     pin_hash: str
     tag_uid: str | None = None  # NTAG 424 DNA uid, when enrolled
@@ -133,7 +133,8 @@ def roster(directory: Directory, powers: Mapping[str, Any] | None = None) -> lis
     (`take_tables` in the location's table of `powers`, `pos/identity/powers.py`: the people who serve one,
     to start the servers and the bartenders) and who may seat a party for someone else or hand a seated
     table over (`assign_tables`: to start the hosts). A manager and an owner do both. Everyone who takes
-    tables gets one by opening it themselves. With no table given, the standard one. Nothing a sign-in is
+    tables gets one by opening it themselves. `delivers` says who a delivery can be handed to (`deliver`:
+    to start the drivers, docs/delivery.md). With no table given, the standard one. Nothing a sign-in is
     checked against (PIN, tag, face) is in it."""
     return [
         {
@@ -142,6 +143,7 @@ def roster(directory: Directory, powers: Mapping[str, Any] | None = None) -> lis
             "role": s.role,
             "takes_tables": holds(powers, s.role, "take_tables"),
             "assigns_tables": holds(powers, s.role, "assign_tables"),
+            "delivers": holds(powers, s.role, "deliver"),
         }
         for s in directory.all()
     ]

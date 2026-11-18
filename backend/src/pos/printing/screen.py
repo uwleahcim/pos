@@ -113,7 +113,7 @@ def kitchen_screen(
         to_go = is_to_go(state)
         if state.status == "void":
             continue
-        if to_go and state.fields.get("stage") in ("ready", "picked_up"):
+        if to_go and state.fields.get("stage") in ("ready", "out", "picked_up"):
             continue
         if not to_go and state.status != "open":
             continue

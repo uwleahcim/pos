@@ -81,7 +81,8 @@ ORDER_FIELDS = frozenset(
         "promised_at",  # wall-clock ms; a future order waits on the hub until its lead time
         "quoted_minutes",
         "for_later",  # the customer named the time: a big order or a rush starts it sooner, never moves it
-        "stage",  # new | ready | picked_up
+        # new | ready | out | picked_up. `out` is a delivery's alone: it left with a driver (docs/delivery.md)
+        "stage",
         "locale",  # the customer's language for texts
         # How the table pays (pos.orders.split): {by: seat} a check for each seat, {by: dish} the dishes
         # put on checks by hand, {by: even, ways: n} the total in n equal parts; anything else is one check.
@@ -106,6 +107,11 @@ ORDER_FIELDS = frozenset(
         "handover",
         "address",
         "event_note",
+        # Who a delivery was handed to (docs/delivery.md): the driver's name and staff id, and when it left
+        # (wall-clock ms). Deliveries handed over in one go carry the same `out_at`: that is a run.
+        "driver",
+        "driver_id",
+        "out_at",
     }
 )
 ALLERGY_NOTE_MAX = 80
