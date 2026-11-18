@@ -79,11 +79,13 @@ Location › **Who may do what** (the powers "Take tables" and "Give tables out"
 | server, bartender | yes | no |
 | host | no | yes |
 | manager, owner | yes | yes |
-| kitchen, cashier | no | no |
+| kitchen, cashier, driver | no | no |
 
 The demo staff has a host to try it with: **Holly, PIN 3333** (beside Amy 1111, Ben 2222 and Mike 9999).
 A location's own staff is the hub's `POS_STAFF` (`id:name:role:pin`, comma-separated, in `/opt/pos/.env`):
-give the person at the host stand the role `host`.
+give the person at the host stand the role `host`. The line is the whole staff and takes `sudo hubctl
+update` to hold; the steps, and what the hub does with a slip in it, are in
+[delivery.md](delivery.md#adding-a-driver).
 
 ## Without a hub, and on an older hub
 
@@ -96,7 +98,7 @@ give the person at the host stand the role `host`.
 
 ## For developers
 
-- `GET /staff` lists `staff_id`, `name`, `role`, `takes_tables`, `assigns_tables` per person, and nothing
+- `GET /staff` lists `staff_id`, `name`, `role`, `takes_tables`, `assigns_tables`, `delivers` per person, and nothing
   anyone signs in with. It answers 304 to an `If-None-Match` that still holds.
 - A check's server is its `server` and `server_id` fields, set by `create` and changed by `set_field`.
   `GET /floor` gives both on each check. `by` and `by_id` on those operations say who sat or handed over the
