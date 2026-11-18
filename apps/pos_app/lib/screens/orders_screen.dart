@@ -8,6 +8,7 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../customers.dart';
 import '../deliveries.dart';
+import '../delivery_fee.dart';
 import '../desk_phone_watcher.dart';
 import '../floor.dart';
 import '../kitchen_bell.dart';
@@ -873,6 +874,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // what a catering order's event needs, and where a delivery goes: only what was filled in
       for (final MapEntry(:key, :value) in (request.event?.toFields() ?? const <String, dynamic>{}).entries)
         if (value != null && value != '') key: value,
+      // what the delivery costs: the band alone, and the hub fills in the amount
+      if (request.fee case final fee? when request.event?.delivered ?? false) 'delivery_fee': FeePick.field(fee),
     }, lines: lines);
   }
 
@@ -2171,6 +2174,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   final _eventNote = TextEditingController();
   final _driverNote = TextEditingController();
   String _handover = 'pickup';
+  DeliveryFees? _fees; // what a delivery costs here; null until the hub answers, and where it charges none
+  String? _fee; // the fee picked for this one (a FeePick); null while nobody picked
   String _addressFilled = ''; // the address the form itself put in the box: the customer's last delivery
   String _driverNoteFilled = ''; // and what was said for the driver then
 
@@ -2189,6 +2194,18 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     super.initState();
     _filled = _name.text.trim();
     unawaited(_lookUp());
+    unawaited(_readFees());
+  }
+
+  /// What a delivery costs here, for the buttons under the address. Nothing answers and nothing was saved:
+  /// the form asks no fee, and the order is taken as before.
+  Future<void> _readFees() async {
+    try {
+      final fees = await widget.api.deliveryFees();
+      if (mounted && fees != null) setState(() => _fees = fees);
+    } on ApiException {
+      // no fee is asked
+    }
   }
 
   @override
@@ -2283,6 +2300,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// A delivery with nowhere to go yet.
   bool get _nowhere => _delivery && oneLine(_address.text).isEmpty;
 
+  /// A delivery nobody said the fee of, where the location charges one: "No fee" is a pick.
+  bool get _unpriced => _delivery && (_fees?.asks ?? false) && _fee == null;
+
   /// The customer names the time: the switch says so, and a catering order always does.
   bool get _named => _later || _catering;
 
@@ -2292,7 +2312,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     return WhenPicker.at(_day, time);
   }
 
-  bool get _ready => _name.text.trim().isNotEmpty && (!_named || _time != null) && !_nowhere;
+  bool get _ready => _name.text.trim().isNotEmpty && (!_named || _time != null) && !_nowhere && !_unpriced;
 
   /// Start, or Same again on the past order [again].
   void _start({String? again}) => Navigator.of(context).pop(
@@ -2309,6 +2329,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
           : _delivery
           ? EventFields.read(address: _address, note: _driverNote, handover: _handover)
           : null,
+      // a fee is a delivery's alone, and a catering order's may be said later
+      fee: (_delivery || _catering) && _handover == 'delivery' ? _fee : null,
     ),
   );
 
@@ -2546,6 +2568,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   handover: _handover,
                   onHandover: (way) => setState(() => _handover = way),
                   onChanged: () => setState(() {}),
+                  fees: _fees,
+                  fee: _fee,
+                  onFee: (pick) => setState(() => _fee = pick),
                 ),
                 if (_nowhere)
                   Padding(
@@ -2553,6 +2578,15 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                     child: Text(
                       'Type the address it goes to.',
                       key: const ValueKey('address-needed'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  )
+                else if (_unpriced)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Pick the delivery fee.',
+                      key: const ValueKey('fee-needed'),
                       style: theme.textTheme.bodySmall,
                     ),
                   ),
@@ -2603,6 +2637,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   note: _eventNote,
                   handover: _handover,
                   onHandover: (way) => setState(() => _handover = way),
+                  fees: _fees,
+                  fee: _fee,
+                  onFee: (pick) => setState(() => _fee = pick),
                 ),
               ],
             ],

@@ -11,6 +11,7 @@ import 'check_history.dart';
 import 'coursing.dart';
 import 'customers.dart';
 import 'day_report.dart';
+import 'delivery_fee.dart';
 import 'dishes_report.dart';
 import 'desk_phone.dart';
 import 'dish_names.dart';
@@ -349,6 +350,10 @@ class Order {
 
   /// Brought to the customer by the restaurant's own driver (docs/delivery.md). A table's check never is.
   bool get isDelivery => isTakeout && fields['handover'] == 'delivery';
+
+  /// What the delivery costs the customer, as it was picked (docs/delivery.md, "The delivery fee"): the
+  /// band and what it cost then. Null while nobody said. The check charges it only while [isDelivery].
+  OrderFee? get deliveryFee => OrderFee.of(fields['delivery_fee']);
 
   /// A delivery that left with a driver and is on its way: who has it ([driver], by name, and
   /// [driverId]) and when it left ([outAt], ms). Deliveries handed over in one go left at the same moment.
@@ -1048,6 +1053,31 @@ class PosApi {
         Uri.parse('$base/settings/bag'),
         headers: {'content-type': 'application/json', ..._bearer(token)},
         body: jsonEncode(question.toJson()),
+      ),
+    ),
+  );
+
+  /// What a delivery costs the customer here (docs/delivery.md, "The delivery fee"): whether a fee is
+  /// charged, by miles or minutes, and the prices. The last list read when nothing answers, so a delivery
+  /// taken in an outage is still asked what it costs (ADR 6). Null from a hub older than the fee, which
+  /// charges none: the form then asks nothing.
+  Future<DeliveryFees?> deliveryFees() async {
+    try {
+      return await _repeated('/settings/delivery_fee', DeliveryFees.fromJson, remember: 'delivery_fee');
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets what a delivery costs for every terminal. The answer is the
+  /// list as the hub keeps it: in order of how far the bands reach.
+  Future<DeliveryFees> saveDeliveryFees(String token, DeliveryFees fees) async => DeliveryFees.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/delivery_fee'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(fees.toJson()),
       ),
     ),
   );

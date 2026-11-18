@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../delivery_fee.dart';
 import '../takeout.dart';
+import 'fee_picker.dart';
 
 /// The day and the time an order is for (docs/catering.md): today, tomorrow or any later day off a
 /// calendar, and the time. Chips that wrap, so the row fits a phone at any size of type.
@@ -81,7 +83,8 @@ class WhenPicker extends StatelessWidget {
 /// How a to-go order leaves, on its form: whether it is picked up or delivered, and for a delivery the
 /// address. A catering order ([guests] given) says how many guests too, and has a note for the kitchen or
 /// the driver about its event (docs/catering.md). Any other order has no guests to count, and its note is
-/// for the driver: asked only of a delivery (docs/delivery.md).
+/// for the driver: asked only of a delivery (docs/delivery.md). Where the location charges for delivery
+/// ([fees]), a delivery also picks what it costs, under the note.
 class EventFields extends StatelessWidget {
   const EventFields({
     super.key,
@@ -91,6 +94,10 @@ class EventFields extends StatelessWidget {
     required this.handover,
     required this.onHandover,
     this.onChanged,
+    this.fees,
+    this.fee,
+    this.feeTaken,
+    this.onFee,
   });
 
   /// The guests of a catering order's event; null on any other order.
@@ -102,6 +109,16 @@ class EventFields extends StatelessWidget {
 
   /// Something was typed.
   final VoidCallback? onChanged;
+
+  /// What a delivery costs here; null where no fee is charged, or the hub knows of none.
+  final DeliveryFees? fees;
+
+  /// The fee picked on this form (a [FeePick]); null while nobody picked.
+  final String? fee;
+
+  /// The fee the order already carries, on a form that changes an order.
+  final OrderFee? feeTaken;
+  final ValueChanged<String>? onFee;
 
   /// What the boxes hold, as an order carries it. With no [guests] box it is no catering order: the note is
   /// the driver's, and an order the customer comes for has none.
@@ -186,22 +203,28 @@ class EventFields extends StatelessWidget {
             onChanged: (_) => onChanged?.call(),
           ),
         ],
+        if (handover == 'delivery' && onFee != null && FeePicker.shown(fees, feeTaken)) ...[
+          const SizedBox(height: 10),
+          FeePicker(fees: fees, pick: fee, taken: feeTaken, onPick: onFee!),
+        ],
       ],
     );
   }
 }
 
-/// What the dialog over a to-go order hands back: its new time when it is an order for later, and how it
-/// leaves (on a catering order, what its event needs).
-typedef WhenAndEvent = ({DateTime? promised, EventDetails? event});
+/// What the dialog over a to-go order hands back: its new time when it is an order for later, how it
+/// leaves (on a catering order, what its event needs), and the delivery fee picked ([FeePick]) when that
+/// changed: null leaves the order's fee as it is.
+typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee});
 
 /// How a to-go order leaves, changed on the order: whether it is picked up or delivered, where to, and the
 /// note for the driver (docs/delivery.md). An order for later ([promised] given) also changes its day and
 /// time here: the kitchen's ticket waits for the new time (docs/printing.md, "Orders sent ahead"). A
 /// catering order ([catering]) changes its guests and the note for its event too. A delivery that is no
-/// catering order needs its address: without one it cannot be saved.
+/// catering order needs its address: without one it cannot be saved. Where the location charges for
+/// delivery ([fees]) it needs its fee picked too, and "No fee" is a pick.
 class WhenDialog extends StatefulWidget {
-  const WhenDialog({super.key, this.promised, this.event, this.catering = false});
+  const WhenDialog({super.key, this.promised, this.event, this.catering = false, this.fees, this.fee});
 
   /// The time an order for later is for; null on an order for now, whose time is not the customer's.
   final DateTime? promised;
@@ -211,6 +234,12 @@ class WhenDialog extends StatefulWidget {
 
   /// A catering order: its event has guests and a note of its own.
   final bool catering;
+
+  /// What a delivery costs here; null where no fee is charged.
+  final DeliveryFees? fees;
+
+  /// The fee the order carries now; null while nobody said.
+  final OrderFee? fee;
 
   @override
   State<WhenDialog> createState() => _WhenDialogState();
@@ -223,10 +252,20 @@ class _WhenDialogState extends State<WhenDialog> {
   late final _address = TextEditingController(text: widget.event?.address ?? '');
   late final _note = TextEditingController(text: widget.event?.note ?? '');
   late String _handover = widget.event?.handover ?? 'pickup';
+  late String? _fee = widget.fee == null ? null : FeePick.kept;
 
   /// A delivery with nowhere to go. (A catering order may be given its address later: it is days away.)
   bool get _nowhere =>
       widget.event != null && !widget.catering && _handover == 'delivery' && oneLine(_address.text).isEmpty;
+
+  /// A delivery nobody said the fee of, where the location charges one. (A catering order may be told
+  /// later, like its address.)
+  bool get _unpriced =>
+      widget.event != null &&
+      !widget.catering &&
+      _handover == 'delivery' &&
+      (widget.fees?.asks ?? false) &&
+      _fee == null;
 
   @override
   void dispose() {
@@ -246,6 +285,8 @@ class _WhenDialogState extends State<WhenDialog> {
             note: _note,
             handover: _handover,
           ),
+    // a fee is a delivery's alone: one that becomes a pickup keeps what it carried and is charged nothing
+    fee: widget.event != null && _handover == 'delivery' ? FeePick.changed(_fee, widget.fee, widget.fees) : null,
   ));
 
   @override
@@ -254,6 +295,7 @@ class _WhenDialogState extends State<WhenDialog> {
     final later = widget.promised != null;
     final past = later && WhenPicker.at(_day, _time).isBefore(DateTime.now());
     final nowhere = _nowhere;
+    final unpriced = _unpriced;
     return AlertDialog(
       title: Text(
         widget.catering
@@ -294,8 +336,21 @@ class _WhenDialogState extends State<WhenDialog> {
                   handover: _handover,
                   onHandover: (way) => setState(() => _handover = way),
                   onChanged: () => setState(() {}),
+                  fees: widget.fees,
+                  fee: _fee,
+                  feeTaken: widget.fee,
+                  onFee: (pick) => setState(() => _fee = pick),
                 ),
               ],
+              if (!nowhere && unpriced)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Pick the delivery fee.',
+                    key: const ValueKey('fee-needed'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
               if (nowhere)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -313,7 +368,7 @@ class _WhenDialogState extends State<WhenDialog> {
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
           key: const ValueKey('when-save'),
-          onPressed: past || nowhere ? null : _save,
+          onPressed: past || nowhere || unpriced ? null : _save,
           child: const Text('Save'),
         ),
       ],

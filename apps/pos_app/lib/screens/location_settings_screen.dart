@@ -4,6 +4,7 @@ import '../api.dart';
 import '../bag.dart';
 import '../camera.dart';
 import '../coursing.dart';
+import '../delivery_fee.dart';
 import '../desk_phone.dart';
 import '../faces.dart';
 import '../kitchen_notes.dart';
@@ -21,6 +22,7 @@ import 'adjustments_screen.dart';
 import 'bag_question_dialog.dart';
 import 'bill_dialog.dart';
 import 'day_report_screen.dart';
+import 'delivery_fee_dialog.dart';
 import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
@@ -153,6 +155,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   KitchenMinutes? _kitchenMinutes; // when a station's screen turns a ticket amber and red; null likewise
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
+  DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
@@ -248,6 +251,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _bag = bag);
     } on ApiException {
       // nothing answered about the to-go question: the row says so
+    }
+    try {
+      final fees = await widget.api.deliveryFees();
+      if (mounted) setState(() => _fees = fees);
+    } on ApiException {
+      // nothing answered about the delivery fee: the row says so
     }
     try {
       final notes = await widget.api.kitchenNotes();
@@ -713,6 +722,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('To-go question saved')));
   }
 
+  Future<void> _deliveryFee() async {
+    final saved = await showDialog<DeliveryFees>(
+      context: context,
+      builder: (_) => DeliveryFeeDialog(api: widget.api, token: widget.token, fees: _fees!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _fees = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery fee saved')));
+  }
+
   Future<void> _kitchenNotesList() async {
     final saved = await showDialog<KitchenNotes>(
       context: context,
@@ -804,6 +823,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (bag == null) return 'The hub has not answered about the to-go question (an older hub: update it)';
     if (!bag.asks) return 'Off: a to-go order is sent with nothing asked';
     return 'Asked before a to-go order is sent: ${[for (final choice in bag.choices) choice.name].join(', ')}';
+  }
+
+  /// One line on what a delivery costs: the prices, or that nothing is charged.
+  String get _feesSummary {
+    final fees = _fees;
+    if (fees == null) return 'The hub has not answered about the delivery fee (an older hub: update it)';
+    if (!fees.asks) return 'Off: nothing is added to a delivery for the trip';
+    final prices = [for (final band in fees.bands) '${feeWords(band.fee)} up to ${band.upTo} ${feeUnit(fees.by)}'];
+    return '${prices.join(', ')}${fees.taxed ? ' · taxed' : ''}';
   }
 
   /// One line on the one-tap notes: what a dish's sheet offers, or that a note is typed.
@@ -1135,6 +1163,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     subtitle: Text(_bagSummary),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _bag == null ? null : _bagQuestion,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('delivery-fee'),
+                    leading: const Icon(Icons.delivery_dining_outlined),
+                    title: const Text('Delivery fee'),
+                    subtitle: Text(_feesSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _fees == null ? null : _deliveryFee,
                   ),
                   const Divider(height: 1),
                   ListTile(

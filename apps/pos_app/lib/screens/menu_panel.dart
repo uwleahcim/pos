@@ -1881,11 +1881,11 @@ class ChoiceTile extends StatelessWidget {
     this.focusNode,
   });
 
-  /// The menu's own tile grid for a width: how many tiles across and how tall each is.
-  static ({int columns, double height}) grid(double width) {
+  /// The menu's own tile grid for a width: how many tiles across, and how wide and how tall each is.
+  static ({int columns, double width, double height}) grid(double width) {
     final columns = (width / (_MenuPanelState._maxCrossAxisExtent + _MenuPanelState._gridSpacing)).ceil().clamp(1, 99);
     final tileWidth = (width - _MenuPanelState._gridSpacing * (columns - 1)) / columns;
-    return (columns: columns, height: tileWidth / _MenuPanelState._childAspectRatio);
+    return (columns: columns, width: tileWidth, height: tileWidth / _MenuPanelState._childAspectRatio);
   }
 
   final String groupLabel;
