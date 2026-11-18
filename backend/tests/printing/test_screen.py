@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pos.api.app import create_app
-from pos.printing.screen import KEEP_MS, RECENT, kitchen_screen
+from pos.printing.screen import KEEP_MS, PASS, RECENT, kitchen_screen
 from pos.printing.service import SOON_MS, Printer, PrintService
 from pos.settings import DEFAULTS, SettingStore
 from pos.sync.hlc import HLC
@@ -400,6 +400,224 @@ def test_a_dish_that_changes_checks_keeps_what_its_stations_made_of_it():
     # one ticket, at the table the dishes are at now, with the made one made
     assert on(c, "wok") == [("o2", ["(1 左宗鸡 (Qt))", "1 左宗鸡 (Qt)"])]
     assert screen(c, "wok")["tickets"][0]["table"] == "14"
+
+
+# --- the pass -----------------------------------------------------------------------------------------------
+
+
+def passed(c: TestClient, *stations: str) -> dict:
+    answer = c.get("/kitchen/pass", params={"stations": ",".join(stations)} if stations else None)
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def at_pass(c: TestClient, *stations: str, recent: bool = False) -> list[tuple[str, list[str]]]:
+    """What the pass lists: each ticket's order and its dishes, each with where it is cooked (a station that
+    has made it ticked); a dish that went out in brackets, a void struck."""
+
+    def words(line: dict) -> str:
+        cooks = " ".join(cook["name"] + ("✓" if cook["made"] else "") for cook in line["cooks"])
+        said = f"{line['qty']} {line['label']} [{cooks}]"
+        said = f"~{said}~" if line["void"] else said
+        return f"({said})" if line["done"] else said
+
+    listed = passed(c, *stations)["recent" if recent else "tickets"]
+    return [(ticket["order_id"], [words(line) for line in ticket["lines"]]) for ticket in listed]
+
+
+def out(c: TestClient, order_id: str, *lines: str, at: int, done: bool = True) -> None:
+    """The pass says these dishes went out (or takes it back)."""
+    mark(c, order_id, PASS, *lines, at=at, done=done, device="p1")
+
+
+def test_the_pass_lists_a_send_whole_with_where_each_dish_is_cooked():
+    c = kitchen("wok", "sushi", "bar")
+    send(c, "o1", CHICKEN, ROLL, BEER)
+    send(c, "o2", CHICKEN, table="7", order_type="dine_in")
+    assert at_pass(c) == [
+        ("o1", ["1 左宗鸡 (Qt) [Wok]", "1 加州卷 [Sushi bar]", "1 Tsingtao [Bar]"]),
+        ("o2", ["1 左宗鸡 (Qt) [Wok]"]),
+    ]
+    answer = passed(c)
+    assert answer["pass"] is True and answer["stations"] == []  # none named: every station
+    assert (answer["warn"], answer["late"]) == (10, 20)
+    first = answer["tickets"][0]
+    assert (first["table"], first["since_ms"], first["also_at"]) == ("12", T0 + 50, [])
+    line = first["lines"][0]
+    assert (line["line_id"], line["stations"], line["made"], line["done"]) == ("L0-1", [PASS], [], False)
+    assert line["cooks"] == [{"code": "wok", "name": "Wok", "made": False}]
+    assert "pass" not in screen(c, "wok") and "cooks" not in screen(c, "wok")["tickets"][0]["lines"][0]
+
+
+def test_what_a_station_made_shows_at_the_pass_and_the_ticket_stays_until_it_goes_out():
+    c = kitchen("wok", "sushi")
+    send(c, "o1", CHICKEN, ROLL)
+    mark(c, "o1", "wok", "L0-1", at=60)
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok✓]", "1 加州卷 [Sushi bar]"])]
+    mark(c, "o1", "sushi", "L0-2", at=61)
+    # every station has made its part: it is for the pass to send out
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok✓]", "1 加州卷 [Sushi bar✓]"])]
+    assert on(c, "wok") == [] and on(c, "sushi") == []
+    out(c, "o1", "L0-1", at=70)
+    assert at_pass(c) == [("o1", ["(1 左宗鸡 (Qt) [Wok✓])", "1 加州卷 [Sushi bar✓]"])]
+    out(c, "o1", "L0-2", at=75)
+    assert at_pass(c) == []
+    assert at_pass(c, recent=True) == [("o1", ["(1 左宗鸡 (Qt) [Wok✓])", "(1 加州卷 [Sushi bar✓])"])]
+    assert passed(c)["recent"][0]["done_ms"] == T0 + 75
+    # brought back at the pass: it did not go out after all
+    out(c, "o1", "L0-1", "L0-2", at=80, done=False)
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok✓]", "1 加州卷 [Sushi bar✓]"])] and at_pass(c, recent=True) == []
+    assert on(c, "wok") == []  # the wok's own word is as it was
+
+
+def test_the_word_of_the_pass_changes_nothing_of_the_check():
+    c = kitchen("wok")
+    send(c, "o1", CHICKEN)
+    before = c.get("/orders/o1/check").json()
+    line = c.get("/orders/o1").json()["lines"]["L0-1"]
+    paper = [job.job_id for job in c.app.state.printing.store.all()]
+    boss = manager(c)
+    told = c.get("/orders/o1/history", headers=boss).json()
+    out(c, "o1", "L0-1", at=60)
+    assert c.get("/orders/o1/check").json() == before
+    assert c.get("/orders/o1/history", headers=boss).json() == told
+    assert [job.job_id for job in c.app.state.printing.store.all()] == paper
+    after = c.get("/orders/o1").json()["lines"]["L0-1"]
+    assert after["done"] == {PASS: T0 + 60} and {**after, "done": {}} == line
+
+
+def test_a_dish_that_went_out_is_made_at_its_station_too_unless_the_station_says_otherwise_after():
+    c = kitchen("wok", "sushi")
+    send(c, "o1", CHICKEN, CHICKEN, ROLL)
+    out(c, "o1", "L0-1", at=60)  # the cook never tapped it, and the plate is gone
+    assert on(c, "wok") == [("o1", ["(1 左宗鸡 (Qt))", "1 左宗鸡 (Qt)"])]
+    assert screen(c, "wok")["tickets"][0]["lines"][0]["made"] == ["wok"]
+    out(c, "o1", "L0-2", "L0-3", at=65)
+    assert on(c, "wok") == [] and on(c, "sushi") == []
+    finished = screen(c, "wok")["recent"][0]
+    assert finished["done_ms"] == T0 + 65
+    # the wok brings its ticket back after that: its later word stands
+    mark(c, "o1", "wok", "L0-1", "L0-2", at=70, done=False)
+    assert on(c, "wok") == [("o1", ["1 左宗鸡 (Qt)", "1 左宗鸡 (Qt)"])]
+    assert on(c, "sushi") == []
+    # the pass takes its own word back: nothing new at the wok, and the roll is still gone
+    out(c, "o1", "L0-1", "L0-2", at=71, done=False)
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok]", "1 左宗鸡 (Qt) [Wok]", "(1 加州卷 [Sushi bar])"])]
+    assert on(c, "wok") == [("o1", ["1 左宗鸡 (Qt)", "1 左宗鸡 (Qt)"])] and on(c, "sushi") == []
+    # sent out again, after the wok's word: off the wok's screen again
+    out(c, "o1", "L0-1", "L0-2", at=80)
+    assert on(c, "wok") == [] and at_pass(c) == []
+
+
+def test_the_word_of_the_pass_against_a_station_s_whatever_order_they_arrive_in():
+    base = [
+        make_op("create", at=0, table="12"),
+        make_op(
+            "add_line",
+            at=1,
+            line_id="L1",
+            item="Wings",
+            priced={"kitchen": [{"qty": 1, "label": "Wings", "labels": [], "station": "wok"}]},
+        ),
+        make_op("fire", at=3, course="*"),
+    ]
+    gone = make_op("done", at=70, station=PASS, line_ids=["L1"])
+    back = make_op("done", at=80, station="wok", line_ids=["L1"], done=False)
+
+    def wok(*ops) -> list[str]:
+        listed = kitchen_screen([replay(list(ops))], ["wok"], now_ms=T0 + 100)
+        return [ticket["order_id"] for ticket in listed["tickets"]]
+
+    assert wok(*base, gone) == [] and wok(*base) == ["o1"]
+    assert wok(*base, gone, back) == ["o1"] and wok(*base, back, gone) == ["o1"]  # replayed in stamp order
+    early = make_op("done", at=60, station="wok", line_ids=["L1"], done=False)
+    assert wok(*base, early, gone) == []  # the wok took its word back before the dish went out
+    # a dish typed with no station is on the pass of every station, with nobody to wait for
+    typed = make_op("add_line", at=2, line_id="L2", item="Egg roll")
+    whole = kitchen_screen([replay([*base, typed])], [], now_ms=T0 + 100, passing=True)
+    assert [(line["label"], line["cooks"]) for line in whole["tickets"][0]["lines"]] == [
+        ("Wings", [{"code": "wok", "name": "wok", "made": False}]),
+        ("Egg roll", []),
+    ]
+    assert kitchen_screen([replay([*base, typed])], ["fryer"], now_ms=T0 + 100, passing=True)["tickets"] == []
+
+
+def test_a_pass_told_its_stations_watches_those_alone():
+    c = kitchen("wok", "sushi", "bar")
+    send(c, "o1", CHICKEN, ROLL, BEER)
+    send(c, "o2", BEER, table="7", order_type="dine_in")  # drinks alone: nothing for the kitchen's pass
+    assert at_pass(c, "wok", "sushi") == [("o1", ["1 左宗鸡 (Qt) [Wok]", "1 加州卷 [Sushi bar]"])]
+    answer = passed(c, "wok", "sushi")
+    assert answer["stations"] == [{"code": "sushi", "name": "Sushi bar"}, {"code": "wok", "name": "Wok"}]
+    assert answer["tickets"][0]["also_at"] == ["Bar"]
+    assert [order for order, _ in at_pass(c)] == ["o1", "o2"]
+
+
+def test_a_to_go_order_is_on_the_pass_once_and_the_packer_s_list_is_the_packer_s():
+    c = kitchen("wok", "sushi", "takeout")
+    send(c, "o1", CHICKEN, ROLL, **PHONE)
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok]", "1 加州卷 [Sushi bar]"])]
+    ticket = passed(c)["tickets"][0]
+    assert (ticket["order_no"], ticket["customer"], ticket["to_go"]) == (1, "Linda", True)
+    mark(c, "o1", "takeout", "L0-1", "L0-2", at=60)  # bagged: not the cooks' word
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok]", "1 加州卷 [Sushi bar]"])]
+    out(c, "o1", "L0-1", "L0-2", at=70)
+    assert at_pass(c) == [] and on(c, "wok") == []
+    # marked Ready: off the last ones too, like every screen
+    ready = {**op("t1", "o1-ready", "set_field", 80, stage="ready"), "order_id": "o1"}
+    assert c.post("/orders/o1/ops", json=[ready]).status_code == 202
+    assert at_pass(c, recent=True) == []
+
+
+def test_the_pass_follows_the_paper_like_a_station_s_screen():
+    c = TestClient(
+        create_app(
+            OpStore(physical=lambda: T0 + 100),
+            menu=menu_with_takeout(),
+            printing=PrintService(
+                [Printer(p, f"10.0.0.{n}", id=p) for n, p in enumerate(("wok", "bar"), 1)], direct=False
+            ),
+            settings=skipping(BAR_SCREEN),
+        )
+    )
+    send(c, "o1", CHICKEN, BEER, device="bar1")  # the bartender makes the beer and prints no ticket for it
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok]"])]
+    # a closed table is off the pass, like every screen
+    assert c.post("/orders/o1/ops", json=[{**op("t1", "o1-close", "close", 80), "order_id": "o1"}]).status_code == 202
+    assert at_pass(c) == []
+
+
+def test_a_voided_dish_stays_struck_at_the_pass_until_the_pass_has_seen_it():
+    c = TestClient(
+        create_app(
+            OpStore(physical=lambda: T0 + 100),
+            menu=menu_with_takeout(),
+            printing=PrintService([Printer("wok", "10.0.0.1", id="wok")], direct=False),
+            settings=servers_void(),
+        )
+    )
+    send(c, "o1", CHICKEN, CHICKEN)
+    void = op("t1", "o1-void", "void_line", 60, line_id="L0-1", reason="kitchen-error", by="Amy", by_id="s1")
+    assert c.post("/orders/o1/ops", json=[{**void, "order_id": "o1"}]).json()["refused"] == []
+    assert at_pass(c) == [("o1", ["~1 左宗鸡 (Qt) [Wok]~", "1 左宗鸡 (Qt) [Wok]"])]
+    mark(c, "o1", "wok", "L0-1", at=65)  # the cook has seen it: off the wok's screen, and still for the pass to see
+    assert on(c, "wok") == [("o1", ["1 左宗鸡 (Qt)"])]
+    assert at_pass(c) == [("o1", ["~1 左宗鸡 (Qt) [Wok✓]~", "1 左宗鸡 (Qt) [Wok]"])]
+    out(c, "o1", "L0-1", at=70)
+    assert at_pass(c) == [("o1", ["1 左宗鸡 (Qt) [Wok]"])]
+
+
+def test_the_pass_is_asked_for_like_a_screen():
+    c = kitchen("wok")
+    send(c, "o1", CHICKEN)
+    for bad in ("wok,not a code", ",".join(f"s{n}" for n in range(33))):
+        assert c.get("/kitchen/pass", params={"stations": bad}).status_code == 422, bad
+    assert [order for order, _ in at_pass(c, *(f"s{n}" for n in range(31)), "wok")] == ["o1"]  # more than a screen's
+    first = c.get("/kitchen/pass")
+    again = c.get("/kitchen/pass", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    mark(c, "o1", "wok", "L0-1", at=60)  # what a station made is news at the pass
+    assert c.get("/kitchen/pass", headers={"If-None-Match": first.headers["etag"]}).status_code == 200
 
 
 # --- the calls ----------------------------------------------------------------------------------------------

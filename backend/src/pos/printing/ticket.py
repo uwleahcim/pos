@@ -29,6 +29,8 @@ class TicketLine:
     changed: bool = False  # modified after the course was fired
     header: str | None = None  # the dish this one is part of, when it is a combo's or a lunch special's choice
     allergy: str = ""  # the allergy told for this dish's seat ("Peanuts - no MSG"), printed under the dish
+    # where it is cooked, of the stations this ticket is for: for a screen (the pass); the paper does not print it
+    stations: tuple[str, ...] = field(default=(), compare=False)
 
 
 @dataclass(frozen=True)

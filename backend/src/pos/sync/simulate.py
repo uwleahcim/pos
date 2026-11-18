@@ -189,7 +189,8 @@ def random_action(rng: random.Random, replica: Replica, order_id: str, *, offlin
     if kind == "done":  # a station's screen marks dishes made, or takes its word back
         ids = rng.sample(live, rng.randint(1, min(2, len(live))))
         made = rng.random() < 0.8
-        return replica.emit(order_id, kind, station=rng.choice(["wok", "fryer"]), line_ids=ids, done=made, **flag)
+        station = rng.choice(["wok", "fryer", "*pass"])  # (the pass sends a dish out with the same word)
+        return replica.emit(order_id, kind, station=station, line_ids=ids, done=made, **flag)
     if kind == "allergy":  # told for a seat or the table, changed, or taken off again
         allergens = rng.sample(ALLERGENS, rng.randint(0, 2))
         return replica.emit(order_id, kind, seat=rng.choice([None, 1, 2, 3]), allergens=allergens, **flag)

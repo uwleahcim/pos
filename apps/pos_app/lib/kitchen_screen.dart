@@ -1,7 +1,9 @@
 /// A station's screen (docs/kitchen-screens.md): what the station has to make, as the hub lists it
-/// (`GET /kitchen/screen`), in the words its paper tickets use. Nothing here is worked out on the terminal
-/// but two things: what this screen itself just marked and the hub has not shown yet, laid over what was
-/// read, and how long each ticket has been in the kitchen.
+/// (`GET /kitchen/screen`), in the words its paper tickets use; or the pass (`GET /kitchen/pass`), where
+/// every station's dishes of a ticket stand together with what each station has made, and a mark says a dish
+/// went out. Nothing here is worked out on the terminal but three things: what this screen itself just
+/// marked and the hub has not shown yet, laid over what was read; how long each ticket has been in the
+/// kitchen; and the all-day counts, how many of each dish its tickets still wait for.
 library;
 
 import 'takeout.dart';
@@ -23,6 +25,7 @@ class KitchenLine {
     this.isVoid = false,
     this.changed = false,
     this.doneMs,
+    this.cooks = const [],
   });
 
   factory KitchenLine.fromJson(Map<String, dynamic> json) => KitchenLine(
@@ -40,6 +43,14 @@ class KitchenLine {
     isVoid: json['void'] == true,
     changed: json['changed'] == true,
     doneMs: (json['done_ms'] as num?)?.toInt(),
+    cooks: [
+      for (final cook in json['cooks'] as List? ?? const [])
+        (
+          code: (cook as Map)['code']?.toString() ?? '',
+          name: (cook['name'] ?? cook['code'])?.toString() ?? '',
+          made: cook['made'] == true,
+        ),
+    ],
   );
 
   /// The line of the order this stands for. A dish made of parts is several of these with one id.
@@ -72,8 +83,14 @@ class KitchenLine {
   final bool changed;
   final int? doneMs;
 
-  /// Every station of this screen that makes it said so.
+  /// At the pass: where it is cooked, and whether that station has made it. Empty on a station's screen.
+  final List<({String code, String name, bool made})> cooks;
+
+  /// Every station of this screen that makes it said so; at the pass, it went out.
   bool get done => stations.isNotEmpty && stations.every(made.contains);
+
+  /// At the pass: nothing of it is still being cooked.
+  bool get cooked => cooks.every((cook) => cook.made);
 
   KitchenLine _marked(String station, bool isMade, int atMs) {
     if (!stations.contains(station) || made.contains(station) == isMade) return this;
@@ -99,6 +116,7 @@ class KitchenLine {
       isVoid: isVoid,
       changed: changed,
       doneMs: all ? atMs : null,
+      cooks: cooks,
     );
   }
 }
@@ -176,6 +194,15 @@ class KitchenTicket {
   final int? doneMs;
 
   bool get done => lines.isNotEmpty && lines.every((line) => line.done);
+
+  /// At the pass: every station has made its part of what has not gone out yet, so it is ready to go.
+  bool get allMade {
+    final waits = [
+      for (final line in lines)
+        if (!line.done && !line.isVoid) line,
+    ];
+    return waits.any((line) => line.cooks.isNotEmpty) && waits.every((line) => line.cooked);
+  }
 
   /// Whose it is, as the head of the ticket says it: "Table 12", "Tab Mike", "#12 Linda".
   String get title {
@@ -258,6 +285,7 @@ class KitchenBoard {
     this.late = 20,
     this.tickets = const [],
     this.recent = const [],
+    this.pass = false,
   });
 
   factory KitchenBoard.fromJson(Map<String, dynamic> json) {
@@ -277,6 +305,7 @@ class KitchenBoard {
       late: (json['late'] as num?)?.toInt() ?? 20,
       tickets: listed('tickets'),
       recent: listed('recent'),
+      pass: json['pass'] == true,
     );
   }
 
@@ -295,8 +324,25 @@ class KitchenBoard {
   /// The last ones finished, the latest first.
   final List<KitchenTicket> recent;
 
-  /// "Wok", "Wok · Fryer": the screen's stations by their names.
-  String get title => [for (final station in stations) station.name].join(' · ');
+  /// The pass: every ticket whole, with what each station has made. [stations] is then the ones it
+  /// watches, or empty for all of them.
+  final bool pass;
+
+  /// "Wok", "Wok · Fryer": the screen's stations by their names. "The pass", "The pass · Wok · Fryer".
+  String get title => [if (pass) 'The pass', for (final station in stations) station.name].join(' · ');
+
+  /// The all-day counts: how many of each dish the tickets on this screen still wait for, the most first.
+  /// A dish made (at the pass: gone out) or voided is not counted.
+  List<({String label, int qty})> get counts {
+    final sums = <String, int>{};
+    for (final ticket in tickets) {
+      for (final line in ticket.lines) {
+        if (!line.done && !line.isVoid) sums[line.label] = (sums[line.label] ?? 0) + line.qty;
+      }
+    }
+    return [for (final MapEntry(key: label, value: qty) in sums.entries) (label: label, qty: qty)]
+      ..sort((a, b) => a.qty != b.qty ? b.qty.compareTo(a.qty) : a.label.compareTo(b.label));
+  }
 
   TicketAge age(KitchenTicket ticket, DateTime now) {
     final minutes = ticket.minutes(now);
@@ -351,6 +397,7 @@ class KitchenBoard {
       late: late,
       tickets: open,
       recent: made.length > keeps ? made.sublist(0, keeps) : made,
+      pass: pass,
     );
   }
 }

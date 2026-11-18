@@ -59,6 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late String _opensOn = widget.settings.opensOn;
   late bool _pickupBoard = widget.settings.pickupBoard;
   late final List<String> _kitchen = [...widget.settings.kitchenStations];
+  late bool _pass = widget.settings.kitchenPass;
   StationList? _stations; // the location's stations, to pick a kitchen screen's from; null until the hub says
   bool _noStations = false; // the hub did not say
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
@@ -122,7 +123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
     await widget.settings.saveOpensOn(_opensOn);
     await widget.settings.savePickupBoard(_pickupBoard);
-    await widget.settings.saveKitchenStations(_kitchen);
+    await widget.settings.saveKitchenStations(_kitchen, pass: _pass);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -356,7 +357,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // (one or the other: a board for the customers shows no kitchen tickets)
                   onChanged: (on) => setState(() {
                     _pickupBoard = on;
-                    if (on) _kitchen.clear();
+                    if (on) {
+                      _kitchen.clear();
+                      _pass = false;
+                    }
                   }),
                 ),
               ),
@@ -377,7 +381,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        _kitchen.isNotEmpty
+                        _pass
+                            ? 'While nobody is signed in, this screen is the pass: it lists every dish of each '
+                                  'ticket with what each station has made, and a tap says a dish went out. It '
+                                  'watches ${_kitchen.isEmpty ? 'every station' : _kitchenNames}. Staff, in its '
+                                  'corner, brings up the sign-in pad.'
+                            : _kitchen.isNotEmpty
                             ? 'While nobody is signed in, this screen lists what $_kitchenNames '
                                   '${_kitchen.length == 1 ? 'has' : 'have'} to make, and a tap marks a dish made. '
                                   'Staff, in its corner, brings up the sign-in pad.'
@@ -406,7 +415,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 label: Text(station.name),
                                 selected: _kitchen.contains(station.code),
                                 onSelected:
-                                    !_kitchen.contains(station.code) && _kitchen.length >= Settings.kitchenStationsMax
+                                    !_kitchen.contains(station.code) &&
+                                        _kitchen.length >=
+                                            (_pass ? Settings.kitchenPassMax : Settings.kitchenStationsMax)
                                     ? null
                                     : (on) => setState(() {
                                         if (on) {
@@ -420,6 +431,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                       ],
+                      // The pass: the screen of whoever calls the orders, in place of a station's.
+                      SwitchListTile(
+                        key: const ValueKey('kitchen-pass-switch'),
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('This screen is the pass'),
+                        subtitle: Text(
+                          _pass
+                              ? (_kitchen.isEmpty
+                                    ? 'Pick stations to watch those alone.'
+                                    : 'It leaves out the stations not picked.')
+                              : 'For whoever calls the orders: each ticket whole, with what every station has made.',
+                        ),
+                        value: _pass,
+                        onChanged: (on) => setState(() {
+                          _pass = on;
+                          if (on) _pickupBoard = false;
+                        }),
+                      ),
                     ],
                   ),
                 ),

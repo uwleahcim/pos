@@ -200,7 +200,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final clockOn = _clock?.enabled ?? false;
-    final kitchen = widget.settings.kitchenStations.isNotEmpty; // what this screen stands as, left alone
+    final kitchen = widget.settings.kitchen; // what this screen stands as, left alone
     final atClock = _atClock;
     final heading = _clocking || atClock != null
         ? 'Time clock'

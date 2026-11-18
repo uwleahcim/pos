@@ -271,6 +271,7 @@ still known as a Star by step 3, without its model.
   the stations each screen prints no ticket at (`ticket-skips.md`).
 - `GET /kitchen/screen?stations=`: what the screen of those stations has to make, routed by the same rules
   as the paper (`kitchen-screens.md`). The tickets print whether or not a station has a screen.
+  `GET /kitchen/pass?stations=` is the pass: the same dishes whole on one ticket for whoever calls the orders.
 - `GET /print/stations`: every station with its name, how many dishes and choices print there, the id of
   its printer, and `missing`.
 - `POST /print/discover` (manager): `addresses` the terminal has; the answer lists each printer found with

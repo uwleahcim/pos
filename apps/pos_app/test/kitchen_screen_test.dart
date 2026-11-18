@@ -155,6 +155,7 @@ const names = {
 Future<Terminal> pumpScreen(
   WidgetTester tester, {
   List<String> stations = const ['wok'],
+  bool pass = false,
   List<Map<String, dynamic>>? kitchen,
   bool older = false,
   Size? size,
@@ -167,7 +168,14 @@ Future<Terminal> pumpScreen(
   if (size != null) tester.view.physicalSize = size;
   await tester.pumpWidget(
     MaterialApp(
-      home: KitchenScreen(api: t.api, outbox: t.outbox, stations: stations, now: now ?? () => six, onStaff: () {}),
+      home: KitchenScreen(
+        api: t.api,
+        outbox: t.outbox,
+        stations: stations,
+        pass: pass,
+        now: now ?? () => six,
+        onStaff: () {},
+      ),
     ),
   );
   await tester.pump();

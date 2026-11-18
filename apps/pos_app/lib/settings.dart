@@ -18,12 +18,13 @@ class Settings extends ChangeNotifier {
     String opensOn = floorMap,
     this.pickupBoard = false,
     List<String> kitchenStations = const [],
+    this.kitchenPass = false,
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
        lockMinutes = cleanLockMinutes(lockMinutes),
        opensOn = cleanOpensOn(opensOn),
-       _kitchenStations = cleanStations(kitchenStations);
+       _kitchenStations = cleanStations(kitchenStations, pass: kitchenPass);
 
   static Future<Settings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -47,6 +48,7 @@ class Settings extends ChangeNotifier {
       opensOn: prefs.getString('opens_on') ?? floorMap,
       pickupBoard: prefs.getBool('pickup_board') ?? false,
       kitchenStations: prefs.getStringList('kitchen_stations') ?? const [],
+      kitchenPass: prefs.getBool('kitchen_pass') ?? false,
       phone: phone,
       prefs: prefs,
     );
@@ -107,19 +109,28 @@ class Settings extends ChangeNotifier {
   List<String> get kitchenStations => List.unmodifiable(_kitchenStations);
   List<String> _kitchenStations;
 
-  /// The most stations one screen stands for, as the hub has it.
+  /// The pass (docs/kitchen-screens.md): this kitchen screen is the one of whoever calls the orders. It lists
+  /// every dish of each ticket with what each station has made, and a tap says a dish went out.
+  /// [kitchenStations] is then the stations it watches; with none it watches them all.
+  bool kitchenPass;
+
+  /// The most stations one screen stands for, and the most a pass can be told to watch, as the hub has them.
   static const kitchenStationsMax = 8;
+  static const kitchenPassMax = 32;
 
   /// Station codes as the device keeps them: each once, none empty, no more than the hub answers for.
-  static List<String> cleanStations(Iterable<String> codes) => [
+  static List<String> cleanStations(Iterable<String> codes, {bool pass = false}) => [
     ...{
       for (final code in codes)
         if (code.trim().isNotEmpty) code.trim(),
     },
-  ].take(kitchenStationsMax).toList();
+  ].take(pass ? kitchenPassMax : kitchenStationsMax).toList();
+
+  /// Whether this screen is a kitchen screen: a station's, or the pass.
+  bool get kitchen => _kitchenStations.isNotEmpty || kitchenPass;
 
   /// Whether this screen stands as something while nobody is signed in: a kitchen screen or the pickup board.
-  bool get stands => _kitchenStations.isNotEmpty || pickupBoard;
+  bool get stands => kitchen || pickupBoard;
 
   PhoneSettings _phone;
 
@@ -187,7 +198,9 @@ class Settings extends ChangeNotifier {
       await _prefs?.setBool('pickup_board', true);
       // (one or the other: a board for the customers shows no kitchen tickets)
       _kitchenStations = [];
+      kitchenPass = false;
       await _prefs?.remove('kitchen_stations');
+      await _prefs?.remove('kitchen_pass');
     } else {
       await _prefs?.remove('pickup_board');
     }
@@ -195,12 +208,21 @@ class Settings extends ChangeNotifier {
   }
 
   /// Makes this screen the kitchen screen of these stations; of none, it is a kitchen screen no longer.
-  Future<void> saveKitchenStations(Iterable<String> codes) async {
-    _kitchenStations = cleanStations(codes);
+  /// With [pass] it is the pass, watching these stations, or every station when none is named.
+  Future<void> saveKitchenStations(Iterable<String> codes, {bool pass = false}) async {
+    _kitchenStations = cleanStations(codes, pass: pass);
+    kitchenPass = pass;
     if (_kitchenStations.isEmpty) {
       await _prefs?.remove('kitchen_stations');
     } else {
       await _prefs?.setStringList('kitchen_stations', _kitchenStations);
+    }
+    if (pass) {
+      await _prefs?.setBool('kitchen_pass', true);
+    } else {
+      await _prefs?.remove('kitchen_pass');
+    }
+    if (kitchen) {
       pickupBoard = false;
       await _prefs?.remove('pickup_board');
     }
