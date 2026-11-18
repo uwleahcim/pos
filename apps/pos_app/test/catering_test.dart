@@ -325,7 +325,10 @@ void main() {
       final paidUp = of(chen(payments: deposit, due: '0.00'));
       expect((owes(paidUp), moneyWords(paidUp)), (false, 'paid'));
       final nothing = of(chen());
-      expect((owes(nothing), moneyWords(nothing)), (true, 'pay at pickup'));
+      // Chen's is delivered, so what is owed is paid at the door (docs/delivery.md); one that is come for
+      // says what it said
+      expect((owes(nothing), moneyWords(nothing)), (true, 'pay at the door'));
+      expect(moneyWords(of(chen(channel: 'phone'))), 'pay at pickup');
       // a hub older than deposits says no figure: paid is whether anything was, as before
       final older = of(chen(payments: deposit));
       expect((older.due, owes(older), moneyWords(older)), (null, false, 'paid'));
