@@ -1254,13 +1254,16 @@ def create_app(
     def quotes_now() -> dict[str, Any]:
         settings: SettingStore = app.state.settings
         rush = rush_now(settings.get("rush"), int(time.time() * 1000))
-        return {**settings.get("quotes"), "rush": rush}
+        # `delivers`: this hub marks an order that is brought to the customer on its tickets and its bill
+        # (docs/delivery.md), so a form may offer Delivery on any to-go order
+        return {**settings.get("quotes"), "rush": rush, "delivers": True}
 
     @app.get("/settings/quotes")
     def read_quotes() -> dict[str, Any]:
         """Minutes each channel promises a takeout order, which channels may pay at pickup, the minutes a big
         order adds (`big_orders`), and `rush`: the minutes a manager added to every new quote for tonight,
-        with when that ends and who set it; null while there is none."""
+        with when that ends and who set it; null while there is none. `delivers` is true: an order taken by
+        hand may be a delivery (it is quoted the minutes of `delivery`), and this hub prints it as one."""
         return quotes_now()
 
     @app.put("/settings/quotes")

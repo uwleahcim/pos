@@ -73,8 +73,18 @@ class Hub {
     'minutes': {'counter': 15, 'phone': 20, 'online': 25, 'delivery': 45},
     'pay_at_pickup': ['phone'],
   };
+
+  /// Whether it marks an order that is brought to the customer on its papers (docs/delivery.md), and says
+  /// so with its quotes, as the real hub does; false for a hub older than deliveries. [quotesOut] is what
+  /// it answers: the quotes it keeps, and that word.
+  bool delivers = true;
+  Map<String, dynamic> get quotesOut => {...quotes, if (delivers) 'delivers': true};
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
+
+  /// What it knows of a customer, by the number's digits (`GET /customers/lookup`): a number it does not
+  /// list is answered as everything is that this hub has no word for.
+  final customers = <String, Map<String, dynamic>>{};
 
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
@@ -1727,6 +1737,10 @@ class Hub {
   Future<http.Response> answer(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (path == '/customers/lookup') {
+      final known = customers[phoneDigits(request.url.queryParameters['phone'])];
+      if (known != null) return json(known);
+    }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
     if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);
     if (path == '/reservations' || path.startsWith('/reservations/')) return _reservations(request);
@@ -2182,7 +2196,7 @@ class Hub {
         return json(coursing);
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
-        return json(quotes);
+        return json(quotesOut);
       case '/settings/rush':
         if (!quotes.containsKey('rush')) return json({'detail': 'Not Found'}, 404);
         rushAuth = request.headers['authorization'];
@@ -2193,7 +2207,7 @@ class Hub {
           ...quotes,
           'rush': minutes > 0 ? {'minutes': minutes, 'until': until, 'by': 'Mike'} : null,
         };
-        return json(quotes);
+        return json(quotesOut);
       case '/settings/kitchen_screens':
         if (kitchen == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

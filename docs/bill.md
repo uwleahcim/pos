@@ -10,6 +10,8 @@ The bill reads, from the top:
 - **The restaurant's own lines**: its name (big), then address, phone or whatever the manager typed.
 - **The table and the time**: "Table 12  4 guests" with the time, the server's name with the date. A to-go
   order is headed with its number and the customer's name ("Order #42  Linda") and how it came in.
+- **Where a delivery goes**: on an order that is brought to the customer, DELIVERY, the address, the phone
+  number and the note for the driver, between two rules. The bill goes with the bag (`delivery.md`).
 - **Each dish** with its quantity and what it comes to. Its choices stand under it, each with what it adds
   ("Brown rice +1.00"); a comp or a discount on the dish is said under it too ("Manager comp -48.00").
 - **Subtotal**, then every discount and charge by name, then **sales tax as one line** ("Sales tax 7%"). A

@@ -51,11 +51,12 @@ bool owes(Order order) => switch (order.due) {
   null => !order.hasPaid,
 };
 
-/// What a list of checks says of a to-go order's money: "paid", "pay at pickup" while nothing was taken,
-/// and "$45.01 due" once a deposit was.
+/// What a list of checks says of a to-go order's money: "paid", "pay at pickup" while nothing was taken
+/// ("pay at the door" of a delivery, docs/delivery.md), and "$45.01 due" once a deposit was.
 String moneyWords(Order order) => switch (order.due) {
   final due? when cents(due) > 0 => '\$$due due',
-  _ => order.hasPaid ? 'paid' : 'pay at pickup',
+  _ when order.hasPaid => 'paid',
+  _ => order.isDelivery ? 'pay at the door' : 'pay at pickup',
 };
 
 /// How many of [orders] each chip lists at [now].

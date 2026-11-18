@@ -797,7 +797,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // The quote is the channel's minutes and tonight's rush. A time the customer named stays theirs: the
     // quote then says how long before it the kitchen starts.
     final now = DateTime.now();
-    final minutes = quotes.minutesFor(request.channel, at: now, promised: request.promisedAt);
+    final minutes = quotes.minutesFor(
+      request.channel,
+      at: now,
+      promised: request.promisedAt,
+      delivery: request.event?.delivered ?? false, // brought to them: the cooking and the drive
+    );
     final promised = request.promisedAt ?? now.add(Duration(minutes: minutes));
     final staff = widget.session.staff;
     final messenger = ScaffoldMessenger.of(context);
@@ -862,7 +867,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       'promised_at': promised.millisecondsSinceEpoch,
       if (request.promisedAt != null) 'for_later': true,
       'stage': 'new',
-      // what a catering order's event needs: only what was filled in
+      // what a catering order's event needs, and where a delivery goes: only what was filled in
       for (final MapEntry(:key, :value) in (request.event?.toFields() ?? const <String, dynamic>{}).entries)
         if (value != null && value != '') key: value,
     }, lines: lines);
@@ -1910,6 +1915,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         // An order for later is marked as its time to start cooking nears, and when that
                         // time has come and nobody sent it.
                         final promisedAt = order.promisedAt;
+                        // brought to the customer (docs/delivery.md): the row says so and where to, and
+                        // its last step is that it was delivered
+                        final delivery = order.isDelivery;
+                        final address = delivery ? order.event.address : '';
                         final later = !isTakeout || !order.isOpen || stage != 'new'
                             ? LaterStage.none
                             : laterStage(
@@ -1936,7 +1945,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             ? FilledButton.tonal(
                                 key: ValueKey('picked-up-${order.orderId}'),
                                 onPressed: () => _setStage(order, 'picked_up'),
-                                child: const Text('Picked up'),
+                                child: Text(delivery ? 'Delivered' : 'Picked up'),
                               )
                             : null;
                         return PressableScale(
@@ -1961,6 +1970,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                     ? [
                                         order.customerName.isEmpty ? 'To go' : order.customerName,
                                         if (order.channel.isNotEmpty) channelLabel(order.channel).toLowerCase(),
+                                        if (delivery && order.channel != 'delivery') 'delivery',
                                       ].join(' · ')
                                     : isTab
                                     ? [
@@ -1995,10 +2005,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                       if (isTakeout && promisedAt != null)
                                         order.forLater
                                             ? 'for ${whenFor(promisedAt, now)}'
-                                            : 'ready ${clockTime(promisedAt)}',
+                                            : '${delivery ? 'there' : 'ready'} ${clockTime(promisedAt)}',
                                       // "$45.01 due" once a deposit was taken: not the whole of it
                                       if (isTakeout) moneyWords(order),
-                                      if (isTakeout && stageLabel(stage).isNotEmpty) stageLabel(stage).toUpperCase(),
+                                      if (isTakeout && stageLabel(stage).isNotEmpty)
+                                        stageLabel(stage, delivery: delivery).toUpperCase(),
+                                      if (address.isNotEmpty) address,
                                       if (finding && (order.fields['server']?.toString() ?? '').isNotEmpty)
                                         order.fields['server'].toString(),
                                       if (queued) 'waiting to send',
@@ -2095,6 +2107,12 @@ String _opened(int ms, DateTime now) {
 /// **Same again** button that starts the new order with those dishes. With no hub answering, or one older
 /// than customers, none of that shows and the form is what it was.
 ///
+/// Under the channels the form asks **Pickup** or **Delivery** (docs/delivery.md). A delivery asks where to
+/// and has a note for the driver; the address of the customer's last delivery is already in the box, and
+/// the order cannot start without one. It is quoted the minutes set for Delivery. (A catering order asks
+/// the same among what its event needs. A hub older than deliveries is not asked: it would print the order
+/// as one that is picked up.)
+///
 /// Somebody who calls may want a table and not food. While the order is by phone the form has **Book a
 /// table** beside its title, which pops a [_BookForCaller] with the name and the number in the form; and a
 /// number that has tables booked, today or ahead, lists them, each with **Open**, which pops that
@@ -2126,11 +2144,15 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   DateTime _day = DateTime.now(); // the day a later order is for: its date alone counts
   TimeOfDay? _time;
 
-  // what a catering order's event needs
+  // how the order leaves, and where to; what a catering order's event needs, and any other delivery's
+  // note for the driver
   final _guests = TextEditingController();
   final _address = TextEditingController();
   final _eventNote = TextEditingController();
+  final _driverNote = TextEditingController();
   String _handover = 'pickup';
+  String _addressFilled = ''; // the address the form itself put in the box: the customer's last delivery
+  String _driverNoteFilled = ''; // and what was said for the driver then
 
   CustomerCard? _customer; // who the hub says is at the number in the box; null: not asked, or no answer
   CallerTables? _tables; // the tables that number has booked, today and ahead; null: not asked, or no answer
@@ -2158,6 +2180,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     _guests.dispose();
     _address.dispose();
     _eventNote.dispose();
+    _driverNote.dispose();
     super.dispose();
   }
 
@@ -2191,6 +2214,19 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       _noteWas = found?.note ?? '';
       _noteProblem = null;
       if (untouched) _note.text = _noteWas;
+      // Where their last delivery went, and what was said for the driver. A box nobody typed in takes
+      // them, and loses them again when the number becomes somebody else's: one customer's address never
+      // goes on another's order.
+      final address = found?.address ?? '';
+      if (oneLine(_address.text) == _addressFilled) {
+        _address.text = address;
+        _addressFilled = address;
+      }
+      final driverNote = found?.addressNote ?? '';
+      if (oneLine(_driverNote.text) == _driverNoteFilled) {
+        _driverNote.text = driverNote;
+        _driverNoteFilled = driverNote;
+      }
     });
   }
 
@@ -2221,6 +2257,12 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
 
   bool get _catering => _channel == 'catering';
 
+  /// Brought to the customer, and no catering order: it needs its address, and is quoted as a delivery.
+  bool get _delivery => !_catering && widget.quotes.delivers && _handover == 'delivery';
+
+  /// A delivery with nowhere to go yet.
+  bool get _nowhere => _delivery && oneLine(_address.text).isEmpty;
+
   /// The customer names the time: the switch says so, and a catering order always does.
   bool get _named => _later || _catering;
 
@@ -2230,7 +2272,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     return WhenPicker.at(_day, time);
   }
 
-  bool get _ready => _name.text.trim().isNotEmpty && (!_named || _time != null);
+  bool get _ready => _name.text.trim().isNotEmpty && (!_named || _time != null) && !_nowhere;
 
   /// Start, or Same again on the past order [again].
   void _start({String? again}) => Navigator.of(context).pop(
@@ -2244,6 +2286,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       note: _noteChanged ? _noteText : null,
       event: _catering
           ? EventFields.read(guests: _guests, address: _address, note: _eventNote, handover: _handover)
+          : _delivery
+          ? EventFields.read(address: _address, note: _driverNote, handover: _handover)
           : null,
     ),
   );
@@ -2389,7 +2433,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised);
+    final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised, delivery: _delivery);
     final rush = widget.quotes.rushAt(now, promised: _promised);
     final customer = _customer;
     final tables = _tables;
@@ -2442,9 +2486,10 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                 key: const ValueKey('takeout-phone'),
                 controller: _phone,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Phone (for the ready text)',
-                  prefixIcon: Icon(Icons.phone_outlined),
+                decoration: InputDecoration(
+                  // nobody is texted to come for a delivery: the number is for the driver at the door
+                  labelText: _delivery ? 'Phone (for the driver to call)' : 'Phone (for the ready text)',
+                  prefixIcon: const Icon(Icons.phone_outlined),
                 ),
                 onChanged: _phoneChanged,
               ),
@@ -2471,6 +2516,27 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                     ),
                 ],
               ),
+              // How it leaves, asked before the time: a delivery is quoted longer. (A catering order says
+              // it among what its event needs, under its time.)
+              if (!_catering && widget.quotes.delivers) ...[
+                const SizedBox(height: 8),
+                EventFields(
+                  address: _address,
+                  note: _driverNote,
+                  handover: _handover,
+                  onHandover: (way) => setState(() => _handover = way),
+                  onChanged: () => setState(() {}),
+                ),
+                if (_nowhere)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Type the address it goes to.',
+                      key: const ValueKey('address-needed'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+              ],
               const SizedBox(height: 8),
               // A catering order is always for a time the customer names: the switch has nothing to ask.
               if (_catering)
@@ -2491,7 +2557,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                     key: const ValueKey('takeout-quote'),
                     _later
                         ? 'Prints ahead of its time by the quote${rush > 0 ? ' ($minutes min tonight)' : ''}'
-                        : 'Ready in about $minutes min${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
+                        : '${_delivery ? 'There' : 'Ready'} in about $minutes min'
+                              '${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
                   ),
                   value: _later,
                   onChanged: (on) => setState(() => _later = on),

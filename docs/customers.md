@@ -25,6 +25,9 @@ typed into it (it waits for the typing to pause). Numbers match by their digits:
   number, write the note, tick, Cancel). An empty note takes it off. The hub keeps who wrote it and when.
 - **Their latest five orders that had dishes on them**, newest first: the day, what it came to, the dishes,
   and **Same again**.
+- **Where their last delivery went.** When the order is a delivery, the address of the latest order that
+  was brought to them is already in the address box, with what was said for the driver then
+  (`delivery.md`). It is read off that order, like the name: no address book is kept.
 
 Picking up a call still opens the order the number placed earlier **today** when there is one (a customer
 calling back about their order lands on it); the form with the customer on it opens when there is none.

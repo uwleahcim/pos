@@ -58,7 +58,8 @@ class AheadOrder {
   final String channel;
   final int promisedMs;
 
-  /// The guests, how it leaves, where to and the note. Only a catering order has them.
+  /// The guests, how it leaves, where to and the note. A catering order has them; any other order says
+  /// how it leaves, and a delivery where to.
   final EventDetails event;
   final String status; // open | closed
   final String stage; // new | ready
@@ -80,8 +81,9 @@ class AheadOrder {
     return [...named, if (more > 0) 'and $more more'].join(', ');
   }
 
-  /// What the event needs, for the list: nothing for an order that is no catering order.
-  String get eventWords => isCatering ? event.words : '';
+  /// What the event needs, for the list, and of any other order that is brought to the customer where it
+  /// goes (docs/delivery.md): nothing for an order that is neither.
+  String get eventWords => isCatering || event.delivered ? event.words : '';
 }
 
 /// One day of service with its orders, the earliest first, and what they add up to.

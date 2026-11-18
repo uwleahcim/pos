@@ -341,9 +341,13 @@ class Order {
   int get dishes => activeLines.fold(0, (n, l) => n + l.qty);
   bool get hasPaid => payments.isNotEmpty;
 
-  /// What an event needs, on a catering order: the guests, how it leaves, where to, the note.
+  /// How a to-go order leaves, where to, and the note that goes with it; on a catering order what its
+  /// event needs: the guests too.
   EventDetails get event => EventDetails.of(fields);
   bool get isCatering => isTakeout && channel == 'catering';
+
+  /// Brought to the customer by the restaurant's own driver (docs/delivery.md). A table's check never is.
+  bool get isDelivery => isTakeout && fields['handover'] == 'delivery';
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
   List<Line> get activeLines => lines.where((l) => l.isActive).toList();

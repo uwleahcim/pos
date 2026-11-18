@@ -35,6 +35,7 @@ class Quotes {
     this.bigMinutes = 0,
     this.takesRush = false,
     this.takesBigOrders = false,
+    this.delivers = false,
   });
 
   factory Quotes.fromJson(Map<String, dynamic> json) {
@@ -49,6 +50,7 @@ class Quotes {
       bigMinutes: (big['minutes'] as num? ?? 0).toInt(),
       takesRush: json.containsKey('rush'),
       takesBigOrders: json.containsKey('big_orders'),
+      delivers: json['delivers'] == true,
     );
   }
 
@@ -67,10 +69,19 @@ class Quotes {
   final bool takesRush;
   final bool takesBigOrders;
 
+  /// Whether the hub that answered marks an order brought to the customer on its tickets and its bill
+  /// (docs/delivery.md). One older than that prints a delivery like an order that is picked up, so a form
+  /// offers Delivery on a catering order alone, as before.
+  final bool delivers;
+
   /// The channel's own minutes, as a manager set them. For catering they are how long before its time the
   /// kitchen gets the ticket; a hub from before catering had a lead of its own says nothing, and the hour
-  /// stands.
-  int baseFor(String channel) => minutes[channel] ?? (channel == 'catering' ? cateringLead : 15);
+  /// stands. An order taken by hand that is brought to the customer ([delivery], docs/delivery.md) takes the
+  /// minutes set for Delivery, whoever took it: they are for the cooking and the drive. (A catering order
+  /// keeps its lead: its time is the customer's.)
+  int baseFor(String channel, {bool delivery = false}) => delivery && channel != 'catering'
+      ? minutes['delivery'] ?? deliveryMinutes
+      : minutes[channel] ?? (channel == 'catering' ? cateringLead : 15);
 
   /// The minutes the rush adds to a quote made at [at]. An order the customer named a time for ([promised])
   /// takes them only when that time is still within the rush's night: tonight's rush says nothing about
@@ -83,9 +94,9 @@ class Quotes {
   }
 
   /// What a new order on [channel] is quoted at [at] (now, unless a test says otherwise): the channel's
-  /// minutes and the rush.
-  int minutesFor(String channel, {DateTime? at, DateTime? promised}) =>
-      baseFor(channel) + rushAt(at ?? DateTime.now(), promised: promised);
+  /// minutes, or Delivery's for one that is brought to the customer, and the rush.
+  int minutesFor(String channel, {DateTime? at, DateTime? promised, bool delivery = false}) =>
+      baseFor(channel, delivery: delivery) + rushAt(at ?? DateTime.now(), promised: promised);
 
   /// The minutes an order of [dishes] dishes takes on top of its quote.
   int extraFor(int dishes) => bigDishes > 0 && bigMinutes > 0 && dishes >= bigDishes ? bigMinutes : 0;
@@ -155,16 +166,21 @@ const handChannels = ['counter', 'phone', 'catering'];
 /// How long before its time the kitchen gets a catering order's ticket, until a manager sets it.
 const cateringLead = 60;
 
-/// How a catering order leaves: the customer comes for it, or it is brought to an address.
+/// How long a delivery is quoted, until a manager sets it (the quote times' "Delivery").
+const deliveryMinutes = 45;
+
+/// How a to-go order leaves: the customer comes for it, or it is brought to an address (docs/delivery.md).
 const handovers = ['pickup', 'delivery'];
 
 String handoverLabel(String handover) => handover == 'delivery' ? 'Delivery' : 'Pickup';
 
-/// The longest an address or a note for the event is kept.
+/// The longest an address or a note for the event or the driver is kept.
 const eventTextMax = 200;
 
 /// What an event needs beyond a name and a time (docs/catering.md): how many it feeds, how it leaves, where
-/// to, and whatever else the kitchen or the driver must know.
+/// to, and whatever else the kitchen or the driver must know. Any to-go order says how it leaves, and one
+/// that is delivered where to, with a note for the driver (docs/delivery.md); only a catering order counts
+/// guests.
 class EventDetails {
   const EventDetails({this.guests, this.handover = 'pickup', this.address = '', this.note = ''});
 
@@ -247,7 +263,8 @@ class TakeoutRequest {
   /// has.
   final String? note;
 
-  /// What a catering order's event needs; null on any other order.
+  /// What a catering order's event needs, and on any other order where it is brought to and the note for
+  /// the driver; null on an order the customer comes for.
   final EventDetails? event;
 }
 
@@ -303,8 +320,9 @@ String whenFor(int ms, DateTime now) {
   return day == 'today' ? clockTime(ms) : '$day ${clockTime(ms)}';
 }
 
-String stageLabel(String stage) => switch (stage) {
+/// A to-go order's stage in words. One that was brought to the customer ([delivery]) was not picked up.
+String stageLabel(String stage, {bool delivery = false}) => switch (stage) {
   'ready' => 'Ready',
-  'picked_up' => 'Picked up',
+  'picked_up' => delivery ? 'Delivered' : 'Picked up',
   _ => '',
 };
