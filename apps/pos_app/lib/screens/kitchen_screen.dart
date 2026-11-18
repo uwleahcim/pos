@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../kitchen_bell.dart';
 import '../kitchen_screen.dart';
 import '../live.dart';
 import '../outbox.dart';
@@ -17,6 +18,8 @@ import 'theme.dart';
 /// together, each with where it is cooked and whether that station has made it. A tap there says a dish
 /// went out, Sent out the whole ticket.
 ///
+/// It sounds a chime when a ticket comes in ([bell]), unless the device was told to keep quiet ([sound]).
+///
 /// Nobody is signed in on it. A mark is the kitchen's own word on the order: it goes through the outbox like
 /// every other change, so a tap is never lost, and it changes no dish, price or payment.
 ///
@@ -30,6 +33,8 @@ class KitchenScreen extends StatefulWidget {
     required this.outbox,
     required this.stations,
     this.pass = false,
+    this.bell,
+    this.sound = true,
     this.onStaff,
     this.now = DateTime.now,
   });
@@ -42,6 +47,13 @@ class KitchenScreen extends StatefulWidget {
 
   /// The pass: every ticket whole, with what each station has made.
   final bool pass;
+
+  /// Sounds when a ticket comes in. It is the app's, not this screen's: the screen goes away whenever
+  /// somebody signs in on the device, and what came in meanwhile is heard when it stands again.
+  final KitchenBell? bell;
+
+  /// Whether this device is to be heard. With it off the bell only keeps up with what stands here.
+  final bool sound;
 
   /// One of the staff wants the sign-in pad.
   final VoidCallback? onStaff;
@@ -130,6 +142,12 @@ class _KitchenScreenState extends State<KitchenScreen> {
     try {
       final board = await widget.api.kitchenScreen(widget.stations, pass: widget.pass);
       if (!mounted) return;
+      // a ticket that came in, or a dish of one voided or changed, is heard; the hub's word, not this
+      // screen's own marks laid over it
+      if (board != null && !identical(board, _hub)) {
+        final screen = '${widget.pass ? 'pass' : 'stations'} ${widget.stations.join(',')}';
+        widget.bell?.heard(screen, board, on: widget.sound);
+      }
       // what this screen marked before the read began is in it: no longer its own to lay over
       var settled = false;
       for (final orderId in _marked.toList()) {

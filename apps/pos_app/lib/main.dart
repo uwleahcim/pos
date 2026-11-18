@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'asset_chime.dart';
 import 'asset_ringer.dart';
 import 'cache.dart';
 import 'call_screen.dart';
@@ -15,6 +16,7 @@ import 'dish_names.dart';
 import 'face_signin.dart';
 import 'frames.dart';
 import 'idle_lock.dart';
+import 'kitchen_bell.dart';
 import 'outbox.dart';
 import 'phone.dart';
 import 'photos.dart';
@@ -95,6 +97,9 @@ Future<void> main() async {
   settings.addListener(() => unawaited(phone.apply(settings.phone)));
   // The ring, on every platform, for as long as the banner shows and the device's screen does not ring itself.
   CallRinger(phone, AssetRinger());
+  // A kitchen screen's chime when a ticket comes in (docs/kitchen-screens.md), for as long as the app runs.
+  // Not during a call on this device: the call has the speaker.
+  final bell = KitchenBell(AssetChime(), quiet: () => phone.onCall);
   // Desk phones: a call taken on one linked to this device opens the caller's order here, as the app does
   // when it picks up a call itself. The hub is asked for as long as the app runs.
   final deskPhones = DeskPhoneWatcher(api, settings)..start();
@@ -143,6 +148,7 @@ Future<void> main() async {
       faces: faces,
       tags: tags,
       idleLock: idleLock,
+      bell: bell,
     ),
   );
 }
@@ -195,6 +201,7 @@ class PosApp extends StatefulWidget {
     this.faces,
     this.tags,
     this.idleLock,
+    this.bell,
   });
 
   final Settings settings;
@@ -217,6 +224,9 @@ class PosApp extends StatefulWidget {
 
   /// Locks the screen when nobody has touched it for the device's minutes; it is told of every touch.
   final IdleLock? idleLock;
+
+  /// What a kitchen screen sounds when a ticket comes in; a device that is none never hears it.
+  final KitchenBell? bell;
 
   @override
   State<PosApp> createState() => _PosAppState();
@@ -297,6 +307,7 @@ class _PosAppState extends State<PosApp> {
                             settings: settings,
                             api: api,
                             outbox: widget.outbox,
+                            bell: widget.bell,
                             pad: (context, toBoard) => SignInScreen(
                               session: session,
                               settings: settings,
@@ -334,6 +345,7 @@ class _PosAppState extends State<PosApp> {
                   settings: settings,
                   api: api,
                   outbox: widget.outbox,
+                  bell: widget.bell,
                   pad: (_, toBoard) => SignInScreen(
                     session: session,
                     settings: settings,
@@ -350,6 +362,7 @@ class _PosAppState extends State<PosApp> {
                           push: widget.push,
                           screen: widget.callScreen,
                           camera: camera,
+                          bell: widget.bell,
                         ),
                       ),
                     ),
@@ -368,6 +381,7 @@ class _PosAppState extends State<PosApp> {
                   phone: phone,
                   deskPhones: widget.deskPhones,
                   tags: widget.tags,
+                  bell: widget.bell,
                 );
               }
               return AnimatedSwitcher(

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/camera.dart';
 import 'package:pos_app/desk_phone_watcher.dart';
 import 'package:pos_app/idle_lock.dart';
+import 'package:pos_app/kitchen_bell.dart';
 import 'package:pos_app/kitchen_screen.dart';
 import 'package:pos_app/main.dart';
 import 'package:pos_app/phone.dart';
@@ -160,6 +161,8 @@ Future<Terminal> pumpScreen(
   bool older = false,
   Size? size,
   DateTime Function()? now,
+  KitchenBell? bell,
+  bool sound = true,
 }) async {
   final t = await terminal(tester);
   t.session.signOut();
@@ -173,6 +176,8 @@ Future<Terminal> pumpScreen(
         outbox: t.outbox,
         stations: stations,
         pass: pass,
+        bell: bell,
+        sound: sound,
         now: now ?? () => six,
         onStaff: () {},
       ),

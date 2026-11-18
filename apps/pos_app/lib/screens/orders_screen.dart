@@ -8,6 +8,7 @@ import '../coursing.dart';
 import '../customers.dart';
 import '../desk_phone_watcher.dart';
 import '../floor.dart';
+import '../kitchen_bell.dart';
 import '../live.dart';
 import '../local_order.dart';
 import '../moves.dart';
@@ -68,6 +69,7 @@ class OrdersScreen extends StatefulWidget {
     this.phone,
     this.deskPhones,
     this.tags,
+    this.bell,
   });
 
   final PosApi api;
@@ -77,6 +79,9 @@ class OrdersScreen extends StatefulWidget {
   final EventCamera camera;
   final PhotoQueue photos;
   final PrintRelay? relay;
+
+  /// A kitchen screen's chime, for the device's Settings to play.
+  final KitchenBell? bell;
 
   /// This terminal's tag reader, which a manager enrolls tags with in Location settings.
   final TagReader? tags;
@@ -1507,6 +1512,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               relay: widget.relay,
               phone: widget.phone,
               camera: widget.camera,
+              bell: widget.bell,
             ),
           ),
         ),
