@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../delivery_fee.dart';
 import '../takeout.dart';
+import 'fee_lookup.dart';
 import 'fee_picker.dart';
 
 /// The day and the time an order is for (docs/catering.md): today, tomorrow or any later day off a
@@ -98,6 +99,9 @@ class EventFields extends StatelessWidget {
     this.fee,
     this.feeTaken,
     this.onFee,
+    this.asker,
+    this.onAddressDone,
+    this.onLookUp,
   });
 
   /// The guests of a catering order's event; null on any other order.
@@ -119,6 +123,12 @@ class EventFields extends StatelessWidget {
   /// The fee the order already carries, on a form that changes an order.
   final OrderFee? feeTaken;
   final ValueChanged<String>? onFee;
+
+  /// Where the hub looks the distance up: [onAddressDone] when the address is done being typed (Enter, or
+  /// the box is left), [onLookUp] when somebody asks for the distance by hand.
+  final DistanceAsker? asker;
+  final VoidCallback? onAddressDone;
+  final VoidCallback? onLookUp;
 
   /// What the boxes hold, as an order carries it. With no [guests] box it is no catering order: the note is
   /// the driver's, and an order the customer comes for has none.
@@ -173,18 +183,27 @@ class EventFields extends StatelessWidget {
         ),
         if (handover == 'delivery') ...[
           const SizedBox(height: 8),
-          TextField(
-            key: const ValueKey('event-address'),
-            controller: address,
-            maxLength: eventTextMax,
-            textCapitalization: TextCapitalization.words,
-            keyboardType: TextInputType.streetAddress,
-            decoration: const InputDecoration(
-              labelText: 'Deliver to',
-              prefixIcon: Icon(Icons.place_outlined),
-              counterText: '',
+          Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onFocusChange: (has) {
+              // a form that is closing takes the focus away too: that is nobody done with the address
+              if (!has && context.mounted && (ModalRoute.of(context)?.isCurrent ?? true)) onAddressDone?.call();
+            },
+            child: TextField(
+              key: const ValueKey('event-address'),
+              controller: address,
+              maxLength: eventTextMax,
+              textCapitalization: TextCapitalization.words,
+              keyboardType: TextInputType.streetAddress,
+              decoration: const InputDecoration(
+                labelText: 'Deliver to',
+                prefixIcon: Icon(Icons.place_outlined),
+                counterText: '',
+              ),
+              onChanged: (_) => onChanged?.call(),
+              onSubmitted: (_) => onAddressDone?.call(),
             ),
-            onChanged: (_) => onChanged?.call(),
           ),
         ],
         if (catering || handover == 'delivery') ...[
@@ -205,7 +224,15 @@ class EventFields extends StatelessWidget {
         ],
         if (handover == 'delivery' && onFee != null && FeePicker.shown(fees, feeTaken)) ...[
           const SizedBox(height: 10),
-          FeePicker(fees: fees, pick: fee, taken: feeTaken, onPick: onFee!),
+          FeePicker(
+            fees: fees,
+            pick: fee,
+            taken: feeTaken,
+            onPick: onFee!,
+            asker: asker,
+            address: address.text,
+            onLookUp: onLookUp,
+          ),
         ],
       ],
     );
@@ -214,8 +241,9 @@ class EventFields extends StatelessWidget {
 
 /// What the dialog over a to-go order hands back: its new time when it is an order for later, how it
 /// leaves (on a catering order, what its event needs), and the delivery fee picked ([FeePick]) when that
-/// changed: null leaves the order's fee as it is.
-typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee});
+/// changed: null leaves the order's fee as it is. With a fee comes what the map said of the address
+/// ([Measured]), when the hub was asked.
+typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee, Measured? measured});
 
 /// How a to-go order leaves, changed on the order: whether it is picked up or delivered, where to, and the
 /// note for the driver (docs/delivery.md). An order for later ([promised] given) also changes its day and
@@ -224,7 +252,7 @@ typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee});
 /// catering order needs its address: without one it cannot be saved. Where the location charges for
 /// delivery ([fees]) it needs its fee picked too, and "No fee" is a pick.
 class WhenDialog extends StatefulWidget {
-  const WhenDialog({super.key, this.promised, this.event, this.catering = false, this.fees, this.fee});
+  const WhenDialog({super.key, this.promised, this.event, this.catering = false, this.fees, this.fee, this.distance});
 
   /// The time an order for later is for; null on an order for now, whose time is not the customer's.
   final DateTime? promised;
@@ -241,6 +269,11 @@ class WhenDialog extends StatefulWidget {
   /// The fee the order carries now; null while nobody said.
   final OrderFee? fee;
 
+  /// How the hub is asked how far an address is (`PosApi.deliveryDistance`); null where it looks nothing
+  /// up. It is asked when the address is typed over or a pickup becomes a delivery, never just for opening
+  /// the dialog: an order that has its fee keeps it.
+  final Future<FeeLookup> Function(String address)? distance;
+
   @override
   State<WhenDialog> createState() => _WhenDialogState();
 }
@@ -253,6 +286,17 @@ class _WhenDialogState extends State<WhenDialog> {
   late final _note = TextEditingController(text: widget.event?.note ?? '');
   late String _handover = widget.event?.handover ?? 'pickup';
   late String? _fee = widget.fee == null ? null : FeePick.kept;
+  late final _asker = DistanceAsker()..source = widget.distance;
+
+  /// Somebody tapped a price: from then on the map says how far and picks nothing.
+  bool _feeByHand = false;
+
+  /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand.
+  Future<void> _lookUp({bool again = false}) async {
+    if (!mounted || widget.event == null || _handover != 'delivery') return;
+    final band = (await _asker.ask(_address.text, again: again))?.band;
+    if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
+  }
 
   /// A delivery with nowhere to go. (A catering order may be given its address later: it is days away.)
   bool get _nowhere =>
@@ -272,6 +316,7 @@ class _WhenDialogState extends State<WhenDialog> {
     _guests.dispose();
     _address.dispose();
     _note.dispose();
+    _asker.dispose();
     super.dispose();
   }
 
@@ -287,6 +332,7 @@ class _WhenDialogState extends State<WhenDialog> {
           ),
     // a fee is a delivery's alone: one that becomes a pickup keeps what it carried and is charged nothing
     fee: widget.event != null && _handover == 'delivery' ? FeePick.changed(_fee, widget.fee, widget.fees) : null,
+    measured: _asker.measuredFor(_address.text),
   ));
 
   @override
@@ -334,12 +380,21 @@ class _WhenDialogState extends State<WhenDialog> {
                   address: _address,
                   note: _note,
                   handover: _handover,
-                  onHandover: (way) => setState(() => _handover = way),
-                  onChanged: () => setState(() {}),
+                  onHandover: (way) {
+                    setState(() => _handover = way);
+                    _lookUp();
+                  },
+                  onChanged: () => setState(() => _asker.typed(_address.text)),
                   fees: widget.fees,
                   fee: _fee,
                   feeTaken: widget.fee,
-                  onFee: (pick) => setState(() => _fee = pick),
+                  onFee: (pick) => setState(() {
+                    _fee = pick;
+                    _feeByHand = true;
+                  }),
+                  asker: _asker,
+                  onAddressDone: _lookUp,
+                  onLookUp: () => _lookUp(again: true),
                 ),
               ],
               if (!nowhere && unpriced)

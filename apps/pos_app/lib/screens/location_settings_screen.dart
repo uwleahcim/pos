@@ -831,7 +831,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (fees == null) return 'The hub has not answered about the delivery fee (an older hub: update it)';
     if (!fees.asks) return 'Off: nothing is added to a delivery for the trip';
     final prices = [for (final band in fees.bands) '${feeWords(band.fee)} up to ${band.upTo} ${feeUnit(fees.by)}'];
-    return '${prices.join(', ')}${fees.taxed ? ' · taxed' : ''}';
+    return '${prices.join(', ')}${fees.taxed ? ' · taxed' : ''}${fees.lookup ? ' · distance looked up' : ''}';
   }
 
   /// One line on the one-tap notes: what a dish's sheet offers, or that a note is typed.

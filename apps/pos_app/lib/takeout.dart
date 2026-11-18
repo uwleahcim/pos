@@ -2,6 +2,8 @@
 /// to-go dialog collects, and what the pay-first dialog hands back.
 library;
 
+import 'delivery_fee.dart';
+
 /// The kitchen is behind tonight: [minutes] more on every quote made until [until] (the end of the night, as
 /// the hub works it out), set by the manager [by]. Orders already promised keep their time.
 class Rush {
@@ -247,6 +249,7 @@ class TakeoutRequest {
     this.note,
     this.event,
     this.fee,
+    this.measured,
   });
 
   final String name;
@@ -271,6 +274,9 @@ class TakeoutRequest {
   /// What a delivery costs, as the form picked it (a `FeePick`: a band's reach, or none on purpose); null
   /// where nobody picked, or no fee is charged.
   final String? fee;
+
+  /// What the map said of the address, where the hub was asked how far it is; it travels with the fee.
+  final Measured? measured;
 }
 
 /// What the pay-first dialog hands back: cash with what was tendered, paid elsewhere with a note, or

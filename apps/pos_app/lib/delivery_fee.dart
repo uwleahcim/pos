@@ -28,7 +28,15 @@ class FeeBand {
 /// The location's prices for a delivery: whether a fee is charged at all, whether it goes by miles or by
 /// the minutes of the drive, the bands in order of how far they reach, and whether the fee is taxed.
 class DeliveryFees {
-  const DeliveryFees({this.enabled = false, this.by = 'miles', this.bands = const [], this.taxed = false});
+  const DeliveryFees({
+    this.enabled = false,
+    this.by = 'miles',
+    this.bands = const [],
+    this.taxed = false,
+    this.origin = '',
+    this.maps,
+    this.lookup = false,
+  });
 
   factory DeliveryFees.fromJson(Map<String, dynamic> json) => DeliveryFees(
     enabled: json['enabled'] == true,
@@ -38,6 +46,9 @@ class DeliveryFees {
         if (band is Map) FeeBand.fromJson(band.cast<String, dynamic>()),
     ],
     taxed: json['taxed'] == true,
+    origin: json['origin'] is String ? json['origin'] as String : '',
+    maps: json['maps'] is bool ? json['maps'] as bool : null,
+    lookup: json['lookup'] == true,
   );
 
   /// The most bands a location lists, as the hub holds it: one screenful of buttons.
@@ -50,8 +61,22 @@ class DeliveryFees {
   final List<FeeBand> bands;
   final bool taxed;
 
+  /// The restaurant's own address, where a looked-up distance starts ("Looking the distance up"); empty
+  /// while nobody typed it.
+  final String origin;
+
+  /// Whether the hub has a map service to ask; null from a hub older than the lookup, which says neither.
+  final bool? maps;
+
+  /// Whether a form may ask the hub how far an address is: a map service, and [origin] to start from.
+  final bool lookup;
+
   /// Whether a delivery is asked what it costs: turned on, with a price to pick.
   bool get asks => enabled && bands.isNotEmpty;
+
+  /// Whether a form asks the hub how far an address is: only where there is a price to pick for the answer,
+  /// so no address leaves the building for nothing.
+  bool get looksUp => lookup && asks;
 
   /// The band that reaches [upTo], or null when the list has none.
   FeeBand? band(String? upTo) {
@@ -61,12 +86,68 @@ class DeliveryFees {
     return null;
   }
 
+  /// As a manager saves it. What the hub says of its map service is the hub's to say, and is not sent.
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
     'by': by,
     'bands': [for (final band in bands) band.toJson()],
     'taxed': taxed,
+    'origin': origin,
   };
+}
+
+/// What the map said of a delivery's address: how far along the road and how long the usual drive.
+class Measured {
+  const Measured({required this.miles, required this.minutes});
+
+  /// Null for anything this build cannot read.
+  static Measured? of(Object? value) {
+    if (value is! Map) return null;
+    final miles = value['miles']?.toString(), minutes = value['minutes'];
+    if (miles == null || double.tryParse(miles) == null || minutes is! int) return null;
+    return Measured(miles: miles, minutes: minutes);
+  }
+
+  /// "3.2", as the hub writes it.
+  final String miles;
+  final int minutes;
+
+  /// "3.2 mi · 9 min".
+  String get words => '$miles mi · $minutes min';
+
+  Map<String, dynamic> toJson() => {'miles': miles, 'minutes': minutes};
+
+  @override
+  bool operator ==(Object other) => other is Measured && other.miles == miles && other.minutes == minutes;
+
+  @override
+  int get hashCode => Object.hash(miles, minutes);
+}
+
+/// The hub's answer about an address (`POST /delivery/distance`): what the map said and the band of the
+/// fee it falls in.
+class FeeLookup {
+  const FeeLookup({required this.measured, this.band, this.beyond = false});
+
+  /// Throws [FormatException] when the answer says no distance.
+  factory FeeLookup.fromJson(Map<String, dynamic> json) {
+    final measured = Measured.of(json);
+    if (measured == null) throw const FormatException('no distance in the answer');
+    final band = json['band'];
+    return FeeLookup(
+      measured: measured,
+      band: band is Map ? FeeBand.fromJson(band.cast<String, dynamic>()) : null,
+      beyond: json['beyond'] == true,
+    );
+  }
+
+  final Measured measured;
+
+  /// The band it falls in; null when it is further than the prices reach, or no fee is charged.
+  final FeeBand? band;
+
+  /// Further than the last band reaches.
+  final bool beyond;
 }
 
 /// "mi" or "min": what a band's reach is counted in, short enough for a button.
@@ -85,7 +166,7 @@ String feeWords(String fee) => (double.tryParse(fee) ?? 0) == 0 ? 'Free' : '\$$f
 /// The fee an order carries, read from its `delivery_fee` field: the band it was picked by and what that
 /// band cost then.
 class OrderFee {
-  const OrderFee({this.by, this.upTo, this.amount = '0.00', this.taxed = false});
+  const OrderFee({this.by, this.upTo, this.amount = '0.00', this.taxed = false, this.measured});
 
   /// Null while nobody said what the delivery costs, and for a field this build cannot read.
   static OrderFee? of(Object? value) {
@@ -93,10 +174,11 @@ class OrderFee {
     final amount = value['amount']?.toString();
     if (amount == null || double.tryParse(amount) == null) return null;
     final by = value['by'], upTo = value['up_to']?.toString();
+    final measured = Measured.of(value['measured']);
     if ((by != 'miles' && by != 'minutes') || upTo == null || upTo.isEmpty) {
-      return double.parse(amount) == 0 ? const OrderFee() : null;
+      return double.parse(amount) == 0 ? OrderFee(measured: measured) : null;
     }
-    return OrderFee(by: by as String, upTo: upTo, amount: amount, taxed: value['taxed'] == true);
+    return OrderFee(by: by as String, upTo: upTo, amount: amount, taxed: value['taxed'] == true, measured: measured);
   }
 
   final String? by;
@@ -105,6 +187,9 @@ class OrderFee {
   final String? upTo;
   final String amount;
   final bool taxed;
+
+  /// What the map said of the address when the fee was picked; null when nobody asked it.
+  final Measured? measured;
 
   /// No fee, on purpose.
   bool get none => upTo == null;
@@ -117,10 +202,15 @@ class OrderFee {
 
   @override
   bool operator ==(Object other) =>
-      other is OrderFee && other.by == by && other.upTo == upTo && other.amount == amount && other.taxed == taxed;
+      other is OrderFee &&
+      other.by == by &&
+      other.upTo == upTo &&
+      other.amount == amount &&
+      other.taxed == taxed &&
+      other.measured == measured;
 
   @override
-  int get hashCode => Object.hash(by, upTo, amount, taxed);
+  int get hashCode => Object.hash(by, upTo, amount, taxed, measured);
 }
 
 /// What a form holds of the fee: a band's reach ("2.5"), [none] for no fee on purpose, [kept] for the fee
@@ -129,8 +219,12 @@ abstract final class FeePick {
   static const none = '';
   static const kept = '=';
 
-  /// What an order's `delivery_fee` field is sent as: the band alone. The hub fills in what it costs.
-  static Map<String, dynamic> field(String pick) => {'up_to': pick == none ? null : pick};
+  /// What an order's `delivery_fee` field is sent as: the band alone, and what the map said of the
+  /// address when it was asked ([measured]). The hub fills in what the band costs.
+  static Map<String, dynamic> field(String pick, {Measured? measured}) => {
+    'up_to': pick == none ? null : pick,
+    'measured': ?measured?.toJson(),
+  };
 
   /// Whether the fee an order carries ([taken]) is one the list ([fees]) still offers at that price. One
   /// that is not stays on the order as it was taken, until somebody picks another.

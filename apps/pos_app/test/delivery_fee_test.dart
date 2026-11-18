@@ -115,7 +115,7 @@ void main() {
       expect((fees.enabled, fees.by, fees.taxed, fees.asks), (true, 'miles', false, true));
       expect([for (final band in fees.bands) (band.upTo, band.fee)], [('2', '3.00'), ('4.5', '5.00'), ('8', '8.50')]);
       expect((fees.band('4.5')?.fee, fees.band('4'), fees.band(null)), ('5.00', null, null));
-      expect(fees.toJson(), Hub.milesFees);
+      expect(fees.toJson(), {...Hub.milesFees, 'origin': ''}); // the address a lookup starts from: none yet
       // off, or on with nothing listed, nothing is asked
       expect(DeliveryFees.fromJson({...Hub.milesFees, 'enabled': false}).asks, isFalse);
       expect(const DeliveryFees().asks, isFalse);
