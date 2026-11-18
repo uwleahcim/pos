@@ -9,8 +9,10 @@ When the bag leaves, it is **handed to a driver**: the order says who has it and
 **Deliveries** screen shows what is waiting to leave and what each driver has out (see
 [Drivers](#drivers)). **Runs** says what each driver took out over the day, run by run (see
 [Runs](#runs)). A location that charges for the trip lists its prices, and the order says which one
-applies (see [The delivery fee](#the-delivery-fee)). Nothing else here is about money: there is no tip yet,
-and a delivery is a sale like any other, counted in every report as a to-go order is.
+applies (see [The delivery fee](#the-delivery-fee)). Where the hub has a map service, the form looks up how
+far the address is and picks the price for it (see [Looking the distance up](#looking-the-distance-up)).
+Nothing else here is about money: there is no tip yet, and a delivery is a sale like any other, counted in
+every report as a to-go order is.
 
 (Orders that come from a delivery app are something else: they arrive on their own channel, in a later
 phase.)
@@ -125,7 +127,94 @@ opens the same buttons.
 - **Tax**: with the switch off the fee adds no tax, and the food is taxed as before. With it on, the fee
   is taxed with the food. A check a manager marked tax exempt pays the fee and no tax.
 
-The fee is picked by hand for now. Working the distance out from the address is the next step.
+The price is tapped by hand unless the hub looks the distance up, which is the next section.
+
+## Looking the distance up
+
+With a map service set up on the hub, nobody has to know how far an address is. The form asks the hub, the
+hub asks the map service, and the price for that distance is picked. **Nothing is looked up until the hub
+has a key for the map service and the restaurant's own address is typed in** (see
+[Setting it up](#setting-it-up)). Until then the price is tapped by hand, as above.
+
+### On the form
+
+- Tap **Delivery**, type the address, and press Enter (Done on a phone's keyboard) or go on to the next
+  box. A line over the prices says "Looking up how far it is…", then what the map said: **3.2 mi · 9 min
+  drive**. The price that distance falls in is picked: with $3.00 up to 2 mi and $5.00 up to 4.5 mi, 3.2
+  miles is $5.00. A distance right at a price's reach is that price (4.5 miles is "up to 4.5 mi"). Until
+  the address has been asked about, the line is a button, **Look up the distance**, that asks.
+- **A returning customer's address** is looked up as soon as the order is a delivery, without a tap.
+- **Any other price can still be tapped**, and No fee too. **A price tapped by hand stays.** From that tap
+  on the map only says how far, on this form: it does not move the price when its answer comes late, nor
+  when the address is typed again. Nobody's "No fee" turns into a charge by itself.
+- **Too far**: "9.3 mi · 21 min drive: further than the prices reach". Nothing is picked. Whoever takes
+  the order decides (the last price, No fee, or no delivery that far), and the order cannot start until a
+  price is tapped.
+- **No answer**: the line says why and ends "Pick the fee by hand.", over a **Try again** button. The
+  address could not be found (check the spelling, add the town); the map service is not answering, which
+  is also what a restaurant without internet sees; the map service refused the hub's key; or it has been
+  asked as often as it may be today. An order is never held up by the map: tap a price.
+- **An address is asked about once**, when it is done being typed, never letter by letter, and not by a
+  form that is being closed. The same address again, on this order or the next, is answered by the hub from
+  what it was told that day.
+- **Only where there is a price to pick.** With the fee turned off, or on a pickup, nothing is asked.
+
+On the order (**Pickup or delivery**) it is the same line. Opening it asks nothing, and the order keeps the
+fee it has. Type another address and that one is looked up and its price picked (unless a price was tapped
+there first); or tap **Look up the distance** to ask about the address as it stands.
+
+The lookup gives both the miles and the minutes whichever the fee goes by, and the price is picked by the
+one the fee goes by. Miles are along the road, to a tenth of a mile. Minutes are the usual drive, to the
+nearest minute: the map service does not know about tonight's traffic.
+
+**The map suggests, a person decides.** What the map said is kept beside the pick, and the check's history
+shows it: "Delivery fee $3.00, up to 2 mi. The map said 3.2 mi · 9 min", with who picked it. It never
+changes what a price costs.
+
+### What leaves the building
+
+- **The two addresses**: the restaurant's own and the delivery's. Nothing else: no name, no phone number,
+  nothing of what was ordered.
+- **The hub asks, not the screens.** The key is on the hub and nowhere else: not in an app and not in
+  the database.
+- **The hub writes no address down for this.** Its log names no address and no key. The answers are held in
+  memory for a day, 500 at most, and a restart of the hub forgets them.
+- **The map service keeps its own records.** Geocodio's pages said this on 2026-11-18: a log of requests,
+  which can hold what was asked, is kept for 45 days and then deleted
+  (<https://www.geocod.io/data-retention-policy>); customers' data is disclosed only where the law requires
+  it or in a form that names nobody, and results may be kept (<https://www.geocod.io/terms-of-use>). Read
+  both before signing up: they are the service's to change.
+- **At most 500 lookups a day** (`POS_MAPS_DAILY` in `/opt/pos/.env`), so a screen gone wrong cannot run up
+  a bill. Past that the form says so and the price is tapped by hand until the next day.
+
+### Setting it up
+
+The hub is built for one map service so far, **Geocodio** (<https://www.geocod.io>), which knows addresses
+in the United States and Canada. The account is the owner's to make: nothing here makes one.
+
+1. **Make an account** at <https://dash.geocod.io>. On 2026-11-18 its pages said the first 2,500 credits
+   of each day are free and no card is asked for under that. A new address costs 4 credits (2 for the
+   drive, 1 for each of the two addresses), so about 600 new addresses a day are free, and the hub stops at
+   500 by itself.
+2. **Make a key** at <https://dash.geocod.io/apikey> and **turn on its Distance permission** there. A new
+   key can only find addresses until that is on, and the form would say the map service refused the key.
+3. **Put the key on the hub.** On the hub: `sudo hubctl maps key`, and paste the key when asked. It is not
+   shown as it is pasted and is never part of a command, so it is in no command history. The hub keeps it
+   in `/opt/pos/.env` and restarts its API (a few seconds).
+4. **Type the restaurant's own address** in the app: Back office › Location › **Delivery fee** ›
+   **Restaurant address**, in full, with the town and the state. Save. The row under Location then ends
+   "· distance looked up".
+5. **Try it**: `sudo hubctl maps test "12 Elm St, Winchester, MA"` answers like "3.2 mi, 9 min: $5.00 (up
+   to 4.5 miles)", or says why not in the form's own words. When every address "could not be found", the one
+   to check is the restaurant's own.
+
+`sudo hubctl maps status` says whether the hub has a key, whether the address is set, and how often the
+service was asked today and gave nothing. `sudo hubctl maps forget` takes the key off the hub: nothing is
+looked up and the price is tapped by hand again. (The key itself is deleted on the service's own page.)
+
+Until the hub has a key, the dialog under Location says "This hub has no map service yet, so the price is
+picked by hand (hubctl maps key)." The address can be typed all the same, and is used from the day the hub
+has one.
 
 ## The papers
 
@@ -288,8 +377,14 @@ it and when.
 
 ## What it does not do
 
-- **The fee is picked, not worked out.** The POS does not measure how far an address is. Whoever takes
-  the order picks the price. Looking the distance up from the address is the next step.
+- **The map's price is a suggestion.** Nothing stops another price or No fee being tapped, and nothing
+  refuses an address for being too far. The history says what the map said and who picked what.
+- **No map on the screen, no route, no delivery area drawn.** The lookup answers with two numbers.
+- **No traffic.** The minutes are the usual drive, whatever the hour.
+- **One map service.** Geocodio is the one built. Another is a small piece of the hub
+  (`pos.maps.Maps`), not a setting.
+- **Nothing looked up without the internet.** The hub needs to reach the map service. The form says so and
+  the price is tapped by hand.
 - **No fee by itself, and no tip.** A fee goes on a check only when somebody picked one. (The pricing
   rules have had an automatic delivery fee since discounts were built, `discounts.md`, but it is for
   orders of the type `delivery`, which no screen makes. It stays as it was, and is not this fee.)
@@ -301,9 +396,9 @@ it and when.
 - **No money with the driver.** Nothing counts what a driver collected at doors or owes the drawer, and
   there is no driver's fee or tip. Taking the money for a delivery is recorded as on any to-go order, by
   whoever marks it delivered.
-- **No map, no distance, no delivery area.** The address is the words that were typed. It is never sent
-  to a service outside the restaurant. (Looking the distance up will send the address, and nothing else
-  about the customer, to the map service the owner picks.)
+- **The address goes nowhere else.** It is sent to the map service for the distance, alone, and only
+  where the owner set that up ([What leaves the building](#what-leaves-the-building)). No texting
+  service, no delivery app and no other service is told it.
 - **The sale is the same.** A delivery is counted in the sales, the day's report and the accountant's
   table exactly as a to-go order is, and every payment on it is recorded on the day it is taken.
 
@@ -323,6 +418,10 @@ Update the hub."
 The fee likewise: on a hub from before the fee, the forms show no prices, and the row under Location says
 "The hub has not answered about the delivery fee (an older hub: update it)". An app from before the fee on
 a new hub shows the fee on the check and cannot pick one; a tap on that line does nothing there.
+
+The lookup likewise: on a hub from before the lookup the forms have no line about the distance and the
+dialog under Location has no box for the restaurant's address. An app from before the lookup on a new hub
+picks the price by hand; saving the prices from it keeps the address the hub has.
 
 ## For developers
 
@@ -416,3 +515,31 @@ The delivery fee:
   `TakeoutRequest.fee`, `CheckCharge.isDeliveryFee` (a tap opens `_changeWhen`),
   `lib/screens/delivery_fee_dialog.dart` and the row `delivery-fee` under Location.
 - Tests: `backend/tests/orders/test_delivery_fee.py`, `apps/pos_app/test/delivery_fee_test.dart`.
+
+Looking the distance up:
+
+- `pos.maps`: `Maps` (a service: `trip(origin, destination) -> Trip`, or `LookupFailed` with a `reason`
+  of `not_found`, `unreachable`, `refused` or `limit`), `Geocodio` (the one service: `GET /distance` with
+  `origin`, `destinations[]` and `mode=driving`, the key in the `Authorization` header and never in the
+  address of the request) and `Lookups` (the answers of a day in memory, the daily most, `status()`).
+  `POS_MAPS_KEY`, `POS_MAPS` (`geocodio`), `POS_MAPS_URL` and `POS_MAPS_DAILY` in the environment;
+  `create_app(lookups=...)` in a test.
+- The setting `delivery_fee` gains `origin` (the restaurant's own address, one line, at most 200 letters).
+  A `PUT` that says none keeps the one stored, so an app from before the lookup does not wipe it. The
+  answers of `GET` and `PUT` add `maps` (the hub has a service) and `lookup` (a service and an origin):
+  worked out, never stored.
+- `POST /delivery/distance` `{"address"}` answers `miles` (a string, to a tenth), `minutes`, `by`, `band`
+  (`{up_to, fee}` or null) and `beyond`. 409 `no_lookup` with no service or no origin; 422 for no address;
+  424 `lookup_failed` with `reason` and a `message` for the form. It is not a 5xx on purpose: the hub is
+  well, and a terminal reads a 5xx as a hub to turn away from. `GET /maps/status` is what `hubctl maps
+  status` prints; no address is in it.
+- `pos.orders.delivery_fee.band_for(setting, miles, minutes)` is the band a measure falls in: the nearest
+  whose reach is not short of it. A pick may carry `measured: {"miles": "3.2", "minutes": 9}`; `fee_ops`
+  keeps it beside the fee when it reads, and it never changes the amount.
+- App: `PosApi.deliveryDistance`, `FeeLookup` and `Measured` (`lib/delivery_fee.dart`), `DistanceAsker`
+  and `FeeLookupLine` (`lib/screens/fee_lookup.dart`: once per address, an answer for an address typed
+  over is dropped), `FeePick.field(pick, measured:)`, `EventFields.asker`, `onAddressDone` and `onLookUp`,
+  `WhenDialog.distance`, `TakeoutRequest.measured`, `DeliveryFees.origin`, `maps` (null from a hub older
+  than the lookup), `lookup` and `looksUp` (a lookup and a price to pick: the one a form goes by).
+- Tests: `backend/tests/orders/test_delivery_distance.py`, `apps/pos_app/test/delivery_distance_test.dart`.
+  The service itself is never called in a test (`httpx.MockTransport`).
