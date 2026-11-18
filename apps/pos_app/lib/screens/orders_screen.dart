@@ -29,6 +29,7 @@ import '../takeout.dart';
 import '../to_go_stages.dart';
 import '../reservations.dart';
 import '../waitlist.dart';
+import 'booked_mark.dart';
 import 'booked_table_dialog.dart';
 import 'booking_dialog.dart';
 import 'check_search_bar.dart';
@@ -145,6 +146,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Waitlist? _wait;
   bool _waitStale = true;
   DateTime _waitRead = DateTime.fromMillisecondsSinceEpoch(0);
+  // Today's reservation book (docs/reservations.md) as the hub last gave it: the booked tables still to sit
+  // down are counted on the waitlist's button, amber when one is near its time and red when one is past
+  // it. Null until it was read, and from a hub older than the book. Read like the waitlist.
+  Book? _book;
+  bool _bookStale = true;
+  DateTime _bookRead = DateTime.fromMillisecondsSinceEpoch(0);
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
   Timer? _clock;
@@ -182,9 +189,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (change.settings || change.everything) _quotesStale = true;
       if (change.notes || change.everything) _notesStale = true;
       if (change.waitlist || change.everything) _waitStale = true;
+      if (change.reservations || change.everything) _bookStale = true;
       if (_inFront && change.anyOrder) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
       if (_inFront && change.waitlist) unawaited(_readWait());
+      if (_inFront && change.reservations) unawaited(_readBook());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
@@ -311,6 +320,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_readQuotes());
     unawaited(_readNotes());
     unawaited(_readWait());
+    unawaited(_readBook());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -380,6 +390,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  /// Today's reservation book, for the count of booked tables on the waitlist's button: read when the hub
+  /// says the book changed, and now and then while it cannot say (twice a minute at most), which is also
+  /// how the count starts over when the night ends. The answer is the one already held unless it changed.
+  Future<void> _readBook() async {
+    final now = DateTime.now();
+    if (!_bookStale && now.difference(_bookRead) < const Duration(seconds: 30)) return;
+    _bookStale = false;
+    _bookRead = now;
+    try {
+      final book = await widget.api.reservations();
+      if (!mounted || identical(book, _book)) return;
+      setState(() => _book = book);
+      _armClock();
+    } on ApiException {
+      // nothing answers: the button keeps what it showed
+    }
+  }
+
+  /// The book was changed from here, or may have been on a screen that was just left: it is read again now.
+  void _bookChanged() {
+    _bookStale = true;
+    unawaited(_readBook());
+  }
+
   /// The waitlist: who is waiting for a table. **Seat** on a party there brings the floor map up, and the
   /// next table tapped is theirs ([_seatPartyAt]).
   Future<void> _waitlist() async {
@@ -387,7 +421,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (staff == null) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
-        builder: (_) => WaitlistScreen(api: widget.api, staffId: staff.staffId, list: _wait),
+        builder: (_) => WaitlistScreen(api: widget.api, staffId: staff.staffId, list: _wait, book: _book),
       ),
     );
     if (!mounted) return;
@@ -401,6 +435,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
     _waitStale = true;
     unawaited(_readWait());
+    _bookChanged(); // a booked party may have been marked from there, by another screen
     if (left is OpenReservations) unawaited(_reservations());
   }
 
@@ -420,6 +455,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ),
     );
     if (!mounted) return;
+    _bookChanged(); // what was booked, changed or called off there is on the waitlist's button at once
     if (left is SeatBooking) {
       setState(() {
         _seatingParty = left.booking;
@@ -554,6 +590,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final hubNow = widget.api.nowMs();
     final turns = _wait?.nextLevelChange(hubNow);
     if (turns != null) consider(now.add(Duration(milliseconds: turns - hubNow)));
+    // and the count of booked tables with the reservation that is next near its time, or past it
+    final due = _book?.nextChange(hubNow);
+    if (due != null) consider(now.add(Duration(milliseconds: due - hubNow)));
     final at = next;
     if (at == null) return;
     _clock = Timer(at.difference(now) + const Duration(seconds: 1), () {
@@ -738,6 +777,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
     final made = after?.booking;
     if (after == null || made == null || !mounted) return;
+    _bookChanged(); // a table booked for today is one more to come
     final day = bookDayWords(made.day, after.today);
     final on = day == 'Today' || day == 'Tomorrow' ? day.toLowerCase() : day;
     say(
@@ -1312,6 +1352,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (party is Booking) {
         final book = await widget.api.seatBooking(staff.staffId, party.id, table: at.id, orderId: orderId);
         unawaited(_floorKey.currentState?.refresh()); // the table is no longer kept for them
+        _bookChanged(); // and they are no longer to come
         final sat = book.booking;
         // another screen sat them first: the book keeps where that screen put them
         words = sat != null && sat.seatedTable.isNotEmpty && sat.seatedTable != at.id
@@ -1574,12 +1615,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final waiting = wait?.waiting.length ?? 0;
     final waitInBar = wait != null && (!small || waiting > 0 || _roster.assigns(widget.session.staff?.staffId));
     final waitLevel = wait?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
+    // The booked tables of today still to sit down are counted on the same button, under the parties
+    // waiting: whoever gives tables out sees both at a glance. A phone's menu says the count on its row.
+    final toCome = _book?.toCome.length ?? 0;
+    final bookLevel = _book?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
     final more = <(String, IconData, VoidCallback)>[
       ('Sign out', Icons.logout, widget.session.signOut),
       if (wait != null && !waitInBar) ('Waitlist', Icons.groups_2_outlined, _waitlist),
       // The reservation book: in a phone's menu; where the bar has every button out it is one tap past the
       // waitlist's, which leads to it, so the bar keeps its room.
-      if (small) ('Reservations', Icons.event_available_outlined, _reservations),
+      if (small)
+        (
+          toCome == 0 ? 'Reservations' : 'Reservations · $toCome to come',
+          Icons.event_available_outlined,
+          _reservations,
+        ),
       (
         _showClosed ? 'Hide closed' : 'Show closed',
         _showClosed ? Icons.visibility_off : Icons.visibility,
@@ -1654,7 +1704,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
           if (waitInBar)
             IconButton(
               key: const ValueKey('waitlist-open'),
-              tooltip: waiting == 0 ? 'Waitlist' : 'Waitlist: $waiting waiting',
+              tooltip: [
+                waiting == 0 ? 'Waitlist' : 'Waitlist: $waiting waiting',
+                if (toCome > 0) bookedToComeWords(toCome),
+              ].join(' · '),
               onPressed: _waitlist,
               icon: Badge(
                 key: ValueKey('waitlist-badge:${waitLevel.name}'),
@@ -1670,7 +1723,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   TimerLevel.warn => posColors.timerWarnText,
                   TimerLevel.late => posColors.timerLateText,
                 },
-                child: const Icon(Icons.groups_2_outlined),
+                child: toCome == 0
+                    ? const Icon(Icons.groups_2_outlined)
+                    : Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Icon(Icons.groups_2_outlined),
+                          // across the icon from the round badge, so the two numbers never meet, large type
+                          // or not
+                          Positioned(
+                            left: -10,
+                            bottom: -10,
+                            child: BookedMark(
+                              key: ValueKey('waitlist-booked:${bookLevel.name}'),
+                              count: toCome,
+                              level: bookLevel,
+                            ),
+                          ),
+                        ],
+                      ),
               ),
             ),
           IconButton(

@@ -8,14 +8,18 @@ theirs, with the guests already filled in.
 Since 18 November 2026 (the Toast comparison, row 15). Hub and app; nothing to turn on. The same day, part
 two: a table booked for today says so on the floor map, and asks before somebody else is sat there
 ([On the floor map](#on-the-floor-map)). And part three: a table is booked from the form a call opens, and
-somebody calling about a table they booked lands on it ([When somebody calls](#when-somebody-calls)).
+somebody calling about a table they booked lands on it ([When somebody calls](#when-somebody-calls)). And
+the last of it: the booked tables still to come are counted on the waitlist's button and said on the
+waitlist ([On the waitlist's button](#on-the-waitlists-button)).
 
 ## Where it is
 
-- **A phone**: on the orders screen, under the three dots, **Reservations**.
+- **A phone**: on the orders screen, under the three dots, **Reservations**. With tables booked for today
+  that are still to sit down, the row says how many: "Reservations · 4 to come".
 - **Tablets and Macs**: open the waitlist (the button with the group of people in the bar at the top), then
   **Reservations** at its top right. The bar itself has no room for one more button. The book has
-  **Waitlist** at its top right, so the two are one tap apart at the door.
+  **Waitlist** at its top right, so the two are one tap apart at the door. With tables booked for today,
+  the waitlist has a row about them at its top, which leads to the book as well.
 
 - **On a call**: the form that opens when a call is picked up has **Book a table** at its top right
   ([When somebody calls](#when-somebody-calls)).
@@ -73,6 +77,32 @@ strip (Hold, Hang up) never covers the form's title or Book a table.
 Numbers are matched by their digits, so `+1 (781) 555-1234` and `781 555 1234` are the same caller. A
 reservation made without a number is found by no call. A customer who ordered earlier **today** still
 lands on that order when they call back, as before; the book is then reached the usual way.
+
+## On the waitlist's button
+
+Whoever is at the door answers two questions at once: who is waiting, and what is booked. The button of the
+waitlist, in the bar at the top of the orders screen, says both.
+
+- **The round number**, at the top right of the button, is the parties waiting, as before.
+- **The square number**, at its bottom left, is the **booked tables of today that are still to come**:
+  every reservation of today that still stands. One that sat down, was cancelled or was marked a no-show
+  is not counted, and neither is a table booked for another day.
+- The square is **plain** while every reservation is ahead, **amber** from a quarter of an hour before the
+  next one's time, and **red** once one is a quarter of an hour past its time with nobody seated. Those
+  are the colours the book and the floor map use. A red square says: seat them, or mark the no-show.
+- With nothing booked for today there is no square, and the button is as it was.
+
+**On the waitlist**, a row at the top says the same in words: "5 booked tables to come", and under it the
+next one, its time first: "Next at 18:30: Chen, 4 guests · table A8". It reads "Here for 18:30: …" once
+the party is marked Here and waits for its table, and "Due since 18:30: …" when the time is past. A tap on
+the row opens the book. So a walk-in is told a wait with the book in sight.
+
+**On a phone** the button is in the bar when it was before: while a party waits, and always for whoever
+gives tables out. Booked tables alone do not put it there. The count is on the menu's row instead
+("Reservations · 4 to come").
+
+The count changes the moment a table is booked, changed, seated or called off on any screen, and starts
+over when the night ends (4 AM). It is the app's part only: the hub already told every screen the book.
 
 ## Reading the book
 
@@ -200,7 +230,8 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 
 ## Not built
 
-- Tonight's reservations counted on the waitlist's button.
+- On the waitlist's button: how many guests the booked tables add up to, a number of its own for the late
+  ones, and the button on a server's phone for booked tables alone.
 - On a call: Book a table on the strip of the call itself and on an order that is already open, the
   customer's past reservations and no-shows, and a table booked by somebody whose number the phone company
   hides.
@@ -256,5 +287,12 @@ mistake, the check opened at the table stays as it is: close or void it as any c
   a `name` and a `phone` to start with, and `ReservationsScreen` a `day` to open at and a reservation to
   `open`. Both forms take `underCall` and then start `callStripRoom` (`lib/screens/phone_bar.dart`) from
   the top.
+- The waitlist's button: app only. `Book.toCome` (today's standing reservations; none in another day's
+  book), `bookedToComeWords` and `nextBookedWords` in `lib/reservations.dart`; `BookedMark` (the square) and
+  `BookedToCome` (the waitlist's row) in `lib/screens/booked_mark.dart`. `lib/screens/orders_screen.dart`
+  keeps today's book (`_book`, `_readBook`: on `LiveChange.reservations`, on coming back from the book or
+  the waitlist, and at most twice a minute otherwise) and rings its clock at `Book.nextChange`;
+  `WaitlistScreen` takes that `book` to start with and reads it beside the list.
 - Tests: `backend/tests/test_reservations.py`, `apps/pos_app/test/reservations_test.dart`,
-  `apps/pos_app/test/booked_tables_test.dart`, `apps/pos_app/test/call_booking_test.dart`.
+  `apps/pos_app/test/booked_tables_test.dart`, `apps/pos_app/test/call_booking_test.dart`,
+  `apps/pos_app/test/booked_to_come_test.dart`.

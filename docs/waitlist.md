@@ -24,6 +24,12 @@ at the door keeps it.
 **Reservations**, at the top right of the list, opens the reservation book (`reservations.md`): the tables
 booked for today and the days ahead. The book has **Waitlist** at its top right, to come back.
 
+**Booked tables are on the button and on the list too.** A second, square number at the bottom left of the
+button counts the tables booked for today that are still to come, amber when one is near its time and red
+when one is past it. At the top of the list a row says how many and which is next ("5 booked tables to
+come", "Next at 18:30: Chen, 4 guests · table A8"), and a tap on it opens the book. With nothing booked for
+today neither shows (`reservations.md`, "On the waitlist's button").
+
 ## Adding a party
 
 **Add party**, at the bottom of the list.
