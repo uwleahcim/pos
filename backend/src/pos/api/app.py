@@ -47,6 +47,7 @@ from ..orders.bag import bag_ops
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
+from ..orders.delivery_fee import fee_ops
 from ..orders.exempt import exempt_ops
 from ..orders.moves import carried, carry_ops
 from ..orders.numbers import OrderNumbers
@@ -72,6 +73,7 @@ from ..settings import (
     clean_bag,
     clean_bill,
     clean_coursing,
+    clean_delivery_fee,
     clean_desk_phones,
     clean_kitchen_notes,
     clean_printers,
@@ -382,6 +384,20 @@ class BagIn(BaseModel):
     enabled: bool = True
     question: str = Field("", description="the question's words; the standard ones when left empty")
     choices: list[BagChoiceIn] = Field(default_factory=list)
+
+
+class FeeBandIn(BaseModel):
+    up_to: float | str = Field(description="how far the band reaches: miles to a tenth, or whole minutes")
+    fee: float | str = Field(description="what a delivery within it costs, in dollars and cents")
+
+
+class DeliveryFeeIn(BaseModel):
+    """What a delivery costs the customer: whether a fee is charged, what it goes by and the prices."""
+
+    enabled: bool = False
+    by: str = Field("miles", description="miles: by how far it goes; minutes: by how long the drive is")
+    bands: list[FeeBandIn] = Field(default_factory=list)
+    taxed: bool = Field(False, description="whether sales tax is charged on the fee")
 
 
 class VoidsIn(BaseModel):
@@ -1001,7 +1017,9 @@ def create_app(
         fresh, refused_exemptions = exempt_ops(app.state.tokens, store, fresh, may)
         # what goes in the bag with a to-go order: the answer is tidied, or left out when it cannot be read
         fresh, refused_bags = bag_ops(fresh)
-        refused += refused_exemptions + refused_bags
+        # what a delivery costs: a screen names the band, the hub fills in what that band costs here now
+        fresh, refused_fees = fee_ops(lambda: app.state.settings.get("delivery_fee"), fresh)
+        refused += refused_exemptions + refused_bags + refused_fees
         # The numbers left on counted dishes: weighed, stored and taken off as one step, so two screens cannot
         # both sell the last one. While no dish has a number nothing is held and nothing is read.
         with app.state.menu.counting():
@@ -1476,6 +1494,23 @@ def create_app(
         screen asks by it from its next to-go order."""
         manager_from(app.state.tokens, authorization)
         return write_setting("bag", body.model_dump(), clean_bag)
+
+    @app.get("/settings/delivery_fee")
+    def read_delivery_fee() -> dict[str, Any]:
+        """What a delivery costs the customer: `enabled`, whether a fee is charged at all; `by`, whether it
+        goes by `miles` or by the `minutes` of the drive; `bands`, the prices in order of how far they
+        reach, each `{up_to, fee}`; `taxed`, whether sales tax is charged on it. The band picked for an
+        order is its `delivery_fee` field (`pos.orders.delivery_fee`): a screen names the band and the hub
+        fills in what it costs."""
+        settings: SettingStore = app.state.settings
+        return settings.get("delivery_fee")
+
+    @app.put("/settings/delivery_fee")
+    def write_delivery_fee(body: DeliveryFeeIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns the fee on or off, says what it goes by and lists the prices. Orders already taken
+        keep the fee they were given; every screen offers the new prices from its next delivery."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("delivery_fee", body.model_dump(), clean_delivery_fee)
 
     @app.get("/settings/kitchen_notes")
     def read_kitchen_notes() -> dict[str, Any]:

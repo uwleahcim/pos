@@ -112,6 +112,11 @@ ORDER_FIELDS = frozenset(
         "driver",
         "driver_id",
         "out_at",
+        # What a delivery costs the customer (pos.orders.delivery_fee): the band it was picked by and what
+        # that band cost then, {by, up_to, amount, taxed}; {up_to: null, amount: "0.00"} is no fee on
+        # purpose. A screen says only the band, and the hub fills in the rest. Charged only while the order
+        # is a delivery.
+        "delivery_fee",
     }
 )
 ALLERGY_NOTE_MAX = 80
