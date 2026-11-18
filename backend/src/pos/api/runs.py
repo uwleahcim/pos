@@ -25,8 +25,7 @@ def runs_for(app: FastAPI, asked: str | None = None) -> dict[str, Any]:
     """The runs as `GET /deliveries/runs` answers them, reckoned now: for the day asked, else the one that
     is running."""
     store = app.state.store
-    now_ms = store.now_ms()
-    day = the_day(asked, now_ms)
+    day = the_day(asked, store.now_ms())
     since, until = localtime.service_day(day)
     entries = orders_between(app, since, until)
     # only what was ever brought to a customer: it is one now, or it once left with somebody
@@ -35,7 +34,7 @@ def runs_for(app: FastAPI, asked: str | None = None) -> dict[str, Any]:
         for state in store.views(entries)
         if is_delivery(state.fields) or state.fields.get("out_at") is not None
     ]
-    return runs_report(((order_id, store.for_order(order_id)) for order_id in brought), day, now_ms=now_ms)
+    return runs_report(((order_id, store.for_order(order_id)) for order_id in brought), day)
 
 
 def add_runs(app: FastAPI) -> None:

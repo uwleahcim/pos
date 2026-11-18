@@ -164,7 +164,7 @@ def _count(runs: list[dict[str, Any]], outcome: str) -> int:
     return sum(1 for run in runs for bag in run["bags"] if bag["outcome"] == outcome)
 
 
-def runs_report(logs: Iterable[tuple[str, Iterable[Op]]], day: date, *, now_ms: int) -> dict[str, Any]:
+def runs_report(logs: Iterable[tuple[str, Iterable[Op]]], day: date) -> dict[str, Any]:
     """The runs of a day of service. `logs` are the orders that may have left in it, each with its
     operations; an order that never left with anybody adds nothing.
 
@@ -205,7 +205,6 @@ def runs_report(logs: Iterable[tuple[str, Iterable[Op]]], day: date, *, now_ms: 
         "day": day.isoformat(),
         "since_ms": since,
         "until_ms": until,
-        "now_ms": now_ms,
         "runs": sum(d["runs"] for d in drivers),
         "delivered": sum(d["delivered"] for d in drivers),
         "back": sum(d["back"] for d in drivers),

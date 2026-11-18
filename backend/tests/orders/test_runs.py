@@ -290,16 +290,17 @@ def test_no_money_is_in_the_runs_and_reading_them_changes_nothing():
     cursor = h.store.cursor
     report = runs(h)
     assert keys_of(report) == {
-        *("day", "since_ms", "until_ms", "now_ms", "runs", "delivered", "back", "out", "no_driver", "drivers"),
+        *("day", "since_ms", "until_ms", "runs", "delivered", "back", "out", "no_driver", "drivers"),
         *("driver_id", "driver", "list", "left_ms", "ended_ms", "minutes", "bags"),
         *("order_id", "order_no", "customer_name", "address", "outcome", "at_ms"),
     }
     assert due != "0.00" and due not in str(report)
     assert told(report) == [("Tom", 1, "o1", "delivered", 20)]
     assert h.store.cursor == cursor and h.check("o1")["due"] == "0.00"  # the sale is where it was
-    # asked again with nothing changed, the screen is told so and sent nothing
-    first = h.c.get("/deliveries/runs", params={"day": "2026-11-16"})
-    again = h.c.get("/deliveries/runs", params={"day": "2026-11-16"}, headers={"if-none-match": first.headers["etag"]})
+    # asked again later with nothing changed, the screen is told so and sent nothing
+    first = h.c.get("/deliveries/runs")
+    h.now += 5 * MINUTE
+    again = h.c.get("/deliveries/runs", headers={"if-none-match": first.headers["etag"]})
     assert again.status_code == 304
 
 
@@ -322,5 +323,5 @@ def test_the_legs_are_the_same_however_the_log_arrived():
     # the report takes the logs as they are, with another order's operations among them
     bag(h, "o2", at(19, 30))
     mixed = [*ops, *h.store.for_order("o2")]
-    report = runs_report([("o1", mixed), ("o2", mixed), ("nothing", [])], date(2026, 11, 16), now_ms=h.now)
+    report = runs_report([("o1", mixed), ("o2", mixed), ("nothing", [])], date(2026, 11, 16))
     assert told(report) == [("Tom", 1, "o1", "back", 10), ("Wei", 1, "o1", "delivered", 20)]
