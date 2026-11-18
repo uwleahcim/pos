@@ -317,8 +317,9 @@ Runs:
   with `to`, `void`), `at_ms` and `minutes`. No amount of money is in it.
 - Nothing is stored: `pos.orders.runs.runs_report` replays the log of every order of the day that is or
   was a delivery (`legs_of`). A **leg** is each time an order became `stage: out` with a driver, until it
-  was delivered, came back, changed driver or was voided; it left at the `out_at` the screen said (at the
-  operation's own time for one handed on) and counts on the day of service it left in. A **run** is one
+  was delivered, came back, changed driver or was voided; it left at the `out_at` carried by the operation
+  that sent it out (at that operation's own time when it carries none, as one handed on along the way) and
+  counts on the day of service it left in. A **run** is one
   driver's legs that each left within `RUN_GAP_MS` (five minutes) of the one before, with none of them
   delivered yet. Drivers are told apart by `driver_id`, by name only for one named without an id.
 - The answer does not say when it was read, so an answer that has not changed keeps its `ETag` and a
