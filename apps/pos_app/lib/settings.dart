@@ -19,6 +19,7 @@ class Settings extends ChangeNotifier {
     this.pickupBoard = false,
     List<String> kitchenStations = const [],
     this.kitchenPass = false,
+    this.kitchenSound = true,
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
@@ -49,6 +50,7 @@ class Settings extends ChangeNotifier {
       pickupBoard: prefs.getBool('pickup_board') ?? false,
       kitchenStations: prefs.getStringList('kitchen_stations') ?? const [],
       kitchenPass: prefs.getBool('kitchen_pass') ?? false,
+      kitchenSound: prefs.getBool('kitchen_sound') ?? true,
       phone: phone,
       prefs: prefs,
     );
@@ -113,6 +115,10 @@ class Settings extends ChangeNotifier {
   /// every dish of each ticket with what each station has made, and a tap says a dish went out.
   /// [kitchenStations] is then the stations it watches; with none it watches them all.
   bool kitchenPass;
+
+  /// A kitchen screen sounds a chime when a ticket comes in (docs/kitchen-screens.md), unless this device
+  /// was told to keep quiet. It means nothing on a device that is no kitchen screen.
+  bool kitchenSound;
 
   /// The most stations one screen stands for, and the most a pass can be told to watch, as the hub has them.
   static const kitchenStationsMax = 8;
@@ -209,9 +215,19 @@ class Settings extends ChangeNotifier {
 
   /// Makes this screen the kitchen screen of these stations; of none, it is a kitchen screen no longer.
   /// With [pass] it is the pass, watching these stations, or every station when none is named.
-  Future<void> saveKitchenStations(Iterable<String> codes, {bool pass = false}) async {
+  /// [sound] is whether it chimes when a ticket comes in; left as it was when not said.
+  Future<void> saveKitchenStations(Iterable<String> codes, {bool pass = false, bool? sound}) async {
     _kitchenStations = cleanStations(codes, pass: pass);
     kitchenPass = pass;
+    if (sound != null) {
+      kitchenSound = sound;
+      // (kept only when it is off: a device that was never asked sounds)
+      if (sound) {
+        await _prefs?.remove('kitchen_sound');
+      } else {
+        await _prefs?.setBool('kitchen_sound', false);
+      }
+    }
     if (_kitchenStations.isEmpty) {
       await _prefs?.remove('kitchen_stations');
     } else {

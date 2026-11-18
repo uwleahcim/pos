@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../kitchen_bell.dart';
 import '../outbox.dart';
 import '../settings.dart';
 import 'kitchen_screen.dart';
@@ -23,6 +24,7 @@ class StandingGate extends StatefulWidget {
     required this.api,
     required this.outbox,
     required this.pad,
+    this.bell,
     this.backAfter = const Duration(minutes: 1),
   });
 
@@ -31,6 +33,9 @@ class StandingGate extends StatefulWidget {
 
   /// Where a kitchen screen's marks go, like every other change to an order.
   final Outbox outbox;
+
+  /// What a kitchen screen sounds when a ticket comes in, where this device has it switched on.
+  final KitchenBell? bell;
   final Widget Function(BuildContext context, VoidCallback? back) pad;
   final Duration backAfter;
 
@@ -90,6 +95,8 @@ class _StandingGateState extends State<StandingGate> {
           outbox: widget.outbox,
           stations: settings.kitchenStations,
           pass: settings.kitchenPass,
+          bell: widget.bell,
+          sound: settings.kitchenSound,
           onStaff: _toPad,
         );
       }

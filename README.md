@@ -115,7 +115,7 @@ merges after any disconnect.
   back; a mark changes nothing of the check; the paper prints as before; the pass shows each ticket whole
   with what every station has made, and All day counts the dishes still waited for; what the cooks mark
   reaches the servers: "ready" under the dish on its check, a strip with Went out, and a badge on the
-  table on the floor map): `docs/kitchen-screens.md`
+  table on the floor map; a screen chimes when a ticket comes in): `docs/kitchen-screens.md`
 - Catering orders and the orders ahead (a to-go order for any later day, with the guests, pickup or
   delivery, the address and a note; a deposit with the rest still due, and Pay for the rest; the list of
   checks says the day and what is left to pay; Orders ahead lists what was promised for a later time by

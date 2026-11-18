@@ -7,6 +7,7 @@ import '../call_screen.dart';
 import '../camera.dart';
 import '../faces.dart';
 import '../frames.dart';
+import '../kitchen_bell.dart';
 import '../phone.dart';
 import '../print_relay.dart';
 import '../printers.dart';
@@ -28,6 +29,7 @@ class SettingsScreen extends StatefulWidget {
     this.screen,
     this.camera,
     this.frames,
+    this.bell,
   });
 
   final Settings settings;
@@ -39,6 +41,9 @@ class SettingsScreen extends StatefulWidget {
 
   /// How smoothly this device draws; the app's own count when not given.
   final FrameWatch? frames;
+
+  /// A kitchen screen's chime, for the button that plays it; no button without one.
+  final KitchenBell? bell;
 
   /// The hub's push registry for this screen (iOS): a line on whether a locked screen is woken.
   final PushRegistrar? push;
@@ -60,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _pickupBoard = widget.settings.pickupBoard;
   late final List<String> _kitchen = [...widget.settings.kitchenStations];
   late bool _pass = widget.settings.kitchenPass;
+  late bool _sound = widget.settings.kitchenSound;
   StationList? _stations; // the location's stations, to pick a kitchen screen's from; null until the hub says
   bool _noStations = false; // the hub did not say
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
@@ -123,7 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
     await widget.settings.saveOpensOn(_opensOn);
     await widget.settings.savePickupBoard(_pickupBoard);
-    await widget.settings.saveKitchenStations(_kitchen, pass: _pass);
+    await widget.settings.saveKitchenStations(_kitchen, pass: _pass, sound: _sound);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -449,6 +455,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           if (on) _pickupBoard = false;
                         }),
                       ),
+                      // The chime when a ticket comes in: on, unless this device is told to keep quiet.
+                      if (_kitchen.isNotEmpty || _pass)
+                        SwitchListTile(
+                          key: const ValueKey('kitchen-sound-switch'),
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Sound when a ticket comes in'),
+                          subtitle: const Text(
+                            'A chime for a new ticket, and for a dish voided or changed after it was sent. '
+                            'The device\'s own volume sets how loud.',
+                          ),
+                          value: _sound,
+                          onChanged: (on) => setState(() => _sound = on),
+                        ),
+                      if ((_kitchen.isNotEmpty || _pass) && _sound && widget.bell != null)
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: TextButton.icon(
+                            key: const ValueKey('kitchen-sound-try'),
+                            icon: const Icon(Icons.volume_up_outlined),
+                            label: const Text('Play it'),
+                            onPressed: () => unawaited(widget.bell!.play()),
+                          ),
+                        ),
                     ],
                   ),
                 ),

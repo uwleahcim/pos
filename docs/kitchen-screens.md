@@ -15,6 +15,9 @@ how many of each dish its tickets still wait for (see "All day").
 What the cooks mark reaches the people who carry the food: a dish that is made says **ready** on its check
 and on its table on the floor map (see "What the servers see").
 
+A kitchen screen **chimes when a ticket comes in**, the way a printer is heard across the kitchen (see "The
+sound").
+
 ## What a cook sees
 
 The station's name at the top with how many tickets are waiting, and under it the tickets, **the longest in
@@ -174,6 +177,27 @@ Set the device itself never to sleep and keep it on its charger: the app does no
 (iPad: Settings › Display & Brightness › Auto-Lock › Never. Mac: System Settings › Lock Screen. Android:
 Settings › Display › Screen timeout.)
 
+## The sound
+
+A kitchen screen chimes when a ticket comes in: two short notes, a high one and a lower one, nothing like
+the phone's ring. It is what the printer's noise is to a kitchen that works off paper: the cook looks up.
+
+- It sounds for **whatever a cook has to read anew**: a new ticket, **a dish voided or changed after it was
+  sent**, and **an allergy told late**.
+- It stays quiet for the kitchen's own taps (a dish made, Done, Recall) and for a ticket that only leaves.
+- **Several tickets in the same moment are one chime.**
+- The tickets that stand on the screen when the app starts make no sound. **What came in while somebody was
+  signed in on the device chimes once when the tickets come back.**
+- The pass chimes like a station's screen.
+- **How loud it is, is the device's own volume**: turn it up with the device's buttons. An iPad chimes
+  whatever its silent switch says; an Android tablet follows its media volume.
+- **To keep one device quiet**: Settings › Kitchen screen › **Sound when a ticket comes in**, off, then
+  **Save**. It is on to start on every kitchen screen. **Play it**, under the switch, plays the chime, to set
+  the volume by.
+- A device that is on a call does not chime: the call has the speaker.
+- With the hub away no ticket arrives, so nothing chimes; when it is back, what came in meanwhile is one
+  chime.
+
 ## The colours
 
 **Location › Kitchen screens** (a manager): the minutes a ticket has been in the kitchen when it turns
@@ -216,7 +240,9 @@ The device is still a POS screen.
 - A setting for the quarter of an hour the ready mark shows.
 - All-day counts by the dish with its choices, or of the whole day's sales: they count what waits now.
 - **Ready by itself**: a to-go order is not marked Ready when its last dish is made; the staff tap Ready.
-- A sound or a flash when a ticket comes in.
+- A flash when a ticket comes in, a choice of chimes, a chime that repeats until the ticket is looked at, or
+  a volume of its own in the app.
+- A chime for a ticket that leaves because its order was voided whole.
 - How long the kitchen takes, as a report.
 - Text as large as a television across the room needs: the screen follows the device's own text size.
 - Chinese for the words of the screen itself.
@@ -276,7 +302,17 @@ The device is still a POS screen.
   `lib/screens/standing_gate.dart` (`StandingGate`, which stands where the sign-in pad stands and shows the
   kitchen screen, the pickup board or the pad), `Settings.kitchenStations` and `Settings.kitchenPass` (the
   preferences `kitchen_stations` and `kitchen_pass`), `lib/screens/kitchen_minutes_dialog.dart`.
+- **The sound** is the terminal's alone; the hub knows nothing of it. `lib/kitchen_bell.dart`:
+  `kitchenReads` is what of a board a cook reads (each ticket's `id`, its `allergies`, and of each line its
+  `qty`, `label`, `modifiers`, `note`, `allergy` and whether it is a `void`; not what is made, not the table
+  or the seat), and `KitchenBell.heard` sounds once when a read brings any of it that was not on the screen
+  at the look before, the finished tickets counting as seen. The bell is one for the app (`main.dart`), so
+  it outlives the screen, which goes away at every sign-in; the first look at a screen is silent.
+  `KitchenScreen` hands it each board the hub answers (not its own marks laid over it).
+  `lib/asset_chime.dart` (`AssetChime`) plays `assets/sounds/ticket.wav`, made by `tool/make_chime.py`, with
+  the system alert sound when the player refuses. `Settings.kitchenSound` is the preference `kitchen_sound`,
+  kept only when it is off.
 - Tests: `backend/tests/printing/test_screen.py`, `backend/tests/printing/test_made.py`,
   `apps/pos_app/test/kitchen_screen_test.dart`, `apps/pos_app/test/kitchen_pass_test.dart`,
-  `apps/pos_app/test/kitchen_word_test.dart`. The sync simulations (`pos.sync.simulate`) mark dishes made,
+  `apps/pos_app/test/kitchen_word_test.dart`, `apps/pos_app/test/kitchen_bell_test.dart`. The sync simulations (`pos.sync.simulate`) mark dishes made,
   and sent out, among their random operations.
