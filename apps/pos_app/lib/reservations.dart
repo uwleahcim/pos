@@ -272,6 +272,26 @@ class Book {
   }
 }
 
+/// The tables one phone number has booked, today and ahead, the soonest first, and the day of service it is
+/// at the hub: what a screen that picks up a call is told of the caller's reservations.
+typedef CallerTables = ({String today, List<Booking> booked});
+
+/// When a caller's reservation is for: "Tomorrow at 18:30".
+String callerTableWhen(Booking booking, String today) => '${bookDayWords(booking.day, today)} at ${booking.time}';
+
+/// What a caller's reservation is, under when it is for: "Table A8 booked · 4 guests". It says whose it
+/// is when that is not the name the caller goes by ([asName]): "Table booked for Chen · 10 guests".
+String callerTableWhat(Booking booking, {String asName = ''}) {
+  final same = booking.name.trim().toLowerCase() == asName.trim().toLowerCase();
+  return [
+    [
+      booking.tableLabel.isEmpty ? 'Table booked' : 'Table ${booking.tableLabel} booked',
+      if (!same && booking.name.isNotEmpty) 'for ${booking.name}',
+    ].join(' '),
+    guestWords(booking.size),
+  ].join(' · ');
+}
+
 /// The hour a night's service is over for sure, as the hub has it: a time before it is the small hours
 /// after the day's midnight.
 const nightEndsHour = 4;

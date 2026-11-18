@@ -30,9 +30,10 @@ from datetime import time as clock
 from typing import Any
 
 from . import localtime
+from .sync.oplog import phone_digits
 
 # What somebody types about a party is tidied the way the waitlist tidies it, and refused in its words.
-from .waitlist import MOST_GUESTS, NAME_MAX, ReadOnlyError, Refused, _line, _phone, _size
+from .waitlist import MOST_GUESTS, NAME_MAX, PHONE_SHORTEST, ReadOnlyError, Refused, _line, _phone, _size
 
 __all__ = ["Booking", "BookStore", "PgBookStore", "ReadOnlyError", "Refused", "Reservations"]
 
@@ -51,6 +52,8 @@ SOON_MIN = 15
 """A reservation is `soon` from this many minutes before its time."""
 LATE_MIN = 15
 """A reservation nobody sat down or marked is `late` from this many minutes after its time."""
+MOST_OF_A_CALLER = 6
+"""The most reservations a caller is told about: more than one number ever has standing."""
 WHYS: tuple[tuple[str, str], ...] = (("cancelled", "Cancelled"), ("no_show", "No-show"))
 """How a reservation ends without a table: it was called off, or nobody came."""
 WHY_NAMES = dict(WHYS)
@@ -552,6 +555,18 @@ class Reservations:
         )
         self.store.put(standing)
         return standing
+
+    def of_phone(self, phone: object) -> list[Booking]:
+        """The reservations still standing, today's and later ones, that were made with this phone number,
+        the soonest first: for somebody who calls about theirs. Numbers are compared by their digits, the way
+        a caller's is with an order's (`+1 (781) 555-1234` is `781 555 1234`); a number too short to be one
+        finds nothing, and so does a reservation made without a number."""
+        wanted = phone_digits(phone)
+        if len(wanted) < PHONE_SHORTEST:
+            return []
+        coming = self.store.between(localtime.service_day(self.today())[0])
+        found = [b for b in coming if b.status == "booked" and b.phone and phone_digits(b.phone) == wanted]
+        return found[:MOST_OF_A_CALLER]
 
     def holds(self) -> dict[str, list[dict[str, Any]]]:
         """The tables held today, for the floor map: under each table's id, the standing reservations of

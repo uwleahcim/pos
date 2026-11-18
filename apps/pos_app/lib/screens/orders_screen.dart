@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -26,9 +27,10 @@ import '../settings.dart';
 import '../check_search.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
-import '../reservations.dart' show Booking;
+import '../reservations.dart';
 import '../waitlist.dart';
 import 'booked_table_dialog.dart';
+import 'booking_dialog.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
 import 'display_dialog.dart';
@@ -39,6 +41,7 @@ import 'menu_editor.dart';
 import 'order_screen.dart';
 import 'orders_ahead_screen.dart';
 import 'pay_dialog.dart';
+import 'phone_bar.dart' show callStripRoom;
 import 'rush.dart';
 import 'server_picker.dart';
 import 'shift_notes_dialog.dart';
@@ -404,12 +407,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// The reservation book (docs/reservations.md): the tables booked for today and the days ahead. **Seat**
   /// on a reservation of today brings the floor map up, and the next table tapped is theirs
   /// ([_seatPartyAt]), as for a party off the waitlist.
-  Future<void> _reservations() async {
+  ///
+  /// With [day] the book opens at that day, and with [open] at that reservation of it: the one somebody is
+  /// calling about.
+  Future<void> _reservations({String? day, String? open}) async {
     final staff = widget.session.staff;
     if (staff == null) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
-        builder: (_) => ReservationsScreen(api: widget.api, staffId: staff.staffId, waitlist: _wait != null),
+        builder: (_) =>
+            ReservationsScreen(api: widget.api, staffId: staff.staffId, waitlist: _wait != null, day: day, open: open),
       ),
     );
     if (!mounted) return;
@@ -673,16 +680,73 @@ class _OrdersScreenState extends State<OrdersScreen> {
       }
       if (!mounted) return;
       final who = caller ?? widget.phone?.callerForOrder;
-      final request = await showDialog<TakeoutRequest>(
+      final asked = await showDialog<Object>(
         context: context,
-        builder: (context) =>
-            _TakeoutDialog(quotes: quotes, api: widget.api, caller: who, by: widget.session.staff?.name),
+        builder: (context) => _TakeoutDialog(
+          quotes: quotes,
+          api: widget.api,
+          caller: who,
+          by: widget.session.staff?.name,
+          underCall: widget.phone?.onCall ?? false,
+        ),
       );
-      if (request == null || !mounted) return;
-      await _startOrder(request, quotes);
+      if (!mounted) return;
+      // The call was about a table and not about food: the reservation form, or the reservation they have.
+      switch (asked) {
+        case TakeoutRequest request:
+          await _startOrder(request, quotes);
+        case _BookForCaller wanted:
+          await _bookForCaller(wanted);
+        case Booking theirs:
+          // the book is a screen of its own: a call picked up while it is open still gets its form
+          unawaited(_reservations(day: theirs.day, open: theirs.id));
+      }
     } finally {
       _ordering = false;
     }
+  }
+
+  /// **Book a table** on the to-go form (docs/reservations.md): the reservation form comes up with the
+  /// name and the number the to-go form had, so somebody who calls for a table is booked without a word
+  /// typed twice. The book says the day it is and what it takes; with no hub answering it is said so, since
+  /// the book is kept there.
+  Future<void> _bookForCaller(_BookForCaller who) async {
+    final staff = widget.session.staff;
+    if (staff == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    void say(String words, {SnackBarAction? action}) => messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(key: const ValueKey('call-booking'), content: Text(words), action: action));
+    final Book? book;
+    try {
+      book = await widget.api.reservations();
+    } on ApiException {
+      return say('The hub cannot be reached, and the reservation book is kept there. Try again in a moment.');
+    }
+    if (book == null) return say('This hub is older than reservations. Update the hub for them.');
+    if (!mounted) return;
+    final after = await showDialog<Book>(
+      context: context,
+      builder: (_) => BookingDialog(
+        api: widget.api,
+        staffId: staff.staffId,
+        book: book!,
+        name: who.name,
+        phone: who.phone,
+        underCall: widget.phone?.onCall ?? false,
+      ),
+    );
+    final made = after?.booking;
+    if (after == null || made == null || !mounted) return;
+    final day = bookDayWords(made.day, after.today);
+    final on = day == 'Today' || day == 'Tomorrow' ? day.toLowerCase() : day;
+    say(
+      '${made.name} is booked for $on at ${made.time}',
+      action: SnackBarAction(
+        label: 'The book',
+        onPressed: () => unawaited(_reservations(day: made.day)),
+      ),
+    );
   }
 
   /// Opens the to-go order the form asked for. A note about the customer changed on the form is kept first,
@@ -1894,38 +1958,47 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ? null
           : Padding(
               padding: EdgeInsets.only(bottom: small && _floor ? 44 : 0),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (small && (widget.phone?.callerForOrder?.formatted.isNotEmpty ?? false))
-                    FloatingActionButton(
-                      key: const ValueKey('new-tab'),
-                      heroTag: 'new-tab',
-                      tooltip: 'Open a tab',
-                      onPressed: _newTab,
-                      child: const Icon(Icons.local_bar_outlined),
-                    )
-                  else
-                    FloatingActionButton.extended(
-                      key: const ValueKey('new-tab'),
-                      heroTag: 'new-tab',
-                      tooltip: 'Open a tab',
-                      onPressed: _newTab,
-                      icon: const Icon(Icons.local_bar_outlined),
-                      label: const Text('Tab'),
-                    ),
-                  const SizedBox(width: 10),
-                  FloatingActionButton.extended(
-                    key: const ValueKey('to-go'),
-                    heroTag: 'to-go',
-                    onPressed: () => _newOrder(),
-                    icon: const Icon(Icons.shopping_bag_outlined),
-                    label: Text(switch (widget.phone?.callerForOrder) {
-                      null => 'To go',
-                      final caller => caller.formatted.isEmpty ? 'To go' : 'To go · ${caller.formatted}',
-                    }),
+              // The narrowest phone with large type has no room for the two side by side while To go names a
+              // caller: they are drawn a little smaller then, and never run off the screen.
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: math.max(0, MediaQuery.sizeOf(context).width - 32)),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (small && (widget.phone?.callerForOrder?.formatted.isNotEmpty ?? false))
+                        FloatingActionButton(
+                          key: const ValueKey('new-tab'),
+                          heroTag: 'new-tab',
+                          tooltip: 'Open a tab',
+                          onPressed: _newTab,
+                          child: const Icon(Icons.local_bar_outlined),
+                        )
+                      else
+                        FloatingActionButton.extended(
+                          key: const ValueKey('new-tab'),
+                          heroTag: 'new-tab',
+                          tooltip: 'Open a tab',
+                          onPressed: _newTab,
+                          icon: const Icon(Icons.local_bar_outlined),
+                          label: const Text('Tab'),
+                        ),
+                      const SizedBox(width: 10),
+                      FloatingActionButton.extended(
+                        key: const ValueKey('to-go'),
+                        heroTag: 'to-go',
+                        onPressed: () => _newOrder(),
+                        icon: const Icon(Icons.shopping_bag_outlined),
+                        label: Text(switch (widget.phone?.callerForOrder) {
+                          null => 'To go',
+                          final caller => caller.formatted.isEmpty ? 'To go' : 'To go · ${caller.formatted}',
+                        }),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
     );
@@ -1950,11 +2023,20 @@ String _opened(int ms, DateTime now) {
 /// ordered, the note kept about them can be read and changed, and each of their latest orders has a
 /// **Same again** button that starts the new order with those dishes. With no hub answering, or one older
 /// than customers, none of that shows and the form is what it was.
+///
+/// Somebody who calls may want a table and not food. While the order is by phone the form has **Book a
+/// table** beside its title, which pops a [_BookForCaller] with the name and the number in the form; and a
+/// number that has tables booked, today or ahead, lists them, each with **Open**, which pops that
+/// [Booking]. Otherwise it pops the [TakeoutRequest] to start, or nothing.
 class _TakeoutDialog extends StatefulWidget {
-  const _TakeoutDialog({required this.quotes, required this.api, this.caller, this.by});
+  const _TakeoutDialog({required this.quotes, required this.api, this.caller, this.by, this.underCall = false});
   final Quotes quotes;
   final PosApi api;
   final Caller? caller;
+
+  /// A call is on at this terminal: its strip lies across the top of the screen, and the form starts under
+  /// it, so the title and Book a table are not behind it.
+  final bool underCall;
 
   /// Who is taking the order: kept with a note they write about the customer.
   final String? by;
@@ -1980,12 +2062,14 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   String _handover = 'pickup';
 
   CustomerCard? _customer; // who the hub says is at the number in the box; null: not asked, or no answer
+  CallerTables? _tables; // the tables that number has booked, today and ahead; null: not asked, or no answer
   String _filled = ''; // the name the form itself put in the box: a customer's replaces it, a typed one stays
   String _noteWas = ''; // the note as the hub keeps it
   String? _noteProblem;
   bool _keeping = false;
   Timer? _typing;
   int _asked = 0;
+  String? _lookedUp; // the digits the hub was last asked about
 
   @override
   void initState() {
@@ -2014,8 +2098,15 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
 
   Future<void> _lookUp() async {
     final digits = phoneDigits(_phone.text);
-    if (digits == _customer?.phone) return;
+    if (digits == _lookedUp) return;
+    _lookedUp = digits;
     final asked = ++_asked;
+    // the tables the number has booked are asked for beside the customer: neither waits for the other
+    unawaited(
+      widget.api.callerTables(digits).then((tables) {
+        if (mounted && asked == _asked) setState(() => _tables = tables);
+      }),
+    );
     final found = await widget.api.customer(digits);
     if (!mounted || asked != _asked) return; // the number changed while the hub was asked
     setState(() {
@@ -2161,6 +2252,66 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     );
   }
 
+  /// The tables the number has booked, each a way to it in the book: the call may be about one. When it is
+  /// for, over what it is; whose it is too, when that is not the name in the box above.
+  Widget _tablesCard(ThemeData theme, CallerTables tables) {
+    final scheme = theme.colorScheme;
+    final ink = scheme.onSecondaryContainer;
+    return Column(
+      key: const ValueKey('caller-tables'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final booking in tables.booked)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: scheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(10),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                key: ValueKey('caller-table-open:${booking.id}'),
+                onTap: () => Navigator.of(context).pop(booking),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.event_rounded, size: 20, color: ink),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              callerTableWhen(booking, tables.today),
+                              key: ValueKey('caller-table:${booking.id}'),
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: ink,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: PosTheme.tabular,
+                              ),
+                            ),
+                            Text(
+                              callerTableWhat(booking, asName: _name.text),
+                              key: ValueKey('caller-table-what:${booking.id}'),
+                              style: theme.textTheme.bodySmall?.copyWith(color: ink),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Tooltip(
+                        message: 'Open in the reservation book',
+                        child: Icon(Icons.chevron_right, color: ink),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   static String _capital(String word) => word.isEmpty ? word : word[0].toUpperCase() + word.substring(1);
 
   @override
@@ -2170,8 +2321,36 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised);
     final rush = widget.quotes.rushAt(now, promised: _promised);
     final customer = _customer;
+    final tables = _tables;
+    // Somebody on the phone may want a table and not food: the way to the reservation form is beside the
+    // title, where it costs the form no height. By its name where the form is wide enough for both, and as
+    // its calendar alone on a phone. (A dialog sizes itself to what is in it: the screen says how wide.)
+    final media = MediaQuery.of(context);
+    final named = media.size.width >= 400 && media.textScaler.scale(1) <= 1.15;
+    void book() => Navigator.of(context).pop(_BookForCaller(_name.text.trim(), _phone.text.trim()));
     return AlertDialog(
-      title: const Text('To-go order'),
+      insetPadding: EdgeInsets.fromLTRB(40, widget.underCall ? callStripRoom : 24, 40, 24),
+      title: Row(
+        children: [
+          const Expanded(child: Text('To-go order', maxLines: 1, overflow: TextOverflow.ellipsis)),
+          if (_channel == 'phone' && named)
+            TextButton.icon(
+              key: const ValueKey('takeout-book'),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              onPressed: book,
+              icon: const Icon(Icons.event_available_outlined, size: 18),
+              label: const Text('Book a table'),
+            )
+          else if (_channel == 'phone')
+            IconButton.filledTonal(
+              key: const ValueKey('takeout-book'),
+              visualDensity: VisualDensity.compact,
+              tooltip: 'Book a table',
+              onPressed: book,
+              icon: const Icon(Icons.event_available_outlined),
+            ),
+        ],
+      ),
       content: SizedBox(
         width: 360,
         child: SingleChildScrollView(
@@ -2198,6 +2377,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                 ),
                 onChanged: _phoneChanged,
               ),
+              if (tables != null && tables.booked.isNotEmpty) _tablesCard(theme, tables),
               if (customer != null) _customerCard(theme, customer),
               const SizedBox(height: 12),
               Wrap(
@@ -2281,6 +2461,15 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       ],
     );
   }
+}
+
+/// What the to-go form was left with when the customer wants a table and not food: the name and the number
+/// it had, for the reservation form.
+class _BookForCaller {
+  const _BookForCaller(this.name, this.phone);
+
+  final String name;
+  final String phone;
 }
 
 /// Seats a party: how many guests and, for a host or manager, whose table it is. A server sees only the

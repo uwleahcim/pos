@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../phone.dart';
 
+/// How far from the top of the screen (under the status bar) a form that opens during a call starts, so
+/// that its title is not behind the call strip.
+const callStripRoom = 64.0;
+
 /// Sits over every screen. While a call rings: a banner with the caller, Answer and Decline. During a call:
 /// a small strip at the top with the caller, the call time, Hold, Hang up, More and, with [onOrder], To go: a
 /// to-go order for the caller. More opens a panel under the strip with the keypad (tones to the other side, or

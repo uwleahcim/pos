@@ -534,6 +534,65 @@ def test_a_reservation_is_no_check_and_no_sale():
     assert c.get("/floor").json()["status"] == {}
 
 
+def calling(c: TestClient, phone: str) -> list[tuple[str, str, str]]:
+    r = c.get("/reservations/caller", params={"phone": phone})
+    assert r.status_code == 200, r.text
+    return [(b["name"], b["day"], b["time"]) for b in r.json()["booked"]]
+
+
+def test_somebody_calling_is_told_the_tables_their_number_has_booked():
+    c, wall = hub()
+    tonight = add(c, "Chen", 4, "18:30", phone="781 555 0101", table="A8")
+    add(c, "Chen", 6, "12:00", day=SAT, phone="(781) 555-0101")
+    add(c, "Garcia", 2, "19:00", phone="617 555 0199")
+    gone = add(c, "Chen", 2, "20:00", day=TUE, phone="781 555 0101")
+    add(c, "Okafor", 5, "17:00")  # booked without a number: nobody's call finds it
+
+    # by the digits, however the number was typed and however the caller ID writes it; the soonest first
+    assert calling(c, "+17815550101") == [("Chen", MON, "18:30"), ("Chen", TUE, "20:00"), ("Chen", SAT, "12:00")]
+    told = c.get("/reservations/caller", params={"phone": "781-555-0101"}).json()
+    assert (told["phone"], told["today"]) == ("7815550101", MON)
+    first = told["booked"][0]
+    assert (first["id"], first["size"], first["table"], first["table_label"], first["status"]) == (
+        tonight["id"],
+        4,
+        "A8",
+        "A8",
+        "booked",
+    )
+
+    # another number, a number nobody booked with, one too short to be a number, and none at all
+    assert calling(c, "617 555 0199") == [("Garcia", MON, "19:00")]
+    assert calling(c, "781 555 0102") == []
+    assert calling(c, "550101") == []
+    assert calling(c, "") == []
+    assert c.get("/reservations/caller").json()["booked"] == []
+
+    # only what still stands: not one that was cancelled, nor one that sat down
+    assert c.post(f"/reservations/{gone['id']}/cancel", json=WHO).status_code == 200
+    assert calling(c, "781 555 0101") == [("Chen", MON, "18:30"), ("Chen", SAT, "12:00")]
+    wall.now = at(18, 35)
+    sat = c.post(f"/reservations/{tonight['id']}/seat", json={**WHO, "table": "A8", "order_id": "o1"})
+    assert sat.status_code == 200
+    assert calling(c, "781 555 0101") == [("Chen", SAT, "12:00")]
+
+    # and nothing of a day that is over
+    wall.now = at(12, day=22)
+    assert calling(c, "781 555 0101") == []
+
+
+def test_asking_who_calls_changes_nothing_in_the_book():
+    book, _ = book_at()
+    book.add("Chen", 4, MON, "18:30", phone="781 555 0101", by_id="s4", by="Holly")
+    before = book.book()
+    assert [b.name for b in book.of_phone("1 781 555 0101")] == ["Chen"]
+    assert book.of_phone(None) == [] and book.of_phone(7815550101) != []
+    assert book.book() == before
+    for n in range(reservations.MOST_OF_A_CALLER + 2):
+        book.add(f"Chen {n}", 2, TUE, "18:00", phone="7815550101", by_id="s4", by="Holly")
+    assert len(book.of_phone("781 555 0101")) == reservations.MOST_OF_A_CALLER
+
+
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
 def test_the_book_is_kept_in_postgres():
     import psycopg
@@ -561,6 +620,7 @@ def test_the_book_is_kept_in_postgres():
         try:
             later, wall2 = book_at(at(19, 5), again)
             assert {table: [h["name"] for h in holds] for table, holds in later.holds().items()} == {"A7": ["Okafor"]}
+            assert later.of_phone("781 555 0101") == []  # Chen sat down
             told = later.book()
             assert [(b["name"], b["size"], b["time"], b["table"]) for b in told["booked"]] == [
                 ("Okafor", 7, "20:00", "A7")

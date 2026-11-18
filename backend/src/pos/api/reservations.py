@@ -9,6 +9,10 @@
   `cancelled` or `no_show`), `seated_table`, `seated_label`, `order_id` and `ended_by`. `counts` adds the
   day up, and `ahead` lists every day from `today` on with a reservation standing (`parties`, `guests`).
   The answer does not say what time it is, so a book nobody changed reads as unchanged (304).
+- `GET /reservations/caller?phone=781 555 1234`: the reservations still standing, today's and later ones,
+  that were made with this number, the soonest first (`booked`, each as above), with `today` and the number
+  as it was compared (`phone`: its digits). For the screen that picks up a call: somebody calling about a
+  table they booked lands on it. Nothing for a number too short to be one.
 - `POST /reservations` `{staff_id, name, size, day, time, phone, note, table}`: books a table. 422
   `past_day` for a day that is over, `too_far` past a year ahead.
 - `PUT /reservations/{id}` (the same body): puts a standing reservation right.
@@ -40,6 +44,7 @@ from pydantic import BaseModel, Field
 from ..floor import FloorPlan
 from ..identity.staff import Directory, Staff
 from ..reservations import Booking, ReadOnlyError, Refused, Reservations, day_of
+from ..sync.oplog import phone_digits
 
 
 class WhoIn(BaseModel):
@@ -119,6 +124,15 @@ def add_reservations(app: FastAPI) -> None:
             return book().book(None if day is None else day_of(day))
         except Refused as err:
             raise refused(err) from err
+
+    @app.get("/reservations/caller")
+    def caller_reservations(phone: str = "") -> dict[str, Any]:
+        """The standing reservations made with a phone number, for whoever picks up its call."""
+        return {
+            "phone": phone_digits(phone[:200]),
+            "today": book().today().isoformat(),
+            "booked": [booking.as_json() for booking in book().of_phone(phone[:200])],
+        }
 
     @app.post("/reservations")
     def add_booking(body: BookingIn) -> dict[str, Any]:

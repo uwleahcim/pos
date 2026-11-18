@@ -1418,6 +1418,28 @@ class PosApi {
     }
   }
 
+  /// The tables the customer at [phone] has booked, today and ahead, the soonest first: for a call about
+  /// a reservation. Null when the number is too short to be a customer's, when nothing answers, and from a
+  /// hub older than this: a screen then works as it did before.
+  Future<CallerTables?> callerTables(String? phone) async {
+    final digits = phoneDigits(phone);
+    if (digits.length < customerDigits) return null;
+    try {
+      final json = await _get('/reservations/caller', query: {'phone': digits});
+      final booked = json['booked'];
+      if (booked is! List) return null;
+      return (
+        today: json['today'] as String? ?? '',
+        booked: [
+          for (final row in booked)
+            if (row is Map) Booking.fromJson(row.cast<String, dynamic>()),
+        ],
+      );
+    } on ApiException {
+      return null;
+    }
+  }
+
   static Map<String, dynamic> _booking(
     String staffId,
     String name,

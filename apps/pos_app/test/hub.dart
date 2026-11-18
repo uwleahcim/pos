@@ -9,7 +9,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
+import 'package:pos_app/customers.dart' show phoneDigits;
 import 'package:pos_app/outbox.dart';
+import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/powers.dart';
 import 'package:pos_app/queue_store.dart';
@@ -555,6 +557,11 @@ class Hub {
   final bookPosts = <(String, Map<String, dynamic>)>[];
   (int, String, String)? refuseBook;
   bool bookDown = false;
+
+  /// Who calls (`GET /reservations/caller`): the numbers it was asked about, as their digits. A hub with
+  /// the book but [callersOld] has no such call yet, and answers as it did before it (405).
+  final callersAsked = <String>[];
+  bool callersOld = false;
 
   /// The moment a table is booked for: [time] ("18:30") in [day]'s service ("2026-11-16"), where a time
   /// before four in the morning is after that day's midnight.
@@ -1409,6 +1416,17 @@ class Hub {
       final day = request.url.queryParameters['day'];
       bookAsks.add(day);
       return json(_bookOut(day ?? bookToday));
+    }
+    if (path == '/reservations/caller' && request.method == 'GET') {
+      if (callersOld) return json({'detail': 'Method Not Allowed'}, 405);
+      final digits = phoneDigits(request.url.queryParameters['phone']);
+      callersAsked.add(digits);
+      final theirs = [
+        for (final b in bookings!)
+          if (b['status'] == 'booked' && (b['day'] as String).compareTo(bookToday) >= 0)
+            if (digits.length >= 7 && phoneDigits(b['phone'] as String?) == digits) b,
+      ]..sort((a, b) => (a['at_ms'] as int).compareTo(b['at_ms'] as int));
+      return json({'phone': digits, 'today': bookToday, 'booked': theirs});
     }
     final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
     bookPosts.add(('${request.method} $path', body));
@@ -2743,8 +2761,8 @@ Future<Terminal> pumpOrders(WidgetTester tester, List<Map<String, dynamic>> orde
   return t;
 }
 
-/// The list of orders on a terminal whose hub a test has already set up.
-Future<void> pumpOrdersOn(WidgetTester tester, Terminal t) async {
+/// The list of orders on a terminal whose hub a test has already set up; with [phone], its softphone.
+Future<void> pumpOrdersOn(WidgetTester tester, Terminal t, {PhoneClient? phone}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: OrdersScreen(
@@ -2754,6 +2772,7 @@ Future<void> pumpOrdersOn(WidgetTester tester, Terminal t) async {
         session: t.session,
         camera: NoCamera(),
         photos: t.photos,
+        phone: phone,
       ),
     ),
   );
