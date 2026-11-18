@@ -2864,6 +2864,13 @@ class _WhenStrip extends StatelessWidget {
       if (later) 'For ${whenFor(order.promisedAt!, DateTime.now())}',
       if (order.isCatering || delivery) order.event.words,
       if (delivery && order.event.address.isEmpty) 'no address yet',
+      // it left: who has it, and since when
+      if (order.isOut)
+        [
+          'out',
+          if (order.driver.isNotEmpty) 'with ${order.driver}',
+          if (order.outAt != null) 'since ${clockTime(order.outAt!)}',
+        ].join(' '),
     ].join(' · ');
     return Material(
       key: const ValueKey('when-strip'),

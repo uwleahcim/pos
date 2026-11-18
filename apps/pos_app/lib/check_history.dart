@@ -297,6 +297,14 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
       final delivery = said['delivery'] == true;
       final was = stageLabel(_text(said['was']), delivery: delivery);
       final now = stageLabel(_text(said['now']), delivery: delivery);
+      // a delivery that left says who took it, and one that came back that it did
+      if (delivery && said['now'] == 'out') {
+        final driver = _text(said['driver']);
+        return (title: driver.isEmpty ? 'Left with a driver' : 'Left with $driver', under: const []);
+      }
+      if (delivery && said['was'] == 'out' && said['now'] != 'picked_up') {
+        return (title: 'Came back from the driver', under: const []);
+      }
       return (
         title: now.isNotEmpty
             ? 'Marked ${now.toLowerCase()}'
@@ -305,6 +313,10 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
             : 'No longer ${was.toLowerCase()}',
         under: const [],
       );
+    case 'driver':
+      // on its way, it changed hands
+      final was = _text(said['was']), now = _text(said['now']);
+      return (title: was.isEmpty ? 'Handed to $now' : 'Handed from $was to $now', under: const []);
     case 'promised':
       return (title: _changed('Time promised', at(said['was']), at(said['now'])), under: const []);
     case 'quoted':

@@ -1,4 +1,5 @@
-/// The staff by name and role (`GET /staff`): who a table can be given to, and who may give one.
+/// The staff by name and role (`GET /staff`): who a table can be given to, who may give one, and who a
+/// delivery can be handed to.
 library;
 
 import 'floor.dart';
@@ -11,6 +12,7 @@ class StaffMember {
     this.role = '',
     this.takesTables = false,
     this.assignsTables = false,
+    this.delivers = false,
   });
 
   factory StaffMember.fromJson(Map<String, dynamic> json) => StaffMember(
@@ -19,6 +21,7 @@ class StaffMember {
     role: json['role'] as String? ?? '',
     takesTables: json['takes_tables'] as bool? ?? false,
     assignsTables: json['assigns_tables'] as bool? ?? false,
+    delivers: json['delivers'] as bool? ?? false,
   );
 
   final String staffId;
@@ -30,6 +33,10 @@ class StaffMember {
 
   /// This person seats a party for someone else and hands a table over: the hosts, a manager.
   final bool assignsTables;
+
+  /// A delivery can be handed to this person (docs/delivery.md): the drivers, a manager. A hub older than
+  /// drivers says it of nobody.
+  final bool delivers;
 }
 
 /// The location's staff. The hub says who takes tables and who gives them out; the app only asks.
@@ -50,6 +57,13 @@ class Roster {
   List<StaffMember> get servers => [
     for (final s in staff)
       if (s.takesTables) s,
+  ];
+
+  /// The people a delivery can be handed to, as the hub lists them. Nobody on a hub older than drivers:
+  /// a delivery is then marked delivered with no driver named, as before.
+  List<StaffMember> get drivers => [
+    for (final s in staff)
+      if (s.delivers) s,
   ];
 
   /// Whether this person picks the server as a party is sat, rather than taking the table themselves.

@@ -8,8 +8,12 @@ import 'package:flutter/foundation.dart';
 /// The roles that hold every power, whatever the table says: nothing takes one from them.
 const alwaysRoles = {'manager', 'owner'};
 
-/// The roles a power can be handed to, in the order the screen lists them.
-const handedRoles = ['server', 'bartender', 'host', 'cashier', 'kitchen'];
+/// The roles a power can be handed to, in the order the screen lists them. A hub says which of them it
+/// knows ([Powers.handed]): the drivers came with deliveries (docs/delivery.md).
+const handedRoles = ['server', 'bartender', 'host', 'cashier', 'kitchen', 'driver'];
+
+/// The roles every hub with a table of powers hands them to: what one older than drivers does not say.
+const firstRoles = ['server', 'bartender', 'host', 'cashier', 'kitchen'];
 
 /// The power no table hands out: the location's settings, and the table itself.
 const settingsPower = 'settings';
@@ -50,6 +54,9 @@ const powerGroups = [
     Power('take_tables', 'Take tables', 'A table can be theirs, and a host can seat a party for them.'),
     Power('assign_tables', 'Give tables out', 'Seat a party for another server, and hand a table over.'),
   ]),
+  PowerGroup('Deliveries', [
+    Power('deliver', 'Take deliveries out', 'A delivery can be handed to them: they are offered as a driver.'),
+  ]),
   PowerGroup('The shift', [
     Power('rush', 'Set the kitchen rush', 'Add minutes to every new quote while the kitchen is behind.'),
     Power('notes', 'Write the notes for the shift', 'Put a note up for everybody, change it, take it down.'),
@@ -83,6 +90,7 @@ String roleLabel(String role) => switch (role) {
   'host' => 'Hosts',
   'cashier' => 'Cashiers',
   'kitchen' => 'Kitchen',
+  'driver' => 'Drivers',
   'manager' => 'Managers',
   'owner' => 'Owners',
   _ => role,
@@ -98,24 +106,39 @@ String aRole(String role) => switch (role) {
 /// The location's table: for each power, the roles it is handed to besides the managers and the owners.
 @immutable
 class Powers {
-  const Powers(this.roles);
+  const Powers(this.roles, {this.handed = firstRoles});
 
   /// The table as the hub answers it. A role or a power this app does not know is kept, so a save sends it
   /// back as it came.
   factory Powers.fromJson(Map<String, dynamic> json) => Powers({
     for (final entry in (json['roles'] as Map<String, dynamic>? ?? const {}).entries)
       entry.key: List<String>.from(entry.value as List? ?? const []),
-  });
+  }, handed: json['handed'] is List ? List<String>.from(json['handed'] as List) : firstRoles);
 
   /// What the hub did before the table could be changed, and what a hub older than the table still does:
   /// the servers and the bartenders take tables, the hosts give them out, and everything else is a
-  /// manager's or an owner's.
+  /// manager's or an owner's. The drivers take deliveries out, where a hub knows of drivers.
   static const standard = Powers({
     'take_tables': ['server', 'bartender'],
     'assign_tables': ['host'],
-  });
+    'deliver': ['driver'],
+  }, handed: handedRoles);
 
   final Map<String, List<String>> roles;
+
+  /// The roles this hub hands powers to. One older than drivers knows none: the screen offers it no
+  /// button for them, and nothing is sent that it would refuse.
+  final List<String> handed;
+
+  /// The roles the screen has a button for: the ones this app words and this hub knows, in the screen's
+  /// order.
+  List<String> get offered => [
+    for (final role in handedRoles)
+      if (handed.contains(role)) role,
+  ];
+
+  /// Whether this hub has [power] in its table. One a hub has never heard of is not shown, and not sent.
+  bool knows(String power) => roles.containsKey(power);
 
   /// Whether a person of [role] may do [power]. A manager and an owner may do everything.
   bool holds(String? role, String power) {
@@ -141,7 +164,19 @@ class Powers {
       for (final r in handedRoles)
         if (r == role ? on : (roles[power]?.contains(r) ?? false)) r,
     ],
-  });
+  }, handed: handed);
+
+  /// The table as it started, before anybody changed it: what the standard one hands out of the powers
+  /// and to the roles this hub knows, and no more.
+  Powers get asItStarted => Powers({
+    ...roles,
+    for (final power in powersById.keys)
+      if (knows(power))
+        power: [
+          for (final role in standard.handedTo(power))
+            if (handed.contains(role)) role,
+        ],
+  }, handed: handed);
 
   /// Whose PIN [power] takes, for a sentence: "a manager", "a manager or a bartender", "a manager, a host
   /// or a server". An owner's does too, and is not said: there is a manager wherever there is an owner.
@@ -163,8 +198,9 @@ class Powers {
     final changes = <String>[];
     for (final group in powerGroups) {
       for (final power in group.powers) {
+        if (!knows(power.id)) continue; // a hub older than the power: nothing to say of it
         final now = handedTo(power.id);
-        final usual = standard.handedTo(power.id);
+        final usual = asItStarted.handedTo(power.id);
         if (listEquals(now, usual)) continue;
         changes.add('${power.name}: ${now.isEmpty ? 'managers only' : now.map(roleLabel).join(', ')}');
       }

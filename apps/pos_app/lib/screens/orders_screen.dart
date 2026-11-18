@@ -7,6 +7,7 @@ import '../api.dart';
 import '../camera.dart';
 import '../coursing.dart';
 import '../customers.dart';
+import '../deliveries.dart';
 import '../desk_phone_watcher.dart';
 import '../floor.dart';
 import '../kitchen_bell.dart';
@@ -34,14 +35,16 @@ import 'booked_table_dialog.dart';
 import 'booking_dialog.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
+import 'deliveries_screen.dart';
 import 'display_dialog.dart';
+import 'driver_picker.dart';
 import 'event_fields.dart';
 import 'floor_view.dart';
+import 'hand_over.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'order_screen.dart';
 import 'orders_ahead_screen.dart';
-import 'pay_dialog.dart';
 import 'phone_bar.dart' show callStripRoom;
 import 'rush.dart';
 import 'server_picker.dart';
@@ -886,43 +889,44 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// deposit was taken on is asked for the rest as it is handed over (docs/catering.md): cash or paid
   /// elsewhere, or not now, which closes the check with the rest still due, as an order nothing was paid on
   /// always closed.
-  Future<void> _setStage(Order order, String stage) async {
-    PayChoice? paying;
-    final due = order.due;
-    if (stage == 'picked_up' && due != null && cents(due) > 0) {
-      paying = await showDialog<PayChoice>(
-        context: context,
-        builder: (_) => PayDialog(due: due, channel: order.channel, payAtPickup: true, sends: false, handover: true),
-      );
-      if (paying == null || !mounted) return;
-    }
+  Future<void> _setStage(Order order, String stage) =>
+      setToGoStage(context, outbox: widget.outbox, order: order, stage: stage, by: widget.session.staff?.name);
+
+  /// A delivery leaves (docs/delivery.md): asks which driver takes it, and says so on the order. Nothing
+  /// is written when nobody is picked.
+  Future<void> _sendOut(Order order) async {
+    final driver = await DriverPicker.ask(
+      context,
+      drivers: _roster.drivers,
+      deliveries: deliveriesOf(_orders, DateTime.now()),
+    );
+    if (driver == null || !mounted) return;
     await widget.outbox.addAll(order.orderId, [
-      if (paying != null && paying.takesMoney)
-        (
-          'pay',
-          {
-            'payment_id': widget.outbox.newId(),
-            'method': paying.method,
-            'amount': paying.amount ?? due,
-            'tendered': ?paying.tendered,
-            if (paying.note.isNotEmpty) 'note': paying.note,
-            'by': ?widget.session.staff?.name,
-          },
-        ),
-      ('set_field', {'stage': stage}),
-      if (stage == 'picked_up') ('close', {}),
+      (
+        'set_field',
+        {
+          ...outFields(driver, DateTime.now().millisecondsSinceEpoch),
+          'by': ?widget.session.staff?.name,
+          'by_id': ?widget.session.staff?.staffId,
+        },
+      ),
     ]);
-    final tendered = paying?.tendered;
-    final change = tendered == null ? 0 : cents(tendered) - cents(paying?.amount ?? due ?? '0');
-    if (change > 0 && mounted) {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Change \$${money(change)}', key: const ValueKey('change-due')),
-          actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+  }
+
+  /// The deliveries on a screen of their own: what waits to leave, and what each driver has out.
+  Future<void> _deliveries() async {
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => DeliveriesScreen(
+          api: widget.api,
+          outbox: widget.outbox,
+          session: widget.session,
+          roster: _roster,
+          onOpen: _open,
         ),
-      );
-    }
+      ),
+    );
+    if (mounted) unawaited(_refresh());
   }
 
   /// The orders ahead (docs/catering.md): what was promised for a later time, by the day it is for, with
@@ -1644,6 +1648,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
         }),
       ),
       ('Orders ahead', Icons.event_note_outlined, _ahead),
+      // where the hub says who takes deliveries out (docs/delivery.md)
+      if (_roster.drivers.isNotEmpty) ('Deliveries', Icons.delivery_dining_outlined, _deliveries),
       if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       ('Waste', Icons.delete_sweep_outlined, _waste),
@@ -1941,7 +1947,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                 onPressed: () => _setStage(order, 'ready'),
                                 child: const Text('Ready'),
                               )
-                            : stage == 'ready'
+                            // a delivery leaves with a driver before it is delivered, where the hub
+                            // says who delivers; a hub older than drivers goes from ready to delivered
+                            : stage == 'ready' && delivery && _roster.drivers.isNotEmpty
+                            ? FilledButton.tonal(
+                                key: ValueKey('out-${order.orderId}'),
+                                onPressed: () => _sendOut(order),
+                                child: const Text('Out'),
+                              )
+                            : stage == 'ready' || order.isOut
                             ? FilledButton.tonal(
                                 key: ValueKey('picked-up-${order.orderId}'),
                                 onPressed: () => _setStage(order, 'picked_up'),
@@ -2008,8 +2022,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                             : '${delivery ? 'there' : 'ready'} ${clockTime(promisedAt)}',
                                       // "$45.01 due" once a deposit was taken: not the whole of it
                                       if (isTakeout) moneyWords(order),
-                                      if (isTakeout && stageLabel(stage).isNotEmpty)
+                                      if (isTakeout && stageLabel(stage, delivery: delivery).isNotEmpty)
                                         stageLabel(stage, delivery: delivery).toUpperCase(),
+                                      // who has it, and since when
+                                      if (order.isOut && order.driver.isNotEmpty)
+                                        [
+                                          order.driver,
+                                          if (order.outAt != null) 'since ${clockTime(order.outAt!)}',
+                                        ].join(' '),
                                       if (address.isNotEmpty) address,
                                       if (finding && (order.fields['server']?.toString() ?? '').isNotEmpty)
                                         order.fields['server'].toString(),
