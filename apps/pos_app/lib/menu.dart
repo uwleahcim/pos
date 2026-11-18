@@ -869,6 +869,10 @@ class CheckCharge {
   final bool taxed;
   final String? appliedBy;
 
+  /// What a delivery costs the customer (docs/delivery.md, "The delivery fee"): picked with how the order
+  /// leaves, not put on or taken off like a charge.
+  bool get isDeliveryFee => chargeId == 'fee:delivery';
+
   CheckCharge withAmount(String amount) => CheckCharge(
     chargeId: chargeId,
     name: name,

@@ -53,6 +53,12 @@
   bag, by name in the order the buttons show (chopsticks, forks and napkins to start). "Nothing" is always
   an answer. An answer on an order carries each choice's id and the name it had then, so a choice can be
   renamed or dropped later.
+- `delivery_fee`: what a delivery costs the customer (`pos/orders/delivery_fee.py`): `enabled`, whether a
+  fee is charged at all (off to start: nothing goes on a check until the owner lists the prices); `by`,
+  whether the fee goes by `miles` or by the `minutes` of the drive; `bands`, the prices in order, each
+  `{up_to, fee}` ("up to 2.5 miles, 5.00"); `taxed`, whether sales tax is charged on the fee (off to
+  start: the owner's accountant says). An order carries the band it was given and what that cost then, so
+  the prices can change without touching an order already taken.
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
@@ -85,6 +91,7 @@ from psycopg_pool import ConnectionPool
 
 from .floor.plan import STAGES
 from .identity.powers import STANDARD as STANDARD_POWERS
+from .orders import delivery_fee as fees
 from .printing.ticket import AUTO, DIALECTS
 from .sync.pgstore import ReadOnlyError
 
@@ -144,6 +151,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "time_clock": {"enabled": False, "breaks_paid": False, "week_starts": "mon"},
     # On to start, with what the old POS rang as free dishes: the owner asked for the question.
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
+    # Off, with no prices: a fee is the owner's to set, and nothing is added to a check until it is.
+    "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
@@ -496,6 +505,51 @@ def clean_bag(data: Mapping[str, Any]) -> dict[str, Any]:
             taken.add(ident)
         choices.append({"id": str(ident), "name": name})
     return {"enabled": enabled, "question": question or BAG_QUESTION, "choices": choices}
+
+
+def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The delivery fee as the app may set it, checked: `enabled`, whether a fee is charged; `by`, miles or
+    minutes; `bands`, a list of `{up_to, fee}` (miles to a tenth or whole minutes, and dollars), kept in
+    order of how far they reach; `taxed`, whether sales tax is charged on the fee. Charged, it needs at
+    least one band. A band may cost nothing (free close by). Raises ValueError on a bad value."""
+    out: dict[str, Any] = {}
+    for name in ("enabled", "taxed"):
+        value = data.get(name, DEFAULTS["delivery_fee"][name])
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false")
+        out[name] = value
+    by = str(data.get("by") or DEFAULTS["delivery_fee"]["by"]).strip().lower()
+    if by not in fees.MEASURES:
+        raise ValueError("by must be miles or minutes")
+    raw = data.get("bands")
+    raw = [] if raw is None else raw
+    if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
+        raise ValueError("bands must be a list of {up_to, fee}")
+    if out["enabled"] and not raw:
+        raise ValueError("list at least one distance and what it costs, or turn the fee off")
+    if len(raw) > fees.BANDS_MAX:
+        raise ValueError(f"at most {fees.BANDS_MAX} bands, so they fit one screen")
+    bands: dict[Any, str] = {}
+    for entry in raw:
+        reach = fees.measure(entry.get("up_to"), by)
+        if reach is None:
+            raise ValueError(
+                f"a band reaches up to a number of miles, to a tenth, from 0.1 to {fees.MILES_MAX}"
+                if by == "miles"
+                else f"a band reaches up to a whole number of minutes, from 1 to {fees.MINUTES_MAX}"
+            )
+        if reach in bands:
+            raise ValueError(f"up to {fees.measure_text(reach)} {by} is listed twice")
+        fee = fees.money(entry.get("fee"))
+        if fee is None:
+            raise ValueError(f"a fee is dollars and cents, from 0.00 to {fees.FEE_MAX}")
+        bands[reach] = str(fee)
+    return {
+        "enabled": out["enabled"],
+        "by": by,
+        "bands": [{"up_to": fees.measure_text(reach), "fee": bands[reach]} for reach in sorted(bands)],
+        "taxed": out["taxed"],
+    }
 
 
 def clean_kitchen_notes(data: Mapping[str, Any]) -> dict[str, Any]:

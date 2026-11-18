@@ -44,7 +44,10 @@ Each step is a dict:
 - `tax_exempt` (a manager marked the check exempt from sales tax): `organisation`, `certificate`;
   `tax_exempt_removed`: `organisation`;
 - `bag` (what goes in the bag with a to-go order was answered): `items`, each `{name, qty}` (none: nothing
-  was wanted), and `changed` when an earlier answer stood.
+  was wanted), and `changed` when an earlier answer stood;
+- `delivery_fee` (what a delivery costs the customer was picked, changed or taken back): `now` and `was`,
+  each `{by, up_to, amount, taxed}` as the order carried it (pos.orders.delivery_fee; an `amount` of "0.00"
+  with no band is no fee on purpose) or None while nobody had said.
 """
 
 from __future__ import annotations
@@ -57,6 +60,8 @@ from .adjustments import PricingRules
 from .bag import FIELD as BAG
 from .bag import bag_of
 from .check import shown_modifiers
+from .delivery_fee import FIELD as FEE
+from .delivery_fee import fee_of
 from .exempt import FIELD as EXEMPT
 from .exempt import exemption_of
 
@@ -206,6 +211,8 @@ def history(
         if kind in ("create", "set_field"):
             if first and kind == "create":
                 step("opened", fields={k: state.fields[k] for k in OPENED_WITH if state.fields.get(k) is not None})
+                if fee_of(state.fields) is not None:  # taken with its delivery fee already picked
+                    step("delivery_fee", now=fee_of(state.fields), was=None)
                 continue
             for name in state.fields:
                 was, now = before_fields.get(name), state.fields.get(name)
@@ -239,6 +246,10 @@ def history(
                     if answer is not None and answer != stood:
                         items = [{"name": item["name"], "qty": item["qty"]} for item in answer["items"]]
                         step("bag", items=items, changed=stood is not None)
+                elif name == FEE:
+                    picked, stood = fee_of({FEE: now}), fee_of({FEE: was})
+                    if picked != stood:
+                        step("delivery_fee", now=picked, was=stood)
 
         elif kind == "add_line":
             added = state.lines.get(data.get("line_id"))

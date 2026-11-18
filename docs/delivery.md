@@ -8,8 +8,9 @@ every paper, so nobody packs it for the shelf.
 When the bag leaves, it is **handed to a driver**: the order says who has it and since when, and the
 **Deliveries** screen shows what is waiting to leave and what each driver has out (see
 [Drivers](#drivers)). **Runs** says what each driver took out over the day, run by run (see
-[Runs](#runs)). Nothing here is about money: there is no delivery fee and no tip yet, and a delivery is a
-sale like any other, counted in every report as a to-go order is.
+[Runs](#runs)). A location that charges for the trip lists its prices, and the order says which one
+applies (see [The delivery fee](#the-delivery-fee)). Nothing else here is about money: there is no tip yet,
+and a delivery is a sale like any other, counted in every report as a to-go order is.
 
 (Orders that come from a delivery app are something else: they arrive on their own channel, in a later
 phase.)
@@ -72,6 +73,59 @@ order for later the same line starts with its day and time.)
 - Once the kitchen has the ticket, the time stays as it is. Tell the customer yourself.
 
 The check's history keeps who changed what.
+
+## The delivery fee
+
+A location that charges for delivery lists its prices, and whoever takes a delivery picks the one that
+applies. **It is off until a manager lists the prices.** Until then nothing is added to anybody's check,
+and the forms are what they were.
+
+### Setting the prices
+
+Back office › Location › **Delivery fee**:
+
+- **Charge for delivery**: on or off.
+- **The fee goes by**: **Miles**, or **Minutes of the drive**.
+- **The prices**: each one is "up to so far, this much". For instance: up to 2 miles $3.00, up to 4.5
+  miles $5.00, up to 8 miles $8.50. Miles go to a tenth of a mile and minutes are whole. There can be up
+  to eight prices, and a price can be 0 for a free delivery close by. The hub keeps them nearest first.
+- **Charge sales tax on the fee**: off to start. Whether a delivery fee is taxed is for your accountant
+  to say. (Massachusetts leaves a delivery charge out of the sales tax when it is stated on its own on the
+  bill and is a fair price for the trip, DOR Directive 04-5; that directive does not speak of meals, so
+  ask. Nothing here is tax advice.)
+
+The row under Location says what is set: "$3.00 up to 2 mi, $5.00 up to 4.5 mi, $8.50 up to 8 mi".
+
+### Picking it on an order
+
+With the fee on, the to-go form shows the prices as buttons under the note for the driver once
+**Delivery** is tapped: each is headed by what it costs, over how far it reaches ("$5.00, Up to 4.5 mi"),
+and the last one is **No fee**. On a small phone, or with large type, a button has no room for "Up to 4.5
+mi" on one line: there it says "4.5 mi" and the heading says "Delivery fee, up to". The order cannot start
+until one is tapped, and the form says "Pick the delivery fee." **No fee** is an answer: for a regular, or
+to make up for a mistake. A catering order may leave it for later, like its address.
+
+On the order the same buttons are in **Pickup or delivery** (the chip beside Allergy, or the line under
+the bar). The fee is a line of the check, **Delivery fee**, under the subtotal, and a tap on that line
+opens the same buttons.
+
+- **The hub sets the amount.** A screen says only which price was picked, and the hub writes what that
+  price costs. Nobody types an amount.
+- **An order keeps the fee it was given.** When the prices are changed later, an order already taken is
+  charged what it was told. Its own fee then shows as a button of its own, "as taken", until another is
+  picked.
+- **Only a delivery is charged.** An order made a pickup is charged nothing for the trip. Made a delivery
+  again, the fee picked before is charged again.
+- **Anybody who takes orders picks the price**, and may pick No fee. It is not behind a manager's PIN. The
+  check's history says who picked what, and what it was before: "Delivery fee $8.50, up to 8 mi. It was
+  $5.00 · up to 4.5 mi."
+- **It is on the bill and in the sales.** The bill lists "Delivery fee" under the subtotal. The day's
+  report and the sales count it under **Charges**, never as a gratuity. A table that pays on several
+  checks shares it between them like any charge.
+- **Tax**: with the switch off the fee adds no tax, and the food is taxed as before. With it on, the fee
+  is taxed with the food. A check a manager marked tax exempt pays the fee and no tax.
+
+The fee is picked by hand for now. Working the distance out from the address is the next step.
 
 ## The papers
 
@@ -234,16 +288,22 @@ it and when.
 
 ## What it does not do
 
-- **No fee and no tip.** Nothing is added to the check for the trip. (The pricing rules have had an
-  automatic delivery fee since discounts were built, `discounts.md`, but it is for orders of the type
-  `delivery`, which no screen makes. An order taken here stays a to-go order, so no fee goes on by itself.
-  A delivery fee by distance or by the time of the drive is the next step.)
+- **The fee is picked, not worked out.** The POS does not measure how far an address is. Whoever takes
+  the order picks the price. Looking the distance up from the address is the next step.
+- **No fee by itself, and no tip.** A fee goes on a check only when somebody picked one. (The pricing
+  rules have had an automatic delivery fee since discounts were built, `discounts.md`, but it is for
+  orders of the type `delivery`, which no screen makes. It stays as it was, and is not this fee.)
+- **No amount typed by hand.** A delivery costs one of the listed prices or nothing.
+- **No line of its own in the reports.** Delivery fees are in **Charges** with any other charge.
+- **With no hub answering, the total on the screen leaves out a fee just picked** and says "Total
+  (updating)". The price is on the button that was tapped; the check adds it when the hub answers.
 - **The runs are on the screen only.** They are not printed, and there is no file of them.
 - **No money with the driver.** Nothing counts what a driver collected at doors or owes the drawer, and
   there is no driver's fee or tip. Taking the money for a delivery is recorded as on any to-go order, by
   whoever marks it delivered.
 - **No map, no distance, no delivery area.** The address is the words that were typed. It is never sent
-  to a service outside the restaurant.
+  to a service outside the restaurant. (Looking the distance up will send the address, and nothing else
+  about the customer, to the map service the owner picks.)
 - **The sale is the same.** A delivery is counted in the sales, the day's report and the accountant's
   table exactly as a to-go order is, and every payment on it is recorded on the day it is taken.
 
@@ -259,6 +319,10 @@ would refuse.
 
 Runs likewise: on a hub from before the runs, the Runs screen says "This hub does not list runs yet.
 Update the hub."
+
+The fee likewise: on a hub from before the fee, the forms show no prices, and the row under Location says
+"The hub has not answered about the delivery fee (an older hub: update it)". An app from before the fee on
+a new hub shows the fee on the check and cannot pick one; a tap on that line does nothing there.
 
 ## For developers
 
@@ -327,3 +391,28 @@ Runs:
 - App: `lib/runs.dart` (the answer and its words), `lib/screens/runs_screen.dart`, `PosApi.runs` (null
   from a hub older than the runs), opened by `deliveries-runs` on the Deliveries screen.
 - Tests: `backend/tests/orders/test_runs.py`, `apps/pos_app/test/runs_test.dart`.
+
+The delivery fee:
+
+- The setting `delivery_fee` (`pos.settings.clean_delivery_fee`, `GET/PUT /settings/delivery_fee`, a
+  manager's token to write): `enabled` (false to start), `by` (`miles` | `minutes`), `bands` (each
+  `{up_to, fee}`, `up_to` a string such as `"2"` or `"2.5"`, kept in order of reach, at most 8) and `taxed`.
+- The order field `delivery_fee` (`pos.orders.delivery_fee`). A screen sends the band alone,
+  `{"up_to": "4.5"}`, `{"up_to": null}` for no fee on purpose, or null to take the answer back. `fee_ops`
+  (in `append_ops`, after `bag_ops`) fills it in from the setting as it arrives:
+  `{by, up_to, amount, taxed}`. A band the setting does not list is refused (`invalid_delivery_fee`) and
+  left out, and whatever else the operation said is kept. Anything a screen sends beside `up_to` is
+  dropped, so no screen sets an amount.
+- The check (`pos.orders.check.check_for`): `fee_charged(fields)` gives the fee only while
+  `is_delivery(fields)` and the amount is above zero. It is a row of `charges` with the id `fee:delivery`
+  (not the pricing rule's code `delivery_fee`), `automatic: false`, `taxed`, and `delivery: {by, up_to}`.
+  Taxed, it is a taxable line of the class `delivery_fee` (the profile's own rule for it, else its default
+  rule); not taxed, it adds no base, on the order and on each check of a split (`pos.orders.split`).
+- History (`pos.orders.history`): a `delivery_fee` step with `now` and `was`, each the fee as
+  `fee_of` reads it or null. An order opened with its fee says it in a step after `opened`.
+- App: `lib/delivery_fee.dart` (`DeliveryFees`, `FeeBand`, `OrderFee`, `FeePick`),
+  `PosApi.deliveryFees` (null from a hub older than the fee) and `saveDeliveryFees`,
+  `lib/screens/fee_picker.dart` (the buttons, inside `EventFields`), `WhenDialog.fees` and `.fee`,
+  `TakeoutRequest.fee`, `CheckCharge.isDeliveryFee` (a tap opens `_changeWhen`),
+  `lib/screens/delivery_fee_dialog.dart` and the row `delivery-fee` under Location.
+- Tests: `backend/tests/orders/test_delivery_fee.py`, `apps/pos_app/test/delivery_fee_test.dart`.

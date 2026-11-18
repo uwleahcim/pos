@@ -5,7 +5,8 @@ is always reflected. Lines carry the price they were sold at (`priced`, set by t
 added); a line without one (the phase 0 demo screen) counts as zero and is flagged.
 
 Order of operations (architecture section 9): line discounts, then check discounts spread over the lines
-in proportion, then charges on the discounted subtotal, then tax on whatever each class taxes. A check a
+in proportion, then charges on the discounted subtotal (and a delivery's fee, pos.orders.delivery_fee), then
+tax on whatever each class taxes. A check a
 manager marked tax exempt (pos.orders.exempt) is charged no tax: `tax_exempt` says for whom, and how much
 tax that was.
 
@@ -23,6 +24,10 @@ from typing import Any
 from ..sync.oplog import Discount, OrderState
 from ..tax import TaxableLine, TaxProfile
 from .adjustments import ChargeRule, PricingRules
+from .delivery_fee import CHARGE_ID as FEE_ID
+from .delivery_fee import CHARGE_NAME as FEE_NAME
+from .delivery_fee import TAX_CLASS as FEE_TAX_CLASS
+from .delivery_fee import fee_charged
 from .exempt import exemption_of
 from .split import split_checks, split_of
 
@@ -124,7 +129,7 @@ def check_for(
 
     # Charges on the discounted subtotal: the rules' automatic ones unless taken off, plus the ones staff put on.
     charge_rows: list[dict[str, Any]] = []
-    charge_classes: list[str] = []  # beside each row: the class it is taxed as
+    charge_classes: list[str | None] = []  # beside each row: the class it is taxed as (None: it is not taxed)
     charge_total = ZERO
     taxable = [TaxableLine(line_id, tax_classes[line_id], amount) for line_id, amount in net.items()]
     guests = state.fields.get("guests")
@@ -152,6 +157,20 @@ def check_for(
         row["applied_by"] = charge.applied_by
         charge_rows.append(row)
         charge_classes.append(charge.tax_class)
+    # What a delivery costs, as it was picked when the order was taken (pos.orders.delivery_fee): a charge of
+    # its own, last, taxed only when the location says its fee is. `delivery` says which band it was.
+    fee = fee_charged(state.fields)
+    if fee is not None:
+        amount = cents(Decimal(fee["amount"]))
+        fee_class = FEE_TAX_CLASS if fee["taxed"] and _taxed(taxes, FEE_TAX_CLASS, order_type, on) else None
+        charge_total += amount
+        if fee_class is not None:
+            taxable.append(TaxableLine(f"charge:{FEE_ID}", fee_class, amount))
+        row = _charge_row(FEE_ID, FEE_NAME, "amount", fee["amount"], amount, False, False)
+        row["taxed"] = exempt is None and fee_class is not None
+        row["delivery"] = {"by": fee["by"], "up_to": fee["up_to"]}
+        charge_rows.append(row)
+        charge_classes.append(fee_class)
 
     # An empty check still names its tax lines (at 0.00), so a terminal knows the rates for its own estimate.
     tax_lines = taxes.compute(taxable or [TaxableLine("", "default", ZERO)], order_type, on)

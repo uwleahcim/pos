@@ -1,4 +1,5 @@
 import 'day_report.dart' show dollars, kindLabel, methodLabel;
+import 'delivery_fee.dart';
 import 'takeout.dart' show EventDetails, channelLabel, handoverLabel, stageLabel;
 import 'voids.dart' show checkName;
 
@@ -497,6 +498,20 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
       return (
         title: said['changed'] == true ? 'Changed what goes in the bag' : 'Asked what goes in the bag',
         under: [items.isEmpty ? 'Nothing' : items.join(', ')],
+      );
+    case 'delivery_fee':
+      // what a delivery costs the customer was picked, changed or taken back (docs/delivery.md)
+      final now = OrderFee.of(said['now']), was = OrderFee.of(said['was']);
+      return (
+        title: now == null
+            ? 'Delivery fee taken back'
+            : now.none
+            ? 'No delivery fee'
+            : 'Delivery fee ${feeWords(now.amount)}',
+        under: [
+          if (now != null && !now.none) reachWords(now.by!, now.upTo!),
+          if (was != null) 'It was ${was.none ? 'no fee' : was.words}',
+        ],
       );
     default:
       return (title: step.what, under: const []);

@@ -118,7 +118,7 @@ def split_checks(
     *,
     lines: Sequence[Mapping[str, Any]],
     taken: Sequence[tuple[Mapping[str, Any], Mapping[str, Decimal]]],
-    charges: Sequence[tuple[Mapping[str, Any], str]],
+    charges: Sequence[tuple[Mapping[str, Any], str | None]],
     tax_classes: Mapping[str, str],
     tax_lines: Sequence[TaxLine],
     taxes: TaxProfile,
@@ -191,7 +191,8 @@ def split_checks(
     for charge, tax_class in charges:
         for i, share in enumerate(prorate(Decimal(charge["amount"]), net)):
             charge_total[i] += share
-            taxable[i].append(TaxableLine(f"charge:{charge['charge_id']}", tax_class, share))
+            if tax_class is not None:  # a charge that is not taxed (a delivery fee, as a rule) adds no base
+                taxable[i].append(TaxableLine(f"charge:{charge['charge_id']}", tax_class, share))
             if share:
                 charged[i].append({"charge_id": charge["charge_id"], "name": charge["name"], "amount": _s(share)})
 

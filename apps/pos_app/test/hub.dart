@@ -105,6 +105,41 @@ class Hub {
   String? tableTimersAuth;
   String? refuseTableTimers;
 
+  /// What a delivery costs the customer (`GET/PUT /settings/delivery_fee`, docs/delivery.md, "The delivery
+  /// fee"), the token the last save carried and a reason to refuse the next save with. Null is a hub older
+  /// than the fee, which charges none: what the tests written before it still run against. [milesFees] is
+  /// a list by miles, as a location might set it.
+  Map<String, dynamic>? deliveryFees;
+  String? deliveryFeesAuth;
+  String? refuseDeliveryFees;
+  static Map<String, dynamic> get milesFees => {
+    'enabled': true,
+    'by': 'miles',
+    'bands': [
+      {'up_to': '2', 'fee': '3.00'},
+      {'up_to': '4.5', 'fee': '5.00'},
+      {'up_to': '8', 'fee': '8.50'},
+    ],
+    'taxed': false,
+  };
+
+  /// A band's reach as the hub writes it: "2", "2.5".
+  static String _reach(Object? value) => double.parse('$value').toString().replaceFirst(RegExp(r'\.0$'), '');
+
+  /// A picked fee as the hub fills it in from its prices: the band's price, what it goes by, whether it is
+  /// taxed. No band: no fee on purpose. A band it does not list: nothing is kept.
+  Map<String, dynamic>? _feeFor(Object? picked) {
+    if (picked is! Map) return null;
+    if (picked['up_to'] == null) return {'up_to': null, 'amount': '0.00'};
+    final fees = deliveryFees;
+    for (final band in (fees?['bands'] as List? ?? const []).cast<Map>()) {
+      if (band['up_to'] == _reach(picked['up_to'])) {
+        return {'by': fees!['by'], 'up_to': band['up_to'], 'amount': band['fee'], 'taxed': fees['taxed'] == true};
+      }
+    }
+    return null;
+  }
+
   /// The to-go question it keeps (`GET/PUT /settings/bag`, docs/to-go-question.md), the token the last save
   /// carried and a reason to refuse the next save with. Null is a hub older than the question, which a
   /// terminal sends its to-go orders to with nothing asked: what the tests written before it still run
@@ -2337,6 +2372,26 @@ class Hub {
           };
         }
         return json(bag!);
+      case '/settings/delivery_fee':
+        if (deliveryFees == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          deliveryFeesAuth = request.headers['authorization'];
+          if (refuseDeliveryFees != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseDeliveryFees},
+            }, 422);
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          deliveryFees = {
+            ...body,
+            // kept in order of how far they reach, each as the hub writes it
+            'bands': [
+              for (final band in (body['bands'] as List).cast<Map>())
+                {'up_to': _reach(band['up_to']), 'fee': double.parse('${band['fee']}').toStringAsFixed(2)},
+            ]..sort((a, b) => double.parse(a['up_to']!).compareTo(double.parse(b['up_to']!))),
+          };
+        }
+        return json(deliveryFees!);
       case '/settings/kitchen_notes':
         if (kitchenNotes == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {
@@ -2780,6 +2835,12 @@ class Hub {
         case 'set_field' when data.containsKey('bag'):
           // what goes in the bag of a to-go order, answered
           (order['fields'] as Map)['bag'] = data['bag'];
+        case 'set_field' when data.containsKey('delivery_fee'):
+          // what a delivery costs, picked: the hub fills in the band's price
+          order['fields'] = <String, dynamic>{
+            ...(order['fields'] as Map).cast<String, dynamic>(),
+            'delivery_fee': _feeFor(data['delivery_fee']),
+          };
         case 'set_field' when keepsStages && (data.containsKey('stage') || data.containsKey('driver')):
           // a to-go order's step, and who a delivery left with (docs/delivery.md)
           // a map of its own: the one a test wrote may hold no nulls, and coming back names nobody

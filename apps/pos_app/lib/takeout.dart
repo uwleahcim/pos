@@ -246,6 +246,7 @@ class TakeoutRequest {
     this.again,
     this.note,
     this.event,
+    this.fee,
   });
 
   final String name;
@@ -266,6 +267,10 @@ class TakeoutRequest {
   /// What a catering order's event needs, and on any other order where it is brought to and the note for
   /// the driver; null on an order the customer comes for.
   final EventDetails? event;
+
+  /// What a delivery costs, as the form picked it (a `FeePick`: a band's reach, or none on purpose); null
+  /// where nobody picked, or no fee is charged.
+  final String? fee;
 }
 
 /// What the pay-first dialog hands back: cash with what was tendered, paid elsewhere with a note, or

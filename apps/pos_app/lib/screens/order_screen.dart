@@ -11,6 +11,7 @@ import '../bag.dart';
 import '../check_order.dart';
 import '../coursing.dart';
 import '../customers.dart';
+import '../delivery_fee.dart';
 import '../dish_names.dart';
 import '../kitchen_word.dart';
 import '../line_ops.dart';
@@ -125,6 +126,8 @@ class _OrderScreenState extends State<OrderScreen> {
   String? _noteFor; // the number's digits it was read for
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
+  DeliveryFees? _fees; // what a delivery costs here, read once for a to-go order; null where none is charged
+  bool _feesAsked = false;
   Future<BagQuestion?>? _bagRead; // the to-go question as the location set it, being read or read
   bool _billing = false; // a bill is on its way to the printer: the button waits
   bool _packing = false; // so is a pack sheet
@@ -150,6 +153,20 @@ class _OrderScreenState extends State<OrderScreen> {
     unawaited(_readAllergens());
     final fresh = _order; // a to-go order opened here a moment ago: no hub has it yet
     if (fresh != null) unawaited(_readQuotes(fresh));
+    if (fresh != null) unawaited(_readFees(fresh));
+  }
+
+  /// What a delivery costs here, once, for a to-go order: the buttons of "Pickup or delivery". Nothing
+  /// answers and nothing was saved: no fee is asked.
+  Future<void> _readFees(Order order) async {
+    if (_feesAsked || !order.isTakeout) return;
+    _feesAsked = true;
+    try {
+      final fees = await widget.api.deliveryFees();
+      if (mounted && fees != null) setState(() => _fees = fees);
+    } on ApiException {
+      _feesAsked = false; // asked again when the order is next read
+    }
   }
 
   /// The quote times, once, for a to-go order the kitchen does not have yet: what a big order adds shows
@@ -291,6 +308,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
         unawaited(_readQuotes(order));
+        unawaited(_readFees(order));
         if (order.isTakeout && order.isOpen) unawaited(_bagQuestion()); // read by the time Send is tapped
       }
     } on ApiException {
@@ -652,8 +670,14 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   /// An automatic charge (the gratuity on a large party) comes off only with a manager when the rules say
-  /// so; one that staff put on comes off freely.
+  /// so; one that staff put on comes off freely. A delivery's fee is no such charge: it was picked with how
+  /// the order leaves, and a tap opens that again ("No fee" is among its buttons).
   Future<void> _removeCharge(CheckCharge charge) async {
+    if (charge.isDeliveryFee) {
+      final order = _order;
+      if (order != null) await _changeWhen(order);
+      return;
+    }
     String? approval;
     if (charge.automatic) {
       final bool needsManager;
@@ -863,6 +887,8 @@ class _OrderScreenState extends State<OrderScreen> {
         promised: named ? DateTime.fromMillisecondsSinceEpoch(promised) : null,
         event: had,
         catering: order.isCatering,
+        fees: _fees,
+        fee: order.deliveryFee,
       ),
     );
     if (asked == null || !mounted) return;
@@ -873,6 +899,8 @@ class _OrderScreenState extends State<OrderScreen> {
       if (to != null && to != promised) 'promised_at': to,
       for (final MapEntry(:key, :value) in now.entries)
         if (value != was[key]) key: value,
+      // what the delivery costs, when another band (or none) was picked: the hub fills in the amount
+      if (asked.fee case final fee?) 'delivery_fee': FeePick.field(fee),
     };
     if (changed.isEmpty) return;
     String? said;
