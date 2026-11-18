@@ -12,6 +12,7 @@ import '../check_order.dart';
 import '../coursing.dart';
 import '../customers.dart';
 import '../dish_names.dart';
+import '../kitchen_word.dart';
 import '../line_ops.dart';
 import '../live.dart';
 import '../local_order.dart';
@@ -39,6 +40,7 @@ import 'lot_comp_dialog.dart';
 import 'menu_editor.dart' show ManagerPinDialog;
 import 'menu_panel.dart';
 import 'pay_dialog.dart';
+import 'ready_mark.dart';
 import 'split_screen.dart';
 import 'status_bar.dart';
 import 'tab_dialog.dart';
@@ -128,6 +130,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _sentHere = false; // dishes were sent to the kitchen from this screen since it opened
   final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
+  int _readyShown = 0; // how many dishes the Ready strip names as drawn: the clock takes them off in time
   late String? _course = widget.coursing.enabled ? widget.coursing.defaultCourse : null; // null: not coursed
 
   @override
@@ -135,6 +138,8 @@ class _OrderScreenState extends State<OrderScreen> {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_poll.due()) _refresh();
+      // a dish that has waited too long to still be at the pass leaves the Ready strip by itself
+      if (_readyShown != _readyLines(_order).length) setState(() {});
     });
     _live = widget.api.live.changes.listen((change) {
       if (change.touches(widget.orderId)) _reader();
@@ -377,6 +382,42 @@ class _OrderScreenState extends State<OrderScreen> {
   };
 
   Future<void> _append(String kind, [Map<String, dynamic> data = const {}]) => _appendAll([(kind, data)]);
+
+  /// The dishes of the check that the kitchen marked made and nobody said went out, while they are still
+  /// pointed at ([readyShownMs]): what the Ready strip names.
+  List<Line> _readyLines(Order? order) {
+    if (order == null || !order.isOpen) return const [];
+    final now = (widget.now ?? _deviceNow)();
+    return [
+      for (final line in order.activeLines)
+        if (line.kitchen?.waitsAt(now) ?? false) line,
+    ];
+  }
+
+  /// The server carried these dishes to the table: they went out. It is the word the pass says at its own
+  /// screen (a `done` named for the pass), so the dishes leave that screen too, and it changes nothing of
+  /// the check. Undo takes it back.
+  Future<void> _wentOut(List<Line> lines) async {
+    final ids = [for (final line in lines) line.lineId];
+    if (ids.isEmpty) return;
+    final who = {'by': ?_staffName, 'by_id': ?_staffId};
+    await _append('done', {'station': passStation, 'line_ids': ids, ...who});
+    if (!mounted) return;
+    final count = lines.fold(0, (n, line) => n + line.qty);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          key: const ValueKey('went-out-said'),
+          content: Text(count == 1 ? '1 dish went out.' : '$count dishes went out.'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () =>
+                unawaited(_append('done', {'station': passStation, 'line_ids': ids, 'done': false, ...who})),
+          ),
+        ),
+      );
+  }
 
   /// Operations that belong together go in one batch, so the kitchen gets one ticket for a change. A dish
   /// taken off, or fewer of one kept, says who did it: nothing is asked for an unsent dish, and the hub's
@@ -1401,6 +1442,9 @@ class _OrderScreenState extends State<OrderScreen> {
     final open = order?.isOpen ?? true;
     final seats = _seats(order);
     final told = order?.allergies ?? const <Allergy>[];
+    final ready = _readyLines(order);
+    _readyShown = ready.length;
+    final chinese = DishLanguage.chineseOf(context);
     // offered once the hub has said what the menu names (a hub older than allergies never does)
     final allergyChip = order == null || _allergens == null
         ? null
@@ -1534,6 +1578,15 @@ class _OrderScreenState extends State<OrderScreen> {
               _AllergyStrip(
                 words: allergySummary(told, _allergenNames, seated: order.hasTable),
                 onTap: open && _allergens != null ? () => _noteAllergy(order) : null,
+              ),
+            // food the kitchen has made for this check that waits to be carried, and the word that it went
+            if (ready.isNotEmpty)
+              _ReadyStrip(
+                dishes: [
+                  for (final line in ready)
+                    (qty: line.qty, name: (chinese ? line.zhName ?? _local[line.lineId]?.zhName : null) ?? line.item),
+                ],
+                onOut: () => unawaited(_wentOut(ready)),
               ),
             if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
             // an order for later says its day and time, and a catering order what its event needs; a tap
@@ -1937,12 +1990,17 @@ class _TicketPanelState extends State<_TicketPanel> {
         : child;
     final on = _placed.isSplit && line.isActive ? _placed.on[line.lineId] : null;
     final sentAt = row.sentMs; // a dish that went later than its course's header says: it says its own time
+    // what the kitchen has said of it: ready, gone out, or one of its stations still cooking
+    final said = line.isActive ? line.kitchen : null;
+    final saidWords = said?.words;
+    // how long ago it was sent counts while the table waits for it: not once it is ready or went out
+    final waited = said?.readyMs != null || (said?.isOut ?? false);
     List<String> wordsAt(int? now) => [
       // on a split table: the check the dish is on, or the checks it is shared between
       if (on != null) on.length == 1 ? 'check ${on.single}' : 'shared by checks ${on.join(', ')}',
       if (line.isVoid) line.voidReason.isEmpty ? 'void' : 'void · ${line.voidReason}',
       if (line.isActive && !line.fired && row.courseState != 'held') 'not sent yet',
-      if (sentAt != null) sentWords(sentAt, nowMs: now),
+      if (sentAt != null) sentWords(sentAt, nowMs: waited ? null : now),
       if (line.isActive && line.modifiedAfterFire) 'added after fire',
       if (line.note.isNotEmpty) line.note,
       // a dish someone other than the order's server added, with hands-free switching
@@ -1970,6 +2028,10 @@ class _TicketPanelState extends State<_TicketPanel> {
         )
       else if (words.isNotEmpty)
         _SubLine(words.join(' · '), key: sentAt == null ? null : ValueKey('sent:${line.lineId}')),
+      // last, the kitchen's word: green while the dish waits to be carried, plain once it went out, and on a
+      // check that is closed (nobody is coming for that food)
+      if (saidWords != null)
+        _SubLine(saidWords, key: ValueKey('kitchen:${line.lineId}'), good: said!.isReady && widget.open),
     ];
     final tile = ListTile(
       key: _keys.putIfAbsent(line.lineId, GlobalKey.new),
@@ -2196,7 +2258,7 @@ class _Price extends StatelessWidget {
 /// on it and what it took off ("(30.00)"), or its state ("not sent yet", a kitchen note). A choice on a
 /// choice that is a dish (the sauce on a roll of the maki combination) sits one step further in.
 class _SubLine extends StatelessWidget {
-  const _SubLine(this.label, {super.key, this.amount, this.depth = 0, this.alert = false});
+  const _SubLine(this.label, {super.key, this.amount, this.depth = 0, this.alert = false, this.good = false});
 
   final String label;
   final String? amount;
@@ -2204,6 +2266,9 @@ class _SubLine extends StatelessWidget {
 
   /// A warning (a dish that contains what the guest is allergic to): red and bold.
   final bool alert;
+
+  /// Good news that asks for a hand (the kitchen has the dish ready): green and bold.
+  final bool good;
 
   /// How far each level of choices moves in.
   static const indent = 12.0;
@@ -2213,6 +2278,8 @@ class _SubLine extends StatelessWidget {
     final theme = Theme.of(context);
     final style = alert
         ? theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error, fontWeight: FontWeight.w700)
+        : good
+        ? theme.textTheme.bodySmall?.copyWith(color: PosColors.of(context).firedText, fontWeight: FontWeight.w700)
         : theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final amount = this.amount;
     return Row(
@@ -2587,6 +2654,57 @@ class _AllergyStrip extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The dishes the kitchen has made for this check that wait to be carried, in a green strip under the app
+/// bar: "Ready: 2 × Fried Rice, Beef Chow Fun", with the button that says they went out. It is over the
+/// check and the menu alike, since on a phone they are two tabs.
+class _ReadyStrip extends StatelessWidget {
+  const _ReadyStrip({required this.dishes, required this.onOut});
+
+  final List<({int qty, String name})> dishes;
+  final VoidCallback onOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = PosColors.of(context);
+    final (fill, ink) = readyColors(context);
+    final names = [for (final dish in dishes) dish.qty == 1 ? dish.name : '${dish.qty} × ${dish.name}'];
+    return Material(
+      key: const ValueKey('ready-strip'),
+      color: colors.fired,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 8, 4),
+        child: Row(
+          children: [
+            Icon(readyIcon, size: 18, color: colors.firedText),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Ready: ${names.join(', ')}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(color: colors.firedText, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              key: const ValueKey('went-out'),
+              onPressed: onOut,
+              style: FilledButton.styleFrom(
+                backgroundColor: fill,
+                foregroundColor: ink,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('Went out'),
+            ),
+          ],
         ),
       ),
     );

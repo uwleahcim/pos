@@ -162,7 +162,8 @@ def test_the_mark_is_the_kitchens_word_and_changes_nothing_of_the_check():
     after = c.get("/orders/o1").json()["lines"]
     assert set(after) == set(lines)  # a dish the check never had is not made up by a mark
     assert after["L0-1"]["done"] == {"wok": T0 + 60} and lines["L0-1"]["done"] == {}
-    assert {**after["L0-1"], "done": {}} == lines["L0-1"]  # the dish is as it was, but for the mark
+    marked = {k: v for k, v in after["L0-1"].items() if k != "kitchen"}  # what the floor reads off the mark
+    assert {**marked, "done": {}} == lines["L0-1"]  # the dish is as it was, but for the mark
 
 
 def test_the_latest_word_of_a_station_on_a_dish_stands_whatever_order_it_arrives_in():
@@ -483,6 +484,7 @@ def test_the_word_of_the_pass_changes_nothing_of_the_check():
     assert c.get("/orders/o1/history", headers=boss).json() == told
     assert [job.job_id for job in c.app.state.printing.store.all()] == paper
     after = c.get("/orders/o1").json()["lines"]["L0-1"]
+    assert after.pop("kitchen")["out_ms"] == T0 + 60  # what the floor reads off the word (pos.printing.made)
     assert after["done"] == {PASS: T0 + 60} and {**after, "done": {}} == line
 
 

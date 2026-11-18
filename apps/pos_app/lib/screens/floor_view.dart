@@ -11,6 +11,7 @@ import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
 import '../roster.dart';
+import 'ready_mark.dart';
 import 'theme.dart';
 
 /// The restaurant's floor as drawn on its plan: tables coloured by what is happening at them, a room picker,
@@ -411,6 +412,36 @@ class FloorViewState extends State<FloorView> {
                                         ),
                                       ),
                                     ),
+                                  // Dishes the kitchen marked made that wait to be carried: a badge on the
+                                  // table's lower edge (the countdown's is on the upper), until they went out
+                                  // or have waited too long to still be there.
+                                  for (final t in shown)
+                                    if (plan.checksAt(t.id).any((check) => check.ready > 0))
+                                      Positioned(
+                                        left: t.x - left - _ReadyBadge.width / 2,
+                                        top:
+                                            t.y -
+                                            top +
+                                            math.max(t.h, _TablePositioned._minSide) / 2 -
+                                            _ReadyBadge.height / 2,
+                                        width: _ReadyBadge.width,
+                                        height: _ReadyBadge.height,
+                                        child: IgnorePointer(
+                                          child: _Ticking<int>(
+                                            clock: _clock,
+                                            read: (now) => plan.readyAt(t.id, now),
+                                            builder: (context, count) => count == 0
+                                                ? const SizedBox.shrink()
+                                                : _Faded(
+                                                    faded: faded(t.id),
+                                                    child: _ReadyBadge(
+                                                      key: ValueKey('ready-badge:${t.id}'),
+                                                      count: count,
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                      ),
                                 ],
                               ),
                             ),
@@ -773,6 +804,55 @@ class _TimerBadge extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The badge on a table with dishes the kitchen marked made that have not gone out: "2 ready". It stands on
+/// the table's lower edge, so a table can wear it and its countdown's badge at once.
+class _ReadyBadge extends StatelessWidget {
+  const _ReadyBadge({super.key, required this.count});
+
+  final int count;
+
+  /// The room a badge is given on the plan, centred on the bottom of its table (plan units).
+  static const width = 52.0, height = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final (fill, ink) = readyColors(context);
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 3.5, vertical: 1),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(7),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 2, offset: const Offset(0, 1)),
+          ],
+        ),
+        // (a count of two figures, or a wider typeface, is drawn smaller sooner than cut off)
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(readyIcon, size: 8.5, color: ink),
+              const SizedBox(width: 1.5),
+              Text(
+                '$count ready',
+                style: TextStyle(
+                  fontSize: 8.5,
+                  height: 1.1,
+                  fontWeight: FontWeight.w800,
+                  color: ink,
+                  fontFeatures: PosTheme.tabular,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1282,8 +1362,9 @@ class _MyTableRow extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              // The minutes and what the table waits on follow the clock; nothing else here does.
-              child: _Ticking<(int, TimerLevel?, String)>(
+              // The minutes, what the table waits on and whether its food is ready follow the clock; nothing
+              // else here does.
+              child: _Ticking<(int, TimerLevel?, String, int)>(
                 clock: clock,
                 read: (now) {
                   final at = plan.countdownAt(table.id, now);
@@ -1291,10 +1372,12 @@ class _MyTableRow extends StatelessWidget {
                     checks.map((c) => c.minutesOpen(now)).fold(0, math.max),
                     at?.level,
                     at == null ? _stageInWords(check.stage) : countdownInWords(at),
+                    checks.fold(0, (n, c) => n + c.readyAt(now)),
                   );
                 },
                 builder: (context, shown) {
-                  final (minutes, level, waits) = shown;
+                  final (minutes, level, waits, ready) = shown;
+                  final (readyFill, readyInk) = readyColors(context);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1316,6 +1399,28 @@ class _MyTableRow extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 2),
+                      // Food the kitchen has made for the table comes first: it is getting cold
+                      if (ready > 0)
+                        Container(
+                          key: ValueKey('my-table-ready:${table.id}'),
+                          margin: const EdgeInsets.only(top: 1, bottom: 3),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: readyFill, borderRadius: BorderRadius.circular(6)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(readyIcon, size: 14, color: readyInk),
+                              const SizedBox(width: 4),
+                              Text(
+                                readyInWords(ready),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: readyInk,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       // Running out or out of time: the words wear the map's badge colours, which read on
                       // a light screen and a dark one alike.
                       if (level == TimerLevel.warn || level == TimerLevel.late)

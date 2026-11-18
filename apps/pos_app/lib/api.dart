@@ -19,6 +19,7 @@ import 'floor.dart';
 import 'guests_report.dart';
 import 'kitchen_notes.dart';
 import 'kitchen_screen.dart';
+import 'kitchen_word.dart';
 import 'live.dart';
 import 'menu.dart';
 import 'orders_ahead.dart';
@@ -76,6 +77,7 @@ class Line {
     this.voidReason = '',
     this.allergy = const [],
     this.checks,
+    this.kitchen,
     this.pending = false,
   });
 
@@ -104,6 +106,7 @@ class Line {
         if (code is String) code,
     ],
     checks: checkNumbers(json['checks']),
+    kitchen: KitchenWord.fromJson(json['kitchen']),
   );
 
   final String lineId;
@@ -157,6 +160,11 @@ class Line {
   /// null while nobody did, and the split's own rule places it (its seat's check, or the first).
   final List<int>? checks;
 
+  /// What the kitchen has said of the dish, as the hub reads the cooks' marks: ready, gone out, or one of
+  /// its stations still working on it. Null while the kitchen has said nothing, which is every dish of a
+  /// kitchen that works off paper, and from a hub older than these words.
+  final KitchenWord? kitchen;
+
   bool get isActive => status == 'active';
   bool get isVoid => status == 'void';
 
@@ -168,7 +176,7 @@ class Line {
   final bool pending;
 
   /// The same line with some fields changed; [clearCourse] takes the course off and [clearChecks] puts the
-  /// dish back where the split places it.
+  /// dish back where the split places it. [kitchen] is the kitchen's word as it stands now.
   Line copyWith({
     String? status,
     bool? fired,
@@ -182,6 +190,7 @@ class Line {
     double? rank,
     List<int>? checks,
     bool clearChecks = false,
+    KitchenWord? kitchen,
   }) => Line(
     lineId: lineId,
     item: item,
@@ -204,6 +213,7 @@ class Line {
     voidReason: voidReason,
     allergy: allergy,
     checks: clearChecks ? null : checks ?? this.checks,
+    kitchen: kitchen ?? this.kitchen,
     pending: pending ?? this.pending,
   );
 }

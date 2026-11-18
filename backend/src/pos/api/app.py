@@ -58,6 +58,7 @@ from ..printing import discover
 from ..printing.bill import SAMPLE, bill_for
 from ..printing.held import default_held
 from ..printing.jobs import PrintJob
+from ..printing.made import kitchen_words, ready_of, with_kitchen
 from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
 from ..push.apns import ApnsSender, sender_from_env
@@ -1102,11 +1103,17 @@ def create_app(
 
     @app.get("/orders/{order_id}")
     def read_order(order_id: str) -> Response:
+        """An order as the log replays it. A dish the kitchen has spoken of carries its word under `kitchen`
+        (`pos.printing.made`): the stations that cook it and whether each has `made` its part (`cooks`), when
+        it was ready (`ready_ms`: every one of them has) and when it went out (`out_ms`). A dish nobody
+        marked has none, so a kitchen that works off paper answers as it always did."""
         store: OpStore | PgOpStore = app.state.store
         state = store.view(order_id)
         if state is None:
             raise HTTPException(404, "no such order")
-        return polled(state.snapshot())
+        printing: PrintService = app.state.printing
+        words = kitchen_words(state, skips=printing.skips, station_names=printing.station_names())
+        return polled(with_kitchen(state.snapshot(), words))
 
     @app.get("/orders/{order_id}/again")
     def read_same_again(order_id: str) -> dict[str, Any]:
@@ -1200,6 +1207,9 @@ def create_app(
         is waiting on and since when (`timer`: a stage and `since_ms`, from the order log), and `timers` holds
         the location's warning times for each stage, so the map can draw a ring that drains as the time runs.
         Each check names its server (`server`, `server_id`): whoever opened the table, or whoever it was given to.
+        A check with dishes the kitchen marked made that have not gone out says how many (`ready`) and when the
+        last of them was made (`ready_ms`), for the mark that tells a server the food is up; how long the map
+        shows it is the map's to say.
         Nothing here moves with the clock: an answer stays the same until an order or a setting changes."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
@@ -1211,7 +1221,12 @@ def create_app(
                 **plan.as_json(),
                 "courses": coursing["courses"] if coursing["enabled"] else [],  # what a line can be coursed by now
                 "timers": app.state.settings.get("table_timers"),
-                "status": table_status(open_states, totals, [c["id"] for c in coursing["courses"]]),
+                "status": table_status(
+                    open_states,
+                    totals,
+                    [c["id"] for c in coursing["courses"]],
+                    ready=lambda state: ready_of(state, skips=app.state.printing.skips),
+                ),
                 "moves": True,  # a table's check can move and merge here (pos.orders.moves)
                 "cursor": store.cursor,
             }

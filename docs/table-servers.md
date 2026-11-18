@@ -60,6 +60,8 @@ A tap turns it on:
   **listed beside the map**: the one that most needs a look first, each with its guests, how long it has sat,
   what it waits on ("Held 16 min · 9 min left") and what it has run up. A tap opens the table. A phone and a
   tablet held upright keep the whole width for the map.
+- A table whose food the kitchen has made says so in green on its row ("2 dishes ready"), as its badge on
+  the map does (`kitchen-screens.md`, "What the servers see").
 
 A second tap shows every table the same again.
 
