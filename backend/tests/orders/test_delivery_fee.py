@@ -32,6 +32,8 @@ MILES = {
     "taxed": False,
 }
 MINUTES = {"enabled": True, "by": "minutes", "bands": [{"up_to": 10, "fee": 3}, {"up_to": 20, "fee": "6.5"}]}
+NO_LOOKUP = {"origin": "", "maps": False, "lookup": False}
+"""What a hub with no map service says beside the prices (tests/orders/test_delivery_distance.py)."""
 
 
 def priced(c, fee: dict = MILES) -> dict:
@@ -67,7 +69,8 @@ def carried(c, order_id: str = "o1"):
 
 def test_no_fee_is_charged_until_the_owner_lists_the_prices():
     c = client()
-    assert c.get("/settings/delivery_fee").json() == {"enabled": False, "by": "miles", "bands": [], "taxed": False}
+    off = {"enabled": False, "by": "miles", "bands": [], "taxed": False}
+    assert c.get("/settings/delivery_fee").json() == {**off, **NO_LOOKUP}
     brought(c)
     assert check(c)["charges"] == [] and check(c)["total"] == "10.71"
     # and a band cannot be picked: there is none
@@ -88,17 +91,18 @@ def test_a_manager_lists_the_prices_by_miles_or_by_minutes():
     refused = c.put("/settings/delivery_fee", json=asked, headers={"authorization": f"Bearer {server}"})
     assert refused.status_code == 403
     # kept in order of how far they reach, each as "up to 2.5" and dollars and cents
-    assert priced(c, asked) == MILES
-    assert c.get("/settings/delivery_fee").json() == MILES
+    assert priced(c, asked) == {**MILES, **NO_LOOKUP}
+    assert c.get("/settings/delivery_fee").json() == {**MILES, **NO_LOOKUP}
     assert priced(c, MINUTES) == {
         "enabled": True,
         "by": "minutes",
         "bands": [{"up_to": "10", "fee": "3.00"}, {"up_to": "20", "fee": "6.50"}],
         "taxed": False,
+        **NO_LOOKUP,
     }
     # turned off, the prices may stay listed for the day it is turned on again, or go
     assert priced(c, {**MILES, "enabled": False})["bands"] == MILES["bands"]
-    assert priced(c, {"enabled": False}) == DEFAULTS["delivery_fee"]
+    assert priced(c, {"enabled": False}) == {**DEFAULTS["delivery_fee"], **NO_LOOKUP}
 
 
 def test_what_the_prices_refuse():

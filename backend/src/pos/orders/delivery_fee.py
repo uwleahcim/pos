@@ -13,6 +13,12 @@ goes by and whether the fee is taxed. So an order keeps the fee it was given whe
 and no screen can make up an amount. A band the location does not list is left out and reported, like a
 refused discount.
 
+With a map service on the hub (`pos.maps`) the form asks how far the address is and picks the band for it
+(`band_for`); whoever takes the order can still tap another. What the map said then travels with the pick,
+`{"up_to": "4.5", "measured": {"miles": "3.2", "minutes": 9}}`, and is kept beside the fee, so the history of
+a check shows a fee that was picked against the map. It is what the screen was told, kept as a note: it
+never changes what the band costs.
+
 The check charges it only while the order is a delivery (`pos.orders.check`): one changed to pickup keeps
 what was picked and is charged nothing. It is a charge of its own on the check and on the bill, "Delivery
 fee", and it is in the sales with the other charges; it is never a gratuity, and nothing here says who the
@@ -44,6 +50,9 @@ BANDS_MAX = 8
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
 TENTH = Decimal("0.1")
+MEASURED_MILES_MAX = Decimal(1000)
+MEASURED_MINUTES_MAX = 24 * 60
+"""What the map may have said and still be kept: further is no delivery."""
 
 
 def measure(value: Any, by: str) -> Decimal | None:
@@ -93,9 +102,44 @@ def band_of(setting: Mapping[str, Any], up_to: Any) -> dict[str, str] | None:
     return None
 
 
+def band_for(setting: Mapping[str, Any], miles: Decimal, minutes: int) -> dict[str, str] | None:
+    """The band a delivery this far falls in: the nearest one of the location's list that reaches it. None
+    when it is further than the last band reaches, or no fee is charged."""
+    by = setting.get("by")
+    if setting.get("enabled") is not True or by not in MEASURES:
+        return None
+    far = miles if by == "miles" else Decimal(minutes)
+    reaches = [(measure(band.get("up_to"), by), band) for band in setting.get("bands") or ()]
+    for reach, band in sorted(((r, b) for r, b in reaches if r is not None), key=lambda entry: entry[0]):
+        if far <= reach:
+            return {"up_to": measure_text(reach), "fee": str(band["fee"])}
+    return None
+
+
+def measured_of(value: Any) -> dict[str, Any] | None:
+    """What the map said of a delivery, as a pick carries it: `{"miles": "3.2", "minutes": 9}`. None when
+    the pick carries none, or it cannot be read."""
+    told = value.get("measured") if isinstance(value, Mapping) else None
+    if not isinstance(told, Mapping):
+        return None
+    miles, minutes = told.get("miles"), told.get("minutes")
+    if isinstance(miles, bool) or not isinstance(miles, int | float | str | Decimal):
+        return None
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 < minutes <= MEASURED_MINUTES_MAX:
+        return None
+    try:
+        far = Decimal(str(miles).strip())
+    except InvalidOperation:
+        return None
+    if not far.is_finite() or far < ZERO or far > MEASURED_MILES_MAX or far != far.quantize(TENTH):
+        return None
+    return {"miles": format(far.quantize(TENTH), "f"), "minutes": minutes}
+
+
 def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     """What an order carries of its delivery fee, or None while nobody said: `amount` (dollars, "0.00" for
-    no fee on purpose), `by` and `up_to` (the band it was picked by; None with no fee) and `taxed`."""
+    no fee on purpose), `by` and `up_to` (the band it was picked by; None with no fee), `taxed`, and, only
+    when the map was asked, `measured`: what it said of the address when the fee was picked."""
     value = fields.get(FIELD)
     if not isinstance(value, Mapping):
         return None
@@ -104,9 +148,11 @@ def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     by = value.get("by")
     reach = measure(value.get("up_to"), by) if by in MEASURES else None
+    measured = measured_of(value)
+    told = {} if measured is None else {"measured": measured}
     if reach is None:
-        return {"by": None, "up_to": None, "amount": "0.00", "taxed": False} if amount == ZERO else None
-    return {"by": by, "up_to": measure_text(reach), "amount": str(amount), "taxed": value.get("taxed") is True}
+        return {"by": None, "up_to": None, "amount": "0.00", "taxed": False, **told} if amount == ZERO else None
+    return {"by": by, "up_to": measure_text(reach), "amount": str(amount), "taxed": value.get("taxed") is True, **told}
 
 
 def fee_charged(fields: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -139,6 +185,8 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
                 problem = "a delivery fee names the band it was picked by"
             elif wanted.get("up_to") is None:
                 data[FIELD] = {"up_to": None, "amount": "0.00"}  # no fee, on purpose
+                if (told := measured_of(wanted)) is not None:
+                    data[FIELD]["measured"] = told
             else:
                 listed = setting() if listed is None else listed
                 band = band_of(listed, wanted["up_to"])
@@ -155,6 +203,8 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
                         "amount": band["fee"],
                         "taxed": listed.get("taxed") is True,
                     }
+                    if (told := measured_of(wanted)) is not None:
+                        data[FIELD]["measured"] = told
             if problem:
                 refused.append({"op_id": op.op_id, "error": "invalid_delivery_fee", "message": problem})
                 del data[FIELD]
@@ -179,11 +229,13 @@ __all__ = [
     "MILES_MAX",
     "MINUTES_MAX",
     "TAX_CLASS",
+    "band_for",
     "band_of",
     "fee_charged",
     "fee_of",
     "fee_ops",
     "measure",
     "measure_text",
+    "measured_of",
     "money",
 ]

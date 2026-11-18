@@ -38,6 +38,7 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
+from ..maps import ADDRESS_MAX, LookupFailed, Lookups, lookups_from_env
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
@@ -47,7 +48,7 @@ from ..orders.bag import bag_ops
 from ..orders.callers import last_order, phone_digits
 from ..orders.check import charge_snapshot, check_for
 from ..orders.counts import count_ops
-from ..orders.delivery_fee import fee_ops
+from ..orders.delivery_fee import band_for, fee_ops
 from ..orders.exempt import exempt_ops
 from ..orders.moves import carried, carry_ops
 from ..orders.numbers import OrderNumbers
@@ -398,6 +399,15 @@ class DeliveryFeeIn(BaseModel):
     by: str = Field("miles", description="miles: by how far it goes; minutes: by how long the drive is")
     bands: list[FeeBandIn] = Field(default_factory=list)
     taxed: bool = Field(False, description="whether sales tax is charged on the fee")
+    origin: str | None = Field(
+        None,
+        max_length=1000,
+        description="the restaurant's own address, where a looked-up distance starts; left out: kept as it is",
+    )
+
+
+class DistanceIn(BaseModel):
+    address: str = Field(max_length=1000, description="where a delivery goes, as it was typed")
 
 
 class VoidsIn(BaseModel):
@@ -795,6 +805,7 @@ def create_app(
     pricing: PricingRules | None = None,
     settings: SettingStore | None = None,
     messenger: Messenger | None = None,
+    lookups: Lookups | None = None,
     location: str | None = None,
     numbers: OrderNumbers | None = None,
     today: Callable[[], date] | None = None,
@@ -862,6 +873,8 @@ def create_app(
         else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0", held=default_held())
     )
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
+    # how far a delivery goes, asked of a map service when the hub has a key for one (docs/delivery.md)
+    app.state.lookups = lookups if lookups is not None else lookups_from_env()
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
@@ -1495,22 +1508,81 @@ def create_app(
         manager_from(app.state.tokens, authorization)
         return write_setting("bag", body.model_dump(), clean_bag)
 
+    def delivery_fee_now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """The fee's setting as a screen is told it: with `maps`, whether this hub has a map service to ask,
+        and `lookup`, whether a delivery's distance is looked up (a service, and the restaurant's own address
+        to start from)."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        told = dict(setting if setting is not None else settings.get("delivery_fee"))
+        return {**told, "maps": lookups.ready, "lookup": lookups.ready and bool(told.get("origin"))}
+
     @app.get("/settings/delivery_fee")
     def read_delivery_fee() -> dict[str, Any]:
         """What a delivery costs the customer: `enabled`, whether a fee is charged at all; `by`, whether it
         goes by `miles` or by the `minutes` of the drive; `bands`, the prices in order of how far they
-        reach, each `{up_to, fee}`; `taxed`, whether sales tax is charged on it. The band picked for an
-        order is its `delivery_fee` field (`pos.orders.delivery_fee`): a screen names the band and the hub
-        fills in what it costs."""
-        settings: SettingStore = app.state.settings
-        return settings.get("delivery_fee")
+        reach, each `{up_to, fee}`; `taxed`, whether sales tax is charged on it; `origin`, the restaurant's
+        own address. The band picked for an order is its `delivery_fee` field (`pos.orders.delivery_fee`): a
+        screen names the band and the hub fills in what it costs. `maps` says whether this hub has a map
+        service, and `lookup` whether a form may ask how far an address is (`POST /delivery/distance`)."""
+        return delivery_fee_now()
 
     @app.put("/settings/delivery_fee")
     def write_delivery_fee(body: DeliveryFeeIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager turns the fee on or off, says what it goes by and lists the prices. Orders already taken
-        keep the fee they were given; every screen offers the new prices from its next delivery."""
+        keep the fee they were given; every screen offers the new prices from its next delivery. An app
+        older than the lookup says no `origin`, and the one that is stored stays."""
         manager_from(app.state.tokens, authorization)
-        return write_setting("delivery_fee", body.model_dump(), clean_delivery_fee)
+        data = body.model_dump()
+        if data["origin"] is None:
+            settings: SettingStore = app.state.settings
+            data["origin"] = settings.get("delivery_fee").get("origin") or ""
+        return delivery_fee_now(write_setting("delivery_fee", data, clean_delivery_fee))
+
+    @app.post("/delivery/distance")
+    def delivery_distance(body: DistanceIn) -> dict[str, Any]:
+        """How far a delivery's address is from the restaurant, asked of the hub's map service
+        (`pos.maps`), and the band of the fee it falls in: `miles` (along the road, to a tenth), `minutes`
+        (the usual drive), `by` (what the fee goes by here), `band` (`{up_to, fee}`, or null) and `beyond`
+        (true when the address is further than the last band reaches). The form picks that band, and whoever
+        takes the order can still tap another.
+
+        Only the two addresses go to the service: no name, no phone number, nothing of the order. 409
+        `no_lookup` when this hub has no map service or no address of its own to start from; 424
+        `lookup_failed`, with a `reason` and words for the form, when the service gave no distance. Not a
+        5xx: the hub itself is well, and a terminal reads a 5xx as a hub to turn away from."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        setting = settings.get("delivery_fee")
+        origin = str(setting.get("origin") or "")
+        if not lookups.ready or not origin:
+            raise HTTPException(
+                409,
+                {
+                    "error": "no_lookup",
+                    "message": "this hub has no map service to ask"
+                    if not lookups.ready
+                    else "the restaurant's own address is not set (Location, Delivery fee)",
+                },
+            )
+        address = " ".join(body.address.split())
+        if not address or len(address) > ADDRESS_MAX:
+            raise HTTPException(422, {"error": "bad_value", "message": "an address of at most 200 letters"})
+        try:
+            trip = lookups.trip(origin, address)
+        except LookupFailed as err:
+            raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
+        band = band_for(setting, trip.miles, trip.minutes)
+        charged = setting.get("enabled") is True and bool(setting.get("bands"))
+        return {**trip.as_json(), "by": setting.get("by"), "band": band, "beyond": charged and band is None}
+
+    @app.get("/maps/status")
+    def maps_status() -> dict[str, Any]:
+        """For `hubctl maps status`: whether the hub has a map service, whether the restaurant's own address
+        is set, and how often the service was asked today. No address is in it."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        return {**lookups.status(), "origin_set": bool(settings.get("delivery_fee").get("origin"))}
 
     @app.get("/settings/kitchen_notes")
     def read_kitchen_notes() -> dict[str, Any]:

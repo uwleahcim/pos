@@ -100,6 +100,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `POS_TIMEZONE` (the restaurant's time zone, `America/New_York` unless set: menu hours, the day order numbers count through, "today" for a caller's order, the times on tickets and in texts) | `/opt/pos/.env`, optional |
 | The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, `COMPOSE_PROFILES=pbx`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
+| The map service's key for the delivery fee's distance lookup (`POS_MAPS`, `POS_MAPS_KEY`; see `docs/delivery.md`), written by `hubctl maps key` | `/opt/pos/.env`, optional |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -123,6 +124,9 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl pbx link root@freepbx.chinasky.org` | Link the hub to the PBX for desk phones: puts the hub's key on the PBX (its root password once), asks for the AMI secret, starts the SSH tunnel and the watcher and waits until the hub reaches the PBX (`docs/desk-phones.md`) |
 | `hubctl pbx status` / `hubctl pbx tail` | How the tunnel and the watcher stand / each call as a desk phone answers it, live |
 | `hubctl pbx unlink` | Stop the tunnel and forget the link |
+| `hubctl maps key` | Put a map service's key on the hub, so a delivery's distance is looked up from its address (`docs/delivery.md`); it asks for the key and does not show it |
+| `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key and how often it asked today / how far an address is and the fee it falls in |
+| `hubctl maps forget` | Remove the key: nothing is looked up, and the fee is picked by hand |
 
 ## Ports
 
