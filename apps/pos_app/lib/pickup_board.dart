@@ -30,12 +30,13 @@ String firstName(String name) {
 /// What the board lists at [now]: the open to-go orders the kitchen has ([made]: sent, and their ticket's
 /// time has come) and the ones marked ready ([ready]), each by its number, lowest first, so a customer
 /// finds theirs where they expect it. An order still being rung up, or sent ahead for a later time whose
-/// ticket has not printed, is on neither list; nor is a table's check or a bar tab.
+/// ticket has not printed, is on neither list; nor is a table's check or a bar tab. Nor is an order that is
+/// brought to the customer (docs/delivery.md): nobody stands at the shelf waiting for it.
 ({List<BoardOrder> made, List<BoardOrder> ready}) boardOf(Iterable<Order> orders, DateTime now) {
   List<BoardOrder> listed(ToGoChip chip) {
     final rows = [
       for (final order in orders)
-        if (inChip(chip, order, now))
+        if (inChip(chip, order, now) && !order.isDelivery)
           BoardOrder(orderId: order.orderId, number: order.orderNo, name: firstName(order.customerName)),
     ];
     // (a stable sort: two with no number keep the order they came in)

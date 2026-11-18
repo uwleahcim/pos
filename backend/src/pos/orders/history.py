@@ -20,9 +20,12 @@ Each step is a dict:
 
 - `opened`: `fields`, the order's fields as it was opened (table, guests, order_type, customer_name, ...;
   `tab` true for a bar tab);
-- `table`, `server`, `guests`, `stage`, `promised` (ms), `quoted` (minutes), `split`: `was`, `now`;
+- `table`, `server`, `guests`, `stage`, `promised` (ms), `quoted` (minutes), `split`: `was`, `now`; a
+  `stage` of an order that is brought to the customer says `delivery` true (it was delivered, not picked
+  up);
 - `merged`: `other` (the check this one's dishes went to) and `other_table`;
-- `field`: `field` (customer_name, phone, note, order_type, channel), `was`, `now`;
+- `field`: `field` (customer_name, phone, note, order_type, channel, event_guests, handover, address,
+  event_note), `was`, `now`; `event_note` says `catering` too: false when the note is for the driver;
 - `added`: `dish`, `options`, `qty`, `seat`, `course` (by its name), `note`, `unit_price`, and `changed`
   when it took the place of a dish that was edited; `moved_in` the same with `other`, `other_table` (or
   `other_tab`, the name on the bar tab it came from), `sent` when the kitchen already had it, and
@@ -48,7 +51,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply
+from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply, is_delivery
 from .adjustments import PricingRules
 from .bag import FIELD as BAG
 from .bag import bag_of
@@ -207,10 +210,15 @@ def history(
                 was, now = before_fields.get(name), state.fields.get(name)
                 if was == now:
                     continue
-                if name in OWN_STEP:
+                if name == "stage" and is_delivery(state.fields):
+                    step("stage", was=was, now=now, delivery=True)  # it was brought, not picked up
+                elif name in OWN_STEP:
                     step(OWN_STEP[name], was=was, now=now)
                 elif name == "merged_into" and isinstance(now, str):
                     step("merged", other=now, other_table=other_table(now))
+                elif name == "event_note":
+                    # a catering order's note is about its event; any other order's is for the driver
+                    step("field", field=name, was=was, now=now, catering=state.fields.get("channel") == "catering")
                 elif name in PLAIN:
                     step("field", field=name, was=was, now=now)
                 elif name == EXEMPT:

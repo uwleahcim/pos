@@ -8,7 +8,8 @@ person typed about the customer, by the number's digits.
 
 `customer_card` is what a screen shows when the phone rings or a number is typed; `same_again` is a past
 order's dishes as the menu sells them now, for a new order to start from. This is the first slice of the
-customer records the architecture plans for later: no addresses, no points, no messages to customers.
+customer records the architecture plans for later: no points, no messages to customers. An address is not
+kept either: where a customer's latest delivery went is read off that order, like their name.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
-from .sync.oplog import OrderEntry, OrderState, phone_digits
+from .sync.oplog import OrderEntry, OrderState, is_delivery, phone_digits
 
 NOTE_MAX = 120
 """How long the note about a customer may be: one line on a phone."""
@@ -150,7 +151,9 @@ def customer_card(
     store: _Store, notes: CustomerNotes, phone: object, *, total: Callable[[OrderState], str]
 ) -> dict[str, Any]:
     """What is known of the customer at this number: the name on their latest order that has one, how many
-    orders they placed (voided ones do not count), when the first and the latest were opened, the note, and
+    orders they placed (voided ones do not count), when the first and the latest were opened, the note, where
+    their latest delivery went (`address`, with `address_note`, what was said for the driver that time; a
+    catering order's note is about its event and is not handed back), and
     their latest `RECENT` orders that have dishes on them, each with what it came to (`total` works that out)
     and its dishes. `known` is false for a number with no order and no note, and for one too short to be a
     customer's. Read from the log's index: only the orders listed are replayed, and the store keeps those."""
@@ -164,6 +167,10 @@ def customer_card(
         "first_ms": None,
         "last_ms": None,
         "recent": [],
+        # where their latest delivery went, and what was said for the driver then: what the form offers
+        # the next time they want one brought
+        "address": "",
+        "address_note": "",
     }
     if len(digits) < SHORTEST:
         return card
@@ -178,6 +185,11 @@ def customer_card(
     for state in store.views(entries[:_LOOK_AT]):
         if not card["name"]:
             card["name"] = str(state.fields.get("customer_name") or "").strip()
+        if not card["address"] and is_delivery(state.fields):
+            card["address"] = " ".join(str(state.fields.get("address") or "").split())
+            # a catering order's note is about its event ("set up by 11:30"), not about the door
+            if card["address"] and state.fields.get("channel") != "catering":
+                card["address_note"] = " ".join(str(state.fields.get("event_note") or "").split())
         dishes = _dishes(state)
         if not dishes or len(recent) >= RECENT:
             continue

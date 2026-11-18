@@ -3,10 +3,11 @@ says what the screen says, to the cent.
 
 A `Bill` is data, like a kitchen `Ticket`: `bill_for` makes one from an order's check and its fields, and
 `render_bill` turns it into the bytes for a printer in its own language. From the top: the restaurant's own
-lines (the location's `bill` setting; the first one big), the table or the order's number with the time, each
-dish with what it costs and its choices under it, the subtotal, every discount and charge by name, sales tax
-as ONE line (the split by jurisdiction is for the back office), the total, what was paid and what is still
-due, and the location's closing lines.
+lines (the location's `bill` setting; the first one big), the table or the order's number with the time, for
+an order that is delivered where it goes (the address, the customer's number, what was said for the driver),
+each dish with what it costs and its choices under it, the subtotal, every discount and charge by name, sales
+tax as ONE line (the split by jurisdiction is for the back office), the total, what was paid and what is
+still due, and the location's closing lines.
 
 Only the right-hand column adds up: a choice's own price ("+1.00") and a comp on a dish ("-48.00") stand in
 the words under the dish, since the dish's amount already holds its choices and the comp is taken off below
@@ -26,7 +27,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from ..sync.oplog import is_tab
+from ..sync.oplog import is_delivery, is_tab
 from .ticket import DIALECTS
 
 ZERO = Decimal(0)
@@ -51,6 +52,9 @@ class Bill:
     detail: str = ""  # beside `where`: "4 guests", the name on a to-go order or on a tab
     who: str = ""  # under it: "Server Amy", "Phone"
     note: str = ""  # under that, on one of a split table's bills: "One of 3 checks at this table"
+    # For an order that is delivered (docs/delivery.md), what the driver reads off the paper that goes with
+    # the bag: where it goes, the number to call from the door, and what was said about getting in.
+    deliver: tuple[str, ...] = ()
     head: tuple[str, ...] = ()  # the restaurant's own lines; the first prints big
     # between the dishes and the total: subtotal, discounts, charges, tax; a row with no amount is words only
     sums: tuple[tuple[str, str], ...] = ()
@@ -178,12 +182,18 @@ def bill_for(
         detail = f"Check {part['check']}"
         on = "at this table" if table else "on this tab" if is_tab(fields) else "on this order"
         note = f"One of {len(parts)} checks {on}"
+    deliver: list[str] = []
+    if is_delivery(fields):
+        said = [" ".join(str(fields.get(name) or "").split()) for name in ("address", "phone", "event_note")]
+        deliver = [said[0] or "No address was given", *([f"Phone {said[1]}"] if said[1] else []), *said[2:3]]
+        deliver = [text for text in deliver if text]
     return Bill(
         order_id=str(check.get("order_id") or ""),
         where=where,
         detail=detail,
         who=who,
         note=note,
+        deliver=tuple(deliver),
         lines=tuple(lines),
         total=_amount(check.get("total") if even else total),
         head=tuple(head),
@@ -212,6 +222,11 @@ def render_bill(bill: Bill, *, dots: int = 576, font: str | None = None, dialect
     b.columns(bill.who, _day(bill.at))
     if bill.note:
         b.line(bill.note)
+    if bill.deliver:
+        b.rule()
+        b.line("DELIVERY", big=True, bold=True)
+        for text in bill.deliver:
+            b.line(text, bold=True)
     b.rule()
     for line in bill.lines:
         b.columns(f"{line.qty} ".ljust(3) + line.name, line.amount, hang="   ")

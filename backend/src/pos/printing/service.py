@@ -48,7 +48,7 @@ from .. import localtime
 from ..orders.bag import FIELD as BAG
 from ..orders.bag import bag_lines, bag_of
 from ..sync.hlc import wall_clock_ms
-from ..sync.oplog import Line, Op, OrderState, replay
+from ..sync.oplog import Line, Op, OrderState, is_delivery, replay
 from .bill import Bill, render_bill
 from .day import DayPaper, render_day
 from .escpos import find_font
@@ -354,7 +354,8 @@ def ticket_for(
         table=str(fields.get("table", "")),
         lines=tuple(lines),
         server=str(fields.get("server", "")),
-        order_type=str(fields.get("order_type", "dine in")),
+        # an order that is brought to the customer says so on every station's ticket: it is packed to travel
+        order_type="delivery" if is_delivery(fields) else str(fields.get("order_type", "dine in")),
         guests=fields.get("guests"),
         course=course,
         late=late,

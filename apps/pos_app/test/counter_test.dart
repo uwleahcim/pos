@@ -99,6 +99,11 @@ class Hub {
   String? quotesAuth;
   bool paid = false;
 
+  /// Whether it marks an order that is brought to the customer on its papers (docs/delivery.md), and says
+  /// so with its quotes, as the real hub does; false for a hub older than deliveries.
+  bool delivers = true;
+  Map<String, dynamic> get quotesOut => {...quotes, if (delivers) 'delivers': true};
+
   /// The rush (`PUT /settings/rush`): the minutes it was set to, in order, who asked, and when a rush set
   /// now runs out. It answers only when its quotes name a rush (`'rush': null` for none): the hub the tests
   /// start with is one from before the rush and before big orders.
@@ -256,7 +261,7 @@ class Hub {
           // What a save names is kept as sent; what it does not name (the rush, always) stays as it was.
           quotes = {...quotes, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
-        return json(quotes);
+        return json(quotesOut);
       case '/settings/rush':
         if (!quotes.containsKey('rush')) return json({'detail': 'Not Found'}, 404);
         rushAuth = request.headers['authorization'];
@@ -266,7 +271,7 @@ class Hub {
           ...quotes,
           'rush': minutes > 0 ? {'minutes': minutes, 'until': rushUntil, 'by': 'Mike'} : null,
         };
-        return json(quotes);
+        return json(quotesOut);
       case '/admin/session':
         final pin = (jsonDecode(request.body) as Map)['pin'] as String;
         pins.add(pin);

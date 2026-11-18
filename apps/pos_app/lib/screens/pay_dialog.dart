@@ -19,6 +19,7 @@ class PayDialog extends StatefulWidget {
     this.partial = false,
     this.sends = true,
     this.handover = false,
+    this.delivery = false,
   });
 
   final String due;
@@ -35,6 +36,10 @@ class PayDialog extends StatefulWidget {
 
   /// Asked as the order is handed over: the third way closes the check with the money still due.
   final bool handover;
+
+  /// The order is brought to the customer (docs/delivery.md): the third way is paid at the door, and no
+  /// ready text says so.
+  final bool delivery;
 
   @override
   State<PayDialog> createState() => _PayDialogState();
@@ -120,13 +125,15 @@ class _PayDialogState extends State<PayDialog> {
   /// The third way, where there is one: nothing is taken now.
   String get _laterLabel {
     if (widget.handover) return 'Not now';
-    return widget.channel == 'catering' ? 'Later' : 'At pickup';
+    if (widget.channel == 'catering') return 'Later';
+    return widget.delivery ? 'At the door' : 'At pickup';
   }
 
   String get _laterWords {
     if (widget.handover) return 'Nothing taken: the check closes with what is due still to pay.';
-    return widget.channel == 'catering'
-        ? 'Nothing taken now: it is paid when the order is handed over.'
+    if (widget.channel == 'catering') return 'Nothing taken now: it is paid when the order is handed over.';
+    return widget.delivery
+        ? 'Nothing taken now: it is paid at the door.'
         : 'Nothing taken now; the ready text says to pay at pickup.';
   }
 

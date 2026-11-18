@@ -96,6 +96,10 @@ cooks is counted for that station.
 Each line is a switch, on to start: **Location settings**, on the Printers card, **Number the tickets of
 one send** and **Name the other stations on each ticket** (`GET`/`PUT /settings/tickets`).
 
+**DELIVERY.** An order that is brought to the customer says so on every station's ticket: the head reads
+"delivery" and the line that says how it came in reads "Phone  DELIVERY". No ticket says the address or the
+phone number; they are on the bill, which goes with the bag (`delivery.md`).
+
 **PAID or NOT PAID.** Orders paid first and orders paid at pickup sit on the same shelf, so the takeout
 counter's ticket of a to-go order says which it is, under the number and the name:
 

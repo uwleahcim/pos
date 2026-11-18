@@ -18,7 +18,8 @@ With Catering picked, the form asks for:
   year ahead). Then the time. A catering order always names its time, so the "For later" switch is not
   asked.
 - **Guests**: how many it feeds.
-- **Pickup** or **Delivery**. For a delivery, the address.
+- **Pickup** or **Delivery**. For a delivery, the address (already filled in when the number had an order
+  delivered before, `delivery.md`).
 - **A note for the event**: whatever the kitchen or the driver must know ("set up by 11:30, side door").
 
 Only the name and the time must be filled in. **Start** opens the order, and the dishes are rung in from

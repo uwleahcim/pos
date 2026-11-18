@@ -40,7 +40,8 @@ The board follows the stages the staff already use on the list of checks (`count
 - It changes by itself, a moment after the staff tap **Ready** or **Picked up** on any screen.
 - An order sent ahead for 6:30 comes onto the board when its ticket prints in the kitchen, with nobody
   touching anything.
-- A table's check and a bar tab are never on it.
+- A table's check and a bar tab are never on it. Nor is an order that is delivered (`delivery.md`):
+  nobody stands at the shelf waiting for it.
 - Nothing on the board can be tapped or changed. It only shows.
 
 ## Turning it on

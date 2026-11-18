@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from .sync.oplog import Op, OrderState, replay
+from .sync.oplog import Op, OrderState, is_delivery, replay
 
 log = logging.getLogger("pos.messaging")
 
@@ -66,6 +66,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "en": "Hi {name}, order #{no} at {location} will be ready at {time}. Sorry for the wait.",
         "zh": "{name}您好，{location}的订单 #{no} 将于{time}准备好，请见谅。",
     },
+    # an order that is brought to the customer is not waited for at the counter: the text says when it comes
+    "delayed_delivery": {
+        "en": "Hi {name}, order #{no} from {location} will be with you around {time}. Sorry for the wait.",
+        "zh": "{name}您好，{location}的订单 #{no} 预计{time}送到，请见谅。",
+    },
     "pay": {"en": " Please pay at pickup.", "zh": "请在取餐时付款。"},
 }
 
@@ -73,14 +78,16 @@ TEMPLATES: dict[str, dict[str, str]] = {
 def text_for(
     kind: str, state: OrderState, *, location: str, unpaid: bool = False, at: datetime | None = None
 ) -> Message | None:
-    """The text of `kind` for this order in its language, or None when the order has no phone number."""
+    """The text of `kind` for this order in its language, or None when the order has no phone number. A
+    delivery that is pushed back is told when it will be there, not when to come for it."""
     fields = state.fields
     phone = str(fields.get("phone") or "").strip()
     if not phone:
         return None
     locale = str(fields.get("locale") or "en")
-    lang = locale if locale in TEMPLATES[kind] else "en"
-    body = TEMPLATES[kind][lang].format(
+    words = TEMPLATES["delayed_delivery" if kind == "delayed" and is_delivery(fields) else kind]
+    lang = locale if locale in words else "en"
+    body = words[lang].format(
         name=str(fields.get("customer_name") or "").strip() or ("there" if lang == "en" else "顾客"),
         no=fields.get("order_no", "?"),
         location=location,
@@ -92,9 +99,11 @@ def text_for(
 
 class Notifier:
     """Watches the operations the hub stores: an order marked ready (`stage` set to `ready`) gets its ready
-    text, once; a promised time moved later on an order the kitchen has not finished gets the new time. The
-    time an order is given as it is first sent to the kitchen is its quote, not a delay: the terminal
-    settles it then (a big order takes longer), and whoever took the order has told the customer."""
+    text, once (an order that is delivered gets none: the text says to come for it); a promised time moved
+    later on an order the kitchen has not finished gets the new time. The time an order is given as it is
+    first sent to the kitchen is its quote, not a delay: the terminal settles it then (a big order takes
+    longer), and whoever took the order has told the customer. Nor is the later time of an order that was
+    just changed from pickup to delivery: the customer asked for that."""
 
     def __init__(self, messenger: Messenger, *, location: str, unpaid: Callable[[OrderState], bool]) -> None:
         self.messenger = messenger
@@ -119,10 +128,14 @@ class Notifier:
 
     def _change(self, before: OrderState, after: OrderState) -> Message | None:
         if after.fields.get("stage") == "ready" and before.fields.get("stage") != "ready":
+            if is_delivery(after.fields):
+                return None  # it is brought to them: nobody is told to come and get it
             return text_for("ready", after, location=self.location, unpaid=self._unpaid(after))
         was, now = before.fields.get("promised_at"), after.fields.get("promised_at")
         if before.first is not None and isinstance(was, int) and isinstance(now, int) and now > was:
             first_send = not before.fired and bool(after.fired)
-            if not first_send and after.fields.get("stage") not in ("ready", "picked_up"):
+            # an order that just became a delivery takes longer because the customer asked for that
+            asked = is_delivery(after.fields) and not is_delivery(before.fields)
+            if not first_send and not asked and after.fields.get("stage") not in ("ready", "picked_up"):
                 return text_for("delayed", after, location=self.location, at=datetime.fromtimestamp(now / 1000))
         return None

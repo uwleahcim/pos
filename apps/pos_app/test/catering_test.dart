@@ -685,11 +685,15 @@ void main() {
         chen(id: 'c2', sent: true, payments: deposit, due: '0.00', at: soon),
         chen(id: 'c3', channel: 'phone'),
       ]);
-      expect(find.text('2 items · open · fired · for $eventDay 12:00 · \$45.01 due'), findsOneWidget);
+      // Chen's is delivered: the row says so and where to (docs/delivery.md)
+      const to = '12 Main St, Winchester';
+      expect(find.text('Chen · catering · delivery'), findsNWidgets(2));
+      expect(find.text('2 items · open · fired · for $eventDay 12:00 · \$45.01 due · $to'), findsOneWidget);
       expect(
-        find.text('2 items · open · fired · for ${whenFor(soon.millisecondsSinceEpoch, DateTime.now())} · paid'),
+        find.text('2 items · open · fired · for ${whenFor(soon.millisecondsSinceEpoch, DateTime.now())} · paid · $to'),
         findsOneWidget,
       );
+      expect(find.text('Chen · phone'), findsOneWidget);
       expect(find.text('2 items · open · for $eventDay 12:00 · pay at pickup'), findsOneWidget);
       // the part-paid one and the unpaid one still owe; the paid-up one does not
       expect(

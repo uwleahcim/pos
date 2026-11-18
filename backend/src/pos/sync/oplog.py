@@ -296,6 +296,13 @@ def is_tab(fields: Mapping[str, Any]) -> bool:
     return fields.get("tab") is True and eaten_in and not fields.get("table")
 
 
+def is_delivery(fields: Mapping[str, Any]) -> bool:
+    """Whether an order with these fields is brought to the customer (docs/delivery.md): a to-go order whose
+    `handover` is delivery, with the `address` it goes to. A table's check never is, whatever it carries."""
+    to_go = str(fields.get("order_type") or "dine_in") != "dine_in"
+    return to_go and fields.get("handover") == "delivery"
+
+
 @dataclass
 class OrderState:
     order_id: str

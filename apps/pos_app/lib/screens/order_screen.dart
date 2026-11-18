@@ -27,6 +27,7 @@ import '../floor.dart';
 import '../moves.dart';
 import '../split.dart';
 import '../takeout.dart';
+import '../to_go_stages.dart';
 import '../voids.dart';
 import 'allergy_dialog.dart';
 import 'bag_sheet.dart';
@@ -777,7 +778,13 @@ class _OrderScreenState extends State<OrderScreen> {
     // deposit (docs/catering.md). The counter pays the whole.
     final choice = await showDialog<PayChoice>(
       context: context,
-      builder: (_) => PayDialog(due: check.due, channel: order.channel, payAtPickup: payAtPickup, partial: payAtPickup),
+      builder: (_) => PayDialog(
+        due: check.due,
+        channel: order.channel,
+        payAtPickup: payAtPickup,
+        partial: payAtPickup,
+        delivery: order.isDelivery,
+      ),
     );
     if (choice == null || !mounted) return;
     _sentHere = true;
@@ -830,26 +837,74 @@ class _OrderScreenState extends State<OrderScreen> {
     if (mounted) await _showChange(choice, check.due);
   }
 
-  /// The day and the time of an order for later, changed on the order, and on a catering order what its
-  /// event needs. Only what was changed is written, each change with who made it.
+  /// Whether this screen offers to change how a to-go order leaves (docs/delivery.md): the hub marks a
+  /// delivery on its papers, or the order already is one. A catering order always says how it leaves,
+  /// among what its event needs.
+  bool _asksHowItLeaves(Order order) =>
+      order.isTakeout && (order.isCatering || order.isDelivery || (_quotes?.delivers ?? false));
+
+  /// How a to-go order leaves, changed on the order: picked up or delivered, where to and the note for the
+  /// driver (docs/delivery.md); of an order for later its day and time too, and on a catering order what
+  /// its event needs. Only what was changed is written, each change with who made it.
+  ///
+  /// An order that becomes a delivery, or stops being one, before the kitchen has its ticket is quoted
+  /// again by what the two quotes differ: one for now is promised that much later (or sooner), and one the
+  /// customer named a time for keeps its time and starts cooking that much sooner (or later). The operator
+  /// is told, to tell the customer.
   Future<void> _changeWhen(Order order) async {
     final promised = order.promisedAt;
-    if (promised == null) return;
-    final had = order.isCatering ? order.event : null;
+    final named = order.forLater && promised != null;
+    final asks = _asksHowItLeaves(order);
+    if (!named && !asks) return;
+    final had = asks ? order.event : null;
     final asked = await showDialog<WhenAndEvent>(
       context: context,
-      builder: (_) => WhenDialog(promised: DateTime.fromMillisecondsSinceEpoch(promised), event: had),
+      builder: (_) => WhenDialog(
+        promised: named ? DateTime.fromMillisecondsSinceEpoch(promised) : null,
+        event: had,
+        catering: order.isCatering,
+      ),
     );
     if (asked == null || !mounted) return;
     final was = had?.toFields() ?? const <String, dynamic>{};
     final now = asked.event?.toFields() ?? const <String, dynamic>{};
+    final to = asked.promised?.millisecondsSinceEpoch;
     final changed = <String, dynamic>{
-      if (asked.promised.millisecondsSinceEpoch != promised) 'promised_at': asked.promised.millisecondsSinceEpoch,
+      if (to != null && to != promised) 'promised_at': to,
       for (final MapEntry(:key, :value) in now.entries)
         if (value != was[key]) key: value,
     };
     if (changed.isEmpty) return;
+    String? said;
+    final brought = asked.event?.delivered ?? false;
+    final quotes = _quotes ?? const Quotes();
+    final waits = !order.isFired || waitsForItsTime(order, DateTime.now());
+    if (had != null && brought != had.delivered && !order.isCatering && waits && order.quotedMinutes > 0) {
+      final by =
+          quotes.baseFor(order.channel, delivery: brought) - quotes.baseFor(order.channel, delivery: had.delivered);
+      final quoted = order.quotedMinutes + by;
+      if (by != 0 && quoted > 0) {
+        changed['quoted_minutes'] = quoted;
+        final how = brought ? 'Now a delivery' : 'Now a pickup';
+        if (_namedTime(order) || promised == null) {
+          final sooner = by > 0 ? '$by minutes sooner' : '${-by} minutes later';
+          said = '$how: the kitchen starts it $sooner.';
+        } else {
+          final at = promised + by * 60000;
+          changed['promised_at'] = at;
+          said = '$how: ${brought ? 'there' : 'ready'} about ${clockTime(at)}.';
+        }
+      }
+    }
     await _append('set_field', {...changed, 'by': ?_staffName, 'by_id': ?_staffId});
+    if (said != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          key: const ValueKey('leaving-said'),
+          content: Text(said, key: const ValueKey('leaving-said-words')),
+        ),
+      );
+    }
   }
 
   void _say(String message) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -1449,6 +1504,11 @@ class _OrderScreenState extends State<OrderScreen> {
     final allergyChip = order == null || _allergens == null
         ? null
         : _AllergyChip(noted: told.isNotEmpty, onTap: () => _noteAllergy(order));
+    // how a to-go order leaves: the chip says it, and a tap changes it (a catering order says it on its
+    // line under the bar, with the rest of its event)
+    final leavingChip = order == null || !open || order.isCatering || !_asksHowItLeaves(order)
+        ? null
+        : _LeavingChip(delivery: order.isDelivery, onTap: () => _changeWhen(order));
     final ticket = _TicketPanel(
       order: order,
       check: check,
@@ -1487,13 +1547,15 @@ class _OrderScreenState extends State<OrderScreen> {
     final menu = open
         ? Column(
             children: [
-              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip alone;
-              // a bar tab has courses and no seats yet, and the way to a table instead
-              if (order?.isTakeout != true || allergyChip != null)
+              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip and
+              // how it leaves (Pickup or Delivery); a bar tab has courses and no seats yet, and the way to
+              // a table instead
+              if (order?.isTakeout != true || allergyChip != null || leavingChip != null)
                 _SeatCourseBar(
                   seated: order?.isTakeout != true,
                   onSeatTab: order != null && order.isTab ? () => _seatTab(order) : null,
                   allergy: allergyChip,
+                  leaving: leavingChip,
                   allergic: {for (final a in told) a.seat ?? 0},
                   seats: seats,
                   seat: _seat,
@@ -1589,9 +1651,9 @@ class _OrderScreenState extends State<OrderScreen> {
                 onOut: () => unawaited(_wentOut(ready)),
               ),
             if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
-            // an order for later says its day and time, and a catering order what its event needs; a tap
-            // changes them
-            if (order != null && order.isTakeout && order.forLater && order.promisedAt != null)
+            // an order for later says its day and time, a catering order what its event needs, and a
+            // delivery where it goes; a tap changes them
+            if (order != null && order.isTakeout && ((order.forLater && order.promisedAt != null) || order.isDelivery))
               _WhenStrip(
                 order: order,
                 onTap: open ? () => _changeWhen(order) : null,
@@ -2477,12 +2539,14 @@ class _CourseHeader extends StatelessWidget {
 /// Which seat and course the next dish goes to, and the seats at the table: + adds one, − takes the last
 /// one away once nothing is on it. With coursing off ([courses] empty) the row is the seats alone. The
 /// Allergy chip leads the row, where a phone shows it without scrolling, and a seat with an allergy noted
-/// carries a warning mark. A to-go order has no seats ([seated] false): its bar is the chip alone.
+/// carries a warning mark. A to-go order has no seats ([seated] false): its bar is that chip and the one
+/// that says how it leaves ([leaving]).
 class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
     this.seated = true,
     this.onSeatTab,
     this.allergy,
+    this.leaving,
     this.allergic = const {},
     required this.seats,
     required this.seat,
@@ -2502,6 +2566,9 @@ class _SeatCourseBar extends StatelessWidget {
 
   /// The Allergy chip, when the hub takes allergies.
   final Widget? allergy;
+
+  /// Pickup or Delivery, on a to-go order whose hub knows of deliveries (docs/delivery.md).
+  final Widget? leaving;
 
   /// The seats with an allergy noted (0: the table).
   final Set<int> allergic;
@@ -2536,7 +2603,7 @@ class _SeatCourseBar extends StatelessWidget {
       ),
     );
     final seatChips = !seated
-        ? [?allergy]
+        ? [if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy), ?leaving]
         : onSeatTab != null
         ? [
             Padding(
@@ -2612,6 +2679,34 @@ class _AllergyChip extends StatelessWidget {
       backgroundColor: noted ? scheme.error : null,
       side: noted ? BorderSide(color: scheme.error) : null,
       tooltip: noted ? 'Change the allergies noted' : 'Note an allergy for the table or a seat',
+      visualDensity: VisualDensity.compact,
+      onPressed: onTap,
+    );
+  }
+}
+
+/// "Pickup" or "Delivery": how a to-go order leaves (docs/delivery.md). A tap changes it, and for a
+/// delivery where it goes and the note for the driver. A delivery's chip is filled, so it is not missed.
+class _LeavingChip extends StatelessWidget {
+  const _LeavingChip({required this.delivery, required this.onTap});
+
+  final bool delivery;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ActionChip(
+      key: const ValueKey('leaving-chip'),
+      avatar: Icon(
+        delivery ? Icons.delivery_dining_outlined : Icons.shopping_bag_outlined,
+        size: 18,
+        color: delivery ? scheme.onSecondaryContainer : null,
+      ),
+      label: Text(delivery ? 'Delivery' : 'Pickup'),
+      labelStyle: delivery ? TextStyle(color: scheme.onSecondaryContainer, fontWeight: FontWeight.w700) : null,
+      backgroundColor: delivery ? scheme.secondaryContainer : null,
+      tooltip: delivery ? 'Change where it goes, or make it a pickup' : 'Make it a delivery',
       visualDensity: VisualDensity.compact,
       onPressed: onTap,
     );
@@ -2747,7 +2842,9 @@ class _CustomerStrip extends StatelessWidget {
 }
 
 /// The day and time an order for later is for, and on a catering order what its event needs, in one line
-/// under the bar: "For Sat 21 Nov 12:00 · 30 guests · Delivery · 12 Main St". A tap changes them.
+/// under the bar: "For Sat 21 Nov 12:00 · 30 guests · Delivery · 12 Main St". An order that is brought to
+/// the customer says so here too, for now or for later, with where it goes and the note for the driver:
+/// "Delivery · 12 Elm St, Winchester · Ring twice, side door" (docs/delivery.md). A tap changes them.
 class _WhenStrip extends StatelessWidget {
   const _WhenStrip({required this.order, this.onTap, this.onPack});
 
@@ -2761,7 +2858,13 @@ class _WhenStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final event = order.isCatering ? order.event.words : '';
+    final delivery = order.isDelivery;
+    final later = order.forLater && order.promisedAt != null;
+    final words = [
+      if (later) 'For ${whenFor(order.promisedAt!, DateTime.now())}',
+      if (order.isCatering || delivery) order.event.words,
+      if (delivery && order.event.address.isEmpty) 'no address yet',
+    ].join(' · ');
     return Material(
       key: const ValueKey('when-strip'),
       color: scheme.surfaceContainerHighest, // plain, like the customer's note: red is the allergy strip's
@@ -2774,11 +2877,15 @@ class _WhenStrip extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                 child: Row(
                   children: [
-                    Icon(Icons.event_outlined, size: 16, color: scheme.onSurfaceVariant),
+                    Icon(
+                      later ? Icons.event_outlined : Icons.delivery_dining_outlined,
+                      size: 16,
+                      color: scheme.onSurfaceVariant,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        ['For ${whenFor(order.promisedAt!, DateTime.now())}', if (event.isNotEmpty) event].join(' · '),
+                        words,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(

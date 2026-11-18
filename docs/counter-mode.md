@@ -15,7 +15,9 @@ Tap **To go** on the orders screen.
    The hub's quote for the channel says when it will be ready ("Ready in about 15 min"). While a manager's
    rush is on, the quote is longer and the form says by how much ("Ready in about 35 min (busy kitchen:
    +20)"). A catering order asks for its day and time and what its event needs (`catering.md`).
-3. **For later.** Today, tomorrow or another day off a calendar, and a time. The kitchen ticket prints
+3. **Pickup or Delivery.** Pickup unless you say otherwise. A delivery asks where to and has a note for
+   the driver, and is quoted Delivery's minutes ("There in about 45 min"): see `delivery.md`.
+4. **For later.** Today, tomorrow or another day off a calendar, and a time. The kitchen ticket prints
    ahead of that time by the channel's quote, so the kitchen sees the order when it is time to cook it,
    not when it was taken.
 

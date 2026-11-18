@@ -78,6 +78,8 @@ class CustomerCard {
     this.firstMs,
     this.lastMs,
     this.recent = const [],
+    this.address = '',
+    this.addressNote = '',
   });
 
   factory CustomerCard.fromJson(Map<String, dynamic> json) => CustomerCard(
@@ -89,6 +91,8 @@ class CustomerCard {
     firstMs: (json['first_ms'] as num?)?.toInt(),
     lastMs: (json['last_ms'] as num?)?.toInt(),
     recent: [for (final o in json['recent'] as List? ?? const []) PastOrder.fromJson(o as Map<String, dynamic>)],
+    address: json['address'] as String? ?? '',
+    addressNote: json['address_note'] as String? ?? '',
   );
 
   /// The number's digits, as the hub keeps them.
@@ -108,6 +112,12 @@ class CustomerCard {
 
   /// Their latest orders that have dishes on them, newest first.
   final List<PastOrder> recent;
+
+  /// Where their latest delivery went, and what was said for the driver then (docs/delivery.md): what the
+  /// form starts a new delivery with. Empty for a customer nothing was brought to, and from a hub older
+  /// than deliveries.
+  final String address;
+  final String addressNote;
 
   /// One line on how well the restaurant knows them: `12 orders since Mar 2025, the last on 3 Nov`.
   String summary(DateTime now) {

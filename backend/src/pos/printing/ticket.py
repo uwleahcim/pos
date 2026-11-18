@@ -130,7 +130,8 @@ def render(
         guests = f"  {ticket.guests} guests" if ticket.guests else ""
         b.line(f"Table {ticket.table}{guests}", bold=True)
     elif ticket.channel:
-        b.line(ticket.channel.replace("_", " ").capitalize(), bold=True)
+        how = "  DELIVERY" if ticket.order_type == "delivery" else ""
+        b.line(f"{ticket.channel.replace('_', ' ').capitalize()}{how}", bold=True)
     elif not ticket.tab:
         b.line("No table", bold=True)
     if ticket.server:
