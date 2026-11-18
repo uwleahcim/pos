@@ -2,6 +2,7 @@
 library;
 
 import 'coursing.dart';
+import 'kitchen_word.dart';
 import 'table_timers.dart';
 
 export 'coursing.dart' show Course;
@@ -81,6 +82,8 @@ class TableCheck {
     this.held = const [],
     this.total,
     this.timer,
+    this.ready = 0,
+    this.readyMs,
   });
   factory TableCheck.fromJson(Map<String, dynamic> json) => TableCheck(
     orderId: json['order_id'] as String,
@@ -93,6 +96,8 @@ class TableCheck {
     held: List<String>.from(json['held'] as List? ?? const []),
     total: json['total'] as String?,
     timer: TableTimer.fromJson(json['timer']),
+    ready: (json['ready'] as num?)?.toInt() ?? 0,
+    readyMs: (json['ready_ms'] as num?)?.toInt(),
   );
   final String orderId;
   final int? guests;
@@ -108,6 +113,16 @@ class TableCheck {
 
   /// What the table is waiting on and since when, for its countdown ring; null from a hub that sends none.
   final TableTimer? timer;
+
+  /// How many of its dishes the kitchen marked made that have not gone out, and when the last of them was
+  /// made: the food that waits for someone to carry it. None on a table whose kitchen marks nothing, and
+  /// from a hub older than the mark.
+  final int ready;
+  final int? readyMs;
+
+  /// The dishes ready for this check that the map still points at, at [nowMs]: none once they have waited
+  /// past [readyShownMs] with nobody saying they went out.
+  int readyAt(int nowMs) => ready > 0 && readyMs != null && nowMs - readyMs! < readyShownMs ? ready : 0;
 
   /// seated (nothing sent yet), waiting (some courses held after one was fired) or fired (everything sent).
   String get stage {
@@ -130,6 +145,8 @@ class TableCheck {
     held: held,
     total: total,
     timer: timer,
+    ready: ready,
+    readyMs: readyMs,
   );
 }
 
@@ -186,6 +203,9 @@ class FloorPlan {
       timers.mostUrgent(checksAt(tableId).map((check) => check.timer), nowMs);
 
   List<TableCheck> checksAt(String tableId) => status[tableId] ?? const [];
+
+  /// How many dishes are ready for the table at [nowMs], over all its checks: what its badge counts.
+  int readyAt(String tableId, int nowMs) => checksAt(tableId).fold(0, (n, check) => n + check.readyAt(nowMs));
 
   /// The same plan with more checks on its tables: the ones this device opened that no backend knows yet.
   FloorPlan withChecks(Map<String, List<TableCheck>> extra) {

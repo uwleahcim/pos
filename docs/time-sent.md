@@ -31,7 +31,9 @@ large type), the time goes under the name, whole and in the same type.
 ## What it does not do
 
 - Nothing prints and nothing is asked. No setting turns it on or off.
-- It does not say when a dish was cooked or carried out: the POS does not know that.
+- By itself it does not say when a dish was cooked or carried out. Where a kitchen screen marks the dishes
+  (`kitchen-screens.md`, "What the servers see"), the dish says "ready 18:50" or "went out 18:52" under its
+  name, and "how long ago" stops counting for it.
 - The bill does not show it.
 - The floor map's ring already shows how long a table has waited since it was last sent to the kitchen
   (`location-settings.md`, table timers); the check now says it course by course.

@@ -12,6 +12,9 @@ One more screen is for whoever calls the orders: **the pass**. It shows each tic
 dishes together, with what each station has made (see "The pass"). And every kitchen screen has **All day**:
 how many of each dish its tickets still wait for (see "All day").
 
+What the cooks mark reaches the people who carry the food: a dish that is made says **ready** on its check
+and on its table on the floor map (see "What the servers see").
+
 ## What a cook sees
 
 The station's name at the top with how many tickets are waiting, and under it the tickets, **the longest in
@@ -84,6 +87,52 @@ station's.
 pass**, then **Save**. With no station picked it watches every station. Pick stations to watch those alone:
 a kitchen's pass with the bar left out shows no ticket for a round of drinks. A screen is a station's or
 the pass, not both; to make it a station's screen again turn the switch off.
+
+## What the servers see
+
+Since 18 November 2026. What the cooks tap reaches the screens on the floor, so nobody walks to the kitchen
+to ask whether table 12's food is up. Nothing is turned on for it: it shows wherever a kitchen screen marks
+dishes, and a kitchen that works off paper alone sees no change at all.
+
+**A dish is ready when every station that cooks it has marked it made.** A dish of the wok alone is ready
+when the wok taps it. A dish cooked at two stations is not ready while one of them still works on it.
+
+**On the check**, under the dish:
+
+- **ready 18:50**, in green: the kitchen has it made and it waits to be carried.
+- **went out 18:52**, in plain grey: it was carried to the table.
+- **Wok ready · waiting on Sushi bar**: a dish of two stations with one part made.
+- "sent 18:42, 23 min ago" stops counting once the dish is ready and says "sent 18:42": how long the table
+  has waited matters while it waits.
+
+**Over the check**, a green strip while dishes wait to be carried: "Ready: Peking duck, 2 × Fried rice".
+It is over the check and the menu alike, so on a phone it shows on both tabs.
+
+- **Went out**, on the strip, says the dishes listed were carried to the table. They then say "went out",
+  the strip goes, and the bar at the bottom offers **Undo** for a tap that was a slip.
+- It is the same word the pass says at its own screen, so a dish a server marks leaves the pass's screen
+  too, and one the pass sends out leaves the server's strip. A kitchen with no screen at the pass has the
+  servers say it here.
+- Anyone on the check can tap it. No PIN is asked.
+
+**On the floor map**, a green badge on the table's lower edge: **2 ready**. The countdown's badge is on the
+upper edge, so a table can wear both. With **Mine** on, the list beside the map says "2 dishes ready" on the
+table's row, and another server's badge fades with their table.
+
+**How long it shows.** The badge and the strip go when the dishes went out. If nobody says so, they go by
+themselves a quarter of an hour after the last dish was made: the food was carried long ago, or nobody is
+coming for it. The dish keeps its words on the check either way.
+
+Good to know:
+
+- **Like every mark, it changes no dish, no price and no payment, prints nothing, and adds no step to the
+  check's history.** Went out is not a sale and not a payment: the check is the same before and after.
+- A drink rung in at the bar's own screen, where that screen prints no ticket at the bar (`ticket-skips.md`),
+  waits for nobody's mark: the bartender who rang it makes it.
+- A dish typed with no station is never "ready" (no screen lists it), and can still be sent out.
+- A voided dish says it is a void and nothing else.
+- The words show on a to-go order's check and a bar tab's too. Neither is on the floor map.
+- It reaches an open check by itself, within a moment of the cook's tap.
 
 ## What is on a screen, and when
 
@@ -162,8 +211,9 @@ The device is still a POS screen.
 ## Not built
 
 - **A screen in place of the paper**: turning a station's printer off because it has a screen.
-- **What the kitchen made, on the servers' screens**: the floor map and the check do not show a mark, nor
-  that a dish went out.
+- **A sound or a message to the server** when their food is ready: the badge and the strip are there to be
+  looked at. Nor is the ready count on the list of to-go orders or of bar tabs.
+- A setting for the quarter of an hour the ready mark shows.
 - All-day counts by the dish with its choices, or of the whole day's sales: they count what waits now.
 - **Ready by itself**: a to-go order is not marked Ready when its last dish is made; the staff tap Ready.
 - A sound or a flash when a ticket comes in.
@@ -188,6 +238,20 @@ The device is still a POS screen.
   (`pos.printing.screen._said`), unless the station's latest word is later than the pass's.
 - `GET /kitchen/pass?stations=wok,fryer` (none to 32 codes; none is every station): the same answer as a
   screen's, with `"pass": true` and `cooks` on every line.
+- **What the floor reads off the marks** is worked out on the hub by `pos.printing.made`: `kitchen_word`
+  for a line (`cooks` with `code`, `name`, `made`; `ready_ms` once every station that cooks it has made it,
+  the stations being the line's `priced.kitchen` stations less the sending screen's ticket skips; `out_ms`
+  once the pass said so), `kitchen_words` for an order and `ready_of` for the floor. `GET /orders/{id}`
+  puts the word on the line under `kitchen` (`with_kitchen`; `OrderState.snapshot`, which the hubs compare
+  between them, does not carry it), and `GET /floor` gives each check `ready` (dishes ready and not out, by
+  quantity) and `ready_ms` (when the last of them was made). A line, and a check, with nothing to say has
+  no such key. Neither answer moves with the clock: the terminal counts the quarter of an hour
+  (`readyShownMs`). A server's Went out is a `done` named `*pass`, like the pass's own.
+- App, for the floor: `lib/kitchen_word.dart` (`KitchenWord`, `readyShownMs`, `passStation`), `Line.kitchen`,
+  `withLocalOps` (a Went out still in the outbox shows at once), `TableCheck.ready`, `readyMs`, `readyAt`
+  and `FloorPlan.readyAt` in `lib/floor.dart`, `_ReadyBadge` and the Mine row in
+  `lib/screens/floor_view.dart`, `_ReadyStrip`, `_readyLines` and `_wentOut` in
+  `lib/screens/order_screen.dart`, `lib/screens/ready_mark.dart` (the icon, the colours, the words).
 - **A screen's list** is worked out on the hub by `pos.printing.screen.kitchen_screen`, with the paper's
   own routing (`Takes`, `_ticket_lines`, the ticket skips, the takeout station) and
   `PrintService.not_yet()` for the orders sent ahead whose tickets still wait.
@@ -212,6 +276,7 @@ The device is still a POS screen.
   `lib/screens/standing_gate.dart` (`StandingGate`, which stands where the sign-in pad stands and shows the
   kitchen screen, the pickup board or the pad), `Settings.kitchenStations` and `Settings.kitchenPass` (the
   preferences `kitchen_stations` and `kitchen_pass`), `lib/screens/kitchen_minutes_dialog.dart`.
-- Tests: `backend/tests/printing/test_screen.py`, `apps/pos_app/test/kitchen_screen_test.dart`,
-  `apps/pos_app/test/kitchen_pass_test.dart`. The sync simulations (`pos.sync.simulate`) mark dishes made,
+- Tests: `backend/tests/printing/test_screen.py`, `backend/tests/printing/test_made.py`,
+  `apps/pos_app/test/kitchen_screen_test.dart`, `apps/pos_app/test/kitchen_pass_test.dart`,
+  `apps/pos_app/test/kitchen_word_test.dart`. The sync simulations (`pos.sync.simulate`) mark dishes made,
   and sent out, among their random operations.

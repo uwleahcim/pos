@@ -2494,6 +2494,30 @@ class Hub {
     floor = {...plan, 'status': status};
   }
 
+  /// A floor a test set up counts the dishes ready at a check as the hub does: made and not gone out, with
+  /// when the last of them was made.
+  void _readyOnFloor(String orderId, Map<String, dynamic> lines) {
+    final plan = floor;
+    if (plan == null) return;
+    final ready = [
+      for (final line in lines.values.cast<Map>())
+        if (line['status'] == 'active')
+          if (line['kitchen'] case {'ready_ms': final int at} && final Map said when said['out_ms'] == null)
+            (line['qty'] as int? ?? 1, at),
+    ];
+    for (final checks in (plan['status'] as Map? ?? const {}).values) {
+      for (final check in (checks as List).cast<Map<String, dynamic>>()) {
+        if (check['order_id'] != orderId) continue;
+        check
+          ..remove('ready')
+          ..remove('ready_ms');
+        if (ready.isEmpty) continue;
+        check['ready'] = ready.fold(0, (n, dish) => n + dish.$1);
+        check['ready_ms'] = ready.map((dish) => dish.$2).reduce(max);
+      }
+    }
+  }
+
   /// The hub's replay, as far as these tests need it: an order read back shows what the terminal sent.
   void _apply(String orderId, List<Map<String, dynamic>> ops) {
     final order = orders.where((o) => o['order_id'] == orderId).firstOrNull;
@@ -2554,6 +2578,17 @@ class Hub {
         case 'void_line':
           final line = lines[data['line_id']] as Map?;
           if (line != null) line['status'] = line['fired'] == true ? 'void' : 'removed';
+        case 'done' when data['station'] == '*pass':
+          // the pass, or the server who carried them, says dishes went out (or not after all): the kitchen's
+          // word on each follows, and the floor counts what is still ready at the check
+          final at = int.tryParse((op['hlc'] as String? ?? '').split('-').first);
+          for (final id in data['line_ids'] as List) {
+            final line = lines[id] as Map?;
+            final said = (line?['kitchen'] as Map?)?.cast<String, dynamic>();
+            if (line == null || said == null) continue;
+            line['kitchen'] = data['done'] == false ? ({...said}..remove('out_ms')) : {...said, 'out_ms': at};
+          }
+          _readyOnFloor(orderId, lines);
         case 'fire':
           // what was waiting is sent now, by the stamp of the screen that sent it; a hub that [tellsSent]
           final at = int.tryParse((op['hlc'] as String? ?? '').split('-').first);

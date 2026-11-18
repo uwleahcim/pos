@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'allergies.dart';
 import 'api.dart';
 import 'floor.dart';
+import 'kitchen_word.dart';
 import 'menu.dart';
 import 'outbox.dart';
 
@@ -108,6 +109,15 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
           if (line.isActive && !line.fired && (course == '*' || line.course == course)) {
             lines[line.lineId] = line.copyWith(fired: true, sentMs: at, pending: true);
           }
+        }
+      case 'done':
+        // a server said dishes went out (the pass's own word), or took that back: the check shows it at once
+        if (data['station'] != passStation) continue;
+        final at = data['done'] == false ? null : int.tryParse((op['hlc'] as String? ?? '').split('-').first);
+        for (final id in data['line_ids'] as List? ?? const []) {
+          final line = lines[id];
+          final said = line?.kitchen;
+          if (line != null && said != null) lines[line.lineId] = line.copyWith(kitchen: said.out(at));
         }
       case 'close':
         if (status != 'void') status = 'closed';

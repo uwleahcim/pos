@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -129,10 +129,15 @@ def check_timer(state: OrderState, courses: Sequence[str] = ()) -> dict[str, Any
 
 
 def table_status(
-    orders: Iterable[OrderState], totals: dict[str, Decimal] | None = None, courses: Sequence[str] = ()
+    orders: Iterable[OrderState],
+    totals: dict[str, Decimal] | None = None,
+    courses: Sequence[str] = (),
+    ready: Callable[[OrderState], dict[str, int]] | None = None,
 ) -> dict[str, list[dict]]:
     """Open checks by table id, oldest first: what the floor map colours and what a tap opens. `courses` are
-    the course ids in the order the kitchen serves them, for the timer on a held course."""
+    the course ids in the order the kitchen serves them, for the timer on a held course. `ready(order)` is
+    what the kitchen has ready for a check (`pos.printing.made.ready_of`): `ready` and `ready_ms`, on the
+    checks that have a dish waiting to be carried out and on no other."""
     out: dict[str, list[dict]] = {}
     for state in orders:
         if state.status != "open":
@@ -155,6 +160,7 @@ def table_status(
                 "held": held,
                 "total": str(totals.get(state.order_id)) if totals and state.order_id in totals else None,
                 "timer": check_timer(state, courses),
+                **(ready(state) if ready is not None else {}),
             }
         )
     for checks in out.values():
