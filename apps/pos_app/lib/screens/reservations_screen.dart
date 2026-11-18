@@ -34,7 +34,15 @@ class OpenWaitlist {
 /// The hub keeps the book and tells this screen when another one changed it. Pops a [SeatBooking] when a
 /// party is to be seated and an [OpenWaitlist] for the waitlist; nothing otherwise.
 class ReservationsScreen extends StatefulWidget {
-  const ReservationsScreen({super.key, required this.api, required this.staffId, this.nowMs, this.waitlist = true});
+  const ReservationsScreen({
+    super.key,
+    required this.api,
+    required this.staffId,
+    this.nowMs,
+    this.waitlist = true,
+    this.day,
+    this.open,
+  });
 
   final PosApi api;
 
@@ -47,6 +55,13 @@ class ReservationsScreen extends StatefulWidget {
   /// Whether the way over to the waitlist is offered.
   final bool waitlist;
 
+  /// The day the book opens at ("2026-11-21"); the hub's today when null.
+  final String? day;
+
+  /// A reservation of that day to open as if it had been tapped, once the book is read: the one somebody
+  /// is calling about. Nothing opens when it stands no longer.
+  final String? open;
+
   @override
   State<ReservationsScreen> createState() => _ReservationsScreenState();
 }
@@ -55,7 +70,8 @@ enum _Do { seat, here, change, cancel, noShow }
 
 class _ReservationsScreenState extends State<ReservationsScreen> {
   Book? _book;
-  String? _day; // the day shown ("2026-11-21"); null is the hub's today
+  late String? _day = widget.day; // the day shown ("2026-11-21"); null is the hub's today
+  late String? _toOpen = widget.open; // the reservation to open when the book is first read
   bool _away = false; // no hub answers: the book is what was last read, or nothing
   bool _older = false; // the hub that answers has no reservations
   bool _earlier = false; // the reservations that ended are shown
@@ -107,10 +123,26 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
         _book = book;
         _away = away;
         _older = false;
+        if (book.isToday) _day = null; // a book opened at the day it is: today's from here on
       });
       _armClock();
+      _openAsked(book);
     } on ApiException {
       if (mounted && !_away) setState(() => _away = true);
+    }
+  }
+
+  /// The reservation the screen was opened for comes up once, when its day's book is first read.
+  void _openAsked(Book book) {
+    final id = _toOpen;
+    if (id == null) return;
+    _toOpen = null;
+    for (final booking in book.booked) {
+      if (booking.id != id) continue;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_open(booking));
+      });
+      return;
     }
   }
 

@@ -29,6 +29,9 @@ typed into it (it waits for the typing to pause). Numbers match by their digits:
 Picking up a call still opens the order the number placed earlier **today** when there is one (a customer
 calling back about their order lands on it); the form with the customer on it opens when there is none.
 
+When the call is about a table, the form has **Book a table** at its top right, and lists the tables the
+number has booked already (docs/reservations.md, "When somebody calls").
+
 ## Same again
 
 A tap starts the new order as **Start** would (the name, the channel, the language and the time as the form

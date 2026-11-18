@@ -7,7 +7,8 @@ theirs, with the guests already filled in.
 
 Since 18 November 2026 (the Toast comparison, row 15). Hub and app; nothing to turn on. The same day, part
 two: a table booked for today says so on the floor map, and asks before somebody else is sat there
-([On the floor map](#on-the-floor-map)).
+([On the floor map](#on-the-floor-map)). And part three: a table is booked from the form a call opens, and
+somebody calling about a table they booked lands on it ([When somebody calls](#when-somebody-calls)).
 
 ## Where it is
 
@@ -15,6 +16,9 @@ two: a table booked for today says so on the floor map, and asks before somebody
 - **Tablets and Macs**: open the waitlist (the button with the group of people in the bar at the top), then
   **Reservations** at its top right. The bar itself has no room for one more button. The book has
   **Waitlist** at its top right, so the two are one tap apart at the door.
+
+- **On a call**: the form that opens when a call is picked up has **Book a table** at its top right
+  ([When somebody calls](#when-somebody-calls)).
 
 Anyone signed in can open the book, book a table and seat a party. No PIN is asked: whoever answers the
 phone takes the booking.
@@ -39,6 +43,36 @@ booking and when.
 
 A table booked for after midnight (half past twelve, one o'clock) belongs to the evening before: the book's
 day runs to 4 AM, like the day's report.
+
+## When somebody calls
+
+Most tables are booked by phone. Picking up a call opens the to-go form with the caller's number and name
+in it, as it always did (docs/customers.md). The call may be about a table and not about food:
+
+- **Book a table**, at the top right of the form (on a phone it is the calendar with a tick). The to-go
+  form closes and the reservation form opens with the **name and the number already in it**: the name from
+  the customer's earlier orders when the restaurant knows the number, the phone company's name for the
+  caller otherwise. Both can be typed over. Pick the guests, the day and the time, and **Book**.
+- A line at the bottom says it is done ("Chen is booked for tomorrow at 18:30"), with **The book** beside
+  it for a look at that day. No order is started.
+- **A caller who has a table booked already** sees it on the form, under the number, as a card of two
+  lines: "Tomorrow at 18:30", and under it "Table A8 booked · 4 guests". When the reservation is in
+  another name than the one on the form, the card says whose it is ("Table booked for Chen · 10 guests").
+  Every reservation still standing for today or a later day that was made with that number is listed, the
+  soonest first. **A tap on a card** goes to the book of that day with the reservation open: Change,
+  Cancel it, and for today's Seat, Here and No-show. So somebody who calls to move a table to seven or to
+  say they are not coming is two taps from it.
+
+Book a table shows while the order is **by phone**: on the form a call opens, and on a form opened with To
+go once **Phone** is picked (for a call taken on a phone the app does not see). A number typed into the
+form is looked up like a caller's.
+
+While a call is on, the to-go form and the reservation form start just under the strip of the call, so the
+strip (Hold, Hang up) never covers the form's title or Book a table.
+
+Numbers are matched by their digits, so `+1 (781) 555-1234` and `781 555 1234` are the same caller. A
+reservation made without a number is found by no call. A customer who ordered earlier **today** still
+lands on that order when they call back, as before; the book is then reached the usual way.
 
 ## Reading the book
 
@@ -166,8 +200,10 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 
 ## Not built
 
-- Tonight's reservations counted on the waitlist's button, and **Book a table** from the caller's popup
-  when a guest phones.
+- Tonight's reservations counted on the waitlist's button.
+- On a call: Book a table on the strip of the call itself and on an order that is already open, the
+  customer's past reservations and no-shows, and a table booked by somebody whose number the phone company
+  hides.
 - On the map: the name on a table that is seated, the booked tables in the list beside the map while Mine
   is on, a count of late reservations in the bar over the map, and a table that says "booked" while a
   reservation is being made. How long a table is kept (an hour and a half each way) is fixed, not a setting.
@@ -210,5 +246,15 @@ mistake, the check opened at the table stays as it is: close or void it as any c
   `LiveChange.reservations`; `lib/screens/booked_table_dialog.dart` (`BookedTableDialog`, `holdWhenWords`,
   `holdColors`); `_bookedOk` in `lib/screens/orders_screen.dart`, asked by `_onTable`, `_seatPartyAt`,
   `_seatAt` and `_moveTo` for a free table; `Booking.ofHold` seats the party from the map.
+- A call: `Reservations.of_phone()` (hub) is `GET /reservations/caller?phone=`: the standing reservations
+  of today and later made with that number (compared by `phone_digits`, `MOST_OF_A_CALLER` at most), with
+  `today`. App: `PosApi.callerTables` (null for a short number, no answer or an older hub), `CallerTables`
+  and the words `callerTableWhen` and `callerTableWhat` in `lib/reservations.dart`; in
+  `lib/screens/orders_screen.dart` the to-go form (`_TakeoutDialog`) asks beside the customer lookup,
+  lists them (`_tablesCard`) and pops the `Booking` for a tapped card or a `_BookForCaller` for **Book a
+  table**; `_newOrder` then calls `_reservations(day:, open:)` or `_bookForCaller`. `BookingDialog` takes
+  a `name` and a `phone` to start with, and `ReservationsScreen` a `day` to open at and a reservation to
+  `open`. Both forms take `underCall` and then start `callStripRoom` (`lib/screens/phone_bar.dart`) from
+  the top.
 - Tests: `backend/tests/test_reservations.py`, `apps/pos_app/test/reservations_test.dart`,
-  `apps/pos_app/test/booked_tables_test.dart`.
+  `apps/pos_app/test/booked_tables_test.dart`, `apps/pos_app/test/call_booking_test.dart`.

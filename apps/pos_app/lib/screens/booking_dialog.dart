@@ -5,13 +5,23 @@ import '../floor.dart';
 import '../reservations.dart';
 import '../takeout.dart' show dayName;
 import 'guests_picker.dart';
+import 'phone_bar.dart' show callStripRoom;
 
 /// A reservation (docs/reservations.md): asked when a table is booked, and again to put a standing one
 /// right. A name, how many they are, the day and the time; a table to hold, a phone number and a note when
 /// there is one. The hub keeps it and says what it does not take. Pops the book of the day the reservation
 /// is for, as the hub has it afterwards; nothing when it was closed.
 class BookingDialog extends StatefulWidget {
-  const BookingDialog({super.key, required this.api, required this.staffId, required this.book, this.booking});
+  const BookingDialog({
+    super.key,
+    required this.api,
+    required this.staffId,
+    required this.book,
+    this.booking,
+    this.name = '',
+    this.phone = '',
+    this.underCall = false,
+  });
 
   final PosApi api;
 
@@ -25,13 +35,21 @@ class BookingDialog extends StatefulWidget {
   /// The reservation being put right; null for a new one.
   final Booking? booking;
 
+  /// What is known already of who a new reservation is for: somebody on the phone has a number, and a name
+  /// when the caller ID or their orders gave one. Both can be typed over.
+  final String name;
+  final String phone;
+
+  /// A call is on at this terminal: the form starts under its strip.
+  final bool underCall;
+
   @override
   State<BookingDialog> createState() => _BookingDialogState();
 }
 
 class _BookingDialogState extends State<BookingDialog> {
-  late final _name = TextEditingController(text: widget.booking?.name ?? '');
-  late final _phone = TextEditingController(text: widget.booking?.phone ?? '');
+  late final _name = TextEditingController(text: widget.booking?.name ?? _known(widget.name, widget.book.nameMax));
+  late final _phone = TextEditingController(text: widget.booking?.phone ?? widget.phone.trim());
   late final _note = TextEditingController(text: widget.booking?.note ?? '');
   late int _size = widget.booking?.size ?? 2;
   // A day of service, as the hub names it; a new reservation starts on the day the book is open at.
@@ -48,6 +66,12 @@ class _BookingDialogState extends State<BookingDialog> {
     _phone.dispose();
     _note.dispose();
     super.dispose();
+  }
+
+  /// A name that came with a call, as the book takes one: on one line, and no longer than it keeps.
+  static String _known(String name, int most) {
+    final tidy = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+    return tidy.length > most ? tidy.substring(0, most).trimRight() : tidy;
   }
 
   String get _today => widget.book.today.isEmpty ? isoDay(DateTime.now()) : widget.book.today;
@@ -176,7 +200,8 @@ class _BookingDialogState extends State<BookingDialog> {
     final held = _table.isEmpty ? null : _held[_table];
     return AlertDialog(
       title: Text(booking == null ? 'Book a table' : 'Change ${booking.name}'),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
+      // a phone keeps its width
+      insetPadding: EdgeInsets.fromLTRB(16, widget.underCall ? callStripRoom : 24, 16, 24),
       contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
       content: SizedBox(
         width: 380,
@@ -189,7 +214,8 @@ class _BookingDialogState extends State<BookingDialog> {
               TextField(
                 key: const ValueKey('booking-name'),
                 controller: _name,
-                autofocus: booking == null,
+                // a name that came with the call is there to read: the keyboard stays down until it is wanted
+                autofocus: booking == null && _name.text.isEmpty,
                 maxLength: book.nameMax,
                 textCapitalization: TextCapitalization.words,
                 textInputAction: TextInputAction.next,

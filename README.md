@@ -54,7 +54,8 @@ merges after any disconnect.
 - Reservations (the book of tables booked for today and the days ahead: name, guests, day and time, a
   table to hold, a phone number and a note; a time turns amber, then red; Seat brings up the floor map and
   the table tapped is theirs; cancelled and no-show, with a way back; a table booked for today says so on
-  the floor map, and asks before somebody else is sat there; no deposit, and nothing sent to the guest):
+  the floor map, and asks before somebody else is sat there; a table is booked from the form a call
+  opens, and a caller's own reservations are on it; no deposit, and nothing sent to the guest):
   `docs/reservations.md`
 - Who may do what (a table under Location where a manager or an owner hands any of fourteen powers to the
   servers, bartenders, hosts, cashiers or the kitchen, or takes them back: approving a void or a comp, the
