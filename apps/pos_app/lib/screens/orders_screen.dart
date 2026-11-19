@@ -2208,7 +2208,10 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       final fees = await widget.api.deliveryFees();
       if (!mounted || fees == null) return;
       setState(() => _fees = fees);
-      _asker.source = fees.looksUp ? widget.api.deliveryDistance : null;
+      // with the number in the box, so the hub can read the distance off the customer's own earlier order
+      _asker.source = fees.looksUp
+          ? (address, {fresh = false}) => widget.api.deliveryDistance(address, phone: _phone.text, fresh: fresh)
+          : null;
       unawaited(_askDistance()); // an address that was there before the prices were
     } on ApiException {
       // no fee is asked
@@ -2216,10 +2219,11 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   }
 
   /// Asks the hub how far the address is, where it looks that up (docs/delivery.md, "Looking the distance
-  /// up"), and picks the band it falls in unless somebody picked by hand. Once per address, unless [again].
-  Future<void> _askDistance({bool again = false}) async {
+  /// up"), and picks the band it falls in unless somebody picked by hand. Once per address, unless [again];
+  /// [fresh] has the hub ask its map service whatever the customer's earlier order says.
+  Future<void> _askDistance({bool again = false, bool fresh = false}) async {
     if (!mounted || _handover != 'delivery' || !_asker.can) return;
-    final band = (await _asker.ask(_address.text, again: again))?.band;
+    final band = (await _asker.ask(_address.text, again: again, fresh: fresh))?.band;
     if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
   }
 
@@ -2605,7 +2609,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onFee: _pickFee,
                   asker: _asker,
                   onAddressDone: _askDistance,
-                  onLookUp: () => _askDistance(again: true),
+                  onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                 ),
                 if (_nowhere)
                   Padding(
@@ -2678,7 +2682,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onFee: _pickFee,
                   asker: _asker,
                   onAddressDone: _askDistance,
-                  onLookUp: () => _askDistance(again: true),
+                  onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                 ),
               ],
             ],

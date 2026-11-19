@@ -889,7 +889,9 @@ class _OrderScreenState extends State<OrderScreen> {
         catering: order.isCatering,
         fees: _fees,
         fee: order.deliveryFee,
-        distance: (_fees?.looksUp ?? false) ? widget.api.deliveryDistance : null,
+        distance: (_fees?.looksUp ?? false)
+            ? (address, {fresh = false}) => widget.api.deliveryDistance(address, phone: order.phone, fresh: fresh)
+            : null,
       ),
     );
     if (asked == null || !mounted) return;

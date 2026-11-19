@@ -45,7 +45,7 @@ class FeePicker extends StatelessWidget {
   /// over the prices, and [onLookUp] asks, or asks again.
   final DistanceAsker? asker;
   final String address;
-  final VoidCallback? onLookUp;
+  final LookUp? onLookUp;
 
   /// The narrowest a button may be, at type of the usual size, and still say "Up to 240 min" on one line.
   static const roomy = 120.0;

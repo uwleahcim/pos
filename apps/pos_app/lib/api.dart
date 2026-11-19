@@ -1086,8 +1086,17 @@ class PosApi {
   /// delivery.md, "Looking the distance up"): the hub asks its map service, which is sent the two addresses
   /// and nothing else. It may take a few seconds. Throws [ApiException] when there is no distance: 409 where
   /// the hub looks nothing up, 424 with the words for the form in its detail when the service gave none.
-  Future<FeeLookup> deliveryDistance(String address) async {
-    final answer = await _post('/delivery/distance', {'address': address}, timeout: const Duration(seconds: 9));
+  ///
+  /// With the customer's [phone] the hub first looks at their own earlier deliveries: one to this address
+  /// says how far it is, and nobody is asked ("Customers who order again"). The number goes no further than
+  /// the hub. [fresh] asks the map service all the same.
+  Future<FeeLookup> deliveryDistance(String address, {String phone = '', bool fresh = false}) async {
+    final digits = phoneDigits(phone);
+    final answer = await _post('/delivery/distance', {
+      'address': address,
+      if (digits.isNotEmpty) 'phone': digits,
+      if (fresh) 'fresh': true,
+    }, timeout: const Duration(seconds: 9));
     try {
       return FeeLookup.fromJson(answer);
     } on FormatException catch (err) {

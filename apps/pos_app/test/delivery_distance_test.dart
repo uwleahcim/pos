@@ -11,7 +11,7 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, tapKey;
 import 'delivery_fee_test.dart' show carried, delivery, offered, picked, pumpForm, pumpOrder;
-import 'delivery_test.dart' show created, elm, key, linda, typeNumber, typed;
+import 'delivery_test.dart' show created, elm, key, linda, lindaDigits, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -19,10 +19,17 @@ import 'location_rows.dart';
 /// hub has a map service and the restaurant's own address, a form asks how far the address is once it is
 /// typed, says what the map said, and picks the band it falls in. Any other price can still be tapped, and
 /// what the map said travels with the pick. The hub's side is backend/tests/orders/test_delivery_distance.py.
+///
+/// A customer who had a delivery brought to the same address before is answered by the hub from that order
+/// ("Customers who order again"): the form sends the number with the address, says "as last time", and
+/// offers to look it up again.
 
 const oak = '4 Oak Rd, Woburn';
 const main9 = '9 Main St, Winchester';
 const mapSaid = {'miles': '3.2', 'minutes': 9};
+
+/// The same as this hub answers it and an order keeps it: with who measured it, and from where.
+const mapKept = {...mapSaid, ...Hub.mapMark};
 
 /// The address typed into a form that is a delivery, and the box left as Enter leaves it.
 Future<void> typeAddress(WidgetTester tester, String address) async {
@@ -41,6 +48,24 @@ Future<void> lindaTo(WidgetTester tester, String address) async {
 }
 
 String said(WidgetTester tester, String name) => tester.widget<Text>(key(name)).data!;
+
+/// The to-go form of a hub that knows Linda, and how far Elm Street was the last time she had a delivery
+/// brought there: [last], what the map said then.
+Future<Terminal> pumpLinda(
+  WidgetTester tester, {
+  Map<String, dynamic> last = mapSaid,
+  String address = elm,
+  Size? size,
+  double? type,
+}) async {
+  final t = await pumpForm(tester, fees: Hub.mapFees, size: size, type: type);
+  t.hub.customers[lindaDigits] = linda(address: address);
+  t.hub.savedDistances[lindaDigits] = {address: last};
+  await tapKey(tester, 'channel:phone');
+  await typeNumber(tester, '781 555 0101');
+  await tapKey(tester, 'handover:delivery');
+  return t;
+}
 
 void main() {
   group('what the hub says', () {
@@ -130,7 +155,7 @@ void main() {
       final asked = <String>[];
       var fails = false;
       final asker = DistanceAsker()
-        ..source = (address) async {
+        ..source = (address, {fresh = false}) async {
           asked.add(address);
           if (fails) throw ApiException('no', status: 424, detail: {'message': 'The map service is not answering.'});
           return const FeeLookup(measured: Measured(miles: '3.2', minutes: 9));
@@ -177,7 +202,7 @@ void main() {
       expect(key('fee-needed'), findsNothing);
       expect(enabled(tester, 'takeout-start'), isTrue);
       await tapKey(tester, 'takeout-start');
-      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapSaid});
+      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
       await stop(tester);
     });
 
@@ -188,7 +213,7 @@ void main() {
       await tapKey(tester, 'fee:2'); // a regular
       expect((picked(tester, '2'), picked(tester, '4.5')), (true, false));
       await tapKey(tester, 'takeout-start');
-      expect(created(t.hub)['delivery_fee'], {'up_to': '2', 'measured': mapSaid});
+      expect(created(t.hub)['delivery_fee'], {'up_to': '2', 'measured': mapKept});
       await stop(tester);
     });
 
@@ -223,7 +248,7 @@ void main() {
       await tapKey(tester, 'takeout-start');
       expect(created(t.hub)['delivery_fee'], {
         'up_to': null,
-        'measured': {'miles': '1.1', 'minutes': 4},
+        'measured': {'miles': '1.1', 'minutes': 4, ...Hub.mapMark},
       });
       await stop(tester);
     });
@@ -301,7 +326,7 @@ void main() {
       await tapKey(tester, 'takeout-start');
       expect(created(t.hub)['delivery_fee'], {
         'up_to': '2',
-        'measured': {'miles': '1.1', 'minutes': 4},
+        'measured': {'miles': '1.1', 'minutes': 4, ...Hub.mapMark},
       });
       await stop(tester);
     });
@@ -320,7 +345,7 @@ void main() {
       await tapKey(tester, 'takeout-start');
       expect(created(t.hub)['delivery_fee'], {
         'up_to': '8',
-        'measured': {'miles': '9.3', 'minutes': 21},
+        'measured': {'miles': '9.3', 'minutes': 21, ...Hub.mapMark},
       });
       await stop(tester);
     });
@@ -338,7 +363,7 @@ void main() {
       expect(t.hub.distanceAsks.length, 2);
       expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
       await tapKey(tester, 'takeout-start');
-      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapSaid});
+      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
       await stop(tester);
     });
 
@@ -360,8 +385,9 @@ void main() {
       expect(t.hub.distanceAsks, isEmpty); // a pickup goes nowhere
       await tapKey(tester, 'handover:delivery');
       expect(typed(tester, 'event-address'), elm);
+      // with the number, so the hub can look at her own earlier deliveries first
       expect(t.hub.distanceAsks, [
-        {'address': elm},
+        {'address': elm, 'phone': '7815550101'},
       ]);
       expect(picked(tester, '4.5'), isTrue);
       expect(enabled(tester, 'takeout-start'), isTrue);
@@ -410,6 +436,177 @@ void main() {
     });
   });
 
+  group('customers who order again', () {
+    test('an answer says whether it was saved, and who measured it from where', () {
+      final again = FeeLookup.fromJson({...mapKept, 'by': 'miles', 'band': null, 'beyond': false, 'saved': true});
+      expect((again.saved, again.measured.service, again.measured.from), (true, 'geocodio', '0a1b2c3d'));
+      // both go back with the pick, as they came
+      expect(again.measured.toJson(), mapKept);
+      expect(FeePick.field('4.5', measured: again.measured), {'up_to': '4.5', 'measured': mapKept});
+      expect(OrderFee.of({...carried('4.5', '5.00'), 'measured': mapKept})?.measured, again.measured);
+      // a hub that keeps no distances says neither, and one alone is nothing
+      final plain = FeeLookup.fromJson({...mapSaid, 'by': 'miles', 'band': null, 'beyond': false});
+      expect((plain.saved, plain.measured.service, plain.measured.from), (false, null, null));
+      expect(plain.measured.toJson(), mapSaid);
+      expect(Measured.of({...mapSaid, 'service': 'geocodio'})?.toJson(), mapSaid);
+      expect(Measured.of({...mapSaid, 'from': 5, 'service': 'geocodio'})?.toJson(), mapSaid);
+      expect(again.measured == plain.measured, isFalse);
+    });
+
+    testWidgets("the hub is sent the number's digits beside the address, and fresh only when asked", (tester) async {
+      final t = await terminal(tester);
+      t.hub.deliveryFees = Hub.mapFees;
+      t.hub.savedDistances[lindaDigits] = {elm: mapSaid};
+      final saved = await tester.runAsync(() => t.api.deliveryDistance(elm, phone: '(781) 555-0101'));
+      final fresh = await tester.runAsync(() => t.api.deliveryDistance(elm, phone: '781 555 0101', fresh: true));
+      final nobody = await tester.runAsync(() => t.api.deliveryDistance(elm, phone: ' '));
+      expect((saved?.saved, fresh?.saved, nobody?.saved), (true, false, false));
+      expect(t.hub.distanceAsks, [
+        {'address': elm, 'phone': lindaDigits},
+        {'address': elm, 'phone': lindaDigits, 'fresh': true},
+        {'address': elm},
+      ]);
+      await stop(tester);
+    });
+
+    test('asked again and fresh, the same address is asked about once more', () async {
+      final asked = <(String, bool)>[];
+      final asker = DistanceAsker()
+        ..source = (address, {fresh = false}) async {
+          asked.add((address, fresh));
+          return FeeLookup(
+            measured: const Measured(miles: '3.2', minutes: 9),
+            saved: !fresh,
+          );
+        };
+      expect((await asker.ask(elm))?.saved, isTrue);
+      expect(await asker.ask(elm), isNull);
+      expect((await asker.ask(elm, fresh: true))?.saved, isFalse);
+      expect(asked, [(elm, false), (elm, true)]);
+      asker.dispose();
+    });
+
+    testWidgets('her distance is not looked up again: the form says so and picks the price', (tester) async {
+      final t = await pumpLinda(tester);
+      expect(typed(tester, 'event-address'), elm);
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive, as last time');
+      expect(key('fee-lookup-again'), findsOneWidget);
+      expect(picked(tester, '4.5'), isTrue);
+      expect(t.hub.distanceAsks, [
+        {'address': elm, 'phone': lindaDigits},
+      ]);
+      await tapKey(tester, 'takeout-start');
+      // the figures go on this order too, so the next one finds them on her newest
+      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
+      await stop(tester);
+    });
+
+    testWidgets('it answers while the map service does not', (tester) async {
+      final t = await pumpForm(tester, fees: Hub.mapFees);
+      t.hub.refuseDistance = 'unreachable';
+      t.hub.customers[lindaDigits] = linda();
+      t.hub.savedDistances[lindaDigits] = {elm: mapSaid};
+      await tapKey(tester, 'channel:phone');
+      await typeNumber(tester, '781 555 0101');
+      await tapKey(tester, 'handover:delivery');
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive, as last time');
+      expect(key('fee-lookup-problem'), findsNothing);
+      expect(picked(tester, '4.5'), isTrue);
+      // asked to look it up again, the form says why it cannot, and the price stays as it was
+      await tapKey(tester, 'fee-lookup-again');
+      expect(key('fee-lookup-problem'), findsOneWidget);
+      expect(picked(tester, '4.5'), isTrue);
+      // "Try again" asks as the form first did, and her saved distance answers
+      await tapKey(tester, 'fee-lookup');
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive, as last time');
+      expect([for (final ask in t.hub.distanceAsks) ask['fresh']], [null, true, null]);
+      await stop(tester);
+    });
+
+    testWidgets('looked up again, the map is asked and the price follows what it says now', (tester) async {
+      final t = await pumpLinda(tester);
+      t.hub.distances[elm] = {'miles': '1.8', 'minutes': 6}; // a new road since
+      await tapKey(tester, 'fee-lookup-again');
+      expect(t.hub.distanceAsks.last, {'address': elm, 'phone': lindaDigits, 'fresh': true});
+      expect(said(tester, 'fee-lookup-found'), '1.8 mi · 6 min drive');
+      expect(key('fee-lookup-again'), findsNothing); // it is the map's own answer now
+      expect((picked(tester, '2'), picked(tester, '4.5')), (true, false));
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {
+        'up_to': '2',
+        'measured': {'miles': '1.8', 'minutes': 6, ...Hub.mapMark},
+      });
+      await stop(tester);
+    });
+
+    testWidgets('a price tapped by hand is not moved by looking it up again', (tester) async {
+      final t = await pumpLinda(tester);
+      await tapKey(tester, 'fee:none');
+      t.hub.distances[elm] = {'miles': '1.8', 'minutes': 6};
+      await tapKey(tester, 'fee-lookup-again');
+      expect(said(tester, 'fee-lookup-found'), '1.8 mi · 6 min drive');
+      expect((picked(tester, 'none'), picked(tester, '2')), (true, false));
+      await stop(tester);
+    });
+
+    testWidgets('another address of hers is looked up, and somebody else at the number is not her', (tester) async {
+      final t = await pumpLinda(tester);
+      await typeAddress(tester, main9);
+      expect(said(tester, 'fee-lookup-found'), '1.1 mi · 4 min drive');
+      expect(key('fee-lookup-again'), findsNothing);
+      expect(t.hub.distanceAsks.last, {'address': main9, 'phone': lindaDigits});
+      // the number changes: the address she typed stays, and is asked about for the new number
+      await typeNumber(tester, '781 555 0199');
+      await typeAddress(tester, elm);
+      expect(t.hub.distanceAsks.last, {'address': elm, 'phone': '7815550199'});
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
+      await stop(tester);
+    });
+
+    testWidgets('further than the prices reach is said of a saved distance too', (tester) async {
+      await pumpLinda(tester, address: oak, last: const {'miles': '9.3', 'minutes': 21});
+      expect(said(tester, 'fee-lookup-found'), '9.3 mi · 21 min drive, as last time: further than the prices reach');
+      expect(key('fee-needed'), findsOneWidget);
+      await stop(tester);
+    });
+
+    testWidgets('it fits a small phone with large type', (tester) async {
+      await pumpLinda(tester, size: const Size(320, 640), type: 1.3);
+      expect(key('fee-lookup-again'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+      await pumpLinda(
+        tester,
+        address: oak,
+        last: const {'miles': '9.3', 'minutes': 21},
+        size: const Size(320, 640),
+        type: 1.3,
+      );
+      expect(key('fee-lookup-again'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets("on the order, the order's own number goes with the address", (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: carried('2', '3.00')), fees: Hub.mapFees);
+      t.hub.savedDistances[lindaDigits] = {elm: mapSaid};
+      await tapKey(tester, 'when-strip');
+      expect(t.hub.distanceAsks, isEmpty); // opening it asks nothing
+      await tapKey(tester, 'fee-lookup');
+      expect(t.hub.distanceAsks, [
+        {'address': elm, 'phone': lindaDigits},
+      ]);
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive, as last time');
+      expect(picked(tester, '4.5'), isTrue);
+      await tapKey(tester, 'fee-lookup-again');
+      expect(t.hub.distanceAsks.last, {'address': elm, 'phone': lindaDigits, 'fresh': true});
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
+      await tapKey(tester, 'when-save');
+      expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
+      await stop(tester);
+    });
+  });
+
   group('on the order', () {
     testWidgets('opening the dialog asks nothing: an order that has its fee keeps it', (tester) async {
       final t = await pumpOrder(tester, delivery(fee: carried('4.5', '5.00')), fees: Hub.mapFees);
@@ -434,7 +631,7 @@ void main() {
       expect(data['address'], main9);
       expect(data['delivery_fee'], {
         'up_to': '2',
-        'measured': {'miles': '1.1', 'minutes': 4},
+        'measured': {'miles': '1.1', 'minutes': 4, ...Hub.mapMark},
       });
       await stop(tester);
     });
@@ -459,7 +656,7 @@ void main() {
       await typeAddress(tester, elm);
       expect(picked(tester, '4.5'), isTrue);
       await tapKey(tester, 'when-save');
-      expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': '4.5', 'measured': mapSaid});
+      expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
       await stop(tester);
     });
 

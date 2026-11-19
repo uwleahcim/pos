@@ -128,7 +128,7 @@ class EventFields extends StatelessWidget {
   /// the box is left), [onLookUp] when somebody asks for the distance by hand.
   final DistanceAsker? asker;
   final VoidCallback? onAddressDone;
-  final VoidCallback? onLookUp;
+  final LookUp? onLookUp;
 
   /// What the boxes hold, as an order carries it. With no [guests] box it is no catering order: the note is
   /// the driver's, and an order the customer comes for has none.
@@ -272,7 +272,7 @@ class WhenDialog extends StatefulWidget {
   /// How the hub is asked how far an address is (`PosApi.deliveryDistance`); null where it looks nothing
   /// up. It is asked when the address is typed over or a pickup becomes a delivery, never just for opening
   /// the dialog: an order that has its fee keeps it.
-  final Future<FeeLookup> Function(String address)? distance;
+  final DistanceSource? distance;
 
   @override
   State<WhenDialog> createState() => _WhenDialogState();
@@ -292,9 +292,9 @@ class _WhenDialogState extends State<WhenDialog> {
   bool _feeByHand = false;
 
   /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand.
-  Future<void> _lookUp({bool again = false}) async {
+  Future<void> _lookUp({bool again = false, bool fresh = false}) async {
     if (!mounted || widget.event == null || _handover != 'delivery') return;
-    final band = (await _asker.ask(_address.text, again: again))?.band;
+    final band = (await _asker.ask(_address.text, again: again, fresh: fresh))?.band;
     if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
   }
 
@@ -394,7 +394,7 @@ class _WhenDialogState extends State<WhenDialog> {
                   }),
                   asker: _asker,
                   onAddressDone: _lookUp,
-                  onLookUp: () => _lookUp(again: true),
+                  onLookUp: ({fresh = false}) => _lookUp(again: true, fresh: fresh),
                 ),
               ],
               if (!nowhere && unpriced)

@@ -145,6 +145,15 @@ class Hub {
   String? refuseDistance;
   Completer<void>? distanceWaits;
 
+  /// What customers' own earlier deliveries say ("Customers who order again"): by the number's digits and
+  /// then the address, what the map said that time. A form that sends the number is answered from here,
+  /// `saved`, and the map is not asked (so [refuseDistance] does not matter), unless it says `fresh`.
+  final savedDistances = <String, Map<String, Map<String, dynamic>>>{};
+
+  /// Who measured a distance and from where, as the hub says beside every answer and is sent back with
+  /// the pick.
+  static const mapMark = {'service': 'geocodio', 'from': '0a1b2c3d'};
+
   Future<http.Response> _distance(http.Request request) async {
     final fees = deliveryFees;
     if (fees == null || !fees.containsKey('lookup')) return json({'detail': 'Not Found'}, 404);
@@ -156,7 +165,8 @@ class Hub {
     final body = jsonDecode(request.body) as Map<String, dynamic>;
     distanceAsks.add(body);
     await distanceWaits?.future;
-    final said = refuseDistance == null ? distances[body['address']] : null;
+    final kept = body['fresh'] == true ? null : savedDistances[body['phone']]?[body['address']];
+    final said = kept ?? (refuseDistance == null ? distances[body['address']] : null);
     if (said == null) {
       final reason = refuseDistance ?? 'not_found';
       return json({
@@ -180,7 +190,14 @@ class Hub {
         }
       }
     }
-    return json({...said, 'by': fees['by'], 'band': band, 'beyond': charged && band == null});
+    return json({
+      ...said,
+      'by': fees['by'],
+      'band': band,
+      'beyond': charged && band == null,
+      ...mapMark,
+      'saved': kept != null,
+    });
   }
 
   /// A band's reach as the hub writes it: "2", "2.5".
