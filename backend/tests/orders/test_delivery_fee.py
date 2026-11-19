@@ -32,7 +32,7 @@ MILES = {
     "taxed": False,
 }
 MINUTES = {"enabled": True, "by": "minutes", "bands": [{"up_to": 10, "fee": 3}, {"up_to": 20, "fee": "6.5"}]}
-NO_LOOKUP = {"origin": "", "maps": False, "lookup": False, "services": []}
+NO_LOOKUP = {"origin": "", "maps": False, "lookup": False, "services": [], "live": False}
 """What a hub with no map service says beside the prices (tests/orders/test_delivery_distance.py)."""
 
 
