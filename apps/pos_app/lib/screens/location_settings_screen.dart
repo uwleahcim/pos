@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -30,6 +32,7 @@ import 'guests_screen.dart';
 import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
 import 'kitchen_times_screen.dart';
+import 'live_drive_dialog.dart';
 import 'logbook_screen.dart';
 import 'powers_screen.dart';
 import 'printers_screen.dart';
@@ -156,6 +159,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
+  LiveDrive? _live; // live traffic for deliveries, as the hub has it; null until it answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
@@ -258,6 +262,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // nothing answered about the delivery fee: the row says so
     }
+    await _readLive();
     try {
       final notes = await widget.api.kitchenNotes();
       if (mounted) setState(() => _kitchenNotes = notes);
@@ -730,6 +735,33 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (saved == null || !mounted) return;
     setState(() => _fees = saved);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery fee saved')));
+    unawaited(_readLive()); // the restaurant's address is live traffic's too
+  }
+
+  /// Live traffic as the hub has it, with what the hub says it still takes.
+  Future<void> _readLive() async {
+    try {
+      final live = await widget.api.liveDrive();
+      if (mounted) setState(() => _live = live);
+    } on ApiException {
+      // nothing answered about live traffic: the row says so
+    }
+  }
+
+  Future<void> _liveTraffic() async {
+    final saved = await showDialog<LiveDrive>(
+      context: context,
+      builder: (_) => LiveDriveDialog(
+        api: widget.api,
+        token: widget.token,
+        setting: _live!,
+        priced: _fees?.asks ?? false,
+        delivery: (_quotes ?? const Quotes()).baseFor('delivery'),
+      ),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _live = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Live traffic saved')));
   }
 
   Future<void> _kitchenNotesList() async {
@@ -832,6 +864,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (!fees.asks) return 'Off: nothing is added to a delivery for the trip';
     final prices = [for (final band in fees.bands) '${feeWords(band.fee)} up to ${band.upTo} ${feeUnit(fees.by)}'];
     return '${prices.join(', ')}${fees.taxed ? ' · taxed' : ''}${fees.lookup ? ' · distance looked up' : ''}';
+  }
+
+  /// One line on live traffic: off, what a delivery for now is promised, or what is still missing for it.
+  String get _liveSummary {
+    final live = _live;
+    if (live == null) return 'The hub has not answered about live traffic (an older hub: update it)';
+    if (!live.enabled) return 'Off: a delivery is promised the minutes set for Delivery';
+    final missing = LiveDriveDialog.missing(live, priced: _fees?.asks ?? false);
+    if (missing != null) return 'On, but not used yet. $missing';
+    return 'On: a delivery for now is promised ${live.before} min and the drive as the roads are';
   }
 
   /// One line on the one-tap notes: what a dish's sheet offers, or that a note is typed.
@@ -1172,6 +1214,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     subtitle: Text(_feesSummary),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _fees == null ? null : _deliveryFee,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('live-traffic'),
+                    leading: const Icon(Icons.traffic_outlined),
+                    title: const Text('Live traffic'),
+                    subtitle: Text(_liveSummary),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _live == null ? null : _liveTraffic,
                   ),
                   const Divider(height: 1),
                   ListTile(

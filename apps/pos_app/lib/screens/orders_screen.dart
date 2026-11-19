@@ -800,13 +800,15 @@ class _OrdersScreenState extends State<OrdersScreen> {
   /// prices moved and which dishes were left off, while the customer is still on the call.
   Future<void> _startOrder(TakeoutRequest request, Quotes quotes) async {
     // The quote is the channel's minutes and tonight's rush. A time the customer named stays theirs: the
-    // quote then says how long before it the kitchen starts.
+    // quote then says how long before it the kitchen starts. A delivery for now where live traffic is on
+    // is promised by the drive the form was told: the order keeps the promise, never the drive.
     final now = DateTime.now();
     final minutes = quotes.minutesFor(
       request.channel,
       at: now,
       promised: request.promisedAt,
       delivery: request.event?.delivered ?? false, // brought to them: the cooking and the drive
+      drive: request.driveNow,
     );
     final promised = request.promisedAt ?? now.add(Duration(minutes: minutes));
     final staff = widget.session.staff;
@@ -2210,7 +2212,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       setState(() => _fees = fees);
       // with the number in the box, so the hub can read the distance off the customer's own earlier order
       _asker.source = fees.looksUp
-          ? (address, {fresh = false}) => widget.api.deliveryDistance(address, phone: _phone.text, fresh: fresh)
+          ? (address, {fresh = false, now = false}) =>
+                widget.api.deliveryDistance(address, phone: _phone.text, fresh: fresh, now: now)
           : null;
       unawaited(_askDistance()); // an address that was there before the prices were
     } on ApiException {
@@ -2221,10 +2224,19 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// Asks the hub how far the address is, where it looks that up (docs/delivery.md, "Looking the distance
   /// up"), and picks the band it falls in unless somebody picked by hand. Once per address, unless [again];
   /// [fresh] has the hub ask its map service whatever the customer's earlier order says.
+  ///
+  /// Where live traffic is on, a delivery for now is also told how long the drive is at this minute
+  /// ("Live traffic"), and the form promises by it. An order for later is not asked about: the roads now
+  /// say nothing of then.
   Future<void> _askDistance({bool again = false, bool fresh = false}) async {
     if (!mounted || _handover != 'delivery' || !_asker.can) return;
-    final band = (await _asker.ask(_address.text, again: again, fresh: fresh))?.band;
-    if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
+    final now = (_fees?.live ?? false) && _delivery && !_named;
+    final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: now))?.band;
+    if (!mounted) return;
+    // the time promised may go by the answer too
+    setState(() {
+      if (band != null && !_feeByHand) _fee = band.upTo;
+    });
   }
 
   /// Something was typed on the form: what the map said of another address is gone.
@@ -2341,6 +2353,10 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// The customer names the time: the switch says so, and a catering order always does.
   bool get _named => _later || _catering;
 
+  /// The drive as the roads are right now to the address on the form, where a delivery for now is
+  /// promised by it ("Live traffic"); null where it is not, and while nobody said.
+  DriveNow? get _drive => _delivery && !_named ? _asker.driveFor(_address.text) : null;
+
   DateTime? get _promised {
     final time = _time;
     if (!_named || time == null) return null;
@@ -2367,6 +2383,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       // a fee is a delivery's alone, and a catering order's may be said later
       fee: (_delivery || _catering) && _handover == 'delivery' ? _fee : null,
       measured: _asker.measuredFor(_address.text),
+      driveNow: _drive,
     ),
   );
 
@@ -2511,7 +2528,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final now = DateTime.now();
-    final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised, delivery: _delivery);
+    final drive = _drive;
+    final minutes = widget.quotes.minutesFor(_channel, at: now, promised: _promised, delivery: _delivery, drive: drive);
     final rush = widget.quotes.rushAt(now, promised: _promised);
     final customer = _customer;
     final tables = _tables;
@@ -2582,7 +2600,10 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                       key: ValueKey('channel:$c'),
                       label: Text(channelLabel(c)),
                       selected: _channel == c,
-                      onSelected: (_) => setState(() => _channel = c),
+                      onSelected: (_) {
+                        setState(() => _channel = c);
+                        unawaited(_askDistance()); // a delivery that is now for now is told the drive
+                      },
                     ),
                   const SizedBox(width: 8),
                   for (final (code, label) in const [('en', 'English'), ('zh', '中文')])
@@ -2651,10 +2672,14 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                     _later
                         ? 'Prints ahead of its time by the quote${rush > 0 ? ' ($minutes min tonight)' : ''}'
                         : '${_delivery ? 'There' : 'Ready'} in about $minutes min'
+                              '${drive != null ? ', with traffic' : ''}'
                               '${rush > 0 ? ' (busy kitchen: +$rush)' : ''}',
                   ),
                   value: _later,
-                  onChanged: (on) => setState(() => _later = on),
+                  onChanged: (on) {
+                    setState(() => _later = on);
+                    unawaited(_askDistance()); // one that is for now after all is told the drive
+                  },
                 ),
               if (_named)
                 WhenPicker(

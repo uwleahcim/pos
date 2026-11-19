@@ -21,6 +21,7 @@ class DistanceAsker extends ChangeNotifier {
   String? _address;
   int _turn = 0;
   bool _gone = false;
+  bool _now = false; // whether the address was asked about as a delivery for now
 
   /// The hub was asked and has not answered yet.
   bool get asking => _asking;
@@ -41,15 +42,27 @@ class DistanceAsker extends ChangeNotifier {
     return found != null && found.keep && _address == oneLine(address) ? found.measured : null;
   }
 
+  /// The drive to [address] as the roads are right now, when that is the address the hub was asked about
+  /// as a delivery for now and it could say ("Live traffic"): what such a delivery is promised by.
+  DriveNow? driveFor(String address) => _address == oneLine(address) ? _found?.driveNow : null;
+
   /// Asks how far [address] is. The answer, or null when there is nothing to ask, the address was asked
   /// already (unless [again]), no distance came of it, or the form has moved on meanwhile. [fresh] asks
   /// again and has the hub ask its map service, whatever the customer's earlier order says.
-  Future<FeeLookup?> ask(String address, {bool again = false, bool fresh = false}) async {
+  ///
+  /// [now] says the delivery is for now, so the hub also says how long the drive is at this minute where
+  /// live traffic is on. An address that was asked about as an order for later is asked about once more
+  /// when the order becomes one for now.
+  Future<FeeLookup?> ask(String address, {bool again = false, bool fresh = false, bool now = false}) async {
     final source = this.source, line = oneLine(address);
     if (source == null || line.isEmpty) return null;
-    if (line == _address && (_asking || (!again && !fresh && (_found != null || _problem != null)))) return null;
+    final forNow = now && !_now; // it is for now, and what was asked last was not
+    if (line == _address && !forNow && (_asking || (!again && !fresh && (_found != null || _problem != null)))) {
+      return null;
+    }
     final turn = ++_turn;
     _address = line;
+    _now = now;
     _asking = true;
     _found = null;
     _problem = null;
@@ -57,7 +70,7 @@ class DistanceAsker extends ChangeNotifier {
     FeeLookup? answer;
     String? problem;
     try {
-      answer = await source(line, fresh: fresh);
+      answer = await source(line, fresh: fresh, now: now);
     } on ApiException catch (err) {
       problem =
           (err.detail?['message'] as String?) ??
@@ -78,6 +91,7 @@ class DistanceAsker extends ChangeNotifier {
     if (oneLine(address) == _address) return;
     _turn++;
     _address = null;
+    _now = false;
     if (!_asking && _found == null && _problem == null) return;
     _asking = false;
     _found = null;
@@ -100,6 +114,10 @@ typedef LookUp = void Function({bool fresh});
 /// asked, why there is no answer, or a button that asks. What the hub read off the customer's own earlier
 /// order says "as last time", with a small button beside it that asks the map service again. Figures of a
 /// service that wants its name beside them carry it ([MapCredit]).
+///
+/// Where the hub also said how long the drive is at this minute ("Live traffic"), that stands with it:
+/// "With traffic now: 14 min", and the name of the service that knows the roads. It is the one place a
+/// form shows that figure.
 class FeeLookupLine extends StatelessWidget {
   const FeeLookupLine({super.key, required this.asker, required this.address, required this.onLookUp});
 
@@ -129,10 +147,13 @@ class FeeLookupLine extends StatelessWidget {
           style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
         );
         final credit = found.credit;
+        final now = found.driveNow;
+        // one name serves both figures when the same service gave both
+        final together = now != null && now.credit == credit;
         final line = !found.saved
             ? said
             : Row(
-                mainAxisSize: credit == null ? MainAxisSize.max : MainAxisSize.min,
+                mainAxisSize: credit == null && !together ? MainAxisSize.max : MainAxisSize.min,
                 children: [
                   Flexible(child: said),
                   IconButton(
@@ -144,13 +165,28 @@ class FeeLookupLine extends StatelessWidget {
                   ),
                 ],
               );
-        if (credit == null) return line;
         // beside the figures where there is room, under them where there is not; never broken in two
-        return Wrap(
-          spacing: 8,
-          runSpacing: 2,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [line, MapCredit(credit)],
+        Widget credited(List<Widget> children) => children.length == 1
+            ? children.single
+            : Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: children);
+        if (now == null) return credited([line, if (credit != null) MapCredit(credit)]);
+        final traffic = Text(
+          'With traffic now: ${now.minutes} min',
+          key: const ValueKey('fee-lookup-now'),
+          style: theme.textTheme.bodyMedium,
+        );
+        if (together) return credited([line, traffic, if (credit != null) MapCredit(credit)]);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            credited([line, if (credit != null) MapCredit(credit)]),
+            const SizedBox(height: 2),
+            credited([
+              traffic,
+              if (now.credit case final name?) MapCredit(name, mark: const ValueKey('fee-lookup-now-credit')),
+            ]),
+          ],
         );
       }
       final button = TextButton.icon(
@@ -183,10 +219,13 @@ class FeeLookupLine extends StatelessWidget {
 /// and its own plain face where not, regular weight, 12 points that grow with the reader's type, and white
 /// on a dark screen or its gray on a light one.
 class MapCredit extends StatelessWidget {
-  const MapCredit(this.name, {super.key});
+  const MapCredit(this.name, {super.key, this.mark = const ValueKey('fee-lookup-credit')});
 
   /// The service's name in its own words, as the hub sends it.
   final String name;
+
+  /// The key its words are found by.
+  final Key mark;
 
   /// The gray Google's guide lists for a light background, and the white for a dark one.
   static const onLight = Color(0xFF5E5E5E);
@@ -195,7 +234,7 @@ class MapCredit extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     name,
-    key: const ValueKey('fee-lookup-credit'),
+    key: mark,
     maxLines: 1,
     softWrap: false,
     overflow: TextOverflow.visible,

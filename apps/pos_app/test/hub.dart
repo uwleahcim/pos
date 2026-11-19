@@ -140,6 +140,32 @@ class Hub {
     'services': ['geocodio', 'google'],
   };
 
+  /// [twoMapFees] on a hub where a manager turned live traffic on ("Live traffic"): a delivery for now is
+  /// also told how long the drive is at this minute ([drivesNow]). [quietFees] is such a hub with live
+  /// traffic left off.
+  static Map<String, dynamic> get liveFees => {...twoMapFees, 'live': true};
+  static Map<String, dynamic> get quietFees => {...twoMapFees, 'live': false};
+
+  /// How long the drive to each address is right now, in minutes, as the service that knows the roads
+  /// says it. An address not in it is one nobody could say for, and so is every address while [noRoads].
+  final drivesNow = <String, int>{'12 Elm St, Winchester': 14, '4 Oak Rd, Woburn': 30, '3 Newbuild Way, Winchester': 6};
+  bool noRoads = false;
+
+  /// Live traffic as the hub has it (`GET/PUT /settings/live_drive`), the token the last save carried and
+  /// a reason to refuse the next save with. Null is a hub older than live traffic. [liveOn] is one that
+  /// has all it takes and is turned on; [liveOff] one that has all it takes and is off.
+  Map<String, dynamic>? liveDrive;
+  String? liveDriveAuth;
+  String? refuseLiveDrive;
+  static Map<String, dynamic> get liveOn => {
+    'enabled': true,
+    'before': 25,
+    'traffic': true,
+    'origin': true,
+    'live': true,
+  };
+  static Map<String, dynamic> get liveOff => {...liveOn, 'enabled': false, 'live': false};
+
   /// How far the addresses it knows are (`POST /delivery/distance`): what the map says of each, as
   /// `{'miles': '3.2', 'minutes': 9}`. An address it does not know is one the map could not find. Every
   /// body it was asked with is in [distanceAsks]; [refuseDistance] is a reason the map gives no distance
@@ -222,6 +248,11 @@ class Hub {
       if (fees.containsKey('services')) ...{'credit': null, 'keep': true},
       if (second != null) ...secondSays,
       'saved': kept != null,
+      // a hub that knows of live traffic says the drive right now, or that nobody could say
+      if (fees.containsKey('live'))
+        'drive_now': fees['live'] == true && body['now'] == true && !noRoads && drivesNow[body['address']] != null
+            ? {'minutes': drivesNow[body['address']], 'before': liveDrive?['before'] ?? 25, 'credit': 'Google Maps'}
+            : null,
     });
   }
 
@@ -2512,6 +2543,23 @@ class Hub {
         return json(deliveryFees!);
       case '/delivery/distance':
         return _distance(request);
+      case '/settings/live_drive':
+        if (liveDrive == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          liveDriveAuth = request.headers['authorization'];
+          if (refuseLiveDrive != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseLiveDrive},
+            }, 422);
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final had = liveDrive!;
+          final live = body['enabled'] == true && had['traffic'] == true && had['origin'] == true;
+          liveDrive = {...had, 'enabled': body['enabled'] == true, 'before': body['before'], 'live': live};
+          // the fee's answer says it too, on a hub that knows of live traffic
+          if (deliveryFees?.containsKey('live') ?? false) deliveryFees = {...deliveryFees!, 'live': live};
+        }
+        return json(liveDrive!);
       case '/settings/kitchen_notes':
         if (kitchenNotes == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {
