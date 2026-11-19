@@ -19,6 +19,12 @@ With a map service on the hub (`pos.maps`) the form asks how far the address is 
 a check shows a fee that was picked against the map. It is what the screen was told, kept as a note: it
 never changes what the band costs.
 
+That note is also how a customer's distance is remembered ("Customers who order again" in the guide). The
+hub's answer says which service measured it and from which address of the restaurant's (`service`, and
+`from`, a mark of that address: `pos.maps.origin_mark`), the pick carries both, and the next time the same
+number orders to the same address the hub reads the figures off that order (`pos.customers.saved_trip`)
+and asks nobody. Nothing is kept anywhere but on the customer's own orders.
+
 The check charges it only while the order is a delivery (`pos.orders.check`): one changed to pickup keeps
 what was picked and is charged nothing. It is a charge of its own on the check and on the bill, "Delivery
 fee", and it is in the sales with the other charges; it is never a gratuity, and nothing here says who the
@@ -27,6 +33,7 @@ money goes to.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
@@ -53,6 +60,8 @@ TENTH = Decimal("0.1")
 MEASURED_MILES_MAX = Decimal(1000)
 MEASURED_MINUTES_MAX = 24 * 60
 """What the map may have said and still be kept: further is no delivery."""
+_SERVICE = re.compile(r"[a-z][a-z0-9_-]{0,23}")
+_MARK = re.compile(r"[0-9a-f]{8}")
 
 
 def measure(value: Any, by: str) -> Decimal | None:
@@ -117,8 +126,11 @@ def band_for(setting: Mapping[str, Any], miles: Decimal, minutes: int) -> dict[s
 
 
 def measured_of(value: Any) -> dict[str, Any] | None:
-    """What the map said of a delivery, as a pick carries it: `{"miles": "3.2", "minutes": 9}`. None when
-    the pick carries none, or it cannot be read."""
+    """What the map said of a delivery, as a pick carries it: `{"miles": "3.2", "minutes": 9}`, and, when
+    the hub said them, which service measured it and the mark of the address it was measured from
+    (`"service": "geocodio", "from": "3fa9c2d1"`). The two go together or not at all: figures without them
+    are a note on the order and are never handed to the customer's next one. None when the pick carries
+    nothing of the map, or it cannot be read."""
     told = value.get("measured") if isinstance(value, Mapping) else None
     if not isinstance(told, Mapping):
         return None
@@ -133,7 +145,11 @@ def measured_of(value: Any) -> dict[str, Any] | None:
         return None
     if not far.is_finite() or far < ZERO or far > MEASURED_MILES_MAX or far != far.quantize(TENTH):
         return None
-    return {"miles": format(far.quantize(TENTH), "f"), "minutes": minutes}
+    kept: dict[str, Any] = {"miles": format(far.quantize(TENTH), "f"), "minutes": minutes}
+    service, mark = told.get("service"), told.get("from")
+    if isinstance(service, str) and isinstance(mark, str) and _SERVICE.fullmatch(service) and _MARK.fullmatch(mark):
+        kept.update({"service": service, "from": mark})
+    return kept
 
 
 def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:

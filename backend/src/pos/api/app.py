@@ -27,7 +27,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
-from ..customers import NOTE_MAX, SHORTEST, CustomerNotes, clean_note, customer_card, default_notes, same_again
+from ..customers import (
+    NOTE_MAX,
+    SHORTEST,
+    CustomerNotes,
+    clean_note,
+    customer_card,
+    default_notes,
+    same_again,
+    saved_trip,
+)
 from ..customers import ReadOnlyError as NotesReadOnly
 from ..devices import DevicesSeen
 from ..floor import FloorPlan, load_floor, table_status
@@ -38,7 +47,7 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
-from ..maps import ADDRESS_MAX, LookupFailed, Lookups, lookups_from_env
+from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, lookups_from_env, origin_mark
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
@@ -408,6 +417,12 @@ class DeliveryFeeIn(BaseModel):
 
 class DistanceIn(BaseModel):
     address: str = Field(max_length=1000, description="where a delivery goes, as it was typed")
+    phone: str = Field(
+        "",
+        max_length=40,
+        description="the customer's number, to read the distance off their own earlier order; it stays on the hub",
+    )
+    fresh: bool = Field(False, description="ask the map service even when the customer's earlier order says how far")
 
 
 class VoidsIn(BaseModel):
@@ -1547,10 +1562,17 @@ def create_app(
         (true when the address is further than the last band reaches). The form picks that band, and whoever
         takes the order can still tap another.
 
-        Only the two addresses go to the service: no name, no phone number, nothing of the order. 409
-        `no_lookup` when this hub has no map service or no address of its own to start from; 424
-        `lookup_failed`, with a `reason` and words for the form, when the service gave no distance. Not a
-        5xx: the hub itself is well, and a terminal reads a 5xx as a hub to turn away from."""
+        A customer who had a delivery brought to this address before is not asked about again: with their
+        `phone`, the figures are read off that order (`pos.customers.saved_trip`) and `saved` is true.
+        `fresh` asks the service all the same. `service` (who measured it) and `from` (the mark of the
+        restaurant's address it was measured from) go back to the hub with the pick, in `measured`, which
+        is how the figures get onto the order for the next time.
+
+        Only the two addresses go to the service: no name, no phone number, nothing of the order. The
+        number is used on the hub alone. 409 `no_lookup` when this hub has no map service or no address of
+        its own to start from; 424 `lookup_failed`, with a `reason` and words for the form, when the service
+        gave no distance. Not a 5xx: the hub itself is well, and a terminal reads a 5xx as a hub to turn
+        away from."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         setting = settings.get("delivery_fee")
@@ -1568,13 +1590,27 @@ def create_app(
         address = " ".join(body.address.split())
         if not address or len(address) > ADDRESS_MAX:
             raise HTTPException(422, {"error": "bad_value", "message": "an address of at most 200 letters"})
-        try:
-            trip = lookups.trip(origin, address)
-        except LookupFailed as err:
-            raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
+        mark = origin_mark(origin)
+        kept = None if body.fresh else saved_trip(app.state.store, body.phone, address, mark)
+        if kept is not None:
+            trip, service = Trip(Decimal(kept["miles"]), kept["minutes"]), kept["service"]
+            lookups.spared()
+        else:
+            try:
+                trip, service = lookups.trip(origin, address), lookups.service
+            except LookupFailed as err:
+                raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
         band = band_for(setting, trip.miles, trip.minutes)
         charged = setting.get("enabled") is True and bool(setting.get("bands"))
-        return {**trip.as_json(), "by": setting.get("by"), "band": band, "beyond": charged and band is None}
+        return {
+            **trip.as_json(),
+            "by": setting.get("by"),
+            "band": band,
+            "beyond": charged and band is None,
+            "service": service,
+            "from": mark,
+            "saved": kept is not None,
+        }
 
     @app.get("/maps/status")
     def maps_status() -> dict[str, Any]:

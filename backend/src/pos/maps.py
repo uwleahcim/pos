@@ -14,10 +14,16 @@ address a log could show.
 
 The hub asks at most `POS_MAPS_DAILY` times a day (500 unless set), so a screen gone wrong cannot run up a
 bill: past that the form says so and the band is tapped by hand.
+
+A customer who orders again to the same address is not asked about at all: what the map said the last time
+is on their own order, beside the fee, and the hub reads it there (`pos.customers.saved_trip`). Those
+figures say which service measured them and carry a mark of the restaurant's address they were measured
+from (`origin_mark`), so a restaurant whose address is corrected does not go on charging by the old one.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -168,6 +174,20 @@ def _plain(address: str) -> str:
     return " ".join(address.split()).casefold()
 
 
+def origin_mark(origin: str) -> str:
+    """A short mark of the address deliveries start from, kept beside a distance measured from it. A
+    distance measured from another address has another mark, and is not used again. It says nothing of the
+    address itself."""
+    return hashlib.sha256(_plain(origin).encode()).hexdigest()[:8]
+
+
+def same_address(one: object, other: object) -> bool:
+    """Whether two spellings are one address: the case and the spaces aside, and nothing else. "12 Elm St"
+    and "12 Elm Street" are two, and the second is looked up."""
+    first = _plain(str(one or ""))
+    return bool(first) and first == _plain(str(other or ""))
+
+
 class Lookups:
     """The hub's lookups: the service when there is one, each answer remembered for a day, and no more
     asked in a day than the owner would expect to pay for."""
@@ -187,12 +207,31 @@ class Lookups:
         self._day = 0
         self._asked = 0
         self._failed = 0
+        self._spared = 0
         self._last_failure: str | None = None
 
     @property
     def ready(self) -> bool:
         """Whether there is a service to ask."""
         return self._maps is not None
+
+    @property
+    def service(self) -> str | None:
+        """The name of the service that is asked, as it is kept beside a distance."""
+        return self._maps.name if self._maps is not None else None
+
+    def _today(self, now: float) -> None:
+        """Starts the day's counts over when the day has turned. Called with the lock held."""
+        day = int(now // 86400)
+        if day != self._day:
+            self._day, self._asked, self._failed, self._spared = day, 0, 0, 0
+
+    def spared(self) -> None:
+        """A distance was read off a customer's own earlier order, and nobody was asked: counted, so
+        `hubctl maps status` can say how often."""
+        with self._lock:
+            self._today(self._clock())
+            self._spared += 1
 
     def trip(self, origin: str, destination: str) -> Trip:
         """The drive from the restaurant to a delivery's address. Raises LookupFailed."""
@@ -206,9 +245,7 @@ class Lookups:
             if kept is not None and now - kept[0] < KEEP_SECONDS:
                 self._kept.move_to_end(key)
                 return kept[1]
-            day = int(now // 86400)
-            if day != self._day:
-                self._day, self._asked, self._failed = day, 0, 0
+            self._today(now)
             if self._asked >= self._daily:
                 self._last_failure = "limit"
                 raise LookupFailed("limit")
@@ -228,13 +265,17 @@ class Lookups:
         return trip
 
     def status(self) -> dict[str, Any]:
-        """For `hubctl maps status`: whether there is a service, and how today went. No address is in it."""
+        """For `hubctl maps status`: whether there is a service, and how today went: how often it was asked,
+        how often it gave no distance, and how often a customer's own earlier order spared the asking. No
+        address is in it."""
         with self._lock:
+            self._today(self._clock())
             return {
                 "configured": self._maps is not None,
                 "service": self._maps.name if self._maps is not None else None,
                 "asked_today": self._asked,
                 "failed_today": self._failed,
+                "saved_today": self._spared,
                 "daily_most": self._daily,
                 "last_failure": self._last_failure,
             }
@@ -272,5 +313,7 @@ __all__ = [
     "Trip",
     "lookups_from_env",
     "maps_from_env",
+    "origin_mark",
+    "same_address",
     "trip_of",
 ]
