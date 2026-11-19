@@ -242,8 +242,9 @@ class EventFields extends StatelessWidget {
 /// What the dialog over a to-go order hands back: its new time when it is an order for later, how it
 /// leaves (on a catering order, what its event needs), and the delivery fee picked ([FeePick]) when that
 /// changed: null leaves the order's fee as it is. With a fee comes what the map said of the address
-/// ([Measured]), when the hub was asked.
-typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee, Measured? measured});
+/// ([Measured]), when the hub was asked; and the drive as the roads are right now ([DriveNow]), where the
+/// dialog asked for it (`WhenDialog.live`).
+typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee, Measured? measured, DriveNow? drive});
 
 /// How a to-go order leaves, changed on the order: whether it is picked up or delivered, where to, and the
 /// note for the driver (docs/delivery.md). An order for later ([promised] given) also changes its day and
@@ -252,7 +253,16 @@ typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee, M
 /// catering order needs its address: without one it cannot be saved. Where the location charges for
 /// delivery ([fees]) it needs its fee picked too, and "No fee" is a pick.
 class WhenDialog extends StatefulWidget {
-  const WhenDialog({super.key, this.promised, this.event, this.catering = false, this.fees, this.fee, this.distance});
+  const WhenDialog({
+    super.key,
+    this.promised,
+    this.event,
+    this.catering = false,
+    this.fees,
+    this.fee,
+    this.distance,
+    this.live = false,
+  });
 
   /// The time an order for later is for; null on an order for now, whose time is not the customer's.
   final DateTime? promised;
@@ -274,6 +284,10 @@ class WhenDialog extends StatefulWidget {
   /// the dialog: an order that has its fee keeps it.
   final DistanceSource? distance;
 
+  /// A pickup for now that is promised by the roads as they are if it becomes a delivery (docs/
+  /// delivery.md, "Live traffic"): the hub is then also asked how long the drive is at this minute.
+  final bool live;
+
   @override
   State<WhenDialog> createState() => _WhenDialogState();
 }
@@ -294,7 +308,7 @@ class _WhenDialogState extends State<WhenDialog> {
   /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand.
   Future<void> _lookUp({bool again = false, bool fresh = false}) async {
     if (!mounted || widget.event == null || _handover != 'delivery') return;
-    final band = (await _asker.ask(_address.text, again: again, fresh: fresh))?.band;
+    final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: widget.live))?.band;
     if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
   }
 
@@ -333,6 +347,7 @@ class _WhenDialogState extends State<WhenDialog> {
     // a fee is a delivery's alone: one that becomes a pickup keeps what it carried and is charged nothing
     fee: widget.event != null && _handover == 'delivery' ? FeePick.changed(_fee, widget.fee, widget.fees) : null,
     measured: _asker.measuredFor(_address.text),
+    drive: widget.event != null && _handover == 'delivery' ? _asker.driveFor(_address.text) : null,
   ));
 
   @override

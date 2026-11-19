@@ -86,6 +86,7 @@ from ..settings import (
     clean_delivery_fee,
     clean_desk_phones,
     clean_kitchen_notes,
+    clean_live_drive,
     clean_printers,
     clean_quotes,
     clean_rush,
@@ -428,6 +429,17 @@ class DistanceIn(BaseModel):
         max_length=24,
         description="the one map service to ask, by name, to try its key out; nothing saved or remembered answers",
     )
+    now: bool = Field(
+        False,
+        description="the delivery is for now: also say how long the drive is at this minute, where that is turned on",
+    )
+
+
+class LiveDriveIn(BaseModel):
+    """Live traffic for deliveries: whether a delivery for now is promised by the roads as they are."""
+
+    enabled: bool = False
+    before: int = Field(25, description="minutes for the cooking and getting the order out of the door")
 
 
 class VoidsIn(BaseModel):
@@ -1540,7 +1552,42 @@ def create_app(
             "maps": lookups.ready,
             "lookup": lookups.ready and bool(told.get("origin")),
             "services": lookups.names,
+            "live": live_drive_now()["live"] and lookups.ready,
         }
+
+    def live_drive_now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Live traffic's setting as a screen is told it: with `traffic`, whether this hub has a map service
+        that knows the roads right now, `origin`, whether the restaurant's own address is set (the fee's
+        setting holds it), and `live`, whether a delivery for now is promised by the roads as they are:
+        turned on, with both."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        told = dict(setting if setting is not None else settings.get("live_drive"))
+        traffic = lookups.traffic is not None
+        origin = bool(settings.get("delivery_fee").get("origin"))
+        return {
+            **told,
+            "traffic": traffic,
+            "origin": origin,
+            "live": told.get("enabled") is True and traffic and origin,
+        }
+
+    @app.get("/settings/live_drive")
+    def read_live_drive() -> dict[str, Any]:
+        """Live traffic for deliveries: `enabled`, whether a manager turned it on, and `before`, the minutes
+        for the cooking and getting an order out of the door. Where it is on, a delivery for now is promised
+        `before` and the drive as it is at this minute (`drive_now` in the answer of `POST
+        /delivery/distance`), in place of the minutes set for Delivery. `traffic` says whether this hub has
+        a map service that knows the roads right now, `origin` whether the restaurant's own address is set,
+        and `live` whether all three hold. The delivery fee never goes by it."""
+        return live_drive_now()
+
+    @app.put("/settings/live_drive")
+    def write_live_drive(body: LiveDriveIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns live traffic on or off and says how long the kitchen needs before the drive. Orders
+        already taken keep the time they were promised."""
+        manager_from(app.state.tokens, authorization)
+        return live_drive_now(write_setting("live_drive", body.model_dump(), clean_live_drive))
 
     @app.get("/settings/delivery_fee")
     def read_delivery_fee() -> dict[str, Any]:
@@ -1584,6 +1631,12 @@ def create_app(
         them and does not send them back, and they are not put on the order whatever a screen sends. `via`
         names the one service to ask, for `hubctl maps test`.
 
+        `now` says the delivery is for now. Where live traffic is turned on (`/settings/live_drive`), the
+        answer then carries `drive_now`: `{minutes, before, credit}`, the drive as the roads are at this
+        minute, the minutes the kitchen needs before it, and the name to show beside the figure; or null
+        when nobody could say, which is no failure: the delivery is promised its usual minutes. It is asked
+        beside the distance, never remembered, and never kept. The band and the fee do not go by it.
+
         Only the two addresses go to the service: no name, no phone number, nothing of the order. The
         number is used on the hub alone. 409 `no_lookup` when this hub has no map service or no address of
         its own to start from; 424 `lookup_failed`, with a `reason` and words for the form, when the service
@@ -1610,6 +1663,8 @@ def create_app(
         if via is not None and via not in lookups.names:
             raise HTTPException(422, {"error": "bad_value", "message": f"this hub has no map service {via!r}"})
         mark = origin_mark(origin)
+        live = settings.get("live_drive")
+        waiting = lookups.drive_soon(origin, address) if body.now and live.get("enabled") is True and not via else None
         kept = None if body.fresh or via else saved_trip(app.state.store, body.phone, address, mark)
         if kept is not None:
             trip = Trip(Decimal(kept["miles"]), kept["minutes"], kept["service"])
@@ -1621,6 +1676,7 @@ def create_app(
                 raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
         band = band_for(setting, trip.miles, trip.minutes)
         charged = setting.get("enabled") is True and bool(setting.get("bands"))
+        drive = waiting() if waiting is not None else None
         return {
             **trip.as_json(),
             "by": setting.get("by"),
@@ -1631,16 +1687,23 @@ def create_app(
             "keep": may_keep(trip.service),
             "from": mark,
             "saved": kept is not None,
+            "drive_now": None
+            if drive is None
+            else {"minutes": drive, "before": live.get("before"), "credit": credit_of(lookups.traffic)},
         }
 
     @app.get("/maps/status")
     def maps_status() -> dict[str, Any]:
         """For `hubctl maps status`: whether the hub has a map service, whether the restaurant's own address
-        is set, and how often the service was asked today; the same of a second service under `fallback`. No
+        is set, and how often the service was asked today; the same of a second service under `fallback`, and
+        under `traffic` how often the drive right now was asked and whether live traffic is turned on. No
         address is in it."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
-        return {**lookups.status(), "origin_set": bool(settings.get("delivery_fee").get("origin"))}
+        status = lookups.status()
+        if status["traffic"] is not None:
+            status["traffic"]["enabled"] = settings.get("live_drive").get("enabled") is True
+        return {**status, "origin_set": bool(settings.get("delivery_fee").get("origin"))}
 
     @app.get("/settings/kitchen_notes")
     def read_kitchen_notes() -> dict[str, Any]:

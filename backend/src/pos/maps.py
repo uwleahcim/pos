@@ -26,6 +26,12 @@ a day's most of its own (`POS_MAPS_GOOGLE_DAILY`, 100 unless set). Google's term
 and drive times be kept, so what it says picks the price and is then gone: it is not remembered for the
 day, it does not go onto the order, and a customer measured by it is asked about again the next time
 (`may_keep`). Its terms also want its name beside its figures wherever they are shown (`credit_of`).
+
+Google also knows the roads as they are right now ("Live traffic" in the guide). Where a manager turned
+that on, a delivery that is for now is promised its cooking and the drive as it is at this minute
+(`Lookups.drive_soon`): one more request to Google, of its dearer kind, at most `POS_MAPS_TRAFFIC_DAILY` a
+day (150 unless set). That figure is used for the promise and kept nowhere, and it never touches the fee,
+which goes by the usual drive.
 """
 
 from __future__ import annotations
@@ -56,6 +62,9 @@ DAILY_MOST = 500
 FALLBACK_DAILY_MOST = 100
 """The most the second service is asked in a day unless set: about 3,000 a month, inside what Google's
 price list gave away each month when this was written (10,000 plain routes)."""
+TRAFFIC_DAILY_MOST = 150
+"""The most the drive right now is asked in a day unless set: about 4,650 a month, inside what Google's
+price list gave away each month when this was written (5,000 routes with traffic)."""
 METERS_A_MILE = Decimal("1609.344")
 TENTH = Decimal("0.1")
 MILES_MOST = Decimal(1000)
@@ -204,6 +213,24 @@ class Google:
         self._client = client if client is not None else httpx.Client(timeout=TIMEOUT_SECONDS)
 
     def trip(self, origin: str, destination: str) -> Trip:
+        route = self._route(origin, destination, "TRAFFIC_UNAWARE", "routes.distanceMeters,routes.duration")
+        trip = _google_trip(route) if route is not None else None
+        if trip is None:  # no route between the two: an address read as one overseas, or not read at all
+            raise LookupFailed("not_found")
+        return trip
+
+    def drive_now(self, origin: str, destination: str) -> int:
+        """The minutes of the drive as the roads are at this minute (`TRAFFIC_AWARE`: Google's dearer kind
+        of request, and the only thing asked for is the time). Raises LookupFailed."""
+        route = self._route(origin, destination, "TRAFFIC_AWARE", "routes.duration")
+        minutes = _google_minutes(route.get("duration")) if route is not None else None
+        if minutes is None:
+            raise LookupFailed("not_found")
+        return minutes
+
+    def _route(self, origin: str, destination: str, preference: str, mask: str) -> Mapping[str, Any] | None:
+        """The first route Google gives from one address to the other, with the fields the mask names; None
+        when it gives none. Raises LookupFailed."""
         try:
             answer = self._client.post(
                 f"{self._base}/directions/v2:computeRoutes",
@@ -211,10 +238,10 @@ class Google:
                     "origin": {"address": origin},
                     "destination": {"address": destination},
                     "travelMode": "DRIVE",
-                    "routingPreference": "TRAFFIC_UNAWARE",
+                    "routingPreference": preference,
                     "regionCode": "us",
                 },
-                headers={"X-Goog-Api-Key": self._key, "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"},
+                headers={"X-Goog-Api-Key": self._key, "X-Goog-FieldMask": mask},
             )
         except httpx.HTTPError as err:
             log.warning("the second map service did not answer (%s)", type(err).__name__)
@@ -237,11 +264,7 @@ class Google:
             log.warning("the second map service's answer could not be read")
             raise LookupFailed("unreachable") from None
         routes = data.get("routes") if isinstance(data, Mapping) else None
-        route = routes[0] if isinstance(routes, list) and routes and isinstance(routes[0], Mapping) else None
-        trip = _google_trip(route) if route is not None else None
-        if trip is None:  # no route between the two: an address read as one overseas, or not read at all
-            raise LookupFailed("not_found")
-        return trip
+        return routes[0] if isinstance(routes, list) and routes and isinstance(routes[0], Mapping) else None
 
 
 def _google_trip(route: Mapping[str, Any]) -> Trip | None:
@@ -284,6 +307,14 @@ def same_address(one: object, other: object) -> bool:
     and "12 Elm Street" are two, and the second is looked up."""
     first = _plain(str(one or ""))
     return bool(first) and first == _plain(str(other or ""))
+
+
+def _google_minutes(took: Any) -> int | None:
+    """A route's time as Google writes it, "545s", in whole minutes and never less than one."""
+    if not isinstance(took, str) or not took.endswith("s"):
+        return None
+    trip = trip_of(0, took[:-1])
+    return trip.minutes if trip is not None else None
 
 
 def _within(seconds: float, ask: Callable[[], Trip]) -> Trip:
@@ -341,11 +372,15 @@ class Lookups:
         fallback: Maps | None = None,
         daily: int = DAILY_MOST,
         fallback_daily: int = FALLBACK_DAILY_MOST,
+        traffic_daily: int = TRAFFIC_DAILY_MOST,
         wait: float = TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.time,
     ) -> None:
         asked = [(maps, daily), (fallback, fallback_daily)]
         self._services = [_Asked(service, most) for service, most in asked if service is not None]
+        # the one that knows the roads as they are right now, when there is one, counted by itself
+        knows = [service.maps for service in self._services if callable(getattr(service.maps, "drive_now", None))]
+        self._traffic = _Asked(knows[0], traffic_daily) if knows else None
         self._daily = daily
         self._wait = wait
         self._clock = clock
@@ -369,8 +404,9 @@ class Lookups:
         day = int(now // 86400)
         if day != self._day:
             self._day, self._spared = day, 0
-            for service in self._services:
-                service.asked, service.failed = 0, 0
+            for service in (*self._services, self._traffic):
+                if service is not None:
+                    service.asked, service.failed = 0, 0
 
     def spared(self) -> None:
         """A distance was read off a customer's own earlier order, and nobody was asked: counted, so
@@ -423,10 +459,60 @@ class Lookups:
             return trip
         raise LookupFailed("not_found" if "not_found" in reasons else reasons[0])
 
+    @property
+    def traffic(self) -> str | None:
+        """The name of the service that knows the roads as they are right now, or None where none does."""
+        return self._traffic.maps.name if self._traffic is not None else None
+
+    def drive_soon(self, origin: str, destination: str) -> Callable[[], int | None]:
+        """Starts asking how long the drive to a delivery's address is at this minute, and hands back the
+        waiting for it. The asking runs beside the looking up of the distance, so a form hears of both
+        inside the time it waits. What the waiting gives is the minutes, or None: nobody here knows the
+        roads right now, it was asked as often as it may be today, or no answer came in time. None is no
+        failure to a form: the delivery is promised its usual minutes.
+
+        The figure is never remembered and never written down: it is right for this minute alone, and the
+        service's terms do not let it be kept."""
+        asked = self._traffic
+        if asked is None:
+            return lambda: None
+        with self._lock:
+            self._today(self._clock())
+            if asked.asked >= asked.daily:
+                asked.last_failure = "limit"
+                return lambda: None
+            asked.asked += 1
+        box: list[int | Exception] = []
+
+        def run() -> None:
+            try:
+                box.append(asked.maps.drive_now(origin, destination))  # type: ignore[attr-defined]
+            except Exception as err:  # noqa: BLE001  handed to the one who waits, below
+                box.append(err)
+
+        thread = threading.Thread(target=run, name="maps-traffic", daemon=True)
+        thread.start()
+        until = time.monotonic() + self._wait
+
+        def wait() -> int | None:
+            thread.join(max(0.0, until - time.monotonic()))
+            told = box[0] if box else LookupFailed("unreachable")
+            if isinstance(told, LookupFailed):
+                with self._lock:
+                    asked.failed += 1
+                    asked.last_failure = told.reason
+                return None
+            if isinstance(told, Exception):
+                raise told
+            return told
+
+        return wait
+
     def status(self) -> dict[str, Any]:
         """For `hubctl maps status`: whether there is a service, and how today went: how often it was asked,
         how often it gave no distance, and how often a customer's own earlier order spared the asking;
-        under `fallback` the same of the second service, or None where there is none. No address is in it."""
+        under `fallback` the same of the second service, or None where there is none, and under `traffic` how
+        often the drive right now was asked, or None where nobody here knows it. No address is in it."""
         with self._lock:
             self._today(self._clock())
             first = self._services[0].status() if self._services else None
@@ -439,6 +525,7 @@ class Lookups:
                 "daily_most": first["daily_most"] if first else self._daily,
                 "last_failure": first["last_failure"] if first else None,
                 "fallback": self._services[1].status() if len(self._services) > 1 else None,
+                "traffic": self._traffic.status() if self._traffic is not None else None,
             }
 
 
@@ -479,6 +566,7 @@ def lookups_from_env(environ: Mapping[str, str] | None = None) -> Lookups:
         fallback=fallback_from_env(env),
         daily=_most(env, "POS_MAPS_DAILY", DAILY_MOST),
         fallback_daily=_most(env, "POS_MAPS_GOOGLE_DAILY", FALLBACK_DAILY_MOST),
+        traffic_daily=_most(env, "POS_MAPS_TRAFFIC_DAILY", TRAFFIC_DAILY_MOST),
     )
 
 

@@ -97,8 +97,15 @@ class Quotes {
 
   /// What a new order on [channel] is quoted at [at] (now, unless a test says otherwise): the channel's
   /// minutes, or Delivery's for one that is brought to the customer, and the rush.
-  int minutesFor(String channel, {DateTime? at, DateTime? promised, bool delivery = false}) =>
-      baseFor(channel, delivery: delivery) + rushAt(at ?? DateTime.now(), promised: promised);
+  ///
+  /// Where live traffic is on and the hub said how long the drive is at this minute ([drive],
+  /// docs/delivery.md, "Live traffic"), a delivery for now is promised the minutes the kitchen needs and
+  /// that drive, in place of Delivery's minutes. One the customer named a time for ([promised]) is not,
+  /// and no catering order: the roads at this minute say nothing of then.
+  int minutesFor(String channel, {DateTime? at, DateTime? promised, bool delivery = false, DriveNow? drive}) {
+    final live = delivery && channel != 'catering' && promised == null ? drive : null;
+    return (live?.promise ?? baseFor(channel, delivery: delivery)) + rushAt(at ?? DateTime.now(), promised: promised);
+  }
 
   /// The minutes an order of [dishes] dishes takes on top of its quote.
   int extraFor(int dishes) => bigDishes > 0 && bigMinutes > 0 && dishes >= bigDishes ? bigMinutes : 0;
@@ -250,6 +257,7 @@ class TakeoutRequest {
     this.event,
     this.fee,
     this.measured,
+    this.driveNow,
   });
 
   final String name;
@@ -277,6 +285,10 @@ class TakeoutRequest {
 
   /// What the map said of the address, where the hub was asked how far it is; it travels with the fee.
   final Measured? measured;
+
+  /// The drive as the roads were when the form asked, on a delivery for now where live traffic is on:
+  /// what the order is promised by. It goes no further than that.
+  final DriveNow? driveNow;
 }
 
 /// What the pay-first dialog hands back: cash with what was tendered, paid elsewhere with a note, or

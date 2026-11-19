@@ -1090,12 +1090,17 @@ class PosApi {
   /// With the customer's [phone] the hub first looks at their own earlier deliveries: one to this address
   /// says how far it is, and nobody is asked ("Customers who order again"). The number goes no further than
   /// the hub. [fresh] asks the map service all the same.
-  Future<FeeLookup> deliveryDistance(String address, {String phone = '', bool fresh = false}) async {
+  ///
+  /// [now] says the delivery is for now. Where live traffic is turned on ("Live traffic") the hub then
+  /// also asks how long the drive is at this minute, beside the distance, and the answer carries it
+  /// ([FeeLookup.driveNow]).
+  Future<FeeLookup> deliveryDistance(String address, {String phone = '', bool fresh = false, bool now = false}) async {
     final digits = phoneDigits(phone);
     final answer = await _post('/delivery/distance', {
       'address': address,
       if (digits.isNotEmpty) 'phone': digits,
       if (fresh) 'fresh': true,
+      if (now) 'now': true,
     }, timeout: const Duration(seconds: 9));
     try {
       return FeeLookup.fromJson(answer);
@@ -1103,6 +1108,30 @@ class PosApi {
       throw ApiException(err.message);
     }
   }
+
+  /// Live traffic for deliveries as the location has it (docs/delivery.md, "Live traffic"): whether a
+  /// delivery for now is promised by the roads as they are, the minutes the kitchen needs before the
+  /// drive, and what the hub has for it. Null from a hub older than live traffic.
+  Future<LiveDrive?> liveDrive() async {
+    try {
+      return LiveDrive.fromJson(await _get('/settings/live_drive'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) turns live traffic on or off and says how long the kitchen
+  /// needs before the drive. Orders already taken keep the time they were promised.
+  Future<LiveDrive> saveLiveDrive(String token, LiveDrive setting) async => LiveDrive.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/live_drive'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(setting.toJson()),
+      ),
+    ),
+  );
 
   /// The one-tap notes as this terminal last read them, for a dish's sheet opened before the hub answers
   /// again: the buttons are there at once.

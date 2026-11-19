@@ -70,6 +70,9 @@ services:
       # most Google is asked in a day (100 unless set).
       POS_MAPS_GOOGLE_KEY: ${POS_MAPS_GOOGLE_KEY:-}
       POS_MAPS_GOOGLE_DAILY: ${POS_MAPS_GOOGLE_DAILY:-}
+      # Live traffic for a delivery's promised time ("Live traffic" in the same guide), turned on in the app.
+      # POS_MAPS_TRAFFIC_DAILY is the most Google is asked about the roads in a day (150 unless set).
+      POS_MAPS_TRAFFIC_DAILY: ${POS_MAPS_TRAFFIC_DAILY:-}
     volumes:
       - ./apns:/apns:ro
     ports:

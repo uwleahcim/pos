@@ -875,12 +875,27 @@ class _OrderScreenState extends State<OrderScreen> {
   /// again by what the two quotes differ: one for now is promised that much later (or sooner), and one the
   /// customer named a time for keeps its time and starts cooking that much sooner (or later). The operator
   /// is told, to tell the customer.
+  ///
+  /// Where live traffic is on (docs/delivery.md, "Live traffic"), a pickup for now that becomes a delivery
+  /// is quoted the minutes the kitchen needs and the drive as it is at this minute, when the hub could
+  /// say. A delivery whose address is changed keeps the time it was promised.
   Future<void> _changeWhen(Order order) async {
     final promised = order.promisedAt;
     final named = order.forLater && promised != null;
     final asks = _asksHowItLeaves(order);
     if (!named && !asks) return;
     final had = asks ? order.event : null;
+    final waits = !order.isFired || waitsForItsTime(order, DateTime.now());
+    // only an order whose time would move by it is asked about: every asking is paid for
+    final live =
+        (_fees?.live ?? false) &&
+        had != null &&
+        !had.delivered &&
+        !order.isCatering &&
+        !_namedTime(order) &&
+        promised != null &&
+        waits &&
+        order.quotedMinutes > 0;
     final asked = await showDialog<WhenAndEvent>(
       context: context,
       builder: (_) => WhenDialog(
@@ -890,8 +905,10 @@ class _OrderScreenState extends State<OrderScreen> {
         fees: _fees,
         fee: order.deliveryFee,
         distance: (_fees?.looksUp ?? false)
-            ? (address, {fresh = false}) => widget.api.deliveryDistance(address, phone: order.phone, fresh: fresh)
+            ? (address, {fresh = false, now = false}) =>
+                  widget.api.deliveryDistance(address, phone: order.phone, fresh: fresh, now: now)
             : null,
+        live: live,
       ),
     );
     if (asked == null || !mounted) return;
@@ -909,10 +926,11 @@ class _OrderScreenState extends State<OrderScreen> {
     String? said;
     final brought = asked.event?.delivered ?? false;
     final quotes = _quotes ?? const Quotes();
-    final waits = !order.isFired || waitsForItsTime(order, DateTime.now());
     if (had != null && brought != had.delivered && !order.isCatering && waits && order.quotedMinutes > 0) {
+      final drive = live && brought ? asked.drive : null; // the roads as they are, where that was asked
       final by =
-          quotes.baseFor(order.channel, delivery: brought) - quotes.baseFor(order.channel, delivery: had.delivered);
+          (drive?.promise ?? quotes.baseFor(order.channel, delivery: brought)) -
+          quotes.baseFor(order.channel, delivery: had.delivered);
       final quoted = order.quotedMinutes + by;
       if (by != 0 && quoted > 0) {
         changed['quoted_minutes'] = quoted;

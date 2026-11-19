@@ -127,7 +127,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl pbx unlink` | Stop the tunnel and forget the link |
 | `hubctl maps key` | Put a map service's key on the hub, so a delivery's distance is looked up from its address (`docs/delivery.md`); it asks for the key and does not show it |
 | `hubctl maps google` | Put a Google Maps key on the hub the same way: Google is asked when the first service gives no distance ("A second map service" in `docs/delivery.md`) |
-| `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key and how often it asked each service today / how far an address is, the fee it falls in and which service answered |
+| `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key, how often it asked each service today, and whether live traffic is on / how far an address is, the fee it falls in and which service answered, and with live traffic on how long the drive is right now |
 | `hubctl maps test google "12 Elm St, Winchester MA"` | Ask Google alone, to try its key |
 | `hubctl maps forget` / `hubctl maps forget google` | Remove the first service's key / remove Google's. With neither, nothing is looked up, and the fee is picked by hand |
 

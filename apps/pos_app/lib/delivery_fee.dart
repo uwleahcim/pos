@@ -37,6 +37,7 @@ class DeliveryFees {
     this.maps,
     this.lookup = false,
     this.services = const [],
+    this.live = false,
   });
 
   factory DeliveryFees.fromJson(Map<String, dynamic> json) => DeliveryFees(
@@ -55,6 +56,7 @@ class DeliveryFees {
         for (final name in names)
           if (name is String && name.isNotEmpty) name,
     ],
+    live: json['live'] == true,
   );
 
   /// The most bands a location lists, as the hub holds it: one screenful of buttons.
@@ -80,6 +82,11 @@ class DeliveryFees {
   /// The hub's map services by the names it gives them, in the order it asks them: the first, and the one
   /// it asks when the first gives no distance ("A second map service"). Empty from a hub that says none.
   final List<String> services;
+
+  /// Whether a delivery for now is promised by the roads as they are ("Live traffic"): a manager turned
+  /// it on, and the hub has a map service that knows them and the restaurant's address. A form then asks
+  /// for the drive right now beside the distance.
+  final bool live;
 
   /// Whether a delivery is asked what it costs: turned on, with a price to pick.
   bool get asks => enabled && bands.isNotEmpty;
@@ -162,8 +169,86 @@ String mapServiceName(String service) => switch (service) {
 
 /// How a form asks the hub how far an address is (`PosApi.deliveryDistance`, with the customer's number
 /// bound in by the form). [fresh] asks the map service even when the customer's own earlier order says how
-/// far.
-typedef DistanceSource = Future<FeeLookup> Function(String address, {bool fresh});
+/// far. [now] says the delivery is for now: where live traffic is on, the answer then also says how long
+/// the drive is at this minute.
+typedef DistanceSource = Future<FeeLookup> Function(String address, {bool fresh, bool now});
+
+/// The drive to a delivery's address as the roads are at this minute, and the minutes the kitchen needs
+/// before it (docs/delivery.md, "Live traffic"): what a delivery for now is promised, in place of the
+/// minutes set for Delivery. It is for the promise alone. It picks no price, it is never put on the order
+/// and it is not sent back to the hub: the order keeps the time it was promised, which is the
+/// restaurant's own.
+class DriveNow {
+  const DriveNow({required this.minutes, required this.before, this.credit});
+
+  /// Null for nothing, and for anything this build cannot read.
+  static DriveNow? of(Object? value) {
+    if (value is! Map) return null;
+    final minutes = value['minutes'], before = value['before'], credit = value['credit'];
+    if (minutes is! int || before is! int || minutes < 1 || minutes > most || before < 0 || before > most) return null;
+    return DriveNow(
+      minutes: minutes,
+      before: before,
+      credit: credit is String && credit.isNotEmpty && credit.length <= FeeLookup.creditMost ? credit : null,
+    );
+  }
+
+  /// The longest either figure may be and still be believed: a day.
+  static const most = 1440;
+
+  /// The drive, in minutes, with the traffic there is.
+  final int minutes;
+
+  /// The minutes for the cooking and getting the order out of the door, as a manager set them.
+  final int before;
+
+  /// The name the service that knows the roads wants shown beside its figure ("Google Maps").
+  final String? credit;
+
+  /// What the delivery is promised: the cooking and the drive.
+  int get promise => before + minutes;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DriveNow && other.minutes == minutes && other.before == before && other.credit == credit;
+
+  @override
+  int get hashCode => Object.hash(minutes, before, credit);
+}
+
+/// Live traffic for deliveries, as a manager sets it for the location (`/settings/live_drive`, "Live
+/// traffic"): whether a delivery for now is promised by the roads as they are, and the minutes the kitchen
+/// needs before the drive. The hub says beside it what it takes: a map service that knows the roads right
+/// now ([traffic]) and the restaurant's own address ([origin]); [live] is all three.
+class LiveDrive {
+  const LiveDrive({
+    this.enabled = false,
+    this.before = 25,
+    this.traffic = false,
+    this.origin = false,
+    this.live = false,
+  });
+
+  factory LiveDrive.fromJson(Map<String, dynamic> json) => LiveDrive(
+    enabled: json['enabled'] == true,
+    before: json['before'] is int ? json['before'] as int : 25,
+    traffic: json['traffic'] == true,
+    origin: json['origin'] == true,
+    live: json['live'] == true,
+  );
+
+  /// The most minutes the kitchen may be given before the drive, as the hub holds it.
+  static const mostBefore = 240;
+
+  final bool enabled;
+  final int before;
+  final bool traffic;
+  final bool origin;
+  final bool live;
+
+  /// As a manager saves it. What the hub has is the hub's to say, and is not sent.
+  Map<String, dynamic> toJson() => {'enabled': enabled, 'before': before};
+}
 
 /// The hub's answer about an address (`POST /delivery/distance`): what the map said and the band of the
 /// fee it falls in.
@@ -175,6 +260,7 @@ class FeeLookup {
     this.saved = false,
     this.credit,
     this.keep = true,
+    this.driveNow,
   });
 
   /// Throws [FormatException] when the answer says no distance.
@@ -189,6 +275,7 @@ class FeeLookup {
       saved: json['saved'] == true,
       credit: credit is String && credit.isNotEmpty && credit.length <= creditMost ? credit : null,
       keep: json['keep'] != false,
+      driveNow: DriveNow.of(json['drive_now']),
     );
   }
 
@@ -214,6 +301,11 @@ class FeeLookup {
   /// its distances be kept (Google): they pick the price on this form and go nowhere else, so they are not
   /// sent back to the hub and never sit in this device's own list of what is still to be sent.
   final bool keep;
+
+  /// The drive as the roads are at this minute, where the form said the delivery is for now and live
+  /// traffic is on; null where it is off, and when nobody could say: the delivery is then promised its
+  /// usual minutes.
+  final DriveNow? driveNow;
 }
 
 /// "mi" or "min": what a band's reach is counted in, short enough for a button.

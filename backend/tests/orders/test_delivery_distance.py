@@ -47,7 +47,7 @@ HOME = "1 Restaurant Row, Winchester, MA"
 OAK = "4 Oak Rd, Woburn, MA"
 LINDA = "(781) 555-0142"
 FROM_HOME = origin_mark(HOME)
-SAID = {"service": "atlas", "credit": None, "keep": True, "from": FROM_HOME, "saved": False}
+SAID = {"service": "atlas", "credit": None, "keep": True, "from": FROM_HOME, "saved": False, "drive_now": None}
 """What an answer says beside the distance when the service was asked."""
 MARKS = {"service": "atlas", "from": FROM_HOME}
 """Who measured a distance and from where, as a form sends it back with its pick."""
@@ -236,6 +236,7 @@ def test_the_hub_asks_no_more_in_a_day_than_it_was_told_to():
         "daily_most": 3,
         "last_failure": "limit",
         "fallback": None,
+        "traffic": None,
         "origin_set": True,
     }
     assert "Elm" not in str(status)  # no address is in it
@@ -357,6 +358,7 @@ def test_a_customer_who_orders_again_to_the_same_address_is_not_looked_up():
         "keep": True,
         "from": FROM_HOME,
         "saved": True,
+        "drive_now": None,
     }
     assert atlas.asked == []
     # the number and the address as anybody types them
@@ -502,6 +504,7 @@ def test_the_second_service_is_asked_only_when_the_first_gives_no_distance():
         "keep": False,
         "from": FROM_HOME,
         "saved": False,
+        "drive_now": None,
     }
     # it is sent the two addresses too, and nothing else
     assert first.asked == [(HOME, ELM), (HOME, NEW)] and second.asked == [(HOME, NEW)]
@@ -764,6 +767,228 @@ def test_the_second_key_comes_from_the_hubs_own_file_too():
     alone = lookups_from_env({"POS_MAPS_GOOGLE_KEY": "AIza", "POS_MAPS_GOOGLE_DAILY": "lots"})
     assert alone.names == ["google"] and alone.status()["daily_most"] == 100
     assert lookups_from_env({"POS_MAPS_KEY": "abc"}).names == ["geocodio"]
+
+
+# Live traffic -------------------------------------------------------------------------------------------------
+
+
+class Roads(Globe):
+    """The second service as the hub asks it about the roads right now: tonight Elm Street takes 14 minutes,
+    not the usual 9."""
+
+    def __init__(self, *, fails: str | None = None, jams: str | None = None, holds: threading.Event | None = None):
+        super().__init__(fails=fails)
+        self.now = {ELM: 14, OAK: 30, NEW: 6}
+        self.jams = jams
+        self.holds = holds
+        self.asked_now: list[tuple[str, str]] = []
+
+    def drive_now(self, origin: str, destination: str) -> int:
+        self.asked_now.append((origin, destination))
+        if self.holds is not None:
+            self.holds.wait(5)
+        if self.jams:
+            raise LookupFailed(self.jams)
+        if destination not in self.now:
+            raise LookupFailed("not_found")
+        return self.now[destination]
+
+
+def live(c, expect: int = 200, **setting) -> dict:
+    """A manager turns live traffic on."""
+    put = c.put("/settings/live_drive", json={"enabled": True, "before": 25, **setting}, headers=manager(c))
+    assert put.status_code == expect, put.text
+    return put.json()
+
+
+def jammed(**more):
+    """A hub with both services, the second one knowing the roads, and live traffic turned on."""
+    roads = more.pop("roads", None) or Roads()
+    c, first, _ = two(second=roads, **more)
+    live(c)
+    return c, first, roads
+
+
+def test_live_traffic_is_off_until_a_manager_turns_it_on():
+    # a hub with nothing set up
+    assert client().get("/settings/live_drive").json() == {
+        "enabled": False,
+        "before": 25,
+        "traffic": False,
+        "origin": False,
+        "live": False,
+    }
+    # one with everything it takes: still off, and nobody is asked about the roads
+    roads = Roads()
+    c, _, _ = two(second=roads)
+    told = c.get("/settings/live_drive").json()
+    assert (told["enabled"], told["traffic"], told["origin"], told["live"]) == (False, True, True, False)
+    assert c.get("/settings/delivery_fee").json()["live"] is False
+    assert far(c, now=True).json()["drive_now"] is None
+    assert roads.asked_now == []
+    # turned on
+    assert live(c, before=30) == {"enabled": True, "before": 30, "traffic": True, "origin": True, "live": True}
+    assert c.get("/settings/delivery_fee").json()["live"] is True
+    # and off again
+    c.put("/settings/live_drive", json={"enabled": False, "before": 30}, headers=manager(c))
+    assert c.get("/settings/delivery_fee").json()["live"] is False
+    assert far(c, now=True).json()["drive_now"] is None
+
+
+def test_only_a_manager_sets_it_and_the_minutes_are_whole_and_sane():
+    c, _, _ = two(second=Roads())
+    assert c.put("/settings/live_drive", json={"enabled": True, "before": 25}).status_code in (401, 403)
+    for before in (-1, 241):
+        assert live(c, 422, before=before)["detail"]["error"] == "bad_value"
+    assert c.get("/settings/live_drive").json()["enabled"] is False
+    assert live(c, before=0)["before"] == 0
+    # saving the prices leaves it alone, and saving it leaves the prices and the address alone
+    priced(c, {**MILES, "origin": HOME})
+    assert c.get("/settings/live_drive").json()["live"] is True
+    assert c.get("/settings/delivery_fee").json()["origin"] == HOME
+
+
+def test_a_delivery_for_now_is_told_the_drive_as_it_is_and_the_fee_does_not_go_by_it():
+    c, first, roads = jammed()
+    told = far(c, now=True).json()
+    assert told["drive_now"] == {"minutes": 14, "before": 25, "credit": "Google Maps"}
+    # the fee goes by the usual drive, as the first service measured it
+    assert (told["miles"], told["minutes"], told["service"], told["keep"]) == ("3.2", 9, "atlas", True)
+    assert told["band"] == {"up_to": "4.5", "fee": "5.00"}
+    assert (first.asked, roads.asked, roads.asked_now) == ([(HOME, ELM)], [], [(HOME, ELM)])
+    # by minutes too: the 9 of the usual drive pick the price, not tonight's 14
+    c, _, roads = jammed(fee=MINUTES)
+    told = far(c, now=True).json()
+    assert (told["minutes"], told["drive_now"]["minutes"]) == (9, 14)
+    usual, tonight = far(c).json()["band"], band_for(c.get("/settings/delivery_fee").json(), Decimal("3.2"), 14)
+    assert told["band"] == usual and usual is not None and usual != tonight
+
+
+def test_an_order_for_later_and_a_try_of_a_key_ask_nothing_about_the_roads():
+    c, _, roads = jammed()
+    assert far(c).json()["drive_now"] is None  # the form did not say it is for now
+    assert far(c, now=True, via="atlas").json()["drive_now"] is None
+    assert roads.asked_now == []
+
+
+def test_a_returning_customers_fee_is_her_saved_one_and_the_roads_are_asked_all_the_same():
+    c, first, roads = jammed()
+    brought(c, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": {"miles": "3.2", "minutes": 9, **MARKS}})
+    told = far(c, phone=LINDA, now=True).json()
+    assert (told["saved"], told["miles"], told["drive_now"]["minutes"]) == (True, "3.2", 14)
+    assert (first.asked, roads.asked_now) == ([], [(HOME, ELM)])
+
+
+def test_the_drive_right_now_is_never_put_on_the_order():
+    c, _, _ = jammed()
+    told = far(c, now=True).json()
+    brought(c, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": measured(told), "drive_now": told["drive_now"]})
+    fee = fee_of(c.app.state.store.view("o1").fields)
+    assert fee["measured"] == {"miles": "3.2", "minutes": 9, **MARKS}
+    assert "drive_now" not in fee and "14" not in json.dumps(fee)
+
+
+def test_no_word_about_the_roads_is_no_failure_and_the_fee_is_still_picked():
+    for jams in ("unreachable", "refused", "not_found"):
+        c, _, roads = jammed(roads=Roads(jams=jams))
+        told = far(c, now=True)
+        assert told.status_code == 200
+        assert (told.json()["drive_now"], told.json()["band"]) == (None, {"up_to": "4.5", "fee": "5.00"})
+        traffic = c.get("/maps/status").json()["traffic"]
+        assert (traffic["asked_today"], traffic["failed_today"], traffic["last_failure"]) == (1, 1, jams)
+
+
+def test_the_roads_are_asked_about_each_time_and_no_more_in_a_day_than_set():
+    now = [1_000_000.0]
+    c, first, roads = jammed(traffic_daily=2, clock=lambda: now[0])
+    assert [far(c, now=True).json()["drive_now"]["minutes"] for _ in range(2)] == [14, 14]
+    assert len(roads.asked_now) == 2  # nothing is remembered: the roads change
+    assert len(first.asked) == 1  # the distance is
+    assert far(c, now=True).json()["drive_now"] is None
+    assert len(roads.asked_now) == 2
+    assert c.get("/maps/status").json()["traffic"] == {
+        "service": "google",
+        "asked_today": 2,
+        "failed_today": 0,
+        "daily_most": 2,
+        "last_failure": "limit",
+        "enabled": True,
+    }
+    now[0] += 86400
+    assert far(c, now=True).json()["drive_now"]["minutes"] == 14
+
+
+def test_a_slow_word_about_the_roads_does_not_hold_the_form():
+    holds = threading.Event()
+    c, _, roads = jammed(roads=Roads(holds=holds), wait=0.05)
+    told = far(c, now=True).json()
+    assert (told["drive_now"], told["miles"]) == (None, "3.2")
+    assert c.get("/maps/status").json()["traffic"]["last_failure"] == "unreachable"
+    holds.set()
+
+
+def test_a_hub_where_nobody_knows_the_roads_promises_as_it_did():
+    c, atlas = mapped()
+    told = live(c)
+    assert (told["enabled"], told["traffic"], told["live"]) == (True, False, False)
+    assert c.get("/settings/delivery_fee").json()["live"] is False
+    assert far(c, now=True).json()["drive_now"] is None
+    assert c.get("/maps/status").json()["traffic"] is None
+    # and one whose only service is the one that knows them
+    c, _ = mapped()
+    roads = Roads()
+    c.app.state.lookups = Lookups(fallback=roads)
+    live(c)
+    told = far(c, now=True).json()
+    assert (told["service"], told["drive_now"]["minutes"]) == ("google", 14)
+    assert (roads.asked, roads.asked_now) == ([(HOME, ELM)], [(HOME, ELM)])
+
+
+def test_google_is_asked_for_the_time_alone_with_the_traffic_there_is(caplog):
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"routes": [{"duration": "845s"}]})
+
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        assert google(answer).drive_now(HOME, ELM) == 14
+    (request,) = seen
+    assert json.loads(request.content) == {
+        "origin": {"address": HOME},
+        "destination": {"address": ELM},
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "regionCode": "us",
+    }
+    assert request.headers["x-goog-fieldmask"] == "routes.duration"
+    assert request.headers["x-goog-api-key"] == "AIza-key-456"
+    assert "Elm" not in caplog.text and "Restaurant Row" not in caplog.text and "AIza" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        (httpx.Response(200, json={}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"distanceMeters": 5214}]}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"duration": 845}]}), "not_found"),
+        (httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED"}}), "refused"),
+        (httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}}), "limit"),
+    ],
+)
+def test_what_google_may_say_of_the_roads_instead(answer, reason):
+    with pytest.raises(LookupFailed) as failed:
+        google(lambda request: answer).drive_now(HOME, ELM)
+    assert failed.value.reason == reason
+
+
+def test_a_short_drive_is_a_minute_and_the_days_most_comes_from_the_hubs_own_file():
+    assert google(lambda request: httpx.Response(200, json={"routes": [{"duration": "12s"}]})).drive_now(HOME, ELM) == 1
+    both = lookups_from_env({"POS_MAPS_KEY": "abc", "POS_MAPS_GOOGLE_KEY": "AIza", "POS_MAPS_TRAFFIC_DAILY": "40"})
+    assert (both.traffic, both.status()["traffic"]["daily_most"]) == ("google", 40)
+    assert lookups_from_env({"POS_MAPS_GOOGLE_KEY": "AIza"}).status()["traffic"]["daily_most"] == 150
+    alone = lookups_from_env({"POS_MAPS_KEY": "abc"})
+    assert (alone.traffic, alone.status()["traffic"]) == (None, None)
 
 
 # The service itself -----------------------------------------------------------------------------------------

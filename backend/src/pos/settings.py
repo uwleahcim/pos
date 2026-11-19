@@ -61,6 +61,11 @@
   asked how far a delivery is (`pos/maps.py`; empty to start, and nothing is looked up without it). An
   order carries the band it was given and what that cost then, so the prices can change without touching
   an order already taken.
+- `live_drive`: whether a delivery that is for now is promised by the roads as they are (`pos.maps`, "Live
+  traffic" in docs/delivery.md): `enabled`, off until a manager turns it on, and `before`, the minutes for
+  the cooking and getting it out of the door. The promise is then `before` and the drive right now, in place
+  of the minutes set for Delivery. It needs a map service that knows the roads right now; the fee never
+  goes by it.
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
@@ -155,6 +160,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
     # Off, with no prices: a fee is the owner's to set, and nothing is added to a check until it is.
     "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False, "origin": ""},
+    # Off: asking a map service about every delivery costs money, and how long the kitchen needs is the
+    # owner's to say.
+    "live_drive": {"enabled": False, "before": 25},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
@@ -509,6 +517,22 @@ def clean_bag(data: Mapping[str, Any]) -> dict[str, Any]:
             taken.add(ident)
         choices.append({"id": str(ident), "name": name})
     return {"enabled": enabled, "question": question or BAG_QUESTION, "choices": choices}
+
+
+LIVE_BEFORE_MAX = 240
+
+
+def clean_live_drive(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Live traffic for deliveries as the app may set it, checked: `enabled`, and `before`, the whole minutes
+    for the cooking and getting an order out of the door (0 to four hours). Raises ValueError on a bad
+    value."""
+    enabled = data.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled is true or false")
+    return {
+        "enabled": enabled,
+        "before": _whole(data.get("before", 25), "the minutes before the drive", LIVE_BEFORE_MAX),
+    }
 
 
 def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:

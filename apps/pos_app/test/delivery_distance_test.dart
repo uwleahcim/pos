@@ -169,7 +169,7 @@ void main() {
       final asked = <String>[];
       var fails = false;
       final asker = DistanceAsker()
-        ..source = (address, {fresh = false}) async {
+        ..source = (address, {fresh = false, now = false}) async {
           asked.add(address);
           if (fails) throw ApiException('no', status: 424, detail: {'message': 'The map service is not answering.'});
           return const FeeLookup(measured: Measured(miles: '3.2', minutes: 9));
@@ -486,7 +486,7 @@ void main() {
     test('asked again and fresh, the same address is asked about once more', () async {
       final asked = <(String, bool)>[];
       final asker = DistanceAsker()
-        ..source = (address, {fresh = false}) async {
+        ..source = (address, {fresh = false, now = false}) async {
           asked.add((address, fresh));
           return FeeLookup(
             measured: const Measured(miles: '3.2', minutes: 9),
@@ -651,7 +651,7 @@ void main() {
 
     test('figures that may not be kept are not what a pick sends back', () async {
       final asker = DistanceAsker()
-        ..source = (address, {fresh = false}) async =>
+        ..source = (address, {fresh = false, now = false}) async =>
             FeeLookup.fromJson({'miles': '1.6', 'minutes': 5, ...Hub.secondSays});
       final found = await asker.ask(newbuild);
       expect(found?.measured.words, '1.6 mi · 5 min');

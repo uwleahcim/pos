@@ -12,7 +12,8 @@ When the bag leaves, it is **handed to a driver**: the order says who has it and
 applies (see [The delivery fee](#the-delivery-fee)). Where the hub has a map service, the form looks up how
 far the address is and picks the price for it (see [Looking the distance up](#looking-the-distance-up)),
 and a customer who orders again to the same address is not looked up a second time (see
-[Customers who order again](#customers-who-order-again)).
+[Customers who order again](#customers-who-order-again)). Where a manager turned it on, a delivery for now
+is promised by the roads as they are at that minute (see [Live traffic](#live-traffic)).
 Nothing else here is about money: there is no tip yet, and a delivery is a sale like any other, counted in
 every report as a to-go order is.
 
@@ -42,7 +43,9 @@ ask for it.
 the minutes are the ones set for Delivery under the quote times (Location › Quote times), whoever took the
 order, and they are meant for the cooking and the drive together. A rush and a big order add their minutes
 as on any quote. For an order **for later**, the time the customer named is the time at their door, and the
-kitchen starts that many minutes before it.
+kitchen starts that many minutes before it. (With [live traffic](#live-traffic) turned on, a delivery for
+now is promised the kitchen's minutes and the drive to that address as it is right then, in place of the
+45.)
 
 ### A customer who had one before
 
@@ -236,6 +239,48 @@ does anything for it, and nothing changes until Google's key is on the hub
   looked up each time, a returning customer's too, because nothing of Google's is kept.
 - **Which is first is not a setting**: Geocodio where it has a key, then Google.
 
+### Live traffic
+
+With Google Maps on the hub and **Live traffic** turned on under Location, a delivery that is **for now**
+is promised by the roads as they are: **the minutes the kitchen needs, and the drive to that address at
+this minute**. That takes the place of the one figure set for Delivery under Quote times, which is the
+same 45 minutes for every address at every hour. It is **off until a manager turns it on**
+([Turning live traffic on](#turning-live-traffic-on)).
+
+- **On the form.** Tap **Delivery** and type the address, as always. Under what the map said of the
+  distance there is a second line, **With traffic now: 14 min**, with the words Google Maps beside it. The
+  line by the For later switch then reads "There in about 39 min, with traffic": 25 for the kitchen and 14
+  on the road. Until the address is typed and answered it says the minutes set for Delivery.
+- **The fee does not go by it.** The price is picked by the distance, or by the usual drive where the
+  prices go by minutes: "3.2 mi · 9 min drive" picks the same price on a Friday at six as on a Tuesday at
+  three. Traffic changes when the food is promised and never what the delivery costs.
+- **The order keeps the promise and not the drive.** The time promised is on the order as always. The 14
+  minutes are written nowhere: not on the order, not in its history, not on the hub. Google's terms do not
+  let them be kept, and an hour later they are wrong anyway.
+- **A rush and a big order add their minutes** on top, as on any quote: "There in about 49 min, with
+  traffic (busy kitchen: +10)".
+- **An order for later is not asked about.** The time the customer named is the time at their door, and
+  the roads at this minute say nothing of then. The kitchen starts the minutes set for Delivery before it,
+  as before. A catering order likewise. (Switch For later off again and the form asks then.)
+- **A returning customer is asked about too.** Their distance is theirs from last time ("as last time"),
+  and the drive is new every time. So with live traffic on, Google is asked once for each delivery for now.
+- **On the order.** A pickup for now that is made a delivery (Pickup or delivery) is promised the same
+  way, as long as the kitchen does not have its ticket yet. A delivery whose address is changed keeps the
+  time it was promised, and nobody is asked.
+- **When Google cannot say** (not answering, its key refused, the day's most used up, an address it does
+  not find), the form says nothing about it and the delivery is promised the minutes set for Delivery, as
+  with live traffic off. `sudo hubctl maps status` says how often that happened today.
+- **The promise is made once**, when the order is taken. Nothing asks again while the food cooks, and the
+  time does not move by itself when the roads get worse.
+- **At most 150 times a day** is Google asked about the roads (`POS_MAPS_TRAFFIC_DAILY` in
+  `/opt/pos/.env`), counted apart from the 100 a day for distances. Past that, deliveries are promised the
+  minutes set for Delivery until the next day.
+- **It is asked about beside the distance**, not after it, so the form waits no longer than before.
+- **What it takes**: Google's key on the hub, the restaurant's own address, and a delivery fee that is
+  turned on with at least one price, because the drive is asked about together with the distance for the
+  fee. (A location that charges nothing for delivery lists one price of $0.) The dialog under Location
+  says which of these is missing.
+
 ### What leaves the building
 
 - **The two addresses**: the restaurant's own and the delivery's. Nothing else: no name, no phone number,
@@ -252,6 +297,9 @@ does anything for it, and nothing changes until Google's key is on the hub
 - **Google is sent the same two addresses and nothing else**, and only for an address the first service
   gave no distance for. Its key is on the hub, in `/opt/pos/.env`, and travels in a header of the request,
   never in an address a log could show.
+- **With live traffic on, Google is sent the two addresses for every delivery for now**, a returning
+  customer's too, and still nothing else: no name, no number, nothing of the order. What it answers is
+  used for the time promised and kept nowhere.
 - **The customer's phone number stays on the hub.** The form sends it with the address so the hub can
   look at that customer's earlier orders. It is never sent to the map service.
 - **The map service keeps its own records.** Geocodio's pages said this on 2026-11-18: a log of requests,
@@ -344,6 +392,38 @@ and Google Maps when that gives no distance."
 
 The hub's side was written from Google's pages and has not been tried against Google itself: the first
 `sudo hubctl maps test google` on the hub is the first real try. If it reads oddly, its words say why.
+
+#### Turning live traffic on
+
+Do this once Google's key is on the hub (the steps above) and the app was rebuilt on every device. There is
+no new key and nothing new to turn on at Google: it is the same Routes API, asked in its other way.
+
+1. In the app: Back office › Location › **Live traffic**. (The row is right under Delivery fee.)
+2. Turn on **Promise a delivery by the roads right now**.
+3. Set **Before the drive**: the minutes for the cooking, and getting the order out of the door. It
+   starts at 25. It is not the 45 set for Delivery: those had the drive in them, and these do not.
+4. **Save.** The row then reads "On: a delivery for now is promised 25 min and the drive as the roads
+   are". If something is still missing it says what: no Google key on the hub, no restaurant address, or
+   no delivery fee with prices.
+5. **Try it** on the hub: `sudo hubctl maps test "12 Elm St, Winchester, MA"` (without the word google)
+   answers like "3.2 mi, 9 min: $5.00 (up to 4.5 miles) [geocodio]; the drive right now: 14 min [Google
+   Maps]". Each try is one of the day's 150.
+
+`sudo hubctl maps status` has a line for it: "live traffic for the promised time: on; google was asked
+about the roads 12 times today (at most 150), 1 gave no answer".
+
+Turning it off is the same switch. Deliveries are then promised the minutes set for Delivery again, and
+orders already taken keep the time they were promised either way.
+
+**What it costs.** Google counts a route with traffic at a dearer price than a plain one. Its price list
+said on 2026-11-18 that the first 5,000 of a month are free and each 1,000 after that are $10. The hub
+asks at most 150 times a day, about 4,650 a month, which stays inside the free 5,000. A restaurant with
+more deliveries than that in a day raises `POS_MAPS_TRAFFIC_DAILY` in `/opt/pos/.env` and pays Google for
+what goes over. A day's limit set on Google's side (**Google Maps Platform › Quotas**) holds whatever the
+hub does.
+
+Like the rest of the hub's side for Google, this was written from Google's pages and has not been tried
+against Google itself. The first `sudo hubctl maps test "..."` with live traffic on is the first real try.
 
 ## The papers
 
@@ -509,7 +589,14 @@ it and when.
 - **The map's price is a suggestion.** Nothing stops another price or No fee being tapped, and nothing
   refuses an address for being too far. The history says what the map said and who picked what.
 - **No map on the screen, no route, no delivery area drawn.** The lookup answers with two numbers.
-- **No traffic.** The minutes are the usual drive, whatever the hour.
+- **Traffic never moves the fee.** The minutes beside the miles are the usual drive, whatever the hour,
+  and they are what a price by minutes goes by. Live traffic is for the time promised alone, and only
+  where a manager turned it on ([Live traffic](#live-traffic)).
+- **Live traffic is asked about once, for one address.** The promise is not checked again while the food
+  cooks, nothing moves it when the roads change, and a driver who takes three bags on one run is not
+  planned for: each was promised as if it went alone.
+- **No live traffic for an order for later or a catering order**, and none where the delivery fee is off:
+  the drive is asked about together with the distance for the fee.
 - **A saved distance is not checked again by itself.** It is used until somebody taps the round arrow, and
   there is no screen that lists customers' distances or clears them all. (Changing the restaurant's own
   address under Location has every customer looked up once more.)
@@ -570,9 +657,46 @@ a command there. An app from before it on a new hub shows Google's figures witho
 and sends them back with the pick; the hub leaves them off the order all the same. So rebuild the apps
 before Google's key goes on the hub.
 
+Live traffic likewise: a hub from before it has no setting for it, and the row under Location says "The
+hub has not answered about live traffic (an older hub: update it)". An app from before it on a new hub
+never says a delivery is for now, so nothing is asked about the roads and its deliveries are promised the
+minutes set for Delivery. Rebuild the apps after the hub, then turn it on.
+
 ## For developers
 
-A second map service (the notes on the lookup and on saved distances are further down):
+Live traffic (the notes on the second map service, the lookup and saved distances are further down):
+
+- The setting `live_drive` (`pos.settings`): `enabled` (false until a manager sets it) and `before`, whole
+  minutes from 0 to 240 (25). `GET/PUT /settings/live_drive`; the PUT needs a manager. The answer adds
+  `traffic` (the hub has a service that knows the roads right now), `origin` (the restaurant's address is
+  set; the fee's setting holds it) and `live` (all three). `GET /settings/delivery_fee` adds `live` too,
+  which is what a form reads.
+- `pos.maps.Google.drive_now(origin, destination)`: the same `computeRoutes` with `routingPreference:
+  TRAFFIC_AWARE` and the mask `routes.duration` alone; whole minutes, never less than one.
+  `Lookups.traffic` names the service that has a `drive_now` (None where none does), and
+  `Lookups.drive_soon(origin, destination)` starts asking on a thread of its own and hands back the
+  waiting, so the roads are asked about beside the distance and both are heard inside `TIMEOUT_SECONDS`.
+  It gives the minutes or None: no failure reaches a form. Its own day's most, `POS_MAPS_TRAFFIC_DAILY`
+  (150), and its own counts under `traffic` in `Lookups.status()`. Nothing is remembered.
+- `POST /delivery/distance` takes `now` (the delivery is for now) and answers `drive_now`: `{minutes,
+  before, credit}` or null. It is asked only with `now`, the setting on, and no `via`; a saved distance
+  does not spare it. The band never goes by it. No op carries it: `fee_ops` reads `up_to` and `measured`
+  alone.
+- `hubctl maps test "<address>"` (no service named) sends `now` and prints the drive; `hubctl maps status`
+  prints the `traffic` line, with `enabled` from the setting.
+- App: `DeliveryFees.live`, `DriveNow` and `FeeLookup.driveNow`, `LiveDrive` (`lib/delivery_fee.dart`);
+  `PosApi.deliveryDistance(now:)`, `liveDrive()` and `saveLiveDrive()`; `DistanceAsker.ask(now:)`, which
+  asks once more about an address that was last asked about without it, and `DistanceAsker.driveFor`;
+  `FeeLookupLine` writes "With traffic now: 14 min" and the service's name (one name where the same
+  service gave the distance too); `Quotes.minutesFor(drive:)` is `before + minutes` and the rush for a
+  delivery for now; `TakeoutRequest.driveNow` reaches `_startOrder`, which writes `quoted_minutes` and
+  `promised_at` and nothing else of it; `WhenDialog.live` and `_changeWhen` for a pickup made a delivery;
+  `LiveDriveDialog` and the row `live-traffic` under Location.
+- Tests: "Live traffic" in `backend/tests/orders/test_delivery_distance.py` (the adapter against
+  `httpx.MockTransport`; Google itself is never called) and
+  `apps/pos_app/test/delivery_live_traffic_test.dart`.
+
+A second map service:
 
 - `pos.maps.Google`: the Routes API, `POST /directions/v2:computeRoutes` with `origin.address`,
   `destination.address`, `travelMode: DRIVE`, `routingPreference: TRAFFIC_UNAWARE` (the plain price, and
