@@ -130,6 +130,14 @@ class Hub {
     'origin': '1 Restaurant Row, Winchester',
     'maps': true,
     'lookup': true,
+    'services': ['geocodio'],
+  };
+
+  /// [mapFees] on a hub with a second map service, asked when the first gives no distance ("A second map
+  /// service"): what it alone knows is in [secondDistances].
+  static Map<String, dynamic> get twoMapFees => {
+    ...mapFees,
+    'services': ['geocodio', 'google'],
   };
 
   /// How far the addresses it knows are (`POST /delivery/distance`): what the map says of each, as
@@ -154,6 +162,15 @@ class Hub {
   /// the pick.
   static const mapMark = {'service': 'geocodio', 'from': '0a1b2c3d'};
 
+  /// What the second map service says of the addresses the first gives no distance for ("A second map
+  /// service"), on a hub whose fees name two services. Its answers say who measured them, the name to
+  /// show beside them, and that they are not to be kept ([secondSays]).
+  final secondDistances = <String, Map<String, dynamic>>{
+    '3 Newbuild Way, Winchester': {'miles': '1.6', 'minutes': 5},
+    '70 Far End Rd, Burlington': {'miles': '9.4', 'minutes': 22},
+  };
+  static const secondSays = {'service': 'google', 'from': '0a1b2c3d', 'credit': 'Google Maps', 'keep': false};
+
   Future<http.Response> _distance(http.Request request) async {
     final fees = deliveryFees;
     if (fees == null || !fees.containsKey('lookup')) return json({'detail': 'Not Found'}, 404);
@@ -166,7 +183,12 @@ class Hub {
     distanceAsks.add(body);
     await distanceWaits?.future;
     final kept = body['fresh'] == true ? null : savedDistances[body['phone']]?[body['address']];
-    final said = kept ?? (refuseDistance == null ? distances[body['address']] : null);
+    final first = kept ?? (refuseDistance == null ? distances[body['address']] : null);
+    // whatever the first says, the second is tried
+    final second = first == null && (fees['services'] as List? ?? const []).length > 1
+        ? secondDistances[body['address']]
+        : null;
+    final said = first ?? second;
     if (said == null) {
       final reason = refuseDistance ?? 'not_found';
       return json({
@@ -196,6 +218,9 @@ class Hub {
       'band': band,
       'beyond': charged && band == null,
       ...mapMark,
+      // a hub that knows of second services says both of every answer
+      if (fees.containsKey('services')) ...{'credit': null, 'keep': true},
+      if (second != null) ...secondSays,
       'saved': kept != null,
     });
   }
@@ -2479,6 +2504,7 @@ class Hub {
             if (had.containsKey('maps')) ...{
               'maps': had['maps'],
               'lookup': had['maps'] == true && '${body['origin'] ?? ''}'.isNotEmpty,
+              if (had.containsKey('services')) 'services': had['services'],
             } else
               'origin': null,
           }..removeWhere((key, value) => key == 'origin' && value == null);

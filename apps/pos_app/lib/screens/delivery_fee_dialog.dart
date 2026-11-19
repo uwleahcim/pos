@@ -229,11 +229,15 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
                 const SizedBox(height: 8),
                 Text('Looking the distance up', style: theme.textTheme.titleSmall),
                 Text(
-                  maps
+                  !maps
+                      ? 'This hub has no map service yet, so the price is picked by hand (hubctl maps key). '
+                            'The address can be typed now, and is used from the day the hub has one.'
+                      : widget.fees.services.length < 2
                       ? 'With the address below, the hub asks its map service how far a delivery is and the '
                             'form picks the price. The service is sent the two addresses and nothing else.'
-                      : 'This hub has no map service yet, so the price is picked by hand (hubctl maps key). '
-                            'The address can be typed now, and is used from the day the hub has one.',
+                      : 'With the address below, the hub asks ${mapServiceName(widget.fees.services[0])} how far '
+                            'a delivery is, and ${mapServiceName(widget.fees.services[1])} when that gives no '
+                            'distance. The form picks the price. Each is sent the two addresses and nothing else.',
                   key: const ValueKey('fee-maps'),
                   style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                 ),

@@ -34,8 +34,12 @@ class DistanceAsker extends ChangeNotifier {
   String? get problem => _problem;
   String? _problem;
 
-  /// What the map said of [address], when that is the address it was asked about.
-  Measured? measuredFor(String address) => _found != null && _address == oneLine(address) ? _found!.measured : null;
+  /// What the map said of [address], when that is the address it was asked about and the figures may go
+  /// onto the order ([FeeLookup.keep]): what a pick sends back to the hub.
+  Measured? measuredFor(String address) {
+    final found = _found;
+    return found != null && found.keep && _address == oneLine(address) ? found.measured : null;
+  }
 
   /// Asks how far [address] is. The answer, or null when there is nothing to ask, the address was asked
   /// already (unless [again]), no distance came of it, or the form has moved on meanwhile. [fresh] asks
@@ -94,7 +98,8 @@ typedef LookUp = void Function({bool fresh});
 
 /// The line over a delivery's prices that says how far the address is: what the map said, that it is being
 /// asked, why there is no answer, or a button that asks. What the hub read off the customer's own earlier
-/// order says "as last time", with a small button beside it that asks the map service again.
+/// order says "as last time", with a small button beside it that asks the map service again. Figures of a
+/// service that wants its name beside them carry it ([MapCredit]).
 class FeeLookupLine extends StatelessWidget {
   const FeeLookupLine({super.key, required this.asker, required this.address, required this.onLookUp});
 
@@ -123,18 +128,29 @@ class FeeLookupLine extends StatelessWidget {
           key: const ValueKey('fee-lookup-found'),
           style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
         );
-        if (!found.saved) return said;
-        return Row(
-          children: [
-            Flexible(child: said),
-            IconButton(
-              key: const ValueKey('fee-lookup-again'),
-              onPressed: () => onLookUp(fresh: true),
-              tooltip: 'Look it up again',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.refresh, size: 20),
-            ),
-          ],
+        final credit = found.credit;
+        final line = !found.saved
+            ? said
+            : Row(
+                mainAxisSize: credit == null ? MainAxisSize.max : MainAxisSize.min,
+                children: [
+                  Flexible(child: said),
+                  IconButton(
+                    key: const ValueKey('fee-lookup-again'),
+                    onPressed: () => onLookUp(fresh: true),
+                    tooltip: 'Look it up again',
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.refresh, size: 20),
+                  ),
+                ],
+              );
+        if (credit == null) return line;
+        // beside the figures where there is room, under them where there is not; never broken in two
+        return Wrap(
+          spacing: 8,
+          runSpacing: 2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [line, MapCredit(credit)],
         );
       }
       final button = TextButton.icon(
@@ -158,5 +174,39 @@ class FeeLookupLine extends StatelessWidget {
         ],
       );
     },
+  );
+}
+
+/// A map service's name beside its figures, where its terms ask for it wherever they are shown without
+/// its map (docs/delivery.md, "A second map service"). Google's guide for the words "Google Maps" is what
+/// this follows: the words as they are, on one line that is never broken, Roboto where the device has it
+/// and its own plain face where not, regular weight, 12 points that grow with the reader's type, and white
+/// on a dark screen or its gray on a light one.
+class MapCredit extends StatelessWidget {
+  const MapCredit(this.name, {super.key});
+
+  /// The service's name in its own words, as the hub sends it.
+  final String name;
+
+  /// The gray Google's guide lists for a light background, and the white for a dark one.
+  static const onLight = Color(0xFF5E5E5E);
+  static const onDark = Color(0xFFFFFFFF);
+
+  @override
+  Widget build(BuildContext context) => Text(
+    name,
+    key: const ValueKey('fee-lookup-credit'),
+    maxLines: 1,
+    softWrap: false,
+    overflow: TextOverflow.visible,
+    style: TextStyle(
+      fontFamily: 'Roboto',
+      fontSize: 12,
+      height: 1.3,
+      fontWeight: FontWeight.w400,
+      fontStyle: FontStyle.normal,
+      letterSpacing: 0,
+      color: Theme.of(context).brightness == Brightness.dark ? onDark : onLight,
+    ),
   );
 }

@@ -8,6 +8,7 @@ import 'package:pos_app/delivery_fee.dart';
 import 'package:pos_app/screens/delivery_fee_dialog.dart';
 import 'package:pos_app/screens/fee_lookup.dart';
 import 'package:pos_app/screens/location_settings_screen.dart';
+import 'package:pos_app/screens/theme.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, tapKey;
 import 'delivery_fee_test.dart' show carried, delivery, offered, picked, pumpForm, pumpOrder;
@@ -23,6 +24,9 @@ import 'location_rows.dart';
 /// A customer who had a delivery brought to the same address before is answered by the hub from that order
 /// ("Customers who order again"): the form sends the number with the address, says "as last time", and
 /// offers to look it up again.
+///
+/// Where the hub has a second map service ("A second map service"), its figures pick the price like any
+/// other, carry its name beside them, and are not sent back with the pick: they are not to be kept.
 
 const oak = '4 Oak Rd, Woburn';
 const main9 = '9 Main St, Winchester';
@@ -30,6 +34,16 @@ const mapSaid = {'miles': '3.2', 'minutes': 9};
 
 /// The same as this hub answers it and an order keeps it: with who measured it, and from where.
 const mapKept = {...mapSaid, ...Hub.mapMark};
+
+/// A street the first map service does not know, and one it does not know that is too far.
+const newbuild = '3 Newbuild Way, Winchester';
+const farEnd = '70 Far End Rd, Burlington';
+
+/// How well [ink] reads on [paper]: the contrast ratio of the two, from 1 to 21.
+double contrast(Color ink, Color paper) {
+  final one = ink.computeLuminance(), other = paper.computeLuminance();
+  return ((one > other ? one : other) + 0.05) / ((one > other ? other : one) + 0.05);
+}
 
 /// The address typed into a form that is a delivery, and the box left as Enter leaves it.
 Future<void> typeAddress(WidgetTester tester, String address) async {
@@ -607,6 +621,184 @@ void main() {
     });
   });
 
+  group('a second map service', () {
+    test('an answer says whose name goes beside it and whether it may be kept', () {
+      final google = FeeLookup.fromJson({'miles': '1.6', 'minutes': 5, 'band': null, ...Hub.secondSays});
+      expect((google.credit, google.keep, google.measured.service), ('Google Maps', false, 'google'));
+      // a service that asks for no name, and a hub from before there was a second
+      final plain = FeeLookup.fromJson({...mapKept, 'credit': null, 'keep': true});
+      expect((plain.credit, plain.keep), (null, true));
+      final older = FeeLookup.fromJson(mapKept);
+      expect((older.credit, older.keep), (null, true));
+      // not a name
+      for (final Object? odd in ['', 'x' * 41, 7]) {
+        expect(FeeLookup.fromJson({...mapKept, 'credit': odd}).credit, isNull);
+      }
+    });
+
+    test('which services the hub has, in the order it asks them, and what a person calls them', () {
+      expect(DeliveryFees.fromJson(Hub.twoMapFees).services, ['geocodio', 'google']);
+      expect(DeliveryFees.fromJson(Hub.mapFees).services, ['geocodio']);
+      expect(DeliveryFees.fromJson(Hub.milesFees).services, isEmpty);
+      expect(DeliveryFees.fromJson({...Hub.mapFees, 'services': 'google'}).services, isEmpty);
+      expect(
+        [
+          for (final name in ['geocodio', 'google', 'atlas']) mapServiceName(name),
+        ],
+        ['Geocodio', 'Google Maps', 'atlas'],
+      );
+    });
+
+    test('figures that may not be kept are not what a pick sends back', () async {
+      final asker = DistanceAsker()
+        ..source = (address, {fresh = false}) async =>
+            FeeLookup.fromJson({'miles': '1.6', 'minutes': 5, ...Hub.secondSays});
+      final found = await asker.ask(newbuild);
+      expect(found?.measured.words, '1.6 mi · 5 min');
+      expect(asker.found?.credit, 'Google Maps');
+      expect(asker.measuredFor(newbuild), isNull);
+      asker.dispose();
+    });
+
+    testWidgets("a street the first does not know: the second's figures pick the price, its name beside them", (
+      tester,
+    ) async {
+      final t = await pumpForm(tester, fees: Hub.twoMapFees);
+      await lindaTo(tester, newbuild);
+      expect(t.hub.distanceAsks, [
+        {'address': newbuild},
+      ]);
+      expect(said(tester, 'fee-lookup-found'), '1.6 mi · 5 min drive');
+      expect(said(tester, 'fee-lookup-credit'), 'Google Maps');
+      expect(key('fee-lookup-again'), findsNothing);
+      expect(picked(tester, '2'), isTrue);
+      // beside the figures, on their line
+      final found = tester.getRect(key('fee-lookup-found')), credit = tester.getRect(key('fee-lookup-credit'));
+      expect(credit.left, greaterThan(found.right));
+      expect(credit.center.dy, inInclusiveRange(found.top, found.bottom));
+      await tapKey(tester, 'takeout-start');
+      // the price is on the order, and the figures are not
+      expect(created(t.hub)['delivery_fee'], {'up_to': '2'});
+      await stop(tester);
+    });
+
+    testWidgets("the first service's figures carry no name, and go onto the order as before", (tester) async {
+      final t = await pumpForm(tester, fees: Hub.twoMapFees);
+      await lindaTo(tester, elm);
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
+      expect(key('fee-lookup-credit'), findsNothing);
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {'up_to': '4.5', 'measured': mapKept});
+      await stop(tester);
+    });
+
+    testWidgets('while the first is not answering, the second says how far any address is', (tester) async {
+      final t = await pumpForm(tester, fees: Hub.twoMapFees);
+      t.hub.refuseDistance = 'unreachable';
+      t.hub.secondDistances[elm] = {'miles': '3.3', 'minutes': 10};
+      await lindaTo(tester, elm);
+      expect(said(tester, 'fee-lookup-found'), '3.3 mi · 10 min drive');
+      expect(said(tester, 'fee-lookup-credit'), 'Google Maps');
+      expect(picked(tester, '4.5'), isTrue);
+      // an address neither knows is said as before
+      await typeAddress(tester, '1 Nowhere');
+      expect(key('fee-lookup-problem'), findsOneWidget);
+      expect(key('fee-lookup-credit'), findsNothing);
+      await stop(tester);
+    });
+
+    testWidgets('a price tapped by hand is not moved by the second service either, and its name still shows', (
+      tester,
+    ) async {
+      final t = await pumpForm(tester, fees: Hub.twoMapFees);
+      await tester.enterText(key('takeout-name'), 'Linda');
+      await tapKey(tester, 'channel:phone');
+      await tapKey(tester, 'handover:delivery');
+      await tapKey(tester, 'fee:none');
+      await typeAddress(tester, newbuild);
+      expect(said(tester, 'fee-lookup-credit'), 'Google Maps');
+      expect((picked(tester, 'none'), picked(tester, '2')), (true, false));
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {'up_to': null});
+      await stop(tester);
+    });
+
+    testWidgets('further than the prices reach is said of it too, with the name under the words', (tester) async {
+      await pumpForm(tester, fees: Hub.twoMapFees, size: const Size(360, 720));
+      await lindaTo(tester, farEnd);
+      expect(said(tester, 'fee-lookup-found'), '9.4 mi · 22 min drive: further than the prices reach');
+      expect(key('fee-needed'), findsOneWidget);
+      final found = tester.getRect(key('fee-lookup-found')), credit = tester.getRect(key('fee-lookup-credit'));
+      expect(credit.top, greaterThanOrEqualTo(found.bottom));
+      expect(credit.left, found.left);
+      await stop(tester);
+    });
+
+    testWidgets('it fits a small phone with large type, and the name is never broken in two', (tester) async {
+      for (final address in [newbuild, farEnd]) {
+        await pumpForm(tester, fees: Hub.twoMapFees, size: const Size(320, 640), type: 1.3);
+        await lindaTo(tester, address);
+        expect(tester.takeException(), isNull);
+        final credit = tester.getRect(key('fee-lookup-credit'));
+        expect((credit.left >= 0, credit.right <= 320), (true, true));
+        // one line of 12-point type at this reader's size, and no more
+        expect(credit.height, lessThan(2 * 12 * 1.3));
+        await stop(tester);
+      }
+    });
+
+    testWidgets('the name is written as its owner asks: its own words, one line, plain, a colour that reads', (
+      tester,
+    ) async {
+      for (final theme in [
+        PosTheme.light(),
+        PosTheme.dark(),
+        PosTheme.light(highContrast: true),
+        PosTheme.dark(highContrast: true),
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: const Scaffold(body: MapCredit('Google Maps')),
+          ),
+        );
+        await tester.pumpAndSettle(); // a theme is faded into
+        final text = tester.widget<Text>(key('fee-lookup-credit'));
+        final style = text.style!, scheme = theme.colorScheme;
+        expect((text.data, text.maxLines, text.softWrap), ('Google Maps', 1, false));
+        expect(
+          (style.fontFamily, style.fontWeight, style.fontStyle, style.fontSize),
+          ('Roboto', FontWeight.w400, FontStyle.normal, 12.0),
+        );
+        expect(style.color, theme.brightness == Brightness.dark ? MapCredit.onDark : MapCredit.onLight);
+        for (final behind in [
+          scheme.surface,
+          scheme.surfaceContainerLowest,
+          scheme.surfaceContainerLow,
+          scheme.surfaceContainer,
+          scheme.surfaceContainerHigh,
+          scheme.surfaceContainerHighest,
+        ]) {
+          expect(contrast(style.color!, behind), greaterThanOrEqualTo(4.5), reason: '$behind');
+        }
+      }
+    });
+
+    testWidgets("on the order too: the second's figures pick the price and are not written down", (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: carried('4.5', '5.00')), fees: Hub.twoMapFees);
+      await tapKey(tester, 'when-strip');
+      await typeAddress(tester, newbuild);
+      expect(said(tester, 'fee-lookup-found'), '1.6 mi · 5 min drive');
+      expect(said(tester, 'fee-lookup-credit'), 'Google Maps');
+      expect(picked(tester, '2'), isTrue);
+      await tapKey(tester, 'when-save');
+      final data = dataOf(t.hub, 'set_field', 'o1');
+      expect(data['address'], newbuild);
+      expect(data['delivery_fee'], {'up_to': '2'});
+      await stop(tester);
+    });
+  });
+
   group('on the order', () {
     testWidgets('opening the dialog asks nothing: an order that has its fee keeps it', (tester) async {
       final t = await pumpOrder(tester, delivery(fee: carried('4.5', '5.00')), fees: Hub.mapFees);
@@ -715,6 +907,33 @@ void main() {
       await tapKey(tester, 'fee-save');
       expect((t.hub.deliveryFees?['origin'], t.hub.deliveryFees?['lookup']), ('1 Restaurant Row, Winchester', false));
       expect(rowWords(tester), isNot(contains('looked up')));
+      await stop(tester);
+    });
+
+    testWidgets('a hub with a second map service names them both, in the order it asks them', (tester) async {
+      final t = await pumpLocation(tester, Hub.twoMapFees);
+      await tapKey(tester, 'delivery-fee');
+      await tester.ensureVisible(key('fee-origin'));
+      expect(
+        said(tester, 'fee-maps'),
+        'With the address below, the hub asks Geocodio how far a delivery is, and Google Maps when that gives '
+        'no distance. The form picks the price. Each is sent the two addresses and nothing else.',
+      );
+      // and saving sends nothing of them: which services there are is the hub's to say
+      await tapKey(tester, 'fee-save');
+      expect(t.hub.deliveryFees?['services'], ['geocodio', 'google']);
+      await stop(tester);
+    });
+
+    testWidgets('a hub with the one service says what it said before', (tester) async {
+      await pumpLocation(tester, Hub.mapFees);
+      await tapKey(tester, 'delivery-fee');
+      await tester.ensureVisible(key('fee-origin'));
+      expect(
+        said(tester, 'fee-maps'),
+        'With the address below, the hub asks its map service how far a delivery is and the form picks the '
+        'price. The service is sent the two addresses and nothing else.',
+      );
       await stop(tester);
     });
 
