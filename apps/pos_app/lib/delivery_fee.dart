@@ -36,6 +36,7 @@ class DeliveryFees {
     this.origin = '',
     this.maps,
     this.lookup = false,
+    this.services = const [],
   });
 
   factory DeliveryFees.fromJson(Map<String, dynamic> json) => DeliveryFees(
@@ -49,6 +50,11 @@ class DeliveryFees {
     origin: json['origin'] is String ? json['origin'] as String : '',
     maps: json['maps'] is bool ? json['maps'] as bool : null,
     lookup: json['lookup'] == true,
+    services: [
+      if (json['services'] case final List names)
+        for (final name in names)
+          if (name is String && name.isNotEmpty) name,
+    ],
   );
 
   /// The most bands a location lists, as the hub holds it: one screenful of buttons.
@@ -70,6 +76,10 @@ class DeliveryFees {
 
   /// Whether a form may ask the hub how far an address is: a map service, and [origin] to start from.
   final bool lookup;
+
+  /// The hub's map services by the names it gives them, in the order it asks them: the first, and the one
+  /// it asks when the first gives no distance ("A second map service"). Empty from a hub that says none.
+  final List<String> services;
 
   /// Whether a delivery is asked what it costs: turned on, with a price to pick.
   bool get asks => enabled && bands.isNotEmpty;
@@ -142,6 +152,14 @@ class Measured {
   int get hashCode => Object.hash(miles, minutes, service, from);
 }
 
+/// A map service as a person calls it: "Geocodio", "Google Maps". One this build has not heard of keeps
+/// the name the hub gives it.
+String mapServiceName(String service) => switch (service) {
+  'geocodio' => 'Geocodio',
+  'google' => 'Google Maps',
+  _ => service,
+};
+
 /// How a form asks the hub how far an address is (`PosApi.deliveryDistance`, with the customer's number
 /// bound in by the form). [fresh] asks the map service even when the customer's own earlier order says how
 /// far.
@@ -150,20 +168,32 @@ typedef DistanceSource = Future<FeeLookup> Function(String address, {bool fresh}
 /// The hub's answer about an address (`POST /delivery/distance`): what the map said and the band of the
 /// fee it falls in.
 class FeeLookup {
-  const FeeLookup({required this.measured, this.band, this.beyond = false, this.saved = false});
+  const FeeLookup({
+    required this.measured,
+    this.band,
+    this.beyond = false,
+    this.saved = false,
+    this.credit,
+    this.keep = true,
+  });
 
   /// Throws [FormatException] when the answer says no distance.
   factory FeeLookup.fromJson(Map<String, dynamic> json) {
     final measured = Measured.of(json);
     if (measured == null) throw const FormatException('no distance in the answer');
-    final band = json['band'];
+    final band = json['band'], credit = json['credit'];
     return FeeLookup(
       measured: measured,
       band: band is Map ? FeeBand.fromJson(band.cast<String, dynamic>()) : null,
       beyond: json['beyond'] == true,
       saved: json['saved'] == true,
+      credit: credit is String && credit.isNotEmpty && credit.length <= creditMost ? credit : null,
+      keep: json['keep'] != false,
     );
   }
+
+  /// The longest name a service is credited by; anything longer is not a name.
+  static const creditMost = 40;
 
   final Measured measured;
 
@@ -175,6 +205,15 @@ class FeeLookup {
 
   /// Nobody was asked: the hub read the figures off this customer's own earlier delivery to the address.
   final bool saved;
+
+  /// The name the service that measured it wants shown beside its figures, in its own words ("Google
+  /// Maps"); null for a service that asks for none.
+  final String? credit;
+
+  /// Whether the figures may go onto the order with the pick. False for a service whose terms do not let
+  /// its distances be kept (Google): they pick the price on this form and go nowhere else, so they are not
+  /// sent back to the hub and never sit in this device's own list of what is still to be sent.
+  final bool keep;
 }
 
 /// "mi" or "min": what a band's reach is counted in, short enough for a button.

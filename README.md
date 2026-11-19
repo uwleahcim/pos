@@ -34,8 +34,9 @@ merges after any disconnect.
   out; Runs says what each driver took out over the day, run by run; a delivery fee by how far it goes or
   how long the drive is, picked on the order from the location's own prices, off until they are set; with a
   map service's key on the hub, the distance is looked up from the address and its price picked, and a
-  customer who orders again to the same address is not looked up a second time):
-  `docs/delivery.md`
+  customer who orders again to the same address is not looked up a second time; Google Maps can be a
+  second map service, asked when the first gives no distance, whose figures pick the price and are not
+  kept): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|status|test|forget
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -254,58 +254,104 @@ case "${1:-status}" in
     ;;
   maps)
     # hubctl maps key                puts a map service's key on the hub (asked for and not shown, never on the command line), restarts the API
+    # hubctl maps google             puts a Google Maps key on the hub the same way: Google is asked when the first service gives no distance
     # hubctl maps status             whether the hub has a key, whether the restaurant's own address is set, how often it asked today
-    #                                and how often it did not have to (a customer's own earlier order said how far)
-    # hubctl maps test "<address>"   asks how far an address is, as a delivery's form does
-    # hubctl maps forget             removes the key: no distance is looked up, and the delivery fee is picked by hand
+    #                                and how often it did not have to (a customer's own earlier order said how far); the same of Google
+    # hubctl maps test "<address>"   asks how far an address is, as a delivery's form does, and says which service answered
+    # hubctl maps test google "<address>"   asks Google alone, to try its key (geocodio in its place asks the first alone)
+    # hubctl maps forget             removes the first service's key
+    # hubctl maps forget google      removes Google's key
     unset_env() {
       for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
+    }
+    read_key() { # $1: whose key is asked for; the key is left in $key
+      read -rsp "$1 (it is not shown as you paste it): " key
+      echo
+      key=${key//[[:space:]]/}
+      [[ -n "$key" ]] || { echo "no key given; nothing changed" >&2; exit 2; }
+      [[ "$key" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || { echo "that does not look like a key (letters and digits, 16 or more, no spaces); nothing changed" >&2; exit 2; }
+    }
+    has_service() { # $1: a service's name; waits up to 30 s for the API to say it has it
+      for _ in $(seq 1 30); do
+        sleep 1
+        if [[ "$(curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r --arg name "$1" '[.service, .fallback.service] | index($name) != null' 2> /dev/null || true)" == true ]]; then
+          return 0
+        fi
+      done
+      return 1
     }
     maps_status() {
       curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '
         (if .configured then "map service: \(.service); asked \(.asked_today) times today (at most \(.daily_most)), \(.failed_today) gave no distance" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "map service: none (hubctl maps key)" end),
+        (if .fallback then "second map service: \(.fallback.service), asked when the first gives no distance; asked \(.fallback.asked_today) times today (at most \(.fallback.daily_most)), \(.fallback.failed_today) gave no distance" + (if .fallback.last_failure then " (last: \(.fallback.last_failure))" else "" end) elif .configured and has("fallback") and .service != "google" then "second map service: none (hubctl maps google)" else empty end),
         (if .configured and .saved_today != null then "not asked, because the customer\u0027s own earlier order said how far: \(.saved_today) times today" else empty end),
         (if .origin_set then "the restaurant\u0027s own address: set" else "the restaurant\u0027s own address: not set (in the app: Location, Delivery fee)" end)' || echo "the API is not answering, or is older than the lookup (hubctl update)"
     }
     case "${2:-status}" in
       key)
-        read -rsp "The map service's API key (it is not shown as you paste it): " key
-        echo
-        key=${key//[[:space:]]/}
-        [[ -n "$key" ]] || { echo "no key given; nothing changed" >&2; exit 2; }
-        [[ "$key" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || { echo "that does not look like a key (letters and digits, 16 or more, no spaces); nothing changed" >&2; exit 2; }
+        read_key "The map service's API key"
         unset_env POS_MAPS POS_MAPS_KEY
         printf 'POS_MAPS=geocodio\nPOS_MAPS_KEY=%s\n' "$key" >> "$POS_HOME/.env"
         unset key
         compose up -d api
         echo "The key is on the hub. Waiting for the API to pick it up..."
-        for _ in $(seq 1 30); do
-          sleep 1
-          if [[ "$(curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '.configured' 2> /dev/null || true)" == true ]]; then
-            maps_status
-            echo "Next: in the app, Location, Delivery fee: type the restaurant's own address. Then: hubctl maps test \"an address nearby\""
-            exit 0
-          fi
-        done
+        if has_service geocodio; then
+          maps_status
+          echo "Next: in the app, Location, Delivery fee: type the restaurant's own address. Then: hubctl maps test \"an address nearby\""
+          exit 0
+        fi
         echo "The API did not come up with the key within 30 s. hubctl logs api says why; hubctl maps forget takes the key off again."
+        exit 1
+        ;;
+      google)
+        read_key "The Google Maps Platform API key"
+        unset_env POS_MAPS_GOOGLE_KEY
+        printf 'POS_MAPS_GOOGLE_KEY=%s\n' "$key" >> "$POS_HOME/.env"
+        unset key
+        compose up -d api
+        echo "The key is on the hub. Waiting for the API to pick it up..."
+        if has_service google; then
+          maps_status
+          echo "Next: hubctl maps test google \"an address nearby\""
+          exit 0
+        fi
+        echo "The API did not come up with the key within 30 s, or is older than the second map service (hubctl update). hubctl logs api says why; hubctl maps forget google takes the key off again."
         exit 1
         ;;
       status)
         maps_status
         ;;
       test)
-        [[ $# -ge 3 ]] || { echo 'usage: hubctl maps test "<address>"' >&2; exit 2; }
-        jq -n --arg address "$3" '{address: $address}' \
+        # with a service's name before the address, that service alone is asked
+        case "${3:-}" in
+          geocodio | google) via="$3" address="${4:-}" ;;
+          *) via="" address="${3:-}" ;;
+        esac
+        [[ -n "$address" ]] || { echo 'usage: hubctl maps test [geocodio|google] "<address>"' >&2; exit 2; }
+        jq -n --arg address "$address" --arg via "$via" '{address: $address} + (if $via == "" then {} else {via: $via} end)' \
           | curl -sS -X POST -H 'content-type: application/json' -d @- http://127.0.0.1:8000/delivery/distance \
-          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else "\(.miles) mi, \(.minutes) min" + (if .band then ": $\(.band.fee) (up to \(.band.up_to) \(.by))" elif .beyond then ": further than the prices reach" else ": no fee is charged" end) end'
+          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else "\(.miles) mi, \(.minutes) min" + (if .band then ": $\(.band.fee) (up to \(.band.up_to) \(.by))" elif .beyond then ": further than the prices reach" else ": no fee is charged" end) + (if .credit then " [\(.credit)]" elif .service then " [\(.service)]" else "" end) end'
         ;;
       forget)
-        unset_env POS_MAPS POS_MAPS_KEY
-        compose up -d api
-        echo "The key is gone; no distance is looked up, and the delivery fee is picked by hand."
+        if [[ "${3:-}" == google ]]; then
+          unset_env POS_MAPS_GOOGLE_KEY
+          compose up -d api
+          echo "Google's key is gone from the hub. (The key itself is deleted in the Google Cloud console.)"
+        elif [[ -n "${3:-}" ]]; then
+          echo 'usage: hubctl maps forget [google]' >&2
+          exit 2
+        else
+          unset_env POS_MAPS POS_MAPS_KEY
+          compose up -d api
+          if grep -q '^POS_MAPS_GOOGLE_KEY=.' "$POS_HOME/.env" 2> /dev/null; then
+            echo "The key is gone. Google's key is still on the hub, and Google is now asked about every address (hubctl maps forget google takes it off too)."
+          else
+            echo "The key is gone; no distance is looked up, and the delivery fee is picked by hand."
+          fi
+        fi
         ;;
       *)
-        echo 'usage: hubctl maps key | status | test "<address>" | forget' >&2
+        echo 'usage: hubctl maps key | google | status | test [geocodio|google] "<address>" | forget [google]' >&2
         exit 2
         ;;
     esac
@@ -317,7 +363,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|status|test|forget" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget" >&2
     exit 2
     ;;
 esac

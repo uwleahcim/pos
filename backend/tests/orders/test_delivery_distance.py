@@ -5,18 +5,36 @@ hub how far an address is and is told the band of the fee it falls in. Only the 
 service. Without a service, or when it gives no distance, the band is tapped by hand as before.
 
 A customer who orders again to the same address is not asked about again: what the map said is on their own
-earlier order, and the hub reads it there ("Customers who order again")."""
+earlier order, and the hub reads it there ("Customers who order again").
+
+A hub may have a second service, Google Maps, for when the first gives no distance ("A second map service").
+What it says picks the price and is not kept anywhere."""
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
 from decimal import Decimal
 
 import httpx
 import pytest
 
 from pos.customers import saved_trip
-from pos.maps import Geocodio, LookupFailed, Lookups, Trip, lookups_from_env, maps_from_env, origin_mark, trip_of
+from pos.maps import (
+    Geocodio,
+    Google,
+    LookupFailed,
+    Lookups,
+    Trip,
+    credit_of,
+    fallback_from_env,
+    lookups_from_env,
+    maps_from_env,
+    may_keep,
+    origin_mark,
+    trip_of,
+)
 from pos.orders.delivery_fee import band_for, fee_of, measured_of
 
 from .test_counter import client, manager, payload, takeout
@@ -29,8 +47,10 @@ HOME = "1 Restaurant Row, Winchester, MA"
 OAK = "4 Oak Rd, Woburn, MA"
 LINDA = "(781) 555-0142"
 FROM_HOME = origin_mark(HOME)
-SAID = {"service": "atlas", "from": FROM_HOME, "saved": False}
+SAID = {"service": "atlas", "credit": None, "keep": True, "from": FROM_HOME, "saved": False}
 """What an answer says beside the distance when the service was asked."""
+MARKS = {"service": "atlas", "from": FROM_HOME}
+"""Who measured a distance and from where, as a form sends it back with its pick."""
 
 
 class Atlas:
@@ -215,6 +235,7 @@ def test_the_hub_asks_no_more_in_a_day_than_it_was_told_to():
         "saved_today": 0,
         "daily_most": 3,
         "last_failure": "limit",
+        "fallback": None,
         "origin_set": True,
     }
     assert "Elm" not in str(status)  # no address is in it
@@ -233,12 +254,13 @@ def test_a_hub_with_no_service_says_so_in_its_status():
 def test_a_pick_carries_what_the_map_said_and_the_band_still_decides_the_amount():
     c, _ = mapped()
     brought(c)
-    told = {"miles": "3.2", "minutes": 9}
+    told = {"miles": "3.2", "minutes": 9, **MARKS}
     assert pick(c, {"up_to": "4.5", "measured": told})["refused"] == []
     assert carried(c) == {"by": "miles", "up_to": "4.5", "amount": "5.00", "taxed": False, "measured": told}
     assert check(c)["total"] == "15.71"
     # picked against the map: the nearer band, and what the map said is kept beside it
-    assert pick(c, {"up_to": "2", "measured": {"miles": 3.2, "minutes": 9}, "amount": "0.01"}, when=60)["refused"] == []
+    again = {"up_to": "2", "measured": {"miles": 3.2, "minutes": 9, **MARKS}, "amount": "0.01"}
+    assert pick(c, again, when=60)["refused"] == []
     assert carried(c) == {"by": "miles", "up_to": "2", "amount": "3.00", "taxed": False, "measured": told}
     # no fee on purpose keeps it too
     pick(c, {"up_to": None, "measured": told}, when=70)
@@ -277,7 +299,7 @@ def test_what_the_map_said_is_read_with_care():
 def test_the_history_shows_a_fee_picked_against_the_map():
     h = Hub(now=at(17))
     h.c.put("/settings/delivery_fee", json=MILES, headers=h.manager())
-    told = {"miles": "3.2", "minutes": 9}
+    told = {"miles": "3.2", "minutes": 9, **MARKS}
     picked = {"up_to": "4.5", "measured": told}
     h.to_go("o1", at(17), handover="delivery", address=ELM, delivery_fee=picked, by="Amy", by_id="s1")
     h.op("o1", "set_field", at(17, 5), delivery_fee={"up_to": "2", "measured": told}, by="Ben", by_id="s2")
@@ -331,6 +353,8 @@ def test_a_customer_who_orders_again_to_the_same_address_is_not_looked_up():
         "band": {"up_to": "4.5", "fee": "5.00"},
         "beyond": False,
         "service": "atlas",
+        "credit": None,
+        "keep": True,
         "from": FROM_HOME,
         "saved": True,
     }
@@ -399,8 +423,10 @@ def test_looking_it_up_again_asks_the_service_and_the_newest_order_is_the_one_re
 
 def test_figures_with_no_mark_a_pickup_and_a_voided_order_are_not_read():
     c, atlas = mapped()
-    # an app built before distances were saved sends the two numbers alone: a note, and no more
+    # an app built before distances were saved sends the two numbers alone, and they are not kept: nobody
+    # can tell who measured them
     brought(c, "o1", 0, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": {"miles": "3.2", "minutes": 9}})
+    assert carried(c) == {"by": "miles", "up_to": "4.5", "amount": "5.00", "taxed": False}
     kept = {"miles": "3.2", "minutes": 9, "service": "atlas", "from": FROM_HOME}
     # picked up after all, and one that was voided
     picked_up = {"channel": "phone", "handover": "pickup", "address": ELM, "phone": LINDA}
@@ -428,6 +454,316 @@ def test_a_customers_saved_distance_still_answers_when_the_service_does_not():
     # with no service at all nothing is asked of anybody, as before
     c.app.state.lookups = Lookups()
     assert far(c, phone=LINDA).status_code == 409
+
+
+# A second map service -----------------------------------------------------------------------------------------
+
+
+class Globe(Atlas):
+    """The second service: it knows the same addresses, and one street the first does not."""
+
+    name = "google"
+
+    def __init__(self, *, fails: str | None = None) -> None:
+        super().__init__(
+            {ELM: Trip(Decimal("3.3"), 10), OAK: Trip(Decimal("9.4"), 22), NEW: Trip(Decimal("1.6"), 5)}, fails=fails
+        )
+
+
+NEW = "3 Newbuild Way, Winchester, MA"
+GOOGLE_MARKS = {"service": "google", "from": FROM_HOME}
+
+
+def two(fee: dict = MILES, *, first: Atlas | None = None, second: Globe | None = None, **more):
+    """A hub with both services."""
+    first = first if first is not None else Atlas()
+    second = second if second is not None else Globe()
+    c, _ = mapped(fee, atlas=first)
+    c.app.state.lookups = Lookups(first, fallback=second, **more)
+    return c, first, second
+
+
+def test_the_second_service_is_asked_only_when_the_first_gives_no_distance():
+    c, first, second = two()
+    assert c.get("/settings/delivery_fee").json()["services"] == ["atlas", "google"]
+    told = far(c).json()
+    assert (told["miles"], told["service"], told["credit"]) == ("3.2", "atlas", None)
+    assert second.asked == []
+    # a street the first does not know
+    told = far(c, NEW).json()
+    assert told == {
+        "miles": "1.6",
+        "minutes": 5,
+        "by": "miles",
+        "band": {"up_to": "2", "fee": "3.00"},
+        "beyond": False,
+        "service": "google",
+        "credit": "Google Maps",
+        "keep": False,
+        "from": FROM_HOME,
+        "saved": False,
+    }
+    # it is sent the two addresses too, and nothing else
+    assert first.asked == [(HOME, ELM), (HOME, NEW)] and second.asked == [(HOME, NEW)]
+    assert c.get("/settings/delivery_fee").json()["lookup"] is True
+
+
+@pytest.mark.parametrize("reason", ["not_found", "unreachable", "refused", "limit"])
+def test_whatever_the_first_says_the_second_is_tried(reason):
+    c, first, second = two(first=Atlas(fails=reason))
+    told = far(c).json()
+    assert (told["miles"], told["minutes"], told["service"], told["credit"]) == ("3.3", 10, "google", "Google Maps")
+    assert len(first.asked) == len(second.asked) == 1
+    status = c.get("/maps/status").json()
+    assert (status["failed_today"], status["last_failure"]) == (1, reason)
+    assert status["fallback"] == {
+        "service": "google",
+        "asked_today": 1,
+        "failed_today": 0,
+        "daily_most": 100,
+        "last_failure": None,
+    }
+
+
+def test_when_neither_gives_a_distance_the_form_is_told_what_it_can_do_about():
+    # an address neither knows
+    c, _, _ = two()
+    assert far(c, "1 Nowhere").json()["detail"]["reason"] == "not_found"
+    # the first cannot be reached and the second does not know the street: the street is what to check
+    c, _, _ = two(first=Atlas(fails="unreachable"))
+    assert far(c, "1 Nowhere").json()["detail"]["reason"] == "not_found"
+    # the first does not know it and the second's key is refused: still the street
+    c, _, second = two(second=Globe(fails="refused"))
+    refused = far(c, "1 Nowhere")
+    assert (refused.status_code, refused.json()["detail"]["reason"]) == (424, "not_found")
+    assert c.get("/maps/status").json()["fallback"]["last_failure"] == "refused"
+    # no internet: neither answers, and the form says so
+    c, _, _ = two(first=Atlas(fails="unreachable"), second=Globe(fails="unreachable"))
+    detail = far(c).json()["detail"]
+    assert detail["reason"] == "unreachable" and "by hand" in detail["message"]
+
+
+def test_what_the_second_service_says_is_not_remembered_and_is_asked_no_more_than_it_may_be():
+    now = [1_000_000.0]
+    c, first, second = two(fallback_daily=3, clock=lambda: now[0])
+    assert [far(c, NEW).status_code for _ in range(5)] == [200, 200, 200, 424, 424]
+    # each time it was asked afresh, until its own day's most; the first was asked every time
+    assert (len(first.asked), len(second.asked)) == (5, 3)
+    assert far(c, NEW).json()["detail"]["reason"] == "not_found"
+    status = c.get("/maps/status").json()
+    assert (status["asked_today"], status["failed_today"], status["daily_most"]) == (6, 6, 500)
+    assert status["fallback"] == {
+        "service": "google",
+        "asked_today": 3,
+        "failed_today": 0,
+        "daily_most": 3,
+        "last_failure": "limit",
+    }
+    # what the first says is remembered for the day, as before
+    assert far(c).status_code == far(c).status_code == 200
+    assert len(first.asked) == 7
+    now[0] += 24 * 3600
+    assert far(c, NEW).json()["service"] == "google"
+    # the first at its own most for the day: the second answers
+    c, first, second = two(daily=1)
+    assert [far(c, address).json()["service"] for address in (ELM, OAK, OAK)] == ["atlas", "google", "google"]
+    assert (len(first.asked), len(second.asked)) == (1, 2)
+
+
+def test_what_the_second_service_says_picks_the_price_and_is_not_kept_on_the_order():
+    c, _, second = two()
+    told = far(c, NEW, phone=LINDA).json()
+    new = {"channel": "phone", "handover": "delivery", "address": NEW, "phone": LINDA}
+    takeout(c, "o1", 0, **new, delivery_fee={"up_to": told["band"]["up_to"], "measured": measured(told)})
+    assert carried(c) == {"by": "miles", "up_to": "2", "amount": "3.00", "taxed": False}
+    assert check(c)["total"] == "13.71"
+    # no fee on purpose, the same
+    pick(c, {"up_to": None, "measured": measured(told)}, when=70)
+    assert carried(c) == {"up_to": None, "amount": "0.00"}
+    # so the customer is asked about again the next time, and the history has nothing of it
+    assert saved_trip(c.app.state.store, LINDA, NEW, FROM_HOME) is None
+    assert far(c, NEW, phone=LINDA).json()["saved"] is False
+    assert len(second.asked) == 2
+    assert "1.6" not in c.get("/orders/o1").text
+    # and nothing a screen says makes it kept: the service's name decides
+    assert may_keep("atlas") and may_keep("geocodio")
+    assert not may_keep("google") and not may_keep("") and not may_keep(None)
+    assert (credit_of("google"), credit_of("geocodio"), credit_of(None)) == ("Google Maps", None, None)
+
+
+def test_a_distance_once_kept_from_the_second_service_is_never_handed_on():
+    # an order that carries such figures all the same (written by something older, or by hand)
+    c, _, second = two()
+    takeout(c, "o1", 0, channel="phone", handover="delivery", address=NEW, phone=LINDA)
+    state = c.app.state.store.view("o1")
+    state.fields["delivery_fee"] = {
+        "by": "miles",
+        "up_to": "2",
+        "amount": "3.00",
+        "taxed": False,
+        "measured": {"miles": "1.6", "minutes": 5, **GOOGLE_MARKS},
+    }
+
+    class Shelf:
+        def index(self, *, phone=None):
+            return c.app.state.store.index(phone=phone)
+
+        def views(self, entries):
+            return [state]
+
+    assert saved_trip(Shelf(), LINDA, NEW, FROM_HOME) is None
+    state.fields["delivery_fee"]["measured"]["service"] = "atlas"
+    assert saved_trip(Shelf(), LINDA, NEW, FROM_HOME) == {"miles": "1.6", "minutes": 5, **MARKS}
+
+
+def test_one_service_can_be_asked_by_name_to_try_its_key():
+    c, first, second = two()
+    brought(c, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": {"miles": "3.2", "minutes": 9, **MARKS}})
+    told = far(c, phone=LINDA, via="Google").json()
+    assert (told["miles"], told["service"], told["saved"]) == ("3.3", "google", False)  # not her saved one
+    assert (first.asked, second.asked) == ([], [(HOME, ELM)])
+    assert far(c, via="atlas").json()["service"] == "atlas"
+    assert far(c, via="atlas").json()["service"] == "atlas"
+    assert len(first.asked) == 2  # asked each time: nothing remembered answers a try
+    refused = far(c, via="mapquest")
+    assert refused.status_code == 422 and "no map service" in refused.json()["detail"]["message"]
+    # a hub with the one service has no second to try
+    c, _ = mapped()
+    assert far(c, via="google").status_code == 422
+    assert c.get("/settings/delivery_fee").json()["services"] == ["atlas"]
+
+
+def test_the_second_service_alone_is_the_one_service():
+    c, _ = mapped()
+    second = Globe()
+    c.app.state.lookups = Lookups(fallback=second, fallback_daily=7)
+    told = far(c).json()
+    assert (told["service"], told["credit"]) == ("google", "Google Maps")
+    status = c.get("/maps/status").json()
+    assert (status["configured"], status["service"], status["daily_most"], status["fallback"]) == (
+        True,
+        "google",
+        7,
+        None,
+    )
+
+
+class Slow(Atlas):
+    """A service that does not come back in time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.let_go = threading.Event()
+
+    def trip(self, origin: str, destination: str) -> Trip:
+        self.asked.append((origin, destination))
+        self.let_go.wait(5)
+        return self.trips[destination]
+
+
+def test_a_service_is_waited_for_only_so_long_and_then_the_second_is_asked():
+    slow = Slow()
+    c, _, second = two(first=slow, wait=0.05)
+    told = far(c).json()
+    assert (told["miles"], told["service"]) == ("3.3", "google")
+    status = c.get("/maps/status").json()
+    assert (status["failed_today"], status["last_failure"]) == (1, "unreachable")
+    # alone, the form is told the service cannot be reached; what it says later is dropped
+    lookups = Lookups(slow, wait=0.05)
+    with pytest.raises(LookupFailed) as failed:
+        lookups.trip(HOME, OAK)
+    assert failed.value.reason == "unreachable"
+    slow.let_go.set()
+
+    # and whatever else a service's own code raises still comes out of the asking
+    class Broken(Atlas):
+        def trip(self, origin: str, destination: str) -> Trip:
+            raise ZeroDivisionError
+
+    with pytest.raises(ZeroDivisionError):
+        Lookups(Broken()).trip(HOME, ELM)
+
+
+def google(handler) -> Google:
+    return Google("AIza-key-456", client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_google_is_sent_the_two_addresses_in_the_body_and_the_key_in_a_header(caplog):
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"routes": [{"distanceMeters": 5214, "duration": "545s"}]})
+
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        trip = google(answer).trip(HOME, ELM)
+    assert trip == Trip(Decimal("3.2"), 9)  # 5,214 meters, 545 seconds
+    (request,) = seen
+    assert (request.method, str(request.url)) == ("POST", "https://routes.googleapis.com/directions/v2:computeRoutes")
+    assert json.loads(request.content) == {
+        "origin": {"address": HOME},
+        "destination": {"address": ELM},
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_UNAWARE",  # the usual drive: no traffic is asked for
+        "regionCode": "us",
+    }
+    assert request.headers["x-goog-api-key"] == "AIza-key-456"
+    # only the length and the time are asked for
+    assert request.headers["x-goog-fieldmask"] == "routes.distanceMeters,routes.duration"
+    # the log names no address, and no key
+    assert "Elm" not in caplog.text and "Restaurant Row" not in caplog.text and "AIza" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        (httpx.Response(200, json={}), "not_found"),  # no route: every empty thing is left out of an answer
+        (httpx.Response(200, json={"routes": []}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"distanceMeters": 5214}]}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"distanceMeters": "far", "duration": "545s"}]}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"distanceMeters": 5214, "duration": "soon"}]}), "not_found"),
+        (httpx.Response(200, json={"routes": [{"distanceMeters": 9_000_000, "duration": "545s"}]}), "not_found"),
+        (httpx.Response(200, json=["what"]), "not_found"),
+        (httpx.Response(200, text="<html>"), "unreachable"),
+        (httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}}), "not_found"),
+        (httpx.Response(404, json={"error": {"status": "NOT_FOUND"}}), "not_found"),
+        (httpx.Response(401, json={"error": {"status": "UNAUTHENTICATED"}}), "refused"),
+        (httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED"}}), "refused"),
+        (httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}}), "limit"),
+        (httpx.Response(503, text="later"), "unreachable"),
+    ],
+)
+def test_what_google_may_answer_instead(answer, reason, caplog):
+    with pytest.raises(LookupFailed) as failed:
+        google(lambda _: answer).trip(HOME, ELM)
+    assert failed.value.reason == reason
+    assert "Elm" not in caplog.text and "AIza" not in caplog.text
+
+
+def test_a_google_route_of_no_length_and_one_that_does_not_answer(caplog):
+    # the same address twice: the length is nothing and is left out of the answer
+    here = google(lambda _: httpx.Response(200, json={"routes": [{"duration": "0s"}]})).trip(HOME, HOME)
+    assert here == Trip(Decimal("0.0"), 1)
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout(f"timed out asking about {ELM}", request=request)
+
+    with pytest.raises(LookupFailed) as failed:
+        google(silent).trip(HOME, ELM)
+    assert failed.value.reason == "unreachable" and failed.value.__cause__ is None
+    assert "ReadTimeout" in caplog.text and "Elm" not in caplog.text and "AIza" not in caplog.text
+
+
+def test_the_second_key_comes_from_the_hubs_own_file_too():
+    assert fallback_from_env({}) is None
+    assert fallback_from_env({"POS_MAPS_GOOGLE_KEY": "  "}) is None
+    assert isinstance(fallback_from_env({"POS_MAPS_GOOGLE_KEY": "AIza"}), Google)
+    both = lookups_from_env({"POS_MAPS_KEY": "abc", "POS_MAPS_GOOGLE_KEY": "AIza", "POS_MAPS_GOOGLE_DAILY": "25"})
+    assert both.names == ["geocodio", "google"]
+    assert (both.status()["daily_most"], both.status()["fallback"]["daily_most"]) == (500, 25)
+    alone = lookups_from_env({"POS_MAPS_GOOGLE_KEY": "AIza", "POS_MAPS_GOOGLE_DAILY": "lots"})
+    assert alone.names == ["google"] and alone.status()["daily_most"] == 100
+    assert lookups_from_env({"POS_MAPS_KEY": "abc"}).names == ["geocodio"]
 
 
 # The service itself -----------------------------------------------------------------------------------------

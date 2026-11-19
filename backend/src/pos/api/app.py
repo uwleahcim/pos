@@ -47,7 +47,7 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
-from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, lookups_from_env, origin_mark
+from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_from_env, may_keep, origin_mark
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
@@ -423,6 +423,11 @@ class DistanceIn(BaseModel):
         description="the customer's number, to read the distance off their own earlier order; it stays on the hub",
     )
     fresh: bool = Field(False, description="ask the map service even when the customer's earlier order says how far")
+    via: str = Field(
+        "",
+        max_length=24,
+        description="the one map service to ask, by name, to try its key out; nothing saved or remembered answers",
+    )
 
 
 class VoidsIn(BaseModel):
@@ -1525,12 +1530,17 @@ def create_app(
 
     def delivery_fee_now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """The fee's setting as a screen is told it: with `maps`, whether this hub has a map service to ask,
-        and `lookup`, whether a delivery's distance is looked up (a service, and the restaurant's own address
-        to start from)."""
+        `lookup`, whether a delivery's distance is looked up (a service, and the restaurant's own address
+        to start from), and `services`, the names of the hub's map services in the order they are asked."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         told = dict(setting if setting is not None else settings.get("delivery_fee"))
-        return {**told, "maps": lookups.ready, "lookup": lookups.ready and bool(told.get("origin"))}
+        return {
+            **told,
+            "maps": lookups.ready,
+            "lookup": lookups.ready and bool(told.get("origin")),
+            "services": lookups.names,
+        }
 
     @app.get("/settings/delivery_fee")
     def read_delivery_fee() -> dict[str, Any]:
@@ -1568,6 +1578,12 @@ def create_app(
         restaurant's address it was measured from) go back to the hub with the pick, in `measured`, which
         is how the figures get onto the order for the next time.
 
+        Where the hub has a second service, it is asked when the first gives no distance. `credit` is what
+        that service's terms want shown beside its figures ("Google Maps"), or null. `keep` is false for
+        figures of a service whose terms do not let them be kept: a screen shows them, picks the price by
+        them and does not send them back, and they are not put on the order whatever a screen sends. `via`
+        names the one service to ask, for `hubctl maps test`.
+
         Only the two addresses go to the service: no name, no phone number, nothing of the order. The
         number is used on the hub alone. 409 `no_lookup` when this hub has no map service or no address of
         its own to start from; 424 `lookup_failed`, with a `reason` and words for the form, when the service
@@ -1590,14 +1606,17 @@ def create_app(
         address = " ".join(body.address.split())
         if not address or len(address) > ADDRESS_MAX:
             raise HTTPException(422, {"error": "bad_value", "message": "an address of at most 200 letters"})
+        via = body.via.strip().lower() or None
+        if via is not None and via not in lookups.names:
+            raise HTTPException(422, {"error": "bad_value", "message": f"this hub has no map service {via!r}"})
         mark = origin_mark(origin)
-        kept = None if body.fresh else saved_trip(app.state.store, body.phone, address, mark)
+        kept = None if body.fresh or via else saved_trip(app.state.store, body.phone, address, mark)
         if kept is not None:
-            trip, service = Trip(Decimal(kept["miles"]), kept["minutes"]), kept["service"]
+            trip = Trip(Decimal(kept["miles"]), kept["minutes"], kept["service"])
             lookups.spared()
         else:
             try:
-                trip, service = lookups.trip(origin, address), lookups.service
+                trip = lookups.trip(origin, address, via=via)
             except LookupFailed as err:
                 raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
         band = band_for(setting, trip.miles, trip.minutes)
@@ -1607,7 +1626,9 @@ def create_app(
             "by": setting.get("by"),
             "band": band,
             "beyond": charged and band is None,
-            "service": service,
+            "service": trip.service,
+            "credit": credit_of(trip.service),
+            "keep": may_keep(trip.service),
             "from": mark,
             "saved": kept is not None,
         }
@@ -1615,7 +1636,8 @@ def create_app(
     @app.get("/maps/status")
     def maps_status() -> dict[str, Any]:
         """For `hubctl maps status`: whether the hub has a map service, whether the restaurant's own address
-        is set, and how often the service was asked today. No address is in it."""
+        is set, and how often the service was asked today; the same of a second service under `fallback`. No
+        address is in it."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         return {**lookups.status(), "origin_set": bool(settings.get("delivery_fee").get("origin"))}
