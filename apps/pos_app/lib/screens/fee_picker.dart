@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../delivery_fee.dart';
+import 'fee_lookup.dart';
 import 'menu_panel.dart';
 
 /// What a delivery costs the customer, picked on its form (docs/delivery.md, "The delivery fee"): the
@@ -12,8 +13,20 @@ import 'menu_panel.dart';
 /// phone, and a label gives way where a badge would not. Where a button is too narrow for "Up to 4.5 mi" on
 /// one line (a small phone, or large type) it says "4.5 mi" and the heading says "up to", so the miles or
 /// minutes are never the part that is cut off.
+///
+/// Where the hub looks the distance up, a line over the buttons says how far the address is; the form
+/// picks the band for it, and any other button can still be tapped.
 class FeePicker extends StatelessWidget {
-  const FeePicker({super.key, required this.fees, required this.pick, required this.onPick, this.taken});
+  const FeePicker({
+    super.key,
+    required this.fees,
+    required this.pick,
+    required this.onPick,
+    this.taken,
+    this.asker,
+    this.address = '',
+    this.onLookUp,
+  });
 
   /// Whether a form shows the picker at all: the location charges a fee, or the order carries one.
   static bool shown(DeliveryFees? fees, OrderFee? taken) => (fees?.asks ?? false) || (taken != null && !taken.none);
@@ -27,6 +40,12 @@ class FeePicker extends StatelessWidget {
 
   /// The fee the order carries, when it is being changed.
   final OrderFee? taken;
+
+  /// Where the hub looks the distance up ("Looking the distance up"): what it said of [address] stands
+  /// over the prices, and [onLookUp] asks, or asks again.
+  final DistanceAsker? asker;
+  final String address;
+  final VoidCallback? onLookUp;
 
   /// The narrowest a button may be, at type of the usual size, and still say "Up to 240 min" on one line.
   static const roomy = 120.0;
@@ -49,6 +68,10 @@ class FeePicker extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(narrow ? 'Delivery fee, up to' : 'Delivery fee', style: theme.textTheme.titleSmall),
+            if (asker case final asker? when asker.can && onLookUp != null) ...[
+              const SizedBox(height: 2),
+              FeeLookupLine(asker: asker, address: address, onLookUp: onLookUp!),
+            ],
             const SizedBox(height: 6),
             ChoiceGrid(
               children: [

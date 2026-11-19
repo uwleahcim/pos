@@ -32,7 +32,8 @@ merges after any disconnect.
   and where it goes on the bill, Delivered in place of Picked up; an order handed to a driver is Out, the
   customer is told it is on its way, and the Deliveries screen says what waits and what each driver has
   out; Runs says what each driver took out over the day, run by run; a delivery fee by how far it goes or
-  how long the drive is, picked on the order from the location's own prices, off until they are set):
+  how long the drive is, picked on the order from the location's own prices, off until they are set; with a
+  map service's key on the hub, the distance is looked up from the address and its price picked):
   `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`

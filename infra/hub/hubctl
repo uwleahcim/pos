@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|status|test|forget
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -252,6 +252,62 @@ case "${1:-status}" in
         ;;
     esac
     ;;
+  maps)
+    # hubctl maps key                puts a map service's key on the hub (asked for and not shown, never on the command line), restarts the API
+    # hubctl maps status             whether the hub has a key, whether the restaurant's own address is set, how often it asked today
+    # hubctl maps test "<address>"   asks how far an address is, as a delivery's form does
+    # hubctl maps forget             removes the key: no distance is looked up, and the delivery fee is picked by hand
+    unset_env() {
+      for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
+    }
+    maps_status() {
+      curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '
+        (if .configured then "map service: \(.service); asked \(.asked_today) times today (at most \(.daily_most)), \(.failed_today) gave no distance" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "map service: none (hubctl maps key)" end),
+        (if .origin_set then "the restaurant\u0027s own address: set" else "the restaurant\u0027s own address: not set (in the app: Location, Delivery fee)" end)' || echo "the API is not answering, or is older than the lookup (hubctl update)"
+    }
+    case "${2:-status}" in
+      key)
+        read -rsp "The map service's API key (it is not shown as you paste it): " key
+        echo
+        key=${key//[[:space:]]/}
+        [[ -n "$key" ]] || { echo "no key given; nothing changed" >&2; exit 2; }
+        [[ "$key" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || { echo "that does not look like a key (letters and digits, 16 or more, no spaces); nothing changed" >&2; exit 2; }
+        unset_env POS_MAPS POS_MAPS_KEY
+        printf 'POS_MAPS=geocodio\nPOS_MAPS_KEY=%s\n' "$key" >> "$POS_HOME/.env"
+        unset key
+        compose up -d api
+        echo "The key is on the hub. Waiting for the API to pick it up..."
+        for _ in $(seq 1 30); do
+          sleep 1
+          if [[ "$(curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '.configured' 2> /dev/null || true)" == true ]]; then
+            maps_status
+            echo "Next: in the app, Location, Delivery fee: type the restaurant's own address. Then: hubctl maps test \"an address nearby\""
+            exit 0
+          fi
+        done
+        echo "The API did not come up with the key within 30 s. hubctl logs api says why; hubctl maps forget takes the key off again."
+        exit 1
+        ;;
+      status)
+        maps_status
+        ;;
+      test)
+        [[ $# -ge 3 ]] || { echo 'usage: hubctl maps test "<address>"' >&2; exit 2; }
+        jq -n --arg address "$3" '{address: $address}' \
+          | curl -sS -X POST -H 'content-type: application/json' -d @- http://127.0.0.1:8000/delivery/distance \
+          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else "\(.miles) mi, \(.minutes) min" + (if .band then ": $\(.band.fee) (up to \(.band.up_to) \(.by))" elif .beyond then ": further than the prices reach" else ": no fee is charged" end) end'
+        ;;
+      forget)
+        unset_env POS_MAPS POS_MAPS_KEY
+        compose up -d api
+        echo "The key is gone; no distance is looked up, and the delivery fee is picked by hand."
+        ;;
+      *)
+        echo 'usage: hubctl maps key | status | test "<address>" | forget' >&2
+        exit 2
+        ;;
+    esac
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -259,7 +315,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|status|test|forget" >&2
     exit 2
     ;;
 esac

@@ -889,6 +889,7 @@ class _OrderScreenState extends State<OrderScreen> {
         catering: order.isCatering,
         fees: _fees,
         fee: order.deliveryFee,
+        distance: (_fees?.looksUp ?? false) ? widget.api.deliveryDistance : null,
       ),
     );
     if (asked == null || !mounted) return;
@@ -900,7 +901,7 @@ class _OrderScreenState extends State<OrderScreen> {
       for (final MapEntry(:key, :value) in now.entries)
         if (value != was[key]) key: value,
       // what the delivery costs, when another band (or none) was picked: the hub fills in the amount
-      if (asked.fee case final fee?) 'delivery_fee': FeePick.field(fee),
+      if (asked.fee case final fee?) 'delivery_fee': FeePick.field(fee, measured: asked.measured),
     };
     if (changed.isEmpty) return;
     String? said;

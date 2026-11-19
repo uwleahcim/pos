@@ -59,6 +59,12 @@ services:
       POS_APNS_KEY_ID: ${POS_APNS_KEY_ID:-}
       POS_APNS_TEAM_ID: ${POS_APNS_TEAM_ID:-}
       POS_APNS_BUNDLE_ID: ${POS_APNS_BUNDLE_ID:-org.chinasky.posApp}
+      # The map service a delivery's distance is asked of (docs/delivery.md, "Looking the distance up"):
+      # `hubctl maps key` writes the first two. Empty: nothing is looked up and the delivery fee is picked by
+      # hand. POS_MAPS_DAILY is the most the hub asks in a day (500 unless set).
+      POS_MAPS: ${POS_MAPS:-}
+      POS_MAPS_KEY: ${POS_MAPS_KEY:-}
+      POS_MAPS_DAILY: ${POS_MAPS_DAILY:-}
     volumes:
       - ./apns:/apns:ro
     ports:

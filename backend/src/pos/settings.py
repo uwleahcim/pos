@@ -57,8 +57,10 @@
   fee is charged at all (off to start: nothing goes on a check until the owner lists the prices); `by`,
   whether the fee goes by `miles` or by the `minutes` of the drive; `bands`, the prices in order, each
   `{up_to, fee}` ("up to 2.5 miles, 5.00"); `taxed`, whether sales tax is charged on the fee (off to
-  start: the owner's accountant says). An order carries the band it was given and what that cost then, so
-  the prices can change without touching an order already taken.
+  start: the owner's accountant says); `origin`, the restaurant's own address, from which a map service is
+  asked how far a delivery is (`pos/maps.py`; empty to start, and nothing is looked up without it). An
+  order carries the band it was given and what that cost then, so the prices can change without touching
+  an order already taken.
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
@@ -152,7 +154,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # On to start, with what the old POS rang as free dishes: the owner asked for the question.
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
     # Off, with no prices: a fee is the owner's to set, and nothing is added to a check until it is.
-    "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False},
+    "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False, "origin": ""},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
@@ -164,6 +166,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "powers": {"roles": STANDARD_POWERS},
 }
 WEEK_STARTS = ("mon", "sun")
+ORIGIN_MAX = 200
+"""The restaurant's own address for the delivery fee: as long as an order's address may be."""
 RUSH_MAX = 120
 """The most minutes a rush can add to a quote: past two hours the kitchen is closed, not busy."""
 BIG_ORDER_DISHES_MAX = 500
@@ -510,8 +514,10 @@ def clean_bag(data: Mapping[str, Any]) -> dict[str, Any]:
 def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
     """The delivery fee as the app may set it, checked: `enabled`, whether a fee is charged; `by`, miles or
     minutes; `bands`, a list of `{up_to, fee}` (miles to a tenth or whole minutes, and dollars), kept in
-    order of how far they reach; `taxed`, whether sales tax is charged on the fee. Charged, it needs at
-    least one band. A band may cost nothing (free close by). Raises ValueError on a bad value."""
+    order of how far they reach; `taxed`, whether sales tax is charged on the fee; `origin`, the
+    restaurant's own address, where every delivery starts when the distance is looked up (`pos.maps`; empty:
+    nothing is looked up). Charged, it needs at least one band. A band may cost nothing (free close by).
+    Raises ValueError on a bad value."""
     out: dict[str, Any] = {}
     for name in ("enabled", "taxed"):
         value = data.get(name, DEFAULTS["delivery_fee"][name])
@@ -521,6 +527,12 @@ def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
     by = str(data.get("by") or DEFAULTS["delivery_fee"]["by"]).strip().lower()
     if by not in fees.MEASURES:
         raise ValueError("by must be miles or minutes")
+    told = data.get("origin")
+    if told is not None and not isinstance(told, str):
+        raise ValueError("origin is the restaurant's own address, as one line")
+    origin = " ".join((told or "").split())
+    if len(origin) > ORIGIN_MAX:
+        raise ValueError(f"the restaurant's address is at most {ORIGIN_MAX} letters")
     raw = data.get("bands")
     raw = [] if raw is None else raw
     if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
@@ -549,6 +561,7 @@ def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
         "by": by,
         "bands": [{"up_to": fees.measure_text(reach), "fee": bands[reach]} for reach in sorted(bands)],
         "taxed": out["taxed"],
+        "origin": origin,
     }
 
 

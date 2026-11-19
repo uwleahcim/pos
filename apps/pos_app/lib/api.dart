@@ -1082,6 +1082,19 @@ class PosApi {
     ),
   );
 
+  /// How far a delivery's address is from the restaurant, and the band of the fee it falls in (docs/
+  /// delivery.md, "Looking the distance up"): the hub asks its map service, which is sent the two addresses
+  /// and nothing else. It may take a few seconds. Throws [ApiException] when there is no distance: 409 where
+  /// the hub looks nothing up, 424 with the words for the form in its detail when the service gave none.
+  Future<FeeLookup> deliveryDistance(String address) async {
+    final answer = await _post('/delivery/distance', {'address': address}, timeout: const Duration(seconds: 9));
+    try {
+      return FeeLookup.fromJson(answer);
+    } on FormatException catch (err) {
+      throw ApiException(err.message);
+    }
+  }
+
   /// The one-tap notes as this terminal last read them, for a dish's sheet opened before the hub answers
   /// again: the buttons are there at once.
   List<String> kitchenNotesKnown = const [];

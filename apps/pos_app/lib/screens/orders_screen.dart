@@ -40,6 +40,7 @@ import 'deliveries_screen.dart';
 import 'display_dialog.dart';
 import 'driver_picker.dart';
 import 'event_fields.dart';
+import 'fee_lookup.dart';
 import 'floor_view.dart';
 import 'hand_over.dart';
 import 'location_settings_screen.dart';
@@ -875,7 +876,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       for (final MapEntry(:key, :value) in (request.event?.toFields() ?? const <String, dynamic>{}).entries)
         if (value != null && value != '') key: value,
       // what the delivery costs: the band alone, and the hub fills in the amount
-      if (request.fee case final fee? when request.event?.delivered ?? false) 'delivery_fee': FeePick.field(fee),
+      if (request.fee case final fee? when request.event?.delivered ?? false)
+        'delivery_fee': FeePick.field(fee, measured: request.measured),
     }, lines: lines);
   }
 
@@ -2176,6 +2178,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   String _handover = 'pickup';
   DeliveryFees? _fees; // what a delivery costs here; null until the hub answers, and where it charges none
   String? _fee; // the fee picked for this one (a FeePick); null while nobody picked
+  final _asker = DistanceAsker(); // how far the address is, where the hub looks that up
+  bool _feeByHand = false; // somebody tapped a price: from then on the map says how far and picks nothing
   String _addressFilled = ''; // the address the form itself put in the box: the customer's last delivery
   String _driverNoteFilled = ''; // and what was said for the driver then
 
@@ -2202,11 +2206,35 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   Future<void> _readFees() async {
     try {
       final fees = await widget.api.deliveryFees();
-      if (mounted && fees != null) setState(() => _fees = fees);
+      if (!mounted || fees == null) return;
+      setState(() => _fees = fees);
+      _asker.source = fees.looksUp ? widget.api.deliveryDistance : null;
+      unawaited(_askDistance()); // an address that was there before the prices were
     } on ApiException {
       // no fee is asked
     }
   }
+
+  /// Asks the hub how far the address is, where it looks that up (docs/delivery.md, "Looking the distance
+  /// up"), and picks the band it falls in unless somebody picked by hand. Once per address, unless [again].
+  Future<void> _askDistance({bool again = false}) async {
+    if (!mounted || _handover != 'delivery' || !_asker.can) return;
+    final band = (await _asker.ask(_address.text, again: again))?.band;
+    if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
+  }
+
+  /// Something was typed on the form: what the map said of another address is gone.
+  void _addressTyped() => setState(() => _asker.typed(_address.text));
+
+  void _leaves(String way) {
+    setState(() => _handover = way);
+    unawaited(_askDistance());
+  }
+
+  void _pickFee(String pick) => setState(() {
+    _fee = pick;
+    _feeByHand = true;
+  });
 
   @override
   void dispose() {
@@ -2218,6 +2246,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     _address.dispose();
     _eventNote.dispose();
     _driverNote.dispose();
+    _asker.dispose();
     super.dispose();
   }
 
@@ -2264,7 +2293,9 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
         _driverNote.text = driverNote;
         _driverNoteFilled = driverNote;
       }
+      _asker.typed(_address.text);
     });
+    unawaited(_askDistance()); // the address of their last delivery, when this one is a delivery too
   }
 
   /// The note as the hub would keep it: on one line.
@@ -2331,6 +2362,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
           : null,
       // a fee is a delivery's alone, and a catering order's may be said later
       fee: (_delivery || _catering) && _handover == 'delivery' ? _fee : null,
+      measured: _asker.measuredFor(_address.text),
     ),
   );
 
@@ -2566,11 +2598,14 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   address: _address,
                   note: _driverNote,
                   handover: _handover,
-                  onHandover: (way) => setState(() => _handover = way),
-                  onChanged: () => setState(() {}),
+                  onHandover: _leaves,
+                  onChanged: _addressTyped,
                   fees: _fees,
                   fee: _fee,
-                  onFee: (pick) => setState(() => _fee = pick),
+                  onFee: _pickFee,
+                  asker: _asker,
+                  onAddressDone: _askDistance,
+                  onLookUp: () => _askDistance(again: true),
                 ),
                 if (_nowhere)
                   Padding(
@@ -2636,10 +2671,14 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   address: _address,
                   note: _eventNote,
                   handover: _handover,
-                  onHandover: (way) => setState(() => _handover = way),
+                  onHandover: _leaves,
+                  onChanged: _addressTyped,
                   fees: _fees,
                   fee: _fee,
-                  onFee: (pick) => setState(() => _fee = pick),
+                  onFee: _pickFee,
+                  asker: _asker,
+                  onAddressDone: _askDistance,
+                  onLookUp: () => _askDistance(again: true),
                 ),
               ],
             ],

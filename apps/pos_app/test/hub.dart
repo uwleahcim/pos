@@ -123,6 +123,66 @@ class Hub {
     'taxed': false,
   };
 
+  /// [milesFees] on a hub with a map service and the restaurant's own address: a delivery's distance is
+  /// looked up (docs/delivery.md, "Looking the distance up").
+  static Map<String, dynamic> get mapFees => {
+    ...milesFees,
+    'origin': '1 Restaurant Row, Winchester',
+    'maps': true,
+    'lookup': true,
+  };
+
+  /// How far the addresses it knows are (`POST /delivery/distance`): what the map says of each, as
+  /// `{'miles': '3.2', 'minutes': 9}`. An address it does not know is one the map could not find. Every
+  /// body it was asked with is in [distanceAsks]; [refuseDistance] is a reason the map gives no distance
+  /// for ("unreachable"), and [distanceWaits], when set, holds each answer back until it completes.
+  final distances = <String, Map<String, dynamic>>{
+    '12 Elm St, Winchester': {'miles': '3.2', 'minutes': 9},
+    '4 Oak Rd, Woburn': {'miles': '9.3', 'minutes': 21},
+    '9 Main St, Winchester': {'miles': '1.1', 'minutes': 4},
+  };
+  final distanceAsks = <Map<String, dynamic>>[];
+  String? refuseDistance;
+  Completer<void>? distanceWaits;
+
+  Future<http.Response> _distance(http.Request request) async {
+    final fees = deliveryFees;
+    if (fees == null || !fees.containsKey('lookup')) return json({'detail': 'Not Found'}, 404);
+    if (fees['lookup'] != true) {
+      return json({
+        'detail': {'error': 'no_lookup', 'message': 'this hub has no map service to ask'},
+      }, 409);
+    }
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    distanceAsks.add(body);
+    await distanceWaits?.future;
+    final said = refuseDistance == null ? distances[body['address']] : null;
+    if (said == null) {
+      final reason = refuseDistance ?? 'not_found';
+      return json({
+        'detail': {
+          'error': 'lookup_failed',
+          'reason': reason,
+          'message': reason == 'not_found'
+              ? 'The map service could not find that address. Check it, or pick the fee by hand.'
+              : 'The map service is not answering. Pick the fee by hand.',
+        },
+      }, 424);
+    }
+    final far = fees['by'] == 'minutes' ? (said['minutes'] as int).toDouble() : double.parse('${said['miles']}');
+    final charged = fees['enabled'] == true && (fees['bands'] as List).isNotEmpty;
+    Map? band;
+    if (charged) {
+      for (final listed in (fees['bands'] as List).cast<Map>()) {
+        if (far <= double.parse('${listed['up_to']}')) {
+          band = listed;
+          break;
+        }
+      }
+    }
+    return json({...said, 'by': fees['by'], 'band': band, 'beyond': charged && band == null});
+  }
+
   /// A band's reach as the hub writes it: "2", "2.5".
   static String _reach(Object? value) => double.parse('$value').toString().replaceFirst(RegExp(r'\.0$'), '');
 
@@ -130,11 +190,19 @@ class Hub {
   /// taxed. No band: no fee on purpose. A band it does not list: nothing is kept.
   Map<String, dynamic>? _feeFor(Object? picked) {
     if (picked is! Map) return null;
-    if (picked['up_to'] == null) return {'up_to': null, 'amount': '0.00'};
+    // what the map said of the address travels with the pick, and is kept beside it
+    final told = {if (picked['measured'] case final Map measured) 'measured': measured};
+    if (picked['up_to'] == null) return {'up_to': null, 'amount': '0.00', ...told};
     final fees = deliveryFees;
     for (final band in (fees?['bands'] as List? ?? const []).cast<Map>()) {
       if (band['up_to'] == _reach(picked['up_to'])) {
-        return {'by': fees!['by'], 'up_to': band['up_to'], 'amount': band['fee'], 'taxed': fees['taxed'] == true};
+        return {
+          'by': fees!['by'],
+          'up_to': band['up_to'],
+          'amount': band['fee'],
+          'taxed': fees['taxed'] == true,
+          ...told,
+        };
       }
     }
     return null;
@@ -2382,6 +2450,7 @@ class Hub {
             }, 422);
           }
           final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final had = deliveryFees!;
           deliveryFees = {
             ...body,
             // kept in order of how far they reach, each as the hub writes it
@@ -2389,9 +2458,17 @@ class Hub {
               for (final band in (body['bands'] as List).cast<Map>())
                 {'up_to': _reach(band['up_to']), 'fee': double.parse('${band['fee']}').toStringAsFixed(2)},
             ]..sort((a, b) => double.parse(a['up_to']!).compareTo(double.parse(b['up_to']!))),
-          };
+            // a hub that knows the lookup says whether it has a map service and whether it looks up
+            if (had.containsKey('maps')) ...{
+              'maps': had['maps'],
+              'lookup': had['maps'] == true && '${body['origin'] ?? ''}'.isNotEmpty,
+            } else
+              'origin': null,
+          }..removeWhere((key, value) => key == 'origin' && value == null);
         }
         return json(deliveryFees!);
+      case '/delivery/distance':
+        return _distance(request);
       case '/settings/kitchen_notes':
         if (kitchenNotes == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

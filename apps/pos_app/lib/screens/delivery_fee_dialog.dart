@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../delivery_fee.dart';
+import '../takeout.dart';
 
 /// What a delivery costs the customer, as a manager sets it for the location (docs/delivery.md, "The
 /// delivery fee"): whether a fee is charged at all, whether it goes by miles or by the minutes of the drive,
 /// the prices ("up to 2.5 mi, $5.00") and whether sales tax is charged on it. Saved on the hub; every screen
 /// offers the prices from its next delivery, and an order already taken keeps the fee it was given.
+///
+/// On a hub that can look a delivery's distance up ("Looking the distance up") the dialog also holds the
+/// restaurant's own address, where every delivery starts, and says whether the hub has a map service.
 class DeliveryFeeDialog extends StatefulWidget {
   const DeliveryFeeDialog({super.key, required this.api, required this.token, required this.fees});
 
@@ -32,6 +36,7 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
   late bool _enabled = widget.fees.enabled;
   late String _by = widget.fees.by;
   late bool _taxed = widget.fees.taxed;
+  late final _origin = TextEditingController(text: widget.fees.origin);
   final _bands = <_Band>[];
   final _removed = <_Band>[]; // off the list, their text boxes still leaving the screen
   int _added = 0; // rows made so far: the next row's key, never one a removed row had
@@ -52,6 +57,7 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
       band.upTo.dispose();
       band.fee.dispose();
     }
+    _origin.dispose();
     super.dispose();
   }
 
@@ -99,6 +105,8 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
           by: _by,
           taxed: _taxed,
           bands: [for (final (i, reach) in reaches.indexed) FeeBand(upTo: reach, fee: fees[i])],
+          // a hub older than the lookup shows no box for it: what it holds is left as it is
+          origin: widget.fees.maps == null ? widget.fees.origin : oneLine(_origin.text),
         ),
       );
       if (mounted) Navigator.of(context).pop(saved);
@@ -217,6 +225,33 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
                       : 'The fee is not taxed. Ask your accountant which is right for you',
                 ),
               ),
+              if (widget.fees.maps case final maps?) ...[
+                const SizedBox(height: 8),
+                Text('Looking the distance up', style: theme.textTheme.titleSmall),
+                Text(
+                  maps
+                      ? 'With the address below, the hub asks its map service how far a delivery is and the '
+                            'form picks the price. The service is sent the two addresses and nothing else.'
+                      : 'This hub has no map service yet, so the price is picked by hand (hubctl maps key). '
+                            'The address can be typed now, and is used from the day the hub has one.',
+                  key: const ValueKey('fee-maps'),
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  key: const ValueKey('fee-origin'),
+                  controller: _origin,
+                  maxLength: 200,
+                  textCapitalization: TextCapitalization.words,
+                  keyboardType: TextInputType.streetAddress,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Restaurant address',
+                    hintText: 'Street, town, state',
+                    counterText: '',
+                  ),
+                ),
+              ],
               if (_message != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
