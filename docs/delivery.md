@@ -157,7 +157,8 @@ has a key for the map service and the restaurant's own address is typed in** (se
 - **No answer**: the line says why and ends "Pick the fee by hand.", over a **Try again** button. The
   address could not be found (check the spelling, add the town); the map service is not answering, which
   is also what a restaurant without internet sees; the map service refused the hub's key; or it has been
-  asked as often as it may be today. An order is never held up by the map: tap a price.
+  asked as often as it may be today. An order is never held up by the map: tap a price. (Where the hub has
+  [a second map service](#a-second-map-service), that one has been asked too by then.)
 - **An address is asked about once**, when it is done being typed, never letter by letter, and not by a
   form that is being closed. The same address again, on this order or the next, is answered by the hub from
   what it was told that day.
@@ -208,6 +209,33 @@ on the customer's own orders, where the fee already was, and they go wherever th
 hub, the cloud). The phone number goes from the screen to the hub, as it does with every order, and no
 further: the map service is still sent the two addresses and nothing else.
 
+### A second map service
+
+The hub can have a second map service, **Google Maps**, which it asks **only when the first gives no
+distance**: a street Geocodio does not know yet, Geocodio not answering, its key refused, or its day's 500
+used up. Google is then asked about the same address before the form is told anything. Nobody at the form
+does anything for it, and nothing changes until Google's key is on the hub
+([Setting it up](#google-maps-as-the-second-service)).
+
+- **The form reads the same, with the words Google Maps beside the figures**: "1.6 mi · 5 min drive" and,
+  after it or under it, "Google Maps". Google's rules ask for its name wherever its figures are shown, in
+  those words, on one line, in plain type. That is all the words are: nothing opens when they are tapped.
+- **The price is picked the same way**, at the prices as they are, and a price tapped by hand still stays.
+- **Google's figures are not kept.** Google's terms do not let its distances and drive times be stored. So
+  what Google said picks the price on that form and is gone. The fee is on the order, as always; the miles
+  and the minutes are not. The check's history says the fee and who picked it, without "The map said". The
+  hub does not remember the answer for the day. And the customer is not "as last time" on their next
+  order: that address is looked up again, by Geocodio first.
+- **When neither gives a distance** the form says so as before: that the address could not be found when
+  either of them said that (it is the one thing somebody at the form can do something about), and
+  otherwise what the first one said.
+- **At most 100 times a day** is Google asked (`POS_MAPS_GOOGLE_DAILY` in `/opt/pos/.env`), whatever goes
+  wrong with the first service. Past that the form is told what the first one said.
+- **Each service is waited for 4 seconds at most**, so with both the form hears back inside 8.
+- **With Google's key alone on the hub**, Google is the one service. It works, and every delivery is then
+  looked up each time, a returning customer's too, because nothing of Google's is kept.
+- **Which is first is not a setting**: Geocodio where it has a key, then Google.
+
 ### What leaves the building
 
 - **The two addresses**: the restaurant's own and the delivery's. Nothing else: no name, no phone number,
@@ -218,22 +246,30 @@ further: the map service is still sent the two addresses and nothing else.
   memory for a day, 500 at most, and a restart of the hub forgets them.
 - **The miles and the minutes are kept on the customer's own order**, beside the fee that was picked with
   them, and nowhere else. That is how a returning customer is not looked up again. Geocodio's terms said on
-  2026-11-18 that its results may be kept; a service whose terms forbid that would have its numbers used
-  for the pick and not kept.
+  2026-11-18 that its results may be kept. Google's said they may not, so Google's numbers are used for the
+  pick and kept nowhere: not on the order, not in the hub's memory for the day, and not in the app's list of
+  what is still to be sent to the hub.
+- **Google is sent the same two addresses and nothing else**, and only for an address the first service
+  gave no distance for. Its key is on the hub, in `/opt/pos/.env`, and travels in a header of the request,
+  never in an address a log could show.
 - **The customer's phone number stays on the hub.** The form sends it with the address so the hub can
   look at that customer's earlier orders. It is never sent to the map service.
 - **The map service keeps its own records.** Geocodio's pages said this on 2026-11-18: a log of requests,
   which can hold what was asked, is kept for 45 days and then deleted
   (<https://www.geocod.io/data-retention-policy>); customers' data is disclosed only where the law requires
   it or in a form that names nobody, and results may be kept (<https://www.geocod.io/terms-of-use>). Read
-  both before signing up: they are the service's to change.
+  both before signing up: they are the service's to change. Google keeps its own records of what it is
+  asked under its own terms (<https://cloud.google.com/maps-platform/terms>) and privacy policy
+  (<https://policies.google.com/privacy>); read those too before giving the hub a Google key.
 - **At most 500 lookups a day** (`POS_MAPS_DAILY` in `/opt/pos/.env`), so a screen gone wrong cannot run up
-  a bill. Past that the form says so and the price is tapped by hand until the next day.
+  a bill. Past that the form says so and the price is tapped by hand until the next day. Google has its own
+  most for a day, 100 (`POS_MAPS_GOOGLE_DAILY`).
 
 ### Setting it up
 
-The hub is built for one map service so far, **Geocodio** (<https://www.geocod.io>), which knows addresses
-in the United States and Canada. The account is the owner's to make: nothing here makes one.
+The first map service is **Geocodio** (<https://www.geocod.io>), which knows addresses in the United
+States and Canada. The account is the owner's to make: nothing here makes one. A second service, Google
+Maps, can be added after it ([below](#google-maps-as-the-second-service)).
 
 1. **Make an account** at <https://dash.geocod.io>. On 2026-11-18 its pages said the first 2,500 credits
    of each day are free and no card is asked for under that. A new address costs 4 credits (2 for the
@@ -253,12 +289,61 @@ in the United States and Canada. The account is the owner's to make: nothing her
 
 `sudo hubctl maps status` says whether the hub has a key, whether the address is set, how often the
 service was asked today and gave nothing, and how often it did not have to be asked because a customer's
-own earlier order said how far. `sudo hubctl maps forget` takes the key off the hub: nothing is
-looked up and the price is tapped by hand again. (The key itself is deleted on the service's own page.)
+own earlier order said how far. Where there is a second service it says the same of that one on a line of
+its own. `sudo hubctl maps forget` takes the key off the hub: nothing is looked up and the price is tapped
+by hand again. (The key itself is deleted on the service's own page.)
 
 Until the hub has a key, the dialog under Location says "This hub has no map service yet, so the price is
 picked by hand (hubctl maps key)." The address can be typed all the same, and is used from the day the hub
 has one.
+
+#### Google Maps as the second service
+
+Do this after the steps above, and **after the app was rebuilt on every device**: an app from before this
+shows Google's figures without the words "Google Maps", which Google's rules ask for.
+
+The Google account is the owner's to make, and so is the card Google asks for. What follows is what
+Google's own pages said on 2026-11-18 and 2026-11-19 (<https://developers.google.com/maps/documentation/routes/get-api-key>,
+<https://developers.google.com/maps/billing-and-pricing/pricing>); the pages are Google's to change.
+
+1. **Sign in to the Google Cloud console** (<https://console.cloud.google.com>) and make a project for the
+   restaurant, or pick one.
+2. **Turn billing on for that project** (the console's Billing page, **Manage billing accounts**). Google
+   wants a card on file before the Routes API can be used at all, also for the part that is free.
+3. **Turn on the Routes API** for the project: find "Routes API" in the console and press **Enable**. It
+   is the only Google service the hub calls.
+4. **Make a key**: **Google Maps Platform › Keys & Credentials › Create credentials › API key**. Under
+   **API restrictions** choose to restrict the key and leave only **Routes API** ticked, so the key is good
+   for nothing else. Google's page warns that the owner pays for what anybody does with an unrestricted
+   key.
+5. **Put the key on the hub**: `sudo hubctl maps google`, and paste the key when asked. Like the first
+   key it is not shown, is never part of a command, and is kept in `/opt/pos/.env`. The hub restarts its
+   API (a few seconds).
+6. **Try it**: `sudo hubctl maps test google "12 Elm St, Winchester, MA"` asks Google alone and answers
+   like "3.3 mi, 10 min: $5.00 (up to 4.5 miles) [Google Maps]", or says why not. (`sudo hubctl maps test
+   "..."` without the word google asks as a form does, the first service and then Google, and ends with the
+   name of the one that answered.)
+
+**What it costs.** Google's price list said on 2026-11-18 that the first 10,000 plain route lookups of a
+month are free and each 1,000 after that are $5. The hub asks Google at most 100 times a day, about 3,100
+a month, and only for addresses the first service gave nothing for. A day's limit can also be set on
+Google's side (**Google Maps Platform › Quotas**), which holds whatever the hub does.
+
+**Google's other rule.** Google's rules for this service
+(<https://developers.google.com/maps/documentation/routes/policies>) also say that whoever uses it has terms
+of use and a privacy policy the public can read, which say that Google Maps is used and point to Google's
+own. Whether and how that applies to a restaurant asking how far its deliveries go is the owner's to
+settle, with a lawyer where in doubt. Nothing here is legal advice.
+
+`sudo hubctl maps forget google` takes Google's key off the hub, and the hub is back to the one service.
+(The key itself is deleted in the Google Cloud console.) `sudo hubctl maps forget` alone takes the first
+service's key off and leaves Google's: Google is then asked about every address.
+
+The dialog under Location names both once the hub has both: "the hub asks Geocodio how far a delivery is,
+and Google Maps when that gives no distance."
+
+The hub's side was written from Google's pages and has not been tried against Google itself: the first
+`sudo hubctl maps test google` on the hub is the first real try. If it reads oddly, its words say why.
 
 ## The papers
 
@@ -430,8 +515,10 @@ it and when.
   address under Location has every customer looked up once more.)
 - **"12 Elm St" is not "12 Elm Street".** Two spellings of one address are two addresses, each looked up
   once.
-- **One map service.** Geocodio is the one built. Another is a small piece of the hub
-  (`pos.maps.Maps`), not a setting.
+- **Two map services and no more.** Geocodio first, Google Maps when it gives nothing. Which is asked
+  first is not a setting, and another service is a small piece of the hub (`pos.maps.Maps`).
+- **Nothing of Google's is kept**, so a customer whose distance Google gave is looked up again the next
+  time, and their check's history does not say what the map said.
 - **Nothing looked up without the internet.** The hub needs to reach the map service. The form says so and
   the price is tapped by hand.
 - **No fee by itself, and no tip.** A fee goes on a check only when somebody picked one. (The pricing
@@ -474,10 +561,48 @@ picks the price by hand; saving the prices from it keeps the address the hub has
 
 Saved distances likewise: on a hub from before them every address is looked up, and no line says "as last
 time". An app from before them on a new hub does not send the customer's number, so its deliveries are
-looked up each time, and the distances it sends with a pick are kept as a note and not used again. Rebuild
-the apps after the hub and both stop.
+looked up each time, and the distances it sends with a pick do not say who measured them, so the hub
+leaves them off the order (the fee is kept; the history does not say what the map said). Rebuild the apps
+after the hub and both stop.
+
+The second map service likewise: a hub from before it has the one service, and `hubctl maps google` is not
+a command there. An app from before it on a new hub shows Google's figures without the words "Google Maps"
+and sends them back with the pick; the hub leaves them off the order all the same. So rebuild the apps
+before Google's key goes on the hub.
 
 ## For developers
+
+A second map service (the notes on the lookup and on saved distances are further down):
+
+- `pos.maps.Google`: the Routes API, `POST /directions/v2:computeRoutes` with `origin.address`,
+  `destination.address`, `travelMode: DRIVE`, `routingPreference: TRAFFIC_UNAWARE` (the plain price, and
+  the usual drive like the first service's) and `regionCode: us`; the key in `X-Goog-Api-Key`, the mask
+  `routes.distanceMeters,routes.duration` in `X-Goog-FieldMask`. `distanceMeters` is turned to miles to a
+  tenth and `duration` ("545s") to minutes; no route is `not_found`. `POS_MAPS_GOOGLE_KEY`,
+  `POS_MAPS_GOOGLE_DAILY` (100 unless set) and `POS_MAPS_GOOGLE_URL` in the environment.
+- `Lookups(maps, fallback=...)` asks the first and then, whatever the first's reason, the second; each
+  within its own day's most, and each for `TIMEOUT_SECONDS` in all (`_within`: a thread that is waited for
+  and no longer, because a request's own timeout bounds each of its steps and not their sum). It raises
+  `not_found` when either said so, else the first one's reason. `Trip.service` names who answered.
+  `status()` adds `fallback` (the second service's own counts, or null); with the second alone it is the
+  one service. `GET /settings/delivery_fee` adds `services`, the names in the order they are asked.
+- What may not be kept: `pos.maps.may_keep(service)` (`NOT_KEPT`). Such an answer is not held in the day's
+  memory, `fee_ops` leaves its `measured` off the order (figures with no service named are left off too),
+  and `pos.customers.saved_trip` passes over one that is on an order all the same. `credit_of(service)` is
+  the name its terms want beside its figures.
+- `POST /delivery/distance` answers `credit` ("Google Maps" or null) and `keep` (false for figures that
+  may not be kept) beside `service`. `via` in the body names the one service to ask, for `hubctl maps test
+  google "..."`: no saved figure and no remembered one answers for it; 422 for a service the hub has not.
+- App: `FeeLookup.credit` and `.keep`; `DistanceAsker.measuredFor` gives nothing for figures that may not
+  be kept, so a pick does not carry them and they never sit in the outbox; `MapCredit`
+  (`lib/screens/fee_lookup.dart`) writes the name as Google's guide for its text asks (the words as they
+  are, one line, Roboto where the device has it, regular, 12 points, its gray on light and white on dark),
+  in a `Wrap` beside the figures; `DeliveryFees.services` and `mapServiceName` for the dialog under
+  Location.
+- Tests: "A second map service" in `backend/tests/orders/test_delivery_distance.py` (the adapter against
+  `httpx.MockTransport`; Google itself is never called) and the group of that name in
+  `apps/pos_app/test/delivery_distance_test.dart`, which also holds the name's colour to a contrast of 4.5
+  on every surface of the app's themes.
 
 - A delivery is a to-go order (`order_type` takeout) whose `handover` is `delivery`. `address` is where it
   goes and `event_note` the note for the driver: the fields a catering order already had
@@ -605,7 +730,8 @@ Customers who order again:
   of the restaurant's address as one line, lower case, so it says nothing of the address) and `saved`. A
   pick sends them back inside `measured`, `{"miles", "minutes", "service", "from"}`, and
   `pos.orders.delivery_fee.measured_of` keeps the two marks only together and only in the hub's own
-  spelling. Figures without them are a note (an older app's) and are never handed on.
+  spelling. Figures without them (an older app's) are never handed on, and since there has been a second
+  map service they are left off the order altogether: nobody can tell whose terms they fall under.
 - The body may carry `phone` and `fresh`. With a phone and without `fresh`,
   `pos.customers.saved_trip(store, phone, address, mark)` reads the customer's newest orders (the index
   by phone, at most 40, voided ones aside, as `customer_card` does) for a delivery to the same address
@@ -615,8 +741,9 @@ Customers who order again:
   day's answers in memory, so a customer is told the figure their own order carries.
 - The band is always worked out from today's setting (`band_for`), never read off the old order.
 - The phone number is used on the hub alone: `Maps.trip` takes the two addresses and nothing else.
-- A service whose terms do not allow its results to be kept is not built. When one is, its figures must be
-  left off the order in `fee_ops` (by `measured.service`), which is why the service's name is kept.
+- A service whose terms do not allow its results to be kept has its figures left off the order in
+  `fee_ops` (by `measured.service`), which is why the service's name is kept: "A second map service",
+  below.
 - App: `PosApi.deliveryDistance(address, phone:, fresh:)` (the digits only, and `fresh` only when true, so
   an older hub is sent what it knows), `DistanceSource`, `FeeLookup.saved`, `Measured.service` and `.from`
   (sent back as they came), `DistanceAsker.ask(fresh:)`, `LookUp` (`onLookUp(fresh: true)` from the button
