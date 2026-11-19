@@ -36,7 +36,8 @@ merges after any disconnect.
   map service's key on the hub, the distance is looked up from the address and its price picked, and a
   customer who orders again to the same address is not looked up a second time; Google Maps can be a
   second map service, asked when the first gives no distance, whose figures pick the price and are not
-  kept): `docs/delivery.md`
+  kept; with live traffic turned on, a delivery for now is promised the kitchen's minutes and the drive as
+  the roads are at that minute, and the fee never goes by it): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
