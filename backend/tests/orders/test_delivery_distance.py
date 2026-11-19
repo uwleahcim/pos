@@ -2,7 +2,10 @@
 
 With a map service's key on the hub and the restaurant's own address in the fee's setting, a form asks the
 hub how far an address is and is told the band of the fee it falls in. Only the two addresses go to the
-service. Without a service, or when it gives no distance, the band is tapped by hand as before."""
+service. Without a service, or when it gives no distance, the band is tapped by hand as before.
+
+A customer who orders again to the same address is not asked about again: what the map said is on their own
+earlier order, and the hub reads it there ("Customers who order again")."""
 
 from __future__ import annotations
 
@@ -12,10 +15,11 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from pos.maps import Geocodio, LookupFailed, Lookups, Trip, lookups_from_env, maps_from_env, trip_of
+from pos.customers import saved_trip
+from pos.maps import Geocodio, LookupFailed, Lookups, Trip, lookups_from_env, maps_from_env, origin_mark, trip_of
 from pos.orders.delivery_fee import band_for, fee_of, measured_of
 
-from .test_counter import client, manager
+from .test_counter import client, manager, payload, takeout
 from .test_day import Hub, at
 from .test_delivery import ELM
 from .test_delivery_fee import MILES, MINUTES, brought, carried, check, pick, priced
@@ -23,6 +27,10 @@ from .test_history import steps
 
 HOME = "1 Restaurant Row, Winchester, MA"
 OAK = "4 Oak Rd, Woburn, MA"
+LINDA = "(781) 555-0142"
+FROM_HOME = origin_mark(HOME)
+SAID = {"service": "atlas", "from": FROM_HOME, "saved": False}
+"""What an answer says beside the distance when the service was asked."""
 
 
 class Atlas:
@@ -53,8 +61,13 @@ def mapped(fee: dict = MILES, *, atlas: Atlas | None = None, origin: str = HOME,
     return c, atlas
 
 
-def far(c, address: str = ELM):
-    return c.post("/delivery/distance", json={"address": address})
+def far(c, address: str = ELM, **more):
+    return c.post("/delivery/distance", json={"address": address, **more})
+
+
+def measured(told: dict) -> dict:
+    """What a form sends back with its pick: the distance as the hub said it, and who measured it from where."""
+    return {key: told[key] for key in ("miles", "minutes", "service", "from")}
 
 
 # Whether anything is looked up ------------------------------------------------------------------------------
@@ -105,6 +118,7 @@ def test_an_address_is_told_how_far_it_is_and_the_band_it_falls_in():
         "by": "miles",
         "band": {"up_to": "4.5", "fee": "5.00"},
         "beyond": False,
+        **SAID,
     }
     # only the two addresses went out: where it starts and where it goes
     assert atlas.asked == [(HOME, ELM)]
@@ -198,6 +212,7 @@ def test_the_hub_asks_no_more_in_a_day_than_it_was_told_to():
         "service": "atlas",
         "asked_today": 3,
         "failed_today": 0,
+        "saved_today": 0,
         "daily_most": 3,
         "last_failure": "limit",
         "origin_set": True,
@@ -269,6 +284,150 @@ def test_the_history_shows_a_fee_picked_against_the_map():
     fees = [(s["by"], s["now"]) for s in steps(h) if s["what"] == "delivery_fee"]
     assert [now["measured"] for _, now in fees] == [told, told]
     assert [(by, now["up_to"], now["amount"]) for by, now in fees] == [("Amy", "4.5", "5.00"), ("Ben", "2", "3.00")]
+
+
+# Customers who order again -----------------------------------------------------------------------------------
+
+
+def again(fee: dict = MILES, **more):
+    """A hub where Linda had a delivery brought to Elm Street: the map was asked then, and the fee picked
+    with what it said. The hub has since started again, so nothing is left in its memory."""
+    c, atlas = mapped(fee, **more)
+    told = far(c, phone=LINDA).json()
+    assert told["saved"] is False
+    brought(c, phone=LINDA, delivery_fee={"up_to": told["band"]["up_to"], "measured": measured(told)})
+    atlas = Atlas()
+    c.app.state.lookups = Lookups(atlas, **more)
+    return c, atlas
+
+
+def test_a_pick_carries_who_measured_it_and_from_where():
+    c, _ = again()
+    kept = carried(c)["measured"]
+    assert kept == {"miles": "3.2", "minutes": 9, "service": "atlas", "from": FROM_HOME}
+    # the mark is of the restaurant's address however it was typed, and says nothing of it
+    assert origin_mark("  1 restaurant row,  WINCHESTER, ma ") == FROM_HOME != origin_mark(OAK)
+    assert len(FROM_HOME) == 8 and "Restaurant" not in FROM_HOME
+    # the two go together or not at all, and only as the hub writes them
+    plain = {"miles": "3.2", "minutes": 9}
+    for bad in (
+        {"service": "atlas"},
+        {"from": FROM_HOME},
+        {"service": "Atlas Maps!", "from": FROM_HOME},
+        {"service": "atlas", "from": "1 Restaurant Row"},
+        {"service": 5, "from": FROM_HOME},
+        {"service": "atlas", "from": 12345678},
+    ):
+        assert measured_of({"measured": {**plain, **bad}}) == plain, bad
+
+
+def test_a_customer_who_orders_again_to_the_same_address_is_not_looked_up():
+    c, atlas = again()
+    told = far(c, phone=LINDA).json()
+    assert told == {
+        "miles": "3.2",
+        "minutes": 9,
+        "by": "miles",
+        "band": {"up_to": "4.5", "fee": "5.00"},
+        "beyond": False,
+        "service": "atlas",
+        "from": FROM_HOME,
+        "saved": True,
+    }
+    assert atlas.asked == []
+    # the number and the address as anybody types them
+    assert far(c, "12 elm st,   WINCHESTER", phone="781.555.0142").json()["saved"] is True
+    assert far(c, phone="+1 781 555 0142").json()["saved"] is True
+    assert atlas.asked == []
+    status = c.get("/maps/status").json()
+    assert (status["asked_today"], status["saved_today"]) == (0, 3)
+
+
+def test_the_saved_distance_is_priced_as_the_prices_are_now():
+    c, atlas = again()
+    priced(c, {**MILES, "bands": [{"up_to": "3", "fee": "4.00"}, {"up_to": "6", "fee": "7.00"}], "origin": HOME})
+    told = far(c, phone=LINDA).json()
+    assert (told["saved"], told["band"]) == (True, {"up_to": "6", "fee": "7.00"})
+    # by the minutes of the drive it is the saved minutes that count
+    priced(c, {**MINUTES, "origin": HOME})
+    told = far(c, phone=LINDA).json()
+    assert (told["saved"], told["by"], told["band"]) == (True, "minutes", {"up_to": "10", "fee": "3.00"})
+    # and past the last price it says so, as a looked-up one does
+    priced(c, {**MILES, "bands": [{"up_to": "2", "fee": "3.00"}], "origin": HOME})
+    told = far(c, phone=LINDA).json()
+    assert (told["saved"], told["band"], told["beyond"]) == (True, None, True)
+    assert atlas.asked == []
+
+
+def test_another_address_another_number_or_no_number_is_looked_up():
+    c, atlas = again()
+    assert far(c, OAK, phone=LINDA).json()["saved"] is False  # somewhere else this time
+    assert far(c, "12 Elm Street, Winchester", phone=LINDA).status_code == 424  # another spelling is another address
+    assert atlas.asked == [(HOME, OAK), (HOME, "12 Elm Street, Winchester")]
+    for n, phone in enumerate(("781 555 0199", "", "0142", "no number")):
+        c.app.state.lookups = Lookups(atlas)  # nothing in memory
+        assert far(c, phone=phone).json()["saved"] is False, phone
+        assert len(atlas.asked) == 3 + n
+    # only the two addresses went out, whoever was asking
+    assert all(set(asked) <= {HOME, ELM, OAK, "12 Elm Street, Winchester"} for asked in atlas.asked)
+    assert "555" not in str(atlas.asked)
+
+
+def test_a_distance_measured_from_another_address_of_the_restaurants_is_not_used():
+    c, atlas = again()
+    priced(c, {**MILES, "origin": "2 Restaurant Row, Winchester, MA"})  # the address was typed wrong at first
+    told = far(c, phone=LINDA).json()
+    assert (told["saved"], told["from"]) == (False, origin_mark("2 Restaurant Row, Winchester, MA"))
+    assert atlas.asked == [("2 Restaurant Row, Winchester, MA", ELM)]
+    # put back, the saved one counts again
+    priced(c, {**MILES, "origin": HOME})
+    assert far(c, phone=LINDA).json()["saved"] is True
+
+
+def test_looking_it_up_again_asks_the_service_and_the_newest_order_is_the_one_read():
+    c, atlas = again()
+    atlas.trips[ELM] = Trip(Decimal("2.9"), 8)  # a new road
+    told = far(c, phone=LINDA, fresh=True).json()
+    assert (told["miles"], told["minutes"], told["saved"]) == ("2.9", 8, False)
+    assert atlas.asked == [(HOME, ELM)]
+    assert far(c, phone=LINDA).json()["miles"] == "3.2"  # nothing was picked with it yet
+    brought(c, "o2", 3600, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": measured(told)})
+    told = far(c, phone=LINDA).json()
+    assert (told["miles"], told["minutes"], told["saved"]) == ("2.9", 8, True)
+    assert len(atlas.asked) == 1
+
+
+def test_figures_with_no_mark_a_pickup_and_a_voided_order_are_not_read():
+    c, atlas = mapped()
+    # an app built before distances were saved sends the two numbers alone: a note, and no more
+    brought(c, "o1", 0, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": {"miles": "3.2", "minutes": 9}})
+    kept = {"miles": "3.2", "minutes": 9, "service": "atlas", "from": FROM_HOME}
+    # picked up after all, and one that was voided
+    picked_up = {"channel": "phone", "handover": "pickup", "address": ELM, "phone": LINDA}
+    takeout(c, "o2", 100, **picked_up, delivery_fee={"up_to": "4.5", "measured": kept})
+    brought(c, "o3", 200, phone=LINDA, delivery_fee={"up_to": "4.5", "measured": kept})
+    c.post("/orders/o3/ops", json=[payload("o3-void", "void_order", 210, "o3")])
+    # a price tapped by hand with no map in it
+    brought(c, "o4", 300, phone=LINDA, delivery_fee={"up_to": "2"})
+    store = c.app.state.store
+    assert saved_trip(store, LINDA, ELM, FROM_HOME) is None
+    assert far(c, phone=LINDA).json()["saved"] is False
+    assert atlas.asked == [(HOME, ELM)]
+    # an older delivery that has the figures is found behind the newer ones that do not
+    brought(c, "o0", -500, phone=LINDA, delivery_fee={"up_to": None, "measured": {**kept, "miles": "3.4"}})
+    assert saved_trip(store, LINDA, ELM, FROM_HOME) == {**kept, "miles": "3.4"}
+    assert saved_trip(store, LINDA, "", FROM_HOME) is None
+    assert saved_trip(store, LINDA, ELM, origin_mark(OAK)) is None
+
+
+def test_a_customers_saved_distance_still_answers_when_the_service_does_not():
+    c, _ = again()
+    c.app.state.lookups = Lookups(Atlas(fails="unreachable"))
+    assert far(c, phone=LINDA).json()["saved"] is True
+    assert far(c, phone=LINDA, fresh=True).status_code == 424
+    # with no service at all nothing is asked of anybody, as before
+    c.app.state.lookups = Lookups()
+    assert far(c, phone=LINDA).status_code == 409
 
 
 # The service itself -----------------------------------------------------------------------------------------

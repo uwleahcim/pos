@@ -255,6 +255,7 @@ case "${1:-status}" in
   maps)
     # hubctl maps key                puts a map service's key on the hub (asked for and not shown, never on the command line), restarts the API
     # hubctl maps status             whether the hub has a key, whether the restaurant's own address is set, how often it asked today
+    #                                and how often it did not have to (a customer's own earlier order said how far)
     # hubctl maps test "<address>"   asks how far an address is, as a delivery's form does
     # hubctl maps forget             removes the key: no distance is looked up, and the delivery fee is picked by hand
     unset_env() {
@@ -263,6 +264,7 @@ case "${1:-status}" in
     maps_status() {
       curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '
         (if .configured then "map service: \(.service); asked \(.asked_today) times today (at most \(.daily_most)), \(.failed_today) gave no distance" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "map service: none (hubctl maps key)" end),
+        (if .configured and .saved_today != null then "not asked, because the customer\u0027s own earlier order said how far: \(.saved_today) times today" else empty end),
         (if .origin_set then "the restaurant\u0027s own address: set" else "the restaurant\u0027s own address: not set (in the app: Location, Delivery fee)" end)' || echo "the API is not answering, or is older than the lookup (hubctl update)"
     }
     case "${2:-status}" in

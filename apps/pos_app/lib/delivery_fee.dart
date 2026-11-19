@@ -98,36 +98,59 @@ class DeliveryFees {
 
 /// What the map said of a delivery's address: how far along the road and how long the usual drive.
 class Measured {
-  const Measured({required this.miles, required this.minutes});
+  const Measured({required this.miles, required this.minutes, this.service, this.from});
 
   /// Null for anything this build cannot read.
   static Measured? of(Object? value) {
     if (value is! Map) return null;
     final miles = value['miles']?.toString(), minutes = value['minutes'];
     if (miles == null || double.tryParse(miles) == null || minutes is! int) return null;
-    return Measured(miles: miles, minutes: minutes);
+    final service = value['service'], from = value['from'];
+    final marked = service is String && from is String;
+    return Measured(miles: miles, minutes: minutes, service: marked ? service : null, from: marked ? from : null);
   }
 
   /// "3.2", as the hub writes it.
   final String miles;
   final int minutes;
 
+  /// Which map service measured it, and the hub's mark of the restaurant's address it was measured from
+  /// ("Customers who order again"). The hub says both and is sent both back with the pick, as they came:
+  /// they are how it knows, the next time this customer orders, that the figures can be used again. Null
+  /// from a hub that keeps no distances.
+  final String? service;
+  final String? from;
+
   /// "3.2 mi · 9 min".
   String get words => '$miles mi · $minutes min';
 
-  Map<String, dynamic> toJson() => {'miles': miles, 'minutes': minutes};
+  Map<String, dynamic> toJson() => {
+    'miles': miles,
+    'minutes': minutes,
+    if (service != null && from != null) ...{'service': service, 'from': from},
+  };
 
   @override
-  bool operator ==(Object other) => other is Measured && other.miles == miles && other.minutes == minutes;
+  bool operator ==(Object other) =>
+      other is Measured &&
+      other.miles == miles &&
+      other.minutes == minutes &&
+      other.service == service &&
+      other.from == from;
 
   @override
-  int get hashCode => Object.hash(miles, minutes);
+  int get hashCode => Object.hash(miles, minutes, service, from);
 }
+
+/// How a form asks the hub how far an address is (`PosApi.deliveryDistance`, with the customer's number
+/// bound in by the form). [fresh] asks the map service even when the customer's own earlier order says how
+/// far.
+typedef DistanceSource = Future<FeeLookup> Function(String address, {bool fresh});
 
 /// The hub's answer about an address (`POST /delivery/distance`): what the map said and the band of the
 /// fee it falls in.
 class FeeLookup {
-  const FeeLookup({required this.measured, this.band, this.beyond = false});
+  const FeeLookup({required this.measured, this.band, this.beyond = false, this.saved = false});
 
   /// Throws [FormatException] when the answer says no distance.
   factory FeeLookup.fromJson(Map<String, dynamic> json) {
@@ -138,6 +161,7 @@ class FeeLookup {
       measured: measured,
       band: band is Map ? FeeBand.fromJson(band.cast<String, dynamic>()) : null,
       beyond: json['beyond'] == true,
+      saved: json['saved'] == true,
     );
   }
 
@@ -148,6 +172,9 @@ class FeeLookup {
 
   /// Further than the last band reaches.
   final bool beyond;
+
+  /// Nobody was asked: the hub read the figures off this customer's own earlier delivery to the address.
+  final bool saved;
 }
 
 /// "mi" or "min": what a band's reach is counted in, short enough for a button.

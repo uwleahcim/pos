@@ -9,7 +9,9 @@ person typed about the customer, by the number's digits.
 `customer_card` is what a screen shows when the phone rings or a number is typed; `same_again` is a past
 order's dishes as the menu sells them now, for a new order to start from. This is the first slice of the
 customer records the architecture plans for later: no points, no messages to customers. An address is not
-kept either: where a customer's latest delivery went is read off that order, like their name.
+kept either: where a customer's latest delivery went is read off that order, like their name. So is how far
+that address is: what the map said when the fee was picked is on the order, and `saved_trip` hands it to
+the customer's next delivery, so the map service is asked once per customer and address.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
+from .maps import same_address
+from .orders.delivery_fee import fee_of
 from .sync.oplog import OrderEntry, OrderState, is_delivery, phone_digits
 
 NOTE_MAX = 120
@@ -207,6 +211,27 @@ def customer_card(
     card["recent"] = recent
     card["known"] = bool(entries) or bool(card["note"])
     return card
+
+
+def saved_trip(store: _Store, phone: object, address: str, mark: str) -> dict[str, Any] | None:
+    """How far this customer's address is, as the map said it the last time a delivery of theirs went
+    there: `{"miles", "minutes", "service", "from"}`, read off their newest delivery to that address that
+    has the figures. None when there is none: another number, another address (the case and the spaces
+    aside), figures measured from another address of the restaurant's (`mark` is today's,
+    `pos.maps.origin_mark`), or an order that was voided. Like the card, it opens only the customer's own
+    newest orders."""
+    digits = phone_digits(phone)
+    if len(digits) < SHORTEST or not address.strip():
+        return None
+    entries = [e for e in store.index(phone=digits) if e.status != "void" and e.first_ms is not None]
+    entries.sort(key=lambda e: (e.first_ms, e.order_id), reverse=True)
+    for state in store.views(entries[:_LOOK_AT]):
+        if not is_delivery(state.fields) or not same_address(state.fields.get("address"), address):
+            continue
+        measured = (fee_of(state.fields) or {}).get("measured")
+        if measured is not None and measured.get("from") == mark:
+            return dict(measured)
+    return None
 
 
 _GONE = frozenset({"unknown_variant", "unknown_entry", "variant_not_offered", "inactive", "entry_mismatch"})

@@ -10,7 +10,9 @@ When the bag leaves, it is **handed to a driver**: the order says who has it and
 [Drivers](#drivers)). **Runs** says what each driver took out over the day, run by run (see
 [Runs](#runs)). A location that charges for the trip lists its prices, and the order says which one
 applies (see [The delivery fee](#the-delivery-fee)). Where the hub has a map service, the form looks up how
-far the address is and picks the price for it (see [Looking the distance up](#looking-the-distance-up)).
+far the address is and picks the price for it (see [Looking the distance up](#looking-the-distance-up)),
+and a customer who orders again to the same address is not looked up a second time (see
+[Customers who order again](#customers-who-order-again)).
 Nothing else here is about money: there is no tip yet, and a delivery is a sale like any other, counted in
 every report as a to-go order is.
 
@@ -143,7 +145,9 @@ has a key for the map service and the restaurant's own address is typed in** (se
   drive**. The price that distance falls in is picked: with $3.00 up to 2 mi and $5.00 up to 4.5 mi, 3.2
   miles is $5.00. A distance right at a price's reach is that price (4.5 miles is "up to 4.5 mi"). Until
   the address has been asked about, the line is a button, **Look up the distance**, that asks.
-- **A returning customer's address** is looked up as soon as the order is a delivery, without a tap.
+- **A returning customer's address** is asked about as soon as the order is a delivery, without a tap.
+  Where they had a delivery brought there before, the map service is not asked at all (see
+  [Customers who order again](#customers-who-order-again)).
 - **Any other price can still be tapped**, and No fee too. **A price tapped by hand stays.** From that tap
   on the map only says how far, on this form: it does not move the price when its answer comes late, nor
   when the address is typed again. Nobody's "No fee" turns into a charge by itself.
@@ -171,6 +175,39 @@ nearest minute: the map service does not know about tonight's traffic.
 shows it: "Delivery fee $3.00, up to 2 mi. The map said 3.2 mi · 9 min", with who picked it. It never
 changes what a price costs.
 
+### Customers who order again
+
+The map service is asked about a customer's address **once**. What it said, the miles and the minutes of
+the drive, is kept on that order beside the fee. The next time the same phone number orders a delivery to
+the same address, the hub reads the two numbers off that earlier order and asks nobody.
+
+- **On the form** the line then reads **3.2 mi · 9 min drive, as last time**, and the price that distance
+  falls in is picked, at the prices as they are today. It comes at once, since nothing outside the
+  building is asked.
+- **Look it up again**: the small round arrow at the end of that line asks the map service all the same,
+  for a new road or a distance that looks wrong. What it says then is kept on this order, and is the one
+  used from then on.
+- **The same customer** is the same phone number, however it is typed: "(781) 555-0101" and "781 555 0101"
+  are one. An order with no number is looked up, as before.
+- **The same address** is the same letters, capitals and spaces aside. "12 Elm St" and "12 Elm Street" are
+  two addresses to the hub: the second is looked up once, and remembered too. The address of a customer's
+  last delivery is filled in by the form exactly as it was, so this seldom comes up.
+- **It works when the map service does not**: with no internet, with the service down, or past the day's
+  500, a returning customer's distance is still there.
+- **Not used**: a distance from an order that was voided or was picked up after all; a delivery whose
+  price was tapped before the map had answered (that order has no distance on it); and every distance
+  measured from another address of the restaurant's. Change the restaurant's address under Location, and
+  each customer is looked up once more, from the new one.
+- **They do not go stale by themselves.** A distance is used however old it is, until somebody looks it up
+  again. Houses do not move, and the map service is spared.
+- **Nothing is counted against the day's 500**, and `sudo hubctl maps status` says how often a customer's
+  own earlier order spared the asking today.
+
+Nothing new is stored for this. There is no list of customers and distances anywhere: the two numbers are
+on the customer's own orders, where the fee already was, and they go wherever the orders go (the second
+hub, the cloud). The phone number goes from the screen to the hub, as it does with every order, and no
+further: the map service is still sent the two addresses and nothing else.
+
 ### What leaves the building
 
 - **The two addresses**: the restaurant's own and the delivery's. Nothing else: no name, no phone number,
@@ -179,6 +216,12 @@ changes what a price costs.
   the database.
 - **The hub writes no address down for this.** Its log names no address and no key. The answers are held in
   memory for a day, 500 at most, and a restart of the hub forgets them.
+- **The miles and the minutes are kept on the customer's own order**, beside the fee that was picked with
+  them, and nowhere else. That is how a returning customer is not looked up again. Geocodio's terms said on
+  2026-11-18 that its results may be kept; a service whose terms forbid that would have its numbers used
+  for the pick and not kept.
+- **The customer's phone number stays on the hub.** The form sends it with the address so the hub can
+  look at that customer's earlier orders. It is never sent to the map service.
 - **The map service keeps its own records.** Geocodio's pages said this on 2026-11-18: a log of requests,
   which can hold what was asked, is kept for 45 days and then deleted
   (<https://www.geocod.io/data-retention-policy>); customers' data is disclosed only where the law requires
@@ -208,8 +251,9 @@ in the United States and Canada. The account is the owner's to make: nothing her
    to 4.5 miles)", or says why not in the form's own words. When every address "could not be found", the one
    to check is the restaurant's own.
 
-`sudo hubctl maps status` says whether the hub has a key, whether the address is set, and how often the
-service was asked today and gave nothing. `sudo hubctl maps forget` takes the key off the hub: nothing is
+`sudo hubctl maps status` says whether the hub has a key, whether the address is set, how often the
+service was asked today and gave nothing, and how often it did not have to be asked because a customer's
+own earlier order said how far. `sudo hubctl maps forget` takes the key off the hub: nothing is
 looked up and the price is tapped by hand again. (The key itself is deleted on the service's own page.)
 
 Until the hub has a key, the dialog under Location says "This hub has no map service yet, so the price is
@@ -381,6 +425,11 @@ it and when.
   refuses an address for being too far. The history says what the map said and who picked what.
 - **No map on the screen, no route, no delivery area drawn.** The lookup answers with two numbers.
 - **No traffic.** The minutes are the usual drive, whatever the hour.
+- **A saved distance is not checked again by itself.** It is used until somebody taps the round arrow, and
+  there is no screen that lists customers' distances or clears them all. (Changing the restaurant's own
+  address under Location has every customer looked up once more.)
+- **"12 Elm St" is not "12 Elm Street".** Two spellings of one address are two addresses, each looked up
+  once.
 - **One map service.** Geocodio is the one built. Another is a small piece of the hub
   (`pos.maps.Maps`), not a setting.
 - **Nothing looked up without the internet.** The hub needs to reach the map service. The form says so and
@@ -422,6 +471,11 @@ a new hub shows the fee on the check and cannot pick one; a tap on that line doe
 The lookup likewise: on a hub from before the lookup the forms have no line about the distance and the
 dialog under Location has no box for the restaurant's address. An app from before the lookup on a new hub
 picks the price by hand; saving the prices from it keeps the address the hub has.
+
+Saved distances likewise: on a hub from before them every address is looked up, and no line says "as last
+time". An app from before them on a new hub does not send the customer's number, so its deliveries are
+looked up each time, and the distances it sends with a pick are kept as a note and not used again. Rebuild
+the apps after the hub and both stop.
 
 ## For developers
 
@@ -543,3 +597,28 @@ Looking the distance up:
   than the lookup), `lookup` and `looksUp` (a lookup and a price to pick: the one a form goes by).
 - Tests: `backend/tests/orders/test_delivery_distance.py`, `apps/pos_app/test/delivery_distance_test.dart`.
   The service itself is never called in a test (`httpx.MockTransport`).
+
+Customers who order again:
+
+- Nothing is stored but the order field. `POST /delivery/distance` answers, beside the distance, `service`
+  (the name of the service that measured it), `from` (`pos.maps.origin_mark`: eight hex digits of a hash
+  of the restaurant's address as one line, lower case, so it says nothing of the address) and `saved`. A
+  pick sends them back inside `measured`, `{"miles", "minutes", "service", "from"}`, and
+  `pos.orders.delivery_fee.measured_of` keeps the two marks only together and only in the hub's own
+  spelling. Figures without them are a note (an older app's) and are never handed on.
+- The body may carry `phone` and `fresh`. With a phone and without `fresh`,
+  `pos.customers.saved_trip(store, phone, address, mark)` reads the customer's newest orders (the index
+  by phone, at most 40, voided ones aside, as `customer_card` does) for a delivery to the same address
+  (`pos.maps.same_address`: the case and the spaces aside) whose `measured.from` is today's mark. Found,
+  it is the answer, with `saved: true`: the service is not asked, the day's count does not move, and
+  `Lookups.spared()` counts it for `saved_today` in `GET /maps/status`. Saved figures come before the
+  day's answers in memory, so a customer is told the figure their own order carries.
+- The band is always worked out from today's setting (`band_for`), never read off the old order.
+- The phone number is used on the hub alone: `Maps.trip` takes the two addresses and nothing else.
+- A service whose terms do not allow its results to be kept is not built. When one is, its figures must be
+  left off the order in `fee_ops` (by `measured.service`), which is why the service's name is kept.
+- App: `PosApi.deliveryDistance(address, phone:, fresh:)` (the digits only, and `fresh` only when true, so
+  an older hub is sent what it knows), `DistanceSource`, `FeeLookup.saved`, `Measured.service` and `.from`
+  (sent back as they came), `DistanceAsker.ask(fresh:)`, `LookUp` (`onLookUp(fresh: true)` from the button
+  `fee-lookup-again`). The to-go form binds the number in its box, the order's dialog the order's own.
+- Tests: the same two files ("Customers who order again", `customers who order again`).
