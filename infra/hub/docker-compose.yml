@@ -65,6 +65,11 @@ services:
       POS_MAPS: ${POS_MAPS:-}
       POS_MAPS_KEY: ${POS_MAPS_KEY:-}
       POS_MAPS_DAILY: ${POS_MAPS_DAILY:-}
+      # A second map service, asked when the first gives no distance ("A second map service" in the same
+      # guide): `hubctl maps google` writes the key. Empty: there is no second. POS_MAPS_GOOGLE_DAILY is the
+      # most Google is asked in a day (100 unless set).
+      POS_MAPS_GOOGLE_KEY: ${POS_MAPS_GOOGLE_KEY:-}
+      POS_MAPS_GOOGLE_DAILY: ${POS_MAPS_GOOGLE_DAILY:-}
     volumes:
       - ./apns:/apns:ro
     ports:

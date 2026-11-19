@@ -21,7 +21,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
-from .maps import same_address
+from .maps import may_keep, same_address
 from .orders.delivery_fee import fee_of
 from .sync.oplog import OrderEntry, OrderState, is_delivery, phone_digits
 
@@ -229,7 +229,7 @@ def saved_trip(store: _Store, phone: object, address: str, mark: str) -> dict[st
         if not is_delivery(state.fields) or not same_address(state.fields.get("address"), address):
             continue
         measured = (fee_of(state.fields) or {}).get("measured")
-        if measured is not None and measured.get("from") == mark:
+        if measured is not None and measured.get("from") == mark and may_keep(measured.get("service")):
             return dict(measured)
     return None
 

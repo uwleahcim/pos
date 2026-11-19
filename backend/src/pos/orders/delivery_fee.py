@@ -25,6 +25,10 @@ hub's answer says which service measured it and from which address of the restau
 number orders to the same address the hub reads the figures off that order (`pos.customers.saved_trip`)
 and asks nobody. Nothing is kept anywhere but on the customer's own orders.
 
+Not every service lets its figures be kept (`pos.maps.may_keep`: Google's terms do not). What such a service
+said picks the band on the form and goes no further: `fee_ops` leaves it off the order, and leaves off
+figures that do not say who measured them, since nobody can tell whose terms those fall under.
+
 The check charges it only while the order is a delivery (`pos.orders.check`): one changed to pickup keeps
 what was picked and is charged nothing. It is a charge of its own on the check and on the bill, "Delivery
 fee", and it is in the sales with the other charges; it is never a gratuity, and nothing here says who the
@@ -39,6 +43,7 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..maps import may_keep
 from ..sync.oplog import ORDER_FIELDS, Op, is_delivery
 
 FIELD = "delivery_fee"
@@ -201,7 +206,7 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
                 problem = "a delivery fee names the band it was picked by"
             elif wanted.get("up_to") is None:
                 data[FIELD] = {"up_to": None, "amount": "0.00"}  # no fee, on purpose
-                if (told := measured_of(wanted)) is not None:
+                if (told := _kept(wanted)) is not None:
                     data[FIELD]["measured"] = told
             else:
                 listed = setting() if listed is None else listed
@@ -219,7 +224,7 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
                         "amount": band["fee"],
                         "taxed": listed.get("taxed") is True,
                     }
-                    if (told := measured_of(wanted)) is not None:
+                    if (told := _kept(wanted)) is not None:
                         data[FIELD]["measured"] = told
             if problem:
                 refused.append({"op_id": op.op_id, "error": "invalid_delivery_fee", "message": problem})
@@ -229,6 +234,13 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
             op = replace(op, data=data)
         kept.append(op)
     return kept, refused
+
+
+def _kept(wanted: Any) -> dict[str, Any] | None:
+    """What the map said, as a pick may put it on the order: only figures that say who measured them, and
+    only of a service whose terms let them be kept."""
+    told = measured_of(wanted)
+    return told if told is not None and may_keep(told.get("service")) else None
 
 
 def _picks(op: Op) -> bool:

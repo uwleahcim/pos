@@ -101,6 +101,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, `COMPOSE_PROFILES=pbx`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
 | The map service's key for the delivery fee's distance lookup (`POS_MAPS`, `POS_MAPS_KEY`; see `docs/delivery.md`), written by `hubctl maps key` | `/opt/pos/.env`, optional |
+| Google's key for the same lookup when the first service gives no distance (`POS_MAPS_GOOGLE_KEY`; see "A second map service" in `docs/delivery.md`), written by `hubctl maps google` | `/opt/pos/.env`, optional |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -125,8 +126,10 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl pbx status` / `hubctl pbx tail` | How the tunnel and the watcher stand / each call as a desk phone answers it, live |
 | `hubctl pbx unlink` | Stop the tunnel and forget the link |
 | `hubctl maps key` | Put a map service's key on the hub, so a delivery's distance is looked up from its address (`docs/delivery.md`); it asks for the key and does not show it |
-| `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key and how often it asked today / how far an address is and the fee it falls in |
-| `hubctl maps forget` | Remove the key: nothing is looked up, and the fee is picked by hand |
+| `hubctl maps google` | Put a Google Maps key on the hub the same way: Google is asked when the first service gives no distance ("A second map service" in `docs/delivery.md`) |
+| `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key and how often it asked each service today / how far an address is, the fee it falls in and which service answered |
+| `hubctl maps test google "12 Elm St, Winchester MA"` | Ask Google alone, to try its key |
+| `hubctl maps forget` / `hubctl maps forget google` | Remove the first service's key / remove Google's. With neither, nothing is looked up, and the fee is picked by hand |
 
 ## Ports
 
