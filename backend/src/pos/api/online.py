@@ -1,15 +1,27 @@
 """Online orders on the wire. The rules live in `pos.online`; these are the calls (docs/online-orders.md).
 
-- `GET /online/status`: how the online orders are doing: whether the hub has GloriaFood's key
-  (`configured`), whether it is asking every minute (`running`) and can write orders down (`writable`),
-  when GloriaFood was last asked and last answered (`asked_ms`, `answered_ms`) and why it did not
-  (`last_failure`: `at_ms`, `reason`), today's orders by what became of them (`today`: `came`, `placed`,
-  `kept`, `failed`), how many are still to be put on the POS (`waiting`), and the ones a person should look
-  at (`look`), each by GloriaFood's number (`id`), with its `kind`, `state`, the POS order it became
-  (`order_id`) and what there is to say of it (`said`). Nothing of a customer is in it, and no key.
+- `POST /online/push`: GloriaFood sends an order here the moment it is accepted, with this restaurant's key
+  for pushes in the `Authorization` header. The body is what it answers when asked: `{"count": 1, "orders":
+  [...]}` (one order by itself and a bare list are read too). The orders are written down and put on the
+  POS before it is answered: 200 `{"received": n}`. An order that is here already, because the hub's asking
+  brought it first or GloriaFood sent it twice, is the same order and nothing happens. Turned away: 404 on
+  a hub with no key for pushes, 401 `refused` without the key (the body is not read), 413 `too_big`, 422
+  `unreadable` (kept as it came, for a person), 503 `standby` on a hub that cannot write orders down, 503
+  `not_written` when the database would not take one (it is held, and written at the next round). Nothing
+  of what was sent is in an answer, and no reason: whoever knocks learns nothing.
+- `GET /online/status`: how the online orders are doing: whether the hub has GloriaFood's key for asking
+  (`configured`), whether its minute's round is running (`running`) and it can write orders down
+  (`writable`), when GloriaFood was last asked and last answered (`asked_ms`, `answered_ms`) and why it did
+  not (`last_failure`: `at_ms`, `reason`); whether it takes pushes (`push.configured`), when the last one
+  came (`push.pushed_ms`) and the last one it turned away (`push.refused`: `at_ms`, `reason`, `count`
+  since the hub started); today's orders by what became of them and by how they came first (`today`:
+  `came`, `by_push`, `by_poll`, `placed`, `kept`, `failed`, and `unread`: what GloriaFood sent that could
+  not be read), how many are still to be put on the POS (`waiting`), and the ones a person should look at
+  (`look`), each by GloriaFood's number (`id`), with its `kind`, `state`, how it came (`via`), the POS order
+  it became (`order_id`) and what there is to say of it (`said`). Nothing of a customer is in it, and no key.
 - `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
-  that round did (`asked`, `came`, `placed`, `kept`, `failed`) and the `status` after it. 409 `no_key`
-  when the hub has no key.
+  that round did (`asked`, `came`, `known`: here already, `placed`, `kept`, `failed`) and the `status` after
+  it. 409 `no_key` when the hub has no key for asking.
 - `GET /online/orders/{id}`: one order as GloriaFood sent it, by GloriaFood's number, with everything of
   the customer taken out (`pos.online.place.hidden`): for looking at the shape of an order that went on
   wrong. 404 `unknown_order`; 410 `forgotten` once the order is older than the hub keeps it as it came.
@@ -23,17 +35,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-from ..online.gloriafood import NAME
+from ..online.door import body_of
+from ..online.gloriafood import NAME, pushed
 from ..online.inbox import Arrival
 from ..online.place import DEVICE, Placed, ext_id_of, hidden, ops_for, order_id_for
-from ..online.service import SEVERAL, UNREADABLE, OnlineOrders
+from ..online.service import SEVERAL, UNREADABLE, OnlineOrders, PushRefused
 from ..orders.check import check_for
 from ..orders.counts import holds
 from ..sync.hlc import Clock
 
 LOOK = "Look at it in GloriaFood's own app."
+PUSH_ERRORS = {401: "refused", 404: "not_found", 422: "unreadable", 503: "standby"}
+"""What a push that is turned away is answered, by status: one word, and nothing of why."""
 
 
 def add_online_orders(app: FastAPI, number_orders: Any) -> None:
@@ -102,6 +119,21 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
 
     online.put = put
     online.notice = notice
+
+    @app.post("/online/push")
+    async def online_push(request: Request) -> JSONResponse:
+        """A push of GloriaFood's. Its key is looked at before a byte of the body is read."""
+        try:
+            online.admit(request.headers.get("authorization"))
+            body = await body_of(request)
+            if body is None:
+                return JSONResponse({"error": "too_big"}, 413)
+            done = await run_in_threadpool(online.push, lambda: pushed(body))
+        except PushRefused as err:
+            return JSONResponse({"error": PUSH_ERRORS[err.status]}, err.status)
+        if done["unwritten"]:
+            return JSONResponse({"error": "not_written"}, 503)
+        return JSONResponse({"received": done["received"]})
 
     @app.get("/online/status")
     def online_status() -> dict[str, Any]:

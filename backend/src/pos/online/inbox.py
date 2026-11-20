@@ -24,6 +24,8 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 STATES = ("new", "placed", "kept", "failed")
+POLL, PUSH = "poll", "push"
+"""How an order reached the hub first: the hub asked for it, or the website's service sent it."""
 MOST_TRIES = 5
 """How often an order that could not be put on the POS is tried again before it is left for a person."""
 KEEP_DAYS = 30
@@ -49,6 +51,7 @@ class Arrival:
     said: str = ""  # why it was kept or failed, or what a person should know of one that was placed
     tries: int = 0
     settled_ms: int | None = None
+    via: str = POLL  # how it reached the hub first: asked for (`POLL`) or sent to it (`PUSH`)
 
     @property
     def waiting(self) -> bool:
@@ -66,6 +69,7 @@ class Arrival:
             "said": self.said,
             "tries": self.tries,
             "fetched_ms": self.fetched_ms,
+            "via": self.via,
         }
 
 
@@ -151,12 +155,27 @@ CREATE TABLE IF NOT EXISTS online_order (
     said       TEXT NOT NULL DEFAULT '',
     tries      INTEGER NOT NULL DEFAULT 0,
     settled_ms BIGINT,
+    via        TEXT NOT NULL DEFAULT 'poll',
     UNIQUE (source, ext_id)
 );
 CREATE INDEX IF NOT EXISTS online_order_fetched ON online_order (fetched_ms);
 """
+# A hub that wrote orders down before they could also be pushed has the table without `via`. Looked for
+# first, and added only where it is missing: adding a column locks the table, and that is not for every minute.
+HAS_VIA = (
+    "SELECT 1 FROM information_schema.columns "
+    "WHERE table_schema = current_schema() AND table_name = 'online_order' AND column_name = 'via'"
+)
+ADD_VIA = "ALTER TABLE online_order ADD COLUMN IF NOT EXISTS via TEXT NOT NULL DEFAULT 'poll'"
 
-_COLUMNS = "source, ext_id, fetched_ms, raw, kind, state, order_id, said, tries, settled_ms"
+_COLUMNS = "source, ext_id, fetched_ms, raw, kind, state, order_id, said, tries, settled_ms, via"
+
+
+def _prepare(conn: Any) -> None:
+    """The table as this version writes it, on a database that can be written."""
+    conn.execute(SCHEMA)
+    if conn.execute(HAS_VIA).fetchone() is None:
+        conn.execute(ADD_VIA)
 
 
 def _arrival_of(row: Sequence[Any]) -> Arrival:
@@ -171,6 +190,7 @@ def _arrival_of(row: Sequence[Any]) -> Arrival:
         said=row[7],
         tries=int(row[8]),
         settled_ms=None if row[9] is None else int(row[9]),
+        via=row[10],
     )
 
 
@@ -187,7 +207,7 @@ class PgInbox(Inbox):
         with self._pool.connection() as conn:
             row = conn.execute("SELECT pg_is_in_recovery()").fetchone()
             if row is not None and not row[0]:
-                conn.execute(SCHEMA)
+                _prepare(conn)
 
     def close(self) -> None:
         self._pool.close()
@@ -198,7 +218,7 @@ class PgInbox(Inbox):
                 row = conn.execute("SELECT pg_is_in_recovery()").fetchone()
                 if row is None or row[0]:
                     return False  # a standby: the hub that takes the orders asks
-                conn.execute(SCHEMA)  # a standby that was promoted since this one started
+                _prepare(conn)  # a standby that was promoted since this one started
                 return True
         except Exception:  # noqa: BLE001 - whatever is wrong with the database, nothing can be written
             return False
@@ -209,7 +229,7 @@ class PgInbox(Inbox):
         try:
             with self._pool.connection() as conn:
                 return conn.execute(sql, args).fetchall()
-        except errors.UndefinedTable:
+        except (errors.UndefinedTable, errors.UndefinedColumn):
             return []  # a standby whose primary has not been updated yet
 
     def add(self, arrival: Arrival) -> bool:
@@ -219,7 +239,7 @@ class PgInbox(Inbox):
         try:
             with self._pool.connection() as conn:
                 done = conn.execute(
-                    f"INSERT INTO online_order ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    f"INSERT INTO online_order ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (source, ext_id) DO NOTHING",
                     (
                         arrival.source,
@@ -232,6 +252,7 @@ class PgInbox(Inbox):
                         arrival.said[:SAID_MAX],
                         arrival.tries,
                         arrival.settled_ms,
+                        arrival.via,
                     ),
                 )
                 return done.rowcount == 1

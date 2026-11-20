@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -12,6 +12,27 @@ fi
 
 compose() {
   docker compose --project-directory "$POS_HOME" -f "$POS_HOME/src/infra/hub/docker-compose.yml" "$@"
+}
+
+# The optional services of the hub (the PBX tunnel, the push door, the way in for pushes) each run under a
+# profile, and the profiles that are on are one line of /opt/pos/.env. These turn one on or off and leave
+# the others as they are.
+profiles() {
+  sed -nE 's/^COMPOSE_PROFILES=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1
+}
+profile_on() {
+  local now
+  now=$(profiles)
+  case ",$now," in *",$1,"*) return 0 ;; esac
+  sed -i -E '/^COMPOSE_PROFILES=/d' "$POS_HOME/.env"
+  printf 'COMPOSE_PROFILES=%s\n' "${now:+$now,}$1" >> "$POS_HOME/.env"
+}
+profile_off() {
+  local now left
+  now=$(profiles)
+  left=$(tr ',' '\n' <<< "$now" | grep -vxF -e "$1" -e '' | paste -sd, - || true)
+  sed -i -E '/^COMPOSE_PROFILES=/d' "$POS_HOME/.env"
+  [[ -z "$left" ]] || printf 'COMPOSE_PROFILES=%s\n' "$left" >> "$POS_HOME/.env"
 }
 
 case "${1:-status}" in
@@ -152,11 +173,12 @@ case "${1:-status}" in
         echo
         secret=${secret:-$saved}
         [[ -n "$secret" ]] || { echo "no secret given; nothing changed" >&2; exit 2; }
-        unset_env COMPOSE_PROFILES POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
+        unset_env POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
         (
           umask 077
-          printf 'COMPOSE_PROFILES=pbx\nPOS_PBX_SSH=%s\nPOS_AMI_HOST=pbx\nPOS_AMI_USER=%s\nPOS_AMI_SECRET=%s\n' "$3" "${4:-pos}" "$secret" >> "$POS_HOME/.env"
+          printf 'POS_PBX_SSH=%s\nPOS_AMI_HOST=pbx\nPOS_AMI_USER=%s\nPOS_AMI_SECRET=%s\n' "$3" "${4:-pos}" "$secret" >> "$POS_HOME/.env"
         )
+        profile_on pbx
         compose up -d --force-recreate pbx # a fresh start, not the tail of a restart loop
         compose up -d api
         echo "Linked to $3. Waiting for the hub to reach the PBX through the tunnel..."
@@ -179,7 +201,8 @@ case "${1:-status}" in
         compose exec -T api sh -c 'exec python -m pos.phones.deskphones --host "$POS_AMI_HOST" --port "$POS_AMI_PORT" --user "$POS_AMI_USER" --secret-env POS_AMI_SECRET'
         ;;
       unlink)
-        unset_env COMPOSE_PROFILES POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
+        unset_env POS_PBX_SSH POS_AMI_HOST POS_AMI_PORT POS_AMI_USER POS_AMI_SECRET POS_AMI_TLS
+        profile_off pbx
         compose --profile pbx stop pbx 2> /dev/null || true
         compose --profile pbx rm -f pbx 2> /dev/null || true
         compose up -d api
@@ -368,18 +391,101 @@ case "${1:-status}" in
     # hubctl online show <number>    one order as GloriaFood sent it, by its number, with everything of the customer taken out:
     #                                for looking at an order that went on the POS wrong
     # hubctl online forget           removes the key: the hub asks nobody; the orders already on the POS stay as they are
+    # hubctl online push key         puts the key GloriaFood's own pushes carry on the hub (asked for and not shown; Enter alone and
+    #                                the hub makes one, shown once, to put into GloriaFood's admin), and opens the push door
+    # hubctl online push test [https://<address>/online/push]
+    #                                sends an empty push through the door, or with an address through the whole way in from
+    #                                outside, and says whether it got in; puts nothing on the POS
+    # hubctl online push forget      removes that key and shuts the door (and the tunnel): the hub only asks
+    # hubctl online tunnel token     puts a Cloudflare Tunnel's token on the hub (asked for and not shown) and starts the tunnel
+    # hubctl online tunnel status    the tunnel as it stands, and its last words
+    # hubctl online tunnel forget    stops the tunnel and removes its token
     unset_env() {
       for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
     }
+    env_of() {
+      sed -nE "s/^$1=//p" "$POS_HOME/.env" 2> /dev/null | tail -n 1
+    }
+    state_of() { # one of the hub's optional services as it stands: running, restarting, exited, or "not set up"
+      local cid
+      cid=$(compose ps -aq "$1" 2> /dev/null | head -n 1 || true)
+      if [[ -n "$cid" ]]; then docker inspect -f '{{.State.Status}}' "$cid"; else echo "not set up"; fi
+    }
     online_status() {
-      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '
+      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r --arg door "$(state_of door)" --arg tunnel "$(state_of tunnel)" '
         def at: if . then (. / 1000 | strflocaltime("%H:%M")) else "never" end;
-        (if .configured then "online orders: on (" + .source + "); " + (if .running then "asked every minute" else "NOT being asked: hubctl restart" end) + "; last answer " + (.answered_ms | at) else "online orders: off, no key (hubctl online key)" end),
-        (if .configured and (.writable | not) then "this hub cannot write orders down now (it is the standby), so it asks nobody" else empty end),
-        (if .last_failure then "TROUBLE at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else empty end),
-        "today: \(.today.came) came, \(.today.placed) on the POS, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
+        (if .configured or .push.configured then "online orders: on" else "online orders: off, no key (hubctl online push key, hubctl online key)" end),
+        (if .push.configured then "  sent by GloriaFood (push): on; last push " + (.push.pushed_ms | at) + "; the door is " + $door + (if $tunnel != "not set up" then "; the tunnel is " + $tunnel else "" end) else "  sent by GloriaFood (push): off (hubctl online push key)" end),
+        (if .configured then "  asked for every minute: " + (if .running then "on" else "NOT RUNNING: hubctl restart" end) + "; last answer " + (.answered_ms | at) else "  asked for every minute: off, no key (hubctl online key)" + (if .push.configured then ". Nothing brings an order whose push is lost" else "" end) end),
+        (if (.configured or .push.configured) and (.writable | not) then "this hub cannot write orders down now (it is the standby), so it takes none" else empty end),
+        (if .push.configured and $door != "running" then "TROUBLE: the push door is not running, so no push gets in: hubctl logs door" else empty end),
+        (if .last_failure then "TROUBLE asking at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else empty end),
+        (if .push.refused then "  turned away: \(.push.refused.count) without the right key since the hub started, the last at " + (.push.refused.at_ms | at) + " (" + .push.refused.reason + ")" else empty end),
+        (if .push.refused and .today.by_push == 0 and .today.by_poll > 0 then "  => orders come only by asking while pushes are turned away: the key in GloriaFood'"'"'s admin is probably not the one on the hub (hubctl online push key)" else empty end),
+        "today: \(.today.came) came (\(.today.by_push) sent by GloriaFood, \(.today.by_poll) asked for), \(.today.placed) on the POS, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
+        (if .today.unread > 0 then "  \(.today.unread) of what GloriaFood sent could not be read (below)" else empty end),
         (if (.look | length) > 0 then "to look at:" else empty end),
-        (.look[] | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "kept" then "not on the POS" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
+        (.look[] | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "kept" then "not on the POS" elif .kind == "unreadable" then "could not be read" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
+    }
+    push_try() { # an empty push to an address, with or without the hub's key: prints the answer's number and what it said
+      local url=$1 key=${2:-}
+      if [[ -n "$key" ]]; then
+        printf 'Authorization: %s\n' "$key" | curl -sS -o - -w '\n%{http_code}' --max-time 20 -X POST -H @- -H 'Content-Type: application/json' --data '{"count": 0, "orders": []}' "$url" 2> /dev/null || true
+      else
+        curl -sS -o - -w '\n%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' --data '{"count": 0, "orders": []}' "$url" 2> /dev/null || true
+      fi
+    }
+    push_test() { # through the door on the hub, or with an address through the whole way in from outside
+      local key answer code url=${1:-}
+      key=$(env_of POS_GLORIAFOOD_PUSH_KEY)
+      [[ -n "$key" ]] || { echo "this hub has no key for pushes (hubctl online push key)"; return 1; }
+      if [[ -z "$url" ]]; then
+        answer=$(push_try http://127.0.0.1:8090/online/push "$key")
+        code=${answer##*$'\n'}
+        case "$code" in
+          200) echo "the door: an empty push with the hub's key got in (it puts nothing on the POS)" ;;
+          401) echo "the hub's own key was turned away: the door and the API are running with another key than the one in $POS_HOME/.env. hubctl update starts them with it"; return 1 ;;
+          404) echo "the door is shut: it was started without the key. hubctl update starts it with it"; return 1 ;;
+          502 | 504) echo "the door is up, but the API behind it did not answer ($code): hubctl status"; return 1 ;;
+          *) echo "the door did not answer (hubctl logs door)"; return 1 ;;
+        esac
+        return 0
+      fi
+      # From outside. First without the key: only this hub's door answers 401 "refused", and the key is sent
+      # to nobody who does not.
+      answer=$(push_try "$url")
+      code=${answer##*$'\n'}
+      if [[ "$code" != 401 || "$answer" != *'"refused"'* ]]; then
+        echo "that address does not lead to this hub's door (it answered ${code:-nothing}). The hub's key was not sent."
+        echo "Look at the way in: the address must end in /online/push and must be handed to http://door:8090 (hubctl online tunnel status)."
+        return 1
+      fi
+      answer=$(push_try "$url" "$key")
+      code=${answer##*$'\n'}
+      if [[ "$code" == 200 ]]; then
+        echo "the whole way in works: a push to $url with the hub's key reached the POS (an empty one: nothing was put on it)."
+        echo "That is the address for GloriaFood's admin. (The test counts as one push turned away and one push in hubctl online status.)"
+      else
+        echo "that address leads to the door, but a push with the hub's key was answered $code. hubctl online status says more."
+        return 1
+      fi
+    }
+    tunnel_status() {
+      local cid state started logs
+      cid=$(compose ps -aq tunnel 2> /dev/null | head -n 1 || true)
+      if [[ -z "$cid" ]]; then
+        echo "tunnel: not set up (hubctl online tunnel token)"
+        return 0
+      fi
+      state=$(docker inspect -f '{{.State.Status}}' "$cid")
+      started=$(docker inspect -f '{{.State.StartedAt}}' "$cid")
+      logs=$(docker logs --since "$started" "$cid" 2>&1 | tail -n 8 || true)
+      if docker logs --since "$started" "$cid" 2>&1 | grep -q "Registered tunnel connection"; then
+        echo "tunnel: $state, and connected to Cloudflare"
+      else
+        echo "tunnel: $state, NOT connected to Cloudflare yet; its last words:"
+        [[ -z "$logs" ]] || while IFS= read -r line; do echo "  | $line"; done <<< "$logs"
+      fi
     }
     case "${2:-status}" in
       key)
@@ -410,7 +516,7 @@ case "${1:-status}" in
         ;;
       fetch)
         curl -sS -X POST http://127.0.0.1:8000/online/fetch \
-          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else (if .asked then "asked: \(.came) came, \(.placed) on the POS, \(.kept) not for the POS, \(.failed) could not be put on" else "not asked: this hub cannot write orders down now" end) + (if .status.last_failure then "; TROUBLE: " + .status.last_failure.reason else "" end) end'
+          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else (if .asked then "asked: \(.came) came" + (if .known > 0 then " (\(.known) of them here already)" else "" end) + ", \(.placed) on the POS, \(.kept) not for the POS, \(.failed) could not be put on" else "not asked: this hub cannot write orders down now" end) + (if .status.last_failure then "; TROUBLE: " + .status.last_failure.reason else "" end) end'
         ;;
       show)
         [[ "${3:-}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "usage: hubctl online show <GloriaFood's number for the order>" >&2; exit 2; }
@@ -420,9 +526,123 @@ case "${1:-status}" in
         unset_env POS_GLORIAFOOD_KEY
         compose up -d api
         echo "The key is gone from the hub: it asks GloriaFood for nothing. The orders already on the POS stay as they are. (The key itself is removed in GloriaFood's admin.)"
+        [[ -z "$(env_of POS_GLORIAFOOD_PUSH_KEY)" ]] || echo "Pushes are still taken (hubctl online push forget stops them), and nothing brings an order whose push is lost."
+        ;;
+      push)
+        case "${3:-}" in
+          key)
+            echo "The key GloriaFood's pushes carry (the integration's master key in GloriaFood's admin)."
+            echo "Paste the one GloriaFood shows, or press Enter alone and the hub makes one for you to put there."
+            read -rsp "Key (it is not shown as you paste it): " key
+            echo
+            key=${key//[[:space:]]/}
+            made=""
+            if [[ -z "$key" ]]; then
+              key=$(head -c 48 /dev/urandom | base64 | tr -d '/+=\n' | cut -c1-40)
+              made=yes
+            fi
+            [[ "$key" =~ ^[A-Za-z0-9._~+/=-]{16,200}$ ]] || { echo "that does not look like a key (letters and digits, 16 or more, no spaces); nothing changed" >&2; exit 2; }
+            unset_env POS_GLORIAFOOD_PUSH_KEY
+            (
+              umask 077
+              printf 'POS_GLORIAFOOD_PUSH_KEY=%s\n' "$key" >> "$POS_HOME/.env"
+            )
+            profile_on push
+            compose up -d api door
+            if [[ -n "$made" ]]; then
+              echo "The hub made this key. Put it into GloriaFood's admin as the integration's master key. It is shown this once"
+              echo "(hubctl online push key makes another, should it be lost):"
+              echo
+              echo "  $key"
+              echo
+            fi
+            unset key
+            echo "The key is on the hub. Waiting for the API and the door to pick it up..."
+            for _ in $(seq 1 30); do
+              sleep 1
+              if [[ "$(curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '.push.configured' 2> /dev/null || true)" == true ]]; then
+                sleep 2 # the door starts beside the API
+                push_test || true
+                online_status
+                echo "Pushes are taken at the door. Nothing reaches the door from outside until there is a way in: hubctl online tunnel token (docs/online-orders.md, \"The way in\")."
+                exit 0
+              fi
+            done
+            echo "The API did not come up with the key within 30 s, or is older than pushes (hubctl update). hubctl logs api says why; hubctl online push forget takes the key off again."
+            exit 1
+            ;;
+          test)
+            if [[ $# -ge 4 ]]; then
+              [[ "$4" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/online/push$ ]] || { echo "usage: hubctl online push test [https://<your address>/online/push]" >&2; exit 2; }
+            fi
+            push_test "${4:-}"
+            ;;
+          forget)
+            unset_env POS_GLORIAFOOD_PUSH_KEY POS_TUNNEL_TOKEN
+            compose --profile tunnel stop tunnel door 2> /dev/null || true
+            compose --profile tunnel rm -f tunnel door 2> /dev/null || true
+            profile_off tunnel
+            profile_off push
+            compose up -d api
+            echo "The key for pushes is gone from the hub, and the door and the tunnel with it: every push is turned away."
+            if [[ -n "$(env_of POS_GLORIAFOOD_KEY)" ]]; then echo "The hub still asks GloriaFood every minute, so orders keep arriving."; fi
+            echo "(Remove the push integration in GloriaFood's admin too, and the tunnel in Cloudflare's.)"
+            ;;
+          *)
+            echo "usage: hubctl online push key | test [https://<your address>/online/push] | forget" >&2
+            exit 2
+            ;;
+        esac
+        ;;
+      tunnel)
+        case "${3:-status}" in
+          token)
+            [[ -n "$(env_of POS_GLORIAFOOD_PUSH_KEY)" ]] || { echo "First the key for pushes (hubctl online push key): the tunnel leads to the door, and the door is shut without it." >&2; exit 2; }
+            read -rsp "The tunnel's token from Cloudflare (it is not shown as you paste it): " token
+            echo
+            token=${token//[[:space:]]/}
+            [[ "$token" =~ ^[A-Za-z0-9_=+/-]{40,4000}$ ]] || { echo "that does not look like a tunnel's token (one long run of letters and digits, usually starting with eyJ); nothing changed" >&2; exit 2; }
+            unset_env POS_TUNNEL_TOKEN
+            (
+              umask 077
+              printf 'POS_TUNNEL_TOKEN=%s\n' "$token" >> "$POS_HOME/.env"
+            )
+            unset token
+            profile_on tunnel
+            compose up -d door
+            compose up -d --force-recreate tunnel
+            echo "The token is on the hub. Waiting for the tunnel to reach Cloudflare..."
+            for _ in $(seq 1 30); do
+              sleep 1
+              cid=$(compose ps -aq tunnel 2> /dev/null | head -n 1 || true)
+              if [[ -n "$cid" ]] && docker logs "$cid" 2>&1 | grep -q "Registered tunnel connection"; then
+                tunnel_status
+                echo "In Cloudflare, the tunnel's public hostname must be handed to http://door:8090. Then: hubctl online push test https://<that hostname>/online/push"
+                exit 0
+              fi
+            done
+            tunnel_status
+            echo "Not connected within 30 s. hubctl logs tunnel says more; hubctl online tunnel forget takes the token off again."
+            exit 1
+            ;;
+          status)
+            tunnel_status
+            ;;
+          forget)
+            unset_env POS_TUNNEL_TOKEN
+            compose --profile tunnel stop tunnel 2> /dev/null || true
+            compose --profile tunnel rm -f tunnel 2> /dev/null || true
+            profile_off tunnel
+            echo "The tunnel is stopped and its token is gone from the hub: nothing reaches the door from outside. The hub's asking still brings the orders. (Delete the tunnel in Cloudflare too.)"
+            ;;
+          *)
+            echo "usage: hubctl online tunnel token | status | forget" >&2
+            exit 2
+            ;;
+        esac
         ;;
       *)
-        echo "usage: hubctl online key | status | fetch | show <number> | forget" >&2
+        echo "usage: hubctl online key | status | fetch | show <number> | forget | push key|test|forget | tunnel token|status|forget" >&2
         exit 2
         ;;
     esac
@@ -434,7 +654,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget" >&2
     exit 2
     ;;
 esac

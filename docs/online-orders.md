@@ -8,18 +8,28 @@ types it in.
 This is the hub's half. The screens show such an order as they show any to-go order; what they do not show
 yet is listed under [What is not built](#what-is-not-built).
 
-**Nothing here was tried against GloriaFood itself.** It was written from GloriaFood's own description of
-how a POS collects orders, and tested against orders made up in that shape from the restaurant's real
-menu. The first real orders are the test: see [The first days](#the-first-days).
+**Nothing here was tried against GloriaFood itself**, and nothing against Cloudflare. It was written from
+GloriaFood's own description of how a POS gets orders, and tested against orders made up in that shape from
+the restaurant's real menu. The first real orders are the test: see [The first days](#the-first-days).
 
 ## How it works
 
 Staff accept an online order in GloriaFood's own app, as they do today. That does not change.
 
-Once a minute the hub asks GloriaFood: "any orders accepted since I last asked?" The question carries the
-restaurant's key and nothing else. GloriaFood answers with the orders, and hands each one over **once**. So
-the first thing the hub does with an order is write it down as it came. Only then does it put it on the
-POS:
+An accepted order reaches the hub in two ways, and both are on at once:
+
+- **GloriaFood sends it** (a push), the moment it is accepted. The order is on the POS a second or two
+  later. This is the first way, and it needs a way in from the internet to the hub: see [Push](#push).
+- **The hub asks for it.** Once a minute the hub asks GloriaFood: "any orders accepted since I last asked?"
+  The question carries the restaurant's key and nothing else, and GloriaFood answers with the orders. This
+  is the net under the push: an order whose push was lost on the way is on the POS within the minute.
+
+**An order that came both ways is one order.** Whichever way brings it first puts it on the POS; when it
+comes the other way too, the hub knows GloriaFood's number for it and does nothing. The same holds for an
+order GloriaFood sends twice, which its pages say can happen.
+
+Either way, the first thing the hub does with an order is write it down as it came (when it asks,
+GloriaFood hands an order over **once**). Only then does it put it on the POS:
 
 - It becomes a to-go order, channel **Online**, with the next order number of the day.
 - It is sent to the kitchen at once, so each station's ticket prints, and the takeout counter's copy of
@@ -28,11 +38,13 @@ POS:
   time as the location's quote for online orders says (25 minutes unless changed; 45 for a delivery), as
   any order taken ahead does (`catering.md`).
 
-It works from behind the restaurant's router: the hub calls out, nothing calls in.
+The asking works from behind the restaurant's router by itself: the hub calls out, nothing calls in. Only
+the push needs more.
 
 ## Turning it on
 
-Three steps. The first is yours alone: the key is made in your GloriaFood account.
+Start with the asking: it needs nothing but a key, and it stays on as the net once push is added. Three
+steps. The first is yours alone: the key is made in your GloriaFood account.
 
 1. **Make the key.** In GloriaFood's restaurant admin, open the list of integrations (under "Others",
    "Third party integrations" as GloriaFood's pages describe it; the labels may read a little differently
@@ -50,15 +62,120 @@ Three steps. The first is yours alone: the key is made in your GloriaFood accoun
    website, accept it in GloriaFood's app, and within the minute it is on the list of checks and its
    tickets print.
 
-Without a key the hub asks nobody, and everything is as it was.
+Without a key the hub asks nobody, and everything is as it was. Then add the push: [Push](#push).
 
 | Command | What it does |
 | --- | --- |
-| `sudo hubctl online key` | Puts the key on the hub (asked for, never shown, never on the command line) |
-| `sudo hubctl online status` | Whether the hub has the key, when GloriaFood last answered and why it did not, today's online orders by what became of them, and the ones to look at |
+| `sudo hubctl online key` | Puts the key for asking on the hub (asked for, never shown, never on the command line) |
+| `sudo hubctl online status` | Whether pushes are taken and when the last one came, whether the hub asks and when GloriaFood last answered, pushes turned away, today's online orders by how they came and what became of them, and the ones to look at |
 | `sudo hubctl online fetch` | Asks GloriaFood now instead of within the minute |
 | `sudo hubctl online show 123456` | One order as GloriaFood sent it, by GloriaFood's number, with everything of the customer taken out: for looking at an order that went on wrong |
-| `sudo hubctl online forget` | Takes the key off the hub: it asks nobody. Orders already on the POS stay |
+| `sudo hubctl online forget` | Takes the key for asking off the hub: it asks nobody. Orders already on the POS stay |
+| `sudo hubctl online push key` | Puts the key GloriaFood's pushes carry on the hub and opens the push door. Asked for and never shown; press Enter alone and the hub makes one, shown once, for you to put into GloriaFood's admin |
+| `sudo hubctl online push test` | Sends an empty push through the door and says whether it got in. With an address (`sudo hubctl online push test https://orders.example.com/online/push`) it goes out to the internet and back in, the whole way GloriaFood's pushes will take. Nothing is put on the POS |
+| `sudo hubctl online push forget` | Takes that key off the hub and shuts the door and the tunnel: the hub only asks |
+| `sudo hubctl online tunnel token` | Puts a Cloudflare Tunnel's token on the hub (asked for, never shown) and starts the tunnel |
+| `sudo hubctl online tunnel status` | Whether the tunnel is connected, and its last words when it is not |
+| `sudo hubctl online tunnel forget` | Stops the tunnel and takes its token off the hub |
+
+## Push
+
+GloriaFood can send an order to the POS the moment it is accepted, instead of waiting to be asked. It
+sends it to an address on the internet, over HTTPS, with a key of yours in it. The hub checks the key,
+writes the order down, puts it on the POS and only then answers. The asking stays on beside it.
+
+Three things are needed, and each is turned on by itself:
+
+1. **A key** that GloriaFood's pushes carry, so that the hub takes orders from GloriaFood and from nobody
+   else.
+2. **A way in** from the internet to the hub, which sits behind your router.
+3. **The integration** in GloriaFood's admin that says where to send.
+
+### The door
+
+Whatever brings pushes in from outside must never be pointed at the POS itself. So the hub has a **push
+door**: a second, tiny server that does one thing. A push that carries the key is handed on to the POS;
+everything else, any other address, any other kind of call, gets an empty "not found". The way in is
+pointed at the door (`door:8090`), and behind the door there is nothing to find but the one call.
+
+A push without the key is not read at all. The hub counts it and `hubctl online status` says so ("turned
+away"), because a wrong key in GloriaFood's admin looks exactly like that. Strangers knocking at an address
+on the internet look like that too, so a few of these now and then mean nothing.
+
+The door starts when the key is put on, and listens only on the hub itself.
+
+### The way in
+
+**Built in: a Cloudflare Tunnel.** The hub calls out to Cloudflare and holds the line open; GloriaFood
+sends to an address at Cloudflare, and the push comes down the line to the door. Nothing is opened on your
+router. As this is written Cloudflare does not charge for it; look when you make the account. It needs a
+Cloudflare account, which is yours to make, and a domain name whose DNS is kept at Cloudflare (a name you
+own that is not there yet has to be moved there, or another name bought there). Orders pass through
+Cloudflare's machines on their way: see [What is kept](#what-is-kept-and-what-leaves-the-building).
+
+**Or your own.** Anything that brings an HTTPS address to the door works: another tunnel program installed
+on the hub (pointed at `http://127.0.0.1:8090`), or your own router and a proxy that holds the certificate.
+For a proxy on another machine, put `POS_DOOR_BIND=0.0.0.0` into `/opt/pos/.env` and run `sudo hubctl
+update`: the door then listens on the restaurant's network too, at the hub's address, port 8090. The door
+speaks plain HTTP; the HTTPS must end at the proxy. Forward to port 8090 only, never to 8000.
+
+### Turning push on
+
+After `sudo hubctl update`, and with the asking already on.
+
+1. **The key.** On the hub:
+
+   ```
+   sudo hubctl online push key
+   ```
+
+   Press Enter alone. The hub makes a key and shows it once: copy it for step 4. (If GloriaFood's admin
+   turns out to show a master key of its own instead of asking for one, run the command again and paste
+   GloriaFood's.) The door is open from now on, and the command tries it.
+2. **The tunnel, at Cloudflare.** In Cloudflare's dashboard, under Zero Trust, Networks, Tunnels, create a
+   tunnel of the kind "Cloudflared" and give it a name (`pos-hub1`). Cloudflare shows a command to install
+   it, with one very long word in it that starts with `eyJ`. That word is the tunnel's token; copy only
+   that. Then on the hub:
+
+   ```
+   sudo hubctl online tunnel token
+   ```
+
+   It asks for the token, does not show it, and says when the tunnel has reached Cloudflare.
+3. **The address.** Back at Cloudflare, give the tunnel a public hostname: a subdomain (`orders`), your
+   domain, the path `online/push`, the service type **HTTP** and the address **`door:8090`**. Exactly
+   that address: it is the door, and the only thing of the hub the tunnel should ever be told about. Then
+   try the whole way in:
+
+   ```
+   sudo hubctl online push test https://orders.example.com/online/push
+   ```
+
+   with your own name in it. It should say "the whole way in works".
+4. **GloriaFood.** In GloriaFood's restaurant admin, where the integrations are, add a custom integration
+   with the template **Push Accepted Order**: the address from step 3 as the endpoint, the key from step 1
+   as the master key, the format **JSON**, version 2. Leave "Poll Accepted Order v2" as it is: that is the
+   net.
+5. **Look.** Place a small test order and accept it. It is on the POS before you have put the phone down,
+   and `sudo hubctl online status` counts it as "sent by GloriaFood".
+
+The labels in Cloudflare's and GloriaFood's pages may read a little differently from these.
+
+### What is not known yet
+
+GloriaFood's pages leave these open, and the first real orders will answer them. None of them can lose an
+order while the asking is on.
+
+- **Whether its admin asks for the master key or shows its own.** The command takes either.
+- **How a push is wrapped.** The hub reads what GloriaFood answers when asked (`{"count": 1, "orders":
+  [...]}`), one order by itself, and a bare list. Anything else is kept as it came and listed in the
+  status with what it looked like, and the order arrives by the asking.
+- **What GloriaFood does when a push does not get through**, and for how long it tries again. Nothing
+  depends on it: the asking brings the order within the minute.
+- **Whether an order that was pushed is also handed over when asked.** If it is, the hub sees it twice and
+  it is one order. If it is not, the asking brings only what the push missed, which is all it is for.
+- **Whether GloriaFood sends anything a second time when an order changes** after it was accepted. The
+  first arrival stands; a later one with the same number changes nothing on the POS.
 
 ## Two things to change once it is on
 
@@ -139,24 +256,41 @@ to-go orders print, and is listed by `sudo hubctl online status`.
 | **An order from an earlier day** reaches the hub (the key was put on days after the integration was made, or the hub was off overnight) | It is **not put on the POS**: it would land in the wrong day's sales. The slip says NOT ON THE POS and it is listed. It is in GloriaFood's own records; ring it in by hand if it should be in the POS's sales. Several of them at once share one slip |
 | **An order cannot be put on the POS** (something in it this build cannot read) | It is tried again each minute, five times. Then the slip says NOT ON THE POS: look at it in GloriaFood's app and ring it in by hand |
 | **GloriaFood's answer cannot be read at all** | It is kept as it came, and a slip says to look at GloriaFood's app (at most one slip a quarter of an hour) |
-| **GloriaFood does not answer** | Nothing is lost: it keeps the orders until the hub asks again. `hubctl online status` says since when and why ("refused the key", "did not answer in time") |
+| **GloriaFood does not answer** when asked | Nothing is lost: it keeps the orders until the hub asks again. `hubctl online status` says since when and why ("refused the key", "did not answer in time") |
+| **Pushes are turned away** (the key in GloriaFood's admin is not the one on the hub) | Nothing of them is read or kept. The orders arrive by the asking, a minute later than they could. `hubctl online status` counts the pushes turned away, and says so in plain words when orders come only by asking while pushes are turned away. `sudo hubctl online push key` puts the right key on |
+| **The door or the tunnel is down**, or the internet is | The same: the asking brings the orders once the hub can call out again. The status says when the door is not running, and `sudo hubctl online tunnel status` what the tunnel last said |
+| **The test works, but GloriaFood's pushes never arrive**: nothing "sent by GloriaFood" and nothing "turned away" | The orders arrive by the asking. Something before the door is stopping the pushes. Look at the address in GloriaFood's admin first. With Cloudflare, look at its security log for that hostname: a setting that stops robots can stop GloriaFood's server too |
+| **A push cannot be read** (the integration was set to XML, say) | It is kept as it came and listed with what it looked like. Where the hub also asks, no slip prints: the order is on its way by the asking, and a slip would have somebody ring it in a second time. On a hub that only takes pushes, a slip says to look at GloriaFood's app |
+| **A push arrives and the hub cannot write it down** | GloriaFood is answered with an error, the order is held, and it is written down and put on the POS within the minute |
 
-GloriaFood sends an order once. If the same order ever comes twice, it is one order on the POS.
+If the same order comes twice, by either way or both, it is one order on the POS.
 
 ## The first days
 
 - Keep GloriaFood's own printing on, and hold each online order's tickets against GloriaFood's.
 - Compare the check's total with GloriaFood's receipt. They should be equal to the cent, with at most a
   row named Rounding.
-- Run `sudo hubctl online status` now and then. "To look at" should be empty or short.
+- Run `sudo hubctl online status` now and then. "To look at" should be empty or short. With push on, nearly
+  every order should be counted as "sent by GloriaFood"; orders that keep arriving as "asked for" mean the
+  push is not getting through.
 - If an order went on wrong, `sudo hubctl online show <number>` prints it as GloriaFood sent it without the
   customer in it. That is what to send along when asking for a fix.
 
 ## What is kept, and what leaves the building
 
-- **To GloriaFood goes the key**, in a header, once a minute. No order, no customer, nothing of the POS.
-- **The key** lives in `/opt/pos/.env` on the hub. It is in no log, no status, and not in the repository.
-  GloriaFood's own keys, which it puts on every order, are dropped before an order is written down.
+- **To GloriaFood goes the key for asking**, in a header, once a minute. No order, no customer, nothing of
+  the POS. A push is answered with a count ("received: 1") or one word of error, and nothing else.
+- **The keys** (for asking, for pushes, and the tunnel's token) live in `/opt/pos/.env` on the hub. They
+  are in no log, no status, and not in the repository. A key the hub makes is shown once, on the screen it
+  was made at. GloriaFood's own keys, which it puts on every order, are dropped before an order is written
+  down.
+- **With a tunnel, every pushed order passes through Cloudflare** on its way from GloriaFood to the hub,
+  with the customer's name, number and address in it, as it already rests at GloriaFood. The tunnel is
+  there to carry it, and nothing here asks Cloudflare to keep it; what Cloudflare itself does with what it
+  carries is in its own terms, which are yours to read when you make the account.
+- **A push without the key is not read**, not kept and not logged: only that it happened, when, and
+  whether it carried no key or the wrong one.
+- **Nothing of the POS is reachable through the way in but the door**, and the door answers one call.
 - **Each order as it came** (name, number, address, e-mail, what the customer wrote) is kept on the hub
   for 30 days, in case an order has to be looked at again, and then dropped. What became of it stays.
 - **On the POS order** go the name, the number, the address and the customer's notes: what a to-go order
@@ -174,20 +308,39 @@ GloriaFood sends an order once. If the same order ever comes twice, it is one or
   in or needs looking at. An online order shows today as any to-go order does, under the channel Online.
 - Reservations from GloriaFood into the reservation book.
 - Telling GloriaFood anything back (that an order is ready, that a dish ran out).
+- A second built-in way in beside the tunnel (a small receiver in the cloud that the hub collects from).
+- Telling the staff on a screen when pushes stop getting through: today only `hubctl online status` says.
+- With two hubs, sending pushes to whichever hub is taking the orders: a push to the hub in waiting is
+  answered with an error, and the asking brings the order.
 - An order from an earlier day is not put into that day's sales automatically.
 
 ## For developers
 
-Code: `backend/src/pos/online/` (`gloriafood.py` asks, `inbox.py` writes down, `place.py` turns an order
-into operations, `service.py` is the minute's round), `backend/src/pos/api/online.py` (the calls, and how
-an order is stored, numbered and printed). Tests: `backend/tests/online/`.
+Code: `backend/src/pos/online/` (`gloriafood.py` asks and reads, `inbox.py` writes down, `place.py` turns
+an order into operations, `service.py` is the minute's round and the push, `door.py` is the push door),
+`backend/src/pos/api/online.py` (the calls, and how an order is stored, numbered and printed). Tests:
+`backend/tests/online/`.
 
+- **A push.** `POST /online/push` on the API, header `Authorization: <the key>` (`POS_GLORIAFOOD_PUSH_KEY`,
+  compared in constant time, before the body is read), body as the answer to asking, at most 2 MB. 200
+  `{"received": n}` once every order in it is written down and tried; 401 `refused`, 404 without a key on
+  the hub, 413 `too_big`, 422 `unreadable`, 503 `standby` or `not_written`. `OnlineOrders.admit` lets it
+  in, `OnlineOrders.push` takes it.
+- **One path.** A push and a round both end in `_take` (write down, `Inbox.add` is False for one already
+  here) and `_settle` (place what waits), under one lock. Asking GloriaFood happens outside that lock, so a
+  push never waits for GloriaFood's answer. The order's fixed operation ids are the last line of defence.
+- **The door.** `pos.online.door` (`uvicorn --factory pos.online.door:door_from_env`), the compose service
+  `door` under the profile `push`, port 8090, published on `${POS_DOOR_BIND:-127.0.0.1}`. It hands
+  `POST /online/push` with the key on to `http://api:8000/online/push`, and for one without the key only
+  its header with an empty body, so the API counts it. Everything else is 404 with no body.
+- **The tunnel.** The compose service `tunnel` (`cloudflare/cloudflared`, profile `tunnel`,
+  `POS_TUNNEL_TOKEN`), on a network of its own with the door.
 - **Asking.** `POST https://pos.globalfoodsoft.com/pos/order/pop`, headers `Authorization: <key>`,
   `Accept: application/json`, `Glf-Api-Version: 2`, no body. Answer `{"count": n, "orders": [...]}`.
   Only a hub whose database is writable asks, since an order is handed over once.
-- **The inbox.** Table `online_order`: the order as it came (`raw`, dropped after 30 days), its state
-  (`new`, `placed`, `kept`, `failed`), the POS order it became, what there is to say of it, and how often
-  it was tried.
+- **The inbox.** Table `online_order`: the order as it came (`raw`, dropped after 30 days), how it came
+  first (`via`: `push` or `poll`), its state (`new`, `placed`, `kept`, `failed`), the POS order it became,
+  what there is to say of it, and how often it was tried.
 - **The order.** `gf-<GloriaFood's id>`, written by the device `online`. Its operations have fixed ids
   (`gf-<id>:create`, `:line-N`, `:off`, `:tip`, `:difference`, `:paid`, `:fire`, ...), so the same order
   can never be written twice. Fields: `order_type: takeout`, `channel: online`, `customer_name`, `phone`,
@@ -200,7 +353,8 @@ an order is stored, numbered and printed). Tests: `backend/tests/online/`.
   choices.
 - **Charges.** The evening rows use the tax class `untaxed` (`orders/check.py`), codes `online_rounding`
   and `online_difference`.
-- **Calls.** `GET /online/status`, `POST /online/fetch` (409 `no_key`), `GET /online/orders/{id}` (404
-  `unknown_order`, 410 `forgotten`).
+- **Calls.** `POST /online/push`, `GET /online/status` (with `push`: `configured`, `pushed_ms`, `refused`;
+  `today.by_push`, `today.by_poll`, `today.unread`), `POST /online/fetch` (409 `no_key`; `known` counts the
+  orders that were here already), `GET /online/orders/{id}` (404 `unknown_order`, 410 `forgotten`).
 - **Printing.** `Ticket.note` and `PackSheet.said` carry the customer's note; a `notice` ticket is the
   slip (`PrintService.notice`). The kitchen screen's tickets carry `note` too.

@@ -19,7 +19,8 @@ HOUR = 60 * MINUTE
 DAY = 24 * HOUR
 CHICKEN = ("Sweet & Sour Chicken", 2)  # wok 1 and the soup station; its ticket is drawn in Chinese
 COMBO = ("Maki Combination",)  # the sushi bar
-NONE = {"asked": True, "came": 0, "placed": 0, "kept": 0, "failed": 0}
+NONE = {"asked": True, "came": 0, "known": 0, "placed": 0, "kept": 0, "failed": 0}
+TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "kept": 0, "failed": 0, "unread": 0}
 CUSTOMER = ("Pat", "Example", "555", "Restaurant Row", "3B", "Ring the bell")
 
 
@@ -62,7 +63,7 @@ def test_an_accepted_order_is_written_down_put_on_the_pos_numbered_and_printed()
     status = hub.status()
     assert status["configured"] and status["source"] == "gloriafood" and status["writable"]
     assert (status["asked_ms"], status["answered_ms"], status["last_failure"]) == (NOW, NOW, None)
-    assert status["today"] == {"came": 1, "placed": 1, "kept": 0, "failed": 0}
+    assert status["today"] == {**TODAY, "came": 1, "by_poll": 1, "placed": 1}
     assert (status["waiting"], status["look"]) == (0, [])
     assert hub.slips() == []
 
@@ -130,7 +131,7 @@ def test_an_order_gloriafood_sends_twice_is_one_order():
     hub.accept(lunch())
     before = (len(hub.store.for_order("gf-301")), tickets(hub))
     hub.clock += MINUTE
-    assert hub.accept(lunch()) == {**NONE, "came": 1}
+    assert hub.accept(lunch()) == {**NONE, "came": 1, "known": 1}
     assert (len(hub.store.for_order("gf-301")), tickets(hub)) == before
     assert len(hub.client.get("/orders").json()["orders"]) == 1
     assert hub.status()["today"]["came"] == 1
@@ -237,7 +238,8 @@ def test_an_answer_that_cannot_be_read_is_kept_and_a_slip_says_to_look_at_gloria
         "failed",
         None,
     )
-    assert status["today"] == {"came": 1, "placed": 0, "kept": 0, "failed": 1} and status["waiting"] == 0
+    # it is not counted as an order, which it may not be: it is counted as what it is
+    assert status["today"] == {**TODAY, "unread": 1} and status["waiting"] == 0
     (slip,) = hub.slips()
     assert "ONLINE ORDERS: LOOK" in slip and "GloriaFood's own app" in slip and "Pat" not in slip
     # what came is kept on the hub, and is not shown to whoever asks
@@ -247,7 +249,7 @@ def test_an_answer_that_cannot_be_read_is_kept_and_a_slip_says_to_look_at_gloria
     # nonsense every minute is one slip a quarter of an hour, and every answer is kept
     hub.clock += MINUTE
     hub.online.round()
-    assert len(hub.slips()) == 1 and hub.status()["today"]["failed"] == 2
+    assert len(hub.slips()) == 1 and hub.status()["today"]["unread"] == 2
     hub.clock += UNREAD_SLIP_MS
     hub.online.round()
     assert len(hub.slips()) == 2

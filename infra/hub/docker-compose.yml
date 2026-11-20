@@ -76,6 +76,9 @@ services:
       # Online orders (docs/online-orders.md): GloriaFood's key for this restaurant, written by
       # `hubctl online key`. Empty: nobody is asked and nothing arrives.
       POS_GLORIAFOOD_KEY: ${POS_GLORIAFOOD_KEY:-}
+      # The key GloriaFood's own pushes of an order must carry ("Push" in the same guide), written by
+      # `hubctl online push key`. Empty: every push is turned away, and the hub only asks.
+      POS_GLORIAFOOD_PUSH_KEY: ${POS_GLORIAFOOD_PUSH_KEY:-}
     volumes:
       - ./apns:/apns:ro
     ports:
@@ -106,6 +109,62 @@ services:
         exec ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/pbx/known_hosts -i /pbx/id_ed25519 \
           -L 0.0.0.0:5038:127.0.0.1:5038 "$$POS_PBX_SSH"
+
+  door:
+    # The push door (pos.online.door; docs/online-orders.md, "The door"): the one thing on the hub that a way
+    # in from outside the building may reach. It hands a push that carries the key on to the API and answers
+    # everything else with nothing. Runs only with the profile `push`, which `hubctl online push key` turns
+    # on. On the hub it listens on 127.0.0.1:8090 (`hubctl online push test`, or a tunnel program installed
+    # on the hub itself); POS_DOOR_BIND=0.0.0.0 in /opt/pos/.env opens it to the restaurant's network, for
+    # when the restaurant's own router or proxy is the way in.
+    image: pos-backend:local
+    profiles: ["push", "tunnel"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 2).close()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    environment:
+      POS_GLORIAFOOD_PUSH_KEY: ${POS_GLORIAFOOD_PUSH_KEY:-}
+      POS_DOOR_TO: http://api:8000
+    command:
+      - uvicorn
+      - --factory
+      - pos.online.door:door_from_env
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+      - --limit-concurrency
+      - "32"
+      - --timeout-keep-alive
+      - "15"
+    networks: [default, door]
+    ports:
+      - "${POS_DOOR_BIND:-127.0.0.1}:8090:8090"
+    depends_on:
+      - api
+
+  tunnel:
+    # The way in from outside (docs/online-orders.md, "The way in"): a Cloudflare Tunnel. The hub calls out
+    # to Cloudflare and holds the line, and GloriaFood's pushes come down it; nothing is opened on the
+    # router. It shares a network with the door and with nothing else of the hub, and what it may reach is
+    # told to Cloudflare by the restaurant: only http://door:8090. Runs only with the profile `tunnel` and the
+    # tunnel's token (POS_TUNNEL_TOKEN), both written by `hubctl online tunnel token`.
+    image: ${POS_TUNNEL_IMAGE:-cloudflare/cloudflared:latest}
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    environment:
+      TUNNEL_TOKEN: ${POS_TUNNEL_TOKEN:-}
+    command: ["tunnel", "--no-autoupdate", "run"]
+    networks: [door]
+    depends_on:
+      - door
+
+networks:
+  # The door's own: the tunnel is on it and on no other, so the API and the database are not its neighbours.
+  door: {}
 
 volumes:
   pos-db:

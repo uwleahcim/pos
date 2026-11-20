@@ -51,7 +51,7 @@ from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
-from ..online.gloriafood import source_from_env
+from ..online.gloriafood import push_key_from_env, source_from_env
 from ..online.inbox import default_inbox
 from ..online.place import own_word
 from ..online.service import OnlineOrders
@@ -867,8 +867,9 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """The PBX watcher runs for as long as the API does, when a PBX is configured; the face models load
         on a thread meanwhile, when the hub has them (POS_FACE_MODELS); GloriaFood is asked for online orders
-        every minute, when the hub has its key; the push relay's connection to Apple closes with the API; the
-        screens' streams end when the server is told to stop, so it can."""
+        every minute, when the hub has its key (with only the key for its pushes the round still runs, for
+        the orders to try again); the push relay's connection to Apple closes with the API; the screens'
+        streams end when the server is told to stop, so it can."""
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
@@ -960,7 +961,10 @@ def create_app(
     # The reservation book: the tables booked ahead, a day at a time, and how each booking ended.
     app.state.reservations = reservations if reservations is not None else Reservations(default_book_store())
     # Online orders: asked of GloriaFood every minute when the hub has its key, and put on the POS.
-    app.state.online = online if online is not None else OnlineOrders(source_from_env(), default_inbox())
+    # Sent by GloriaFood itself too, the moment one is accepted, when the hub has the key its pushes carry.
+    app.state.online = (
+        online if online is not None else OnlineOrders(source_from_env(), default_inbox(), push_key=push_key_from_env())
+    )
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(

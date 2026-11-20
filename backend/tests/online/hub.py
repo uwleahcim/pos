@@ -3,6 +3,7 @@ hand, and a GloriaFood that hands over what the test queued."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,6 +29,8 @@ from ..printing.fake_printer import decode
 NOW = int(datetime(2027, 1, 15, 23, 1, tzinfo=UTC).timestamp() * 1000)
 """A minute after the orders of `tests.online.orders` were accepted: 18:01 in Winchester, dinner."""
 MINUTE = 60_000
+PUSH_KEY = "made-up-key-for-pushes-0123456789"
+"""What GloriaFood's pushes carry in these tests. Nobody's key."""
 
 
 class FakeFood:
@@ -56,6 +59,7 @@ class Hub:
         inbox: Inbox | None = None,
         rules: PricingRules | None = None,
         key: bool = True,
+        push: bool = False,
         printers: bool = True,
     ) -> None:
         self.clock = NOW
@@ -72,7 +76,9 @@ class Hub:
             stations if printers else [], store=self.jobs, direct=False, now=lambda: self.clock
         )
         self.menu = MenuService(load_restaurant_menu()[0])
-        self.online = OnlineOrders(self.food if key else None, self.inbox, now=lambda: self.clock)
+        self.online = OnlineOrders(
+            self.food if key else None, self.inbox, push_key=PUSH_KEY if push else None, now=lambda: self.clock
+        )
         self.client = TestClient(
             create_app(
                 self.store,
@@ -92,6 +98,14 @@ class Hub:
         """These orders were accepted in GloriaFood's app, and the hub's minute came round."""
         self.food.queue.extend(orders)
         return self.online.round()
+
+    def push(self, *orders: dict[str, Any], key: str | None = PUSH_KEY, body: str | bytes | None = None) -> Any:
+        """These orders were accepted in GloriaFood's app, and it sent them to the hub by itself, with `key`
+        in the header (None: with none). `body` is sent as it is instead, when given."""
+        if body is None:
+            body = json.dumps({"count": len(orders), "orders": list(orders)})
+        headers = {"Content-Type": "application/json"} | ({} if key is None else {"Authorization": key})
+        return self.client.post("/online/push", content=body, headers=headers)
 
     def order(self, number: int) -> dict[str, Any]:
         return self.client.get(f"/orders/gf-{number}").json()
