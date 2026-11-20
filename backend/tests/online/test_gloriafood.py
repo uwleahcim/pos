@@ -1,4 +1,5 @@
-"""Asking GloriaFood for the accepted orders (pos.online.gloriafood), against a GloriaFood that is a function."""
+"""Asking GloriaFood for the accepted orders, and reading what it sends by itself (pos.online.gloriafood),
+against a GloriaFood that is a function."""
 
 from __future__ import annotations
 
@@ -7,7 +8,16 @@ import json
 import httpx
 import pytest
 
-from pos.online.gloriafood import API_VERSION, POP_URL, FetchFailed, GloriaFood, source_from_env
+from pos.online.gloriafood import (
+    API_VERSION,
+    POP_URL,
+    FetchFailed,
+    GloriaFood,
+    allowed,
+    push_key_from_env,
+    pushed,
+    source_from_env,
+)
 
 KEY = "made-up-key-0123456789"
 
@@ -114,3 +124,63 @@ def test_an_answer_that_cannot_be_read_is_kept_without_the_restaurant_s_keys():
     assert failed.value.reason == "GloriaFood's answer could not be read"
     assert "secret" not in failed.value.body and '"id": 7' in failed.value.body
     assert failed.value.body.count("(left out)") == 2
+
+
+# A push ------------------------------------------------------------------------------------------------------
+
+
+def test_a_push_is_let_in_only_with_the_key_the_hub_was_given():
+    assert allowed(KEY, KEY) and allowed(f"  {KEY} ", KEY)
+    for given in (None, "", " ", KEY[:-1], KEY + "0", KEY.upper(), f"Bearer {KEY}", "clé"):
+        assert not allowed(given, KEY), given
+    for no_key in (None, ""):  # a hub with no key for pushes lets nothing in, whatever is sent
+        assert not allowed(KEY, no_key) and not allowed("", no_key) and not allowed(None, no_key)
+
+
+def test_a_hub_with_no_key_for_pushes_has_none():
+    assert push_key_from_env({}) is None
+    assert push_key_from_env({"POS_GLORIAFOOD_PUSH_KEY": "  "}) is None
+    assert push_key_from_env({"POS_GLORIAFOOD_PUSH_KEY": f" {KEY} "}) == KEY
+    assert push_key_from_env({"POS_GLORIAFOOD_KEY": KEY}) is None  # the key for asking is another key
+
+
+def test_a_push_is_read_as_an_answer_is_and_also_one_order_by_itself_or_a_bare_list():
+    one = {"id": 7, "type": "pickup", "restaurant_key": "secret-one", "restaurant_token": "secret-two"}
+    read = [{"id": 7, "type": "pickup"}]  # the restaurant's own keys are left out
+    assert pushed(json.dumps({"count": 1, "orders": [one]}).encode()) == read
+    assert pushed(json.dumps(one).encode()) == read
+    assert pushed(json.dumps([one, one]).encode()) == read * 2
+    for none in (b"", b"  \n", b"{}", b'{"count": 0}', b'{"count": 0, "orders": []}', b'{"orders": []}', b"[]"):
+        assert pushed(none) == [], none
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        (b"<orders><order><id>7</id></order></orders>", "it came as XML, and the hub reads JSON"),
+        (b"hello", "it is not JSON"),
+        (b"\xff\xfe\x00", "it is not text"),
+        (b'{"error": "nope", "client_first_name": "Pat"}', "it holds no orders, but: client_first_name, error"),
+        (b'{"count": 2, "orders": "soon"}', "it holds no orders, but: count, orders"),
+        (b'{"orders": [1, 2]}', "it holds no orders, but: orders"),
+        (b"[1, 2]", "it is a list, not orders"),
+        (b'"7"', "it is a str, not orders"),
+    ],
+)
+def test_a_push_that_cannot_be_read_says_what_it_looked_like_and_nothing_of_a_customer(body, why):
+    with pytest.raises(FetchFailed) as failed:
+        pushed(body)
+    assert failed.value.reason == f"GloriaFood's push could not be read ({why})"
+    assert "Pat" not in failed.value.reason
+
+
+def test_a_push_that_cannot_be_read_is_kept_without_the_restaurant_s_keys_in_either_language():
+    xml = b"<order><id>7</id><restaurant_key>secret-one</restaurant_key><restaurant_token>secret-two</restaurant_token>"
+    with pytest.raises(FetchFailed) as failed:
+        pushed(xml)
+    assert "secret" not in failed.value.body and "<id>7</id>" in failed.value.body
+    assert failed.value.body.count("(left out)") == 2
+    odd = b'{"event": "x", "restaurant_key": "secret-one", "RESTAURANT_TOKEN" : "secret-two"}'
+    with pytest.raises(FetchFailed) as failed:
+        pushed(odd)
+    assert "secret" not in failed.value.body and failed.value.body.count("(left out)") == 2
