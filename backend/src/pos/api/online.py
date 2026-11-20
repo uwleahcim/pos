@@ -19,6 +19,16 @@
   not be read), how many are still to be put on the POS (`waiting`), and the ones a person should look at
   (`look`), each by GloriaFood's number (`id`), with its `kind`, `state`, how it came (`via`), the POS order
   it became (`order_id`) and what there is to say of it (`said`). Nothing of a customer is in it, and no key.
+  `look` rows also say since when they are as they are (`at_ms`) and whether that is after somebody last
+  looked (`new`; never for one that is still being tried, nor for a push that could not be read on a hub
+  that also asks); `news` counts those, and `seen_ms` is when somebody last looked. `trouble` lists what is
+  wrong right now, each with a `code` (`not_answering`: asking GloriaFood has failed for five minutes;
+  `pushes_refused`: orders come only by the asking while pushes are turned away), `since_ms`, the `reason`
+  and whether it is `urgent` (no order is reaching the POS).
+- `POST /online/seen` (`{"by": "Mike"}`): somebody looked at the ones to look at. Nothing of them changes:
+  they stay listed, and are no longer `new` on any screen. Answers with the status after it. Like a
+  screen's operations it takes no token: it changes no order, no money and no setting anybody chose. 503
+  `read_only` on a hub that cannot write.
 - `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
   that round did (`asked`, `came`, `known`: here already, `placed`, `kept`, `failed`) and the `status` after
   it. 409 `no_key` when the hub has no key for asking.
@@ -37,6 +47,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ..online.door import body_of
@@ -47,10 +58,21 @@ from ..online.service import SEVERAL, UNREADABLE, OnlineOrders, PushRefused
 from ..orders.check import check_for
 from ..orders.counts import holds
 from ..sync.hlc import Clock
+from ..sync.pgstore import ReadOnlyError
 
+SEEN = "online_seen"
+"""The setting that keeps when somebody last looked at the online orders to look at, and who."""
+TOPIC = "online"
+"""What the change feed says when there is something new to look at, or somebody looked."""
 LOOK = "Look at it in GloriaFood's own app."
 PUSH_ERRORS = {401: "refused", 404: "not_found", 422: "unreadable", 503: "standby"}
 """What a push that is turned away is answered, by status: one word, and nothing of why."""
+
+
+class SeenIn(BaseModel):
+    """Who looked at the online orders that need looking at."""
+
+    by: str = Field("", max_length=80)
 
 
 def add_online_orders(app: FastAPI, number_orders: Any) -> None:
@@ -117,8 +139,20 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             words = ["NOT ON THE POS", f"{number}: {said}.", f"{LOOK} Ring it in by hand if it still has to be made."]
         app.state.printing.notice(words, key=f"online:{arrival.source}:{arrival.ext_id}")
 
+    def seen_ms() -> int:
+        """When somebody last looked; never, where the settings cannot be read (everything is new then)."""
+        try:
+            at = app.state.settings.get(SEEN).get("at_ms")
+        except Exception:  # noqa: BLE001 - how the online orders are doing is said without it
+            return 0
+        return at if isinstance(at, int) and not isinstance(at, bool) else 0
+
+    def status() -> dict[str, Any]:
+        return online.status(seen_ms())
+
     online.put = put
     online.notice = notice
+    online.news = lambda: app.state.feed.changed(TOPIC)  # the screens hear that there is something to look at
 
     @app.post("/online/push")
     async def online_push(request: Request) -> JSONResponse:
@@ -137,13 +171,24 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
 
     @app.get("/online/status")
     def online_status() -> dict[str, Any]:
-        return online.status()
+        return status()
+
+    @app.post("/online/seen")
+    def online_seen(body: SeenIn) -> dict[str, Any]:
+        """Somebody looked at the online orders to look at: from now on they are new on no screen."""
+        looked = {"at_ms": online.now_ms(), "by": " ".join(body.by.split())}
+        try:
+            app.state.settings.put(SEEN, looked)
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed(TOPIC)
+        return status()
 
     @app.post("/online/fetch")
     def online_fetch() -> dict[str, Any]:
         if not online.configured:
             raise HTTPException(409, {"error": "no_key", "message": "This hub has no key for online orders."})
-        return {**online.round(), "status": online.status()}
+        return {**online.round(), "status": status()}
 
     @app.get("/online/orders/{ext_id}")
     def online_order(ext_id: str) -> dict[str, Any]:

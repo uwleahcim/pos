@@ -1445,6 +1445,25 @@ class PosApi {
     ),
   );
 
+  // Online orders (docs/online-orders.md). -------------------------------------------------------------------
+
+  /// How the online orders are doing: how they arrive, today's by what became of them, the ones to look at
+  /// and what is wrong right now. The very same object as last time while nothing changed. Null from a hub
+  /// older than online orders.
+  Future<OnlineStatus?> onlineStatus() async {
+    try {
+      return await _repeated('/online/status', OnlineStatus.fromJson);
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Somebody ([by], by name) looked at the online orders to look at: they stay listed, and no screen says
+  /// they are new any more. Answers how the online orders stand after it. 404 from a hub older than that.
+  Future<OnlineStatus> onlineSeen(String by) async =>
+      OnlineStatus.fromJson(await _post('/online/seen', {'by': by.length > 80 ? by.substring(0, 80) : by}));
+
   // The waitlist (docs/waitlist.md). ------------------------------------------------------------------------
 
   /// Tonight's waitlist: who is waiting, in the order they came, and who went off the list earlier. The very

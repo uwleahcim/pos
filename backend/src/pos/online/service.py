@@ -61,6 +61,8 @@ UNREAD_SLIP_MS = 15 * 60_000
 """An answer that cannot be read prints a slip, but not one a minute while GloriaFood sends nonsense."""
 LISTED = 10
 """How many orders to look at `status` names."""
+STALE_MS = 5 * 60_000
+"""Asking that has failed for this long is trouble to tell a person of: one answer that did not come is not."""
 REFUSAL_LOG_MS = 60_000
 """A push that is turned away is counted every time and logged at most this often: the way in is open to
 the internet, and whoever knocks must not fill the hub's log."""
@@ -98,9 +100,11 @@ class OnlineOrders:
         self.inbox = inbox if inbox is not None else Inbox()
         self._push_key = push_key or None  # what a push must carry; None: every push is turned away
         # Set by the API: `put` stores an order's operations and prints its tickets; `notice` prints a slip
-        # for an order somebody has to look at (the arrival, and the words for it).
+        # for an order somebody has to look at (the arrival, and the words for it); `news` tells the screens
+        # that there is something new to look at, slip or none.
         self.put: Callable[[Mapping[str, Any]], Placed] | None = None
         self.notice: Callable[[Arrival, str], None] | None = None
+        self.news: Callable[[], None] | None = None
         self._now = now
         self._asking = threading.Lock()  # one round at a time: the minute's own and one a person asked for
         self._lock = threading.Lock()  # one order at a time is written down and placed, however it came
@@ -108,6 +112,7 @@ class OnlineOrders:
         self._asked_ms: int | None = None
         self._answered_ms: int | None = None
         self._failure: tuple[int, str] | None = None  # the last time asking failed, and why
+        self._failing_ms: int | None = None  # since when asking has failed every time; None while it works
         self._forgot_ms = 0
         self._unread_slip_ms: int | None = None
         self._pushed_ms: int | None = None  # the last push the hub took
@@ -129,6 +134,10 @@ class OnlineOrders:
     @property
     def name(self) -> str:
         return self.source.name if self.source is not None else NAME
+
+    def now_ms(self) -> int:
+        """The time by the clock every order here is stamped with: what "somebody looked" is set against."""
+        return self._now()
 
     # --- a round ---------------------------------------------------------------------------------
 
@@ -154,7 +163,7 @@ class OnlineOrders:
                 if isinstance(answer, FetchFailed):
                     self._failed(now, answer)
                 elif answer is not None:
-                    self._answered_ms, self._failure = now, None
+                    self._answered_ms, self._failure, self._failing_ms = now, None, None
                     done["came"] = len(answer)
                     done["known"], _ = self._take(answer, now, POLL)
                 else:
@@ -229,14 +238,18 @@ class OnlineOrders:
         somebody has to look at. `new_only` leaves the ones that would not go on before to the minute's
         round: a busy minute of pushes must not use up an order's tries in a few seconds."""
         slips: list[tuple[Arrival, str]] = []
+        look = False
         for arrival in self._waiting():
             if new_only and arrival.state != "new":
                 continue
             settled, tell = self._place(arrival)
             done[settled.state] += 1
+            look = look or (_to_look_at(settled) and not settled.waiting)
             if tell:
                 slips.append((settled, tell))
         self._slips(slips)
+        if look:
+            self._heard()
 
     def _slips(self, slips: list[tuple[Arrival, str]]) -> None:
         """A slip for each order somebody has to look at; the ones from earlier days share one when there
@@ -258,6 +271,8 @@ class OnlineOrders:
         """GloriaFood was asked and gave no orders: why is kept for `status`, and what it did send, when it
         sent something, for a person."""
         self._failure = (now, err.reason)
+        if self._failing_ms is None:
+            self._failing_ms = now
         log.warning("online orders: %s", err.reason)
         if err.body is not None:
             self._unread(now, err, POLL)
@@ -292,6 +307,7 @@ class OnlineOrders:
         self._write_down()
         if via == PUSH and self.configured:
             return
+        self._heard()
         if self._unread_slip_ms is None or now - self._unread_slip_ms >= UNREAD_SLIP_MS:
             self._unread_slip_ms = now
             self._tell(unread, unread.said)
@@ -357,6 +373,16 @@ class OnlineOrders:
         except Exception:  # noqa: BLE001 - a slip that does not print changes nothing of the order
             log.error("the slip for online order %s could not be printed", arrival.ext_id)
 
+    def _heard(self) -> None:
+        """There is something new to look at: the screens are told. One that is not told reads it within
+        half a minute all the same."""
+        if self.news is None:
+            return
+        try:
+            self.news()
+        except Exception:  # noqa: BLE001 - telling the screens changes nothing of the order
+            log.error("the screens could not be told of an online order to look at")
+
     def _forget(self) -> None:
         """Once an hour: the customer's details are dropped from the orders older than `KEEP_DAYS`."""
         now = self._now()
@@ -370,12 +396,13 @@ class OnlineOrders:
 
     # --- what a person is told -------------------------------------------------------------------
 
-    def status(self) -> dict[str, Any]:
+    def status(self, seen_ms: int = 0) -> dict[str, Any]:
         """How the online orders are doing, for `hubctl online status` and the screens: whether the hub
         asks GloriaFood (`configured`) and when it last answered and why it did not; whether it takes pushes
         (`push`), when the last one came, and the last one it turned away and why; today's orders by what
-        became of them and by how they came; and the ones to look at, each by GloriaFood's number. Nothing
-        of a customer, and no key."""
+        became of them and by how they came; the ones to look at, each by GloriaFood's number, with since
+        when (`at_ms`) and whether that is after somebody last looked (`new`, against `seen_ms`; `news`
+        counts them); and what is wrong right now (`trouble`). Nothing of a customer, and no key."""
         now = self._now()
         start, _ = localtime.service_day(localtime.service_day_of(now))
         try:
@@ -389,7 +416,10 @@ class OnlineOrders:
             if _to_look_at(row):
                 look.setdefault((row.source, row.ext_id), row)
         listed = sorted(look.values(), key=lambda row: row.fetched_ms, reverse=True)[:LISTED]
+        looked = [{**row.about(), "at_ms": _since(row), "new": self._news(row, seen_ms)} for row in listed]
         orders = [row for row in today if row.kind != UNREADABLE]
+        by_push = sum(row.via == PUSH for row in orders)
+        by_poll = sum(row.via == POLL for row in orders)
         pushed = [row.fetched_ms for row in today if row.via == PUSH]
         pushed_ms = max([*pushed, *([] if self._pushed_ms is None else [self._pushed_ms])], default=None)
         refused = None
@@ -406,16 +436,65 @@ class OnlineOrders:
             "push": {"configured": self.pushable, "pushed_ms": pushed_ms, "refused": refused},
             "today": {
                 "came": len(orders),
-                "by_push": sum(row.via == PUSH for row in orders),
-                "by_poll": sum(row.via == POLL for row in orders),
+                "by_push": by_push,
+                "by_poll": by_poll,
                 "placed": sum(row.state == "placed" for row in orders),
                 "kept": sum(row.state == "kept" for row in orders),
                 "failed": sum(row.state == "failed" for row in orders),
                 "unread": len(today) - len(orders),
             },
             "waiting": len(waiting) + len(self._unwritten),
-            "look": [row.about() for row in listed],
+            "look": looked,
+            "seen_ms": seen_ms,
+            "news": sum(row["new"] for row in looked),
+            "trouble": self._trouble(now, start, pushed_ms, by_push=by_push, by_poll=by_poll),
         }
+
+    def _news(self, row: Arrival, seen_ms: int) -> bool:
+        """Whether one to look at is news to a person: it is as it is since after somebody last looked. Not
+        one the hub is still trying to put on (it may go on yet), and not a push that could not be read on a
+        hub that also asks: its orders come by the asking, and nobody is to ring them in a second time."""
+        if row.waiting or (row.kind == UNREADABLE and row.via == PUSH and self.configured):
+            return False
+        return _since(row) > seen_ms
+
+    def _trouble(
+        self, now: int, start: int, pushed_ms: int | None, *, by_push: int, by_poll: int
+    ) -> list[dict[str, Any]]:
+        """What is wrong with the online orders right now, each with a `code`, since when (`since_ms`), the
+        `reason` in a few words and whether it is `urgent`. Nothing while all is well. These hold until they
+        are mended: looking at them does not take them away.
+
+        - `not_answering`: the hub has asked GloriaFood for `STALE_MS` and got no orders once. It is urgent
+          unless pushes are known to get in (one came since the hub started or today, and none was turned
+          away after it): then the orders still arrive, and only the net under them is gone.
+        - `pushes_refused`: today's orders came only by the asking, and a push was turned away after the
+          last one that got in. The orders arrive, a minute later than they could: never urgent."""
+        said: list[dict[str, Any]] = []
+        # a push was turned away today, and none got in after it
+        turned_away = self._refused is not None and self._refused[0] >= start and self._refused[0] > (pushed_ms or 0)
+        if self.configured and self._failure is not None and self._failing_ms is not None:
+            if now - self._failing_ms >= STALE_MS:
+                pushes_get_in = self.pushable and pushed_ms is not None and not turned_away
+                said.append(
+                    {
+                        "code": "not_answering",
+                        "since_ms": self._failing_ms,
+                        "reason": self._failure[1],
+                        "urgent": not pushes_get_in,
+                    }
+                )
+        if self._refused is not None and turned_away and by_push == 0 and by_poll > 0:
+            said.append(
+                {
+                    "code": "pushes_refused",
+                    "since_ms": self._refused[0],
+                    "reason": self._refused[1],
+                    "urgent": False,
+                    "count": self._refusals,
+                }
+            )
+        return said
 
     # --- every minute ----------------------------------------------------------------------------
 
@@ -440,6 +519,12 @@ class OnlineOrders:
 
 def _kind(order: Mapping[str, Any]) -> str:
     return str(order.get("type") or "")[:40]
+
+
+def _since(row: Arrival) -> int:
+    """Since when an order is as it is: when it was put on the POS, kept or given up on, and before any of
+    that when it came."""
+    return row.settled_ms if row.settled_ms is not None else row.fetched_ms
 
 
 def _to_look_at(row: Arrival) -> bool:

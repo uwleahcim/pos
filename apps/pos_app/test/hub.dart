@@ -740,6 +740,113 @@ class Hub {
     });
   }
 
+  /// Online orders (docs/online-orders.md): how they are doing, as the hub answers `GET /online/status`
+  /// ([onlineStatus] makes one); null is a hub older than online orders, which the tests written before
+  /// them run against. [onlineAsks] counts the asks. `POST /online/seen` keeps who looked in [onlineSeenBy],
+  /// and from then on no row is new; a hub that cannot write ([onlineReadOnly]) refuses that with 503.
+  /// [onlineDown] fails every call of these as if no hub answered, while the rest of the hub goes on.
+  Map<String, dynamic>? online;
+  int onlineAsks = 0;
+  final onlineSeenBy = <String>[];
+  bool onlineReadOnly = false;
+  bool onlineDown = false;
+
+  /// How the online orders are doing, as a hub with both keys says it on a quiet day: [look] are the ones
+  /// to look at ([onlineLook] makes one) and [trouble] what is wrong right now.
+  static Map<String, dynamic> onlineStatus({
+    bool asks = true,
+    bool pushes = true,
+    bool running = true,
+    bool writable = true,
+    int? answeredMs,
+    int? pushedMs,
+    int came = 0,
+    int byPush = 0,
+    int placed = 0,
+    int kept = 0,
+    int failed = 0,
+    int unread = 0,
+    int waiting = 0,
+    List<Map<String, dynamic>> look = const [],
+    List<Map<String, dynamic>> trouble = const [],
+  }) => {
+    'configured': asks,
+    'source': asks ? 'gloriafood' : null,
+    'running': asks && running,
+    'writable': writable,
+    'asked_ms': answeredMs,
+    'answered_ms': answeredMs,
+    'last_failure': null,
+    'push': {'configured': pushes, 'pushed_ms': pushedMs, 'refused': null},
+    'today': {
+      'came': came,
+      'by_push': byPush,
+      'by_poll': came - byPush,
+      'placed': placed,
+      'kept': kept,
+      'failed': failed,
+      'unread': unread,
+    },
+    'waiting': waiting,
+    'look': look,
+    'seen_ms': 0,
+    'news': look.where((row) => row['new'] == true).length,
+    'trouble': trouble,
+  };
+
+  /// One to look at, by the website's number: what became of it ([state]), since when, and what the hub says.
+  static Map<String, dynamic> onlineLook(
+    String id, {
+    required int atMs,
+    String kind = 'pickup',
+    String state = 'failed',
+    String? orderId,
+    String said = '',
+    bool isNew = true,
+  }) => {
+    'source': 'gloriafood',
+    'id': id,
+    'kind': kind,
+    'state': state,
+    'order_id': orderId,
+    'said': said,
+    'tries': 5,
+    'fetched_ms': atMs,
+    'settled_ms': atMs,
+    'via': 'push',
+    'at_ms': atMs,
+    'new': isNew,
+  };
+
+  http.Response _online(http.Request request) {
+    final status = online;
+    if (status == null) return json({'detail': 'Not Found'}, 404);
+    if (onlineDown) throw const SocketException('down');
+    if (request.url.path == '/online/status' && request.method == 'GET') {
+      onlineAsks += 1;
+      return json(status);
+    }
+    if (request.url.path == '/online/seen' && request.method == 'POST') {
+      if (onlineReadOnly) {
+        return json({
+          'detail': {'error': 'read_only', 'message': 'This hub cannot write that down now.'},
+        }, 503);
+      }
+      onlineSeenBy.add((jsonDecode(request.body) as Map)['by'] as String? ?? '');
+      return json(
+        online = {
+          ...status,
+          'seen_ms': clockNow,
+          'news': 0,
+          'look': [
+            for (final row in (status['look'] as List).cast<Map<String, dynamic>>()) {...row, 'new': false},
+          ],
+        },
+      );
+    }
+    return json({'detail': 'Not Found'}, 404);
+  }
+
   /// The waitlist (docs/waitlist.md). [parties] are tonight's parties in the order they came, each as the hub
   /// answers it ([waitParty] makes one); null is a hub older than the list, which the tests written before
   /// it run against. `GET /waitlist` answers them ([waitAsks] counts the asks) and every change that came is
@@ -1968,6 +2075,7 @@ class Hub {
       if (known != null) return json(known);
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path.startsWith('/online/')) return _online(request);
     if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);
     if (path == '/reservations' || path.startsWith('/reservations/')) return _reservations(request);
     if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);

@@ -11,6 +11,7 @@ import '../desk_phone.dart';
 import '../faces.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
+import '../online_orders.dart';
 import '../powers.dart';
 import '../printers.dart';
 import '../kitchen_screen.dart';
@@ -34,6 +35,7 @@ import 'kitchen_notes_dialog.dart';
 import 'kitchen_times_screen.dart';
 import 'live_drive_dialog.dart';
 import 'logbook_screen.dart';
+import 'online_orders_screen.dart';
 import 'powers_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
@@ -65,6 +67,7 @@ class LocationSettingsScreen extends StatefulWidget {
     required this.token,
     this.holds,
     this.staffId,
+    this.by,
     this.device,
     this.camera,
     this.tags,
@@ -80,6 +83,9 @@ class LocationSettingsScreen extends StatefulWidget {
 
   /// Who is signed in at this terminal: who an entry of the waste log written from here is by.
   final String? staffId;
+
+  /// That person by name: who looked at the online orders that need looking at.
+  final String? by;
 
   /// This terminal's device name: first in the list of screens a desk phone can be linked to.
   final String? device;
@@ -163,6 +169,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
+  OnlineStatus? _online; // how the online orders are doing; null until the hub answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
   BillSettings? _bill; // the guest's bill as the hub has it; null from an older hub, which prints none
@@ -281,6 +288,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // nothing answered about the 86 board: the card says so
     }
+    await _readOnline();
     try {
       final clock = await widget.api.clockSetting();
       if (mounted) setState(() => _clock = clock);
@@ -830,6 +838,25 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Who may do what saved')));
   }
 
+  Future<void> _readOnline() async {
+    try {
+      final online = await widget.api.onlineStatus();
+      if (mounted) setState(() => _online = online);
+    } on ApiException {
+      // nothing answered about the online orders: the row says so
+    }
+  }
+
+  /// How the online orders are doing, on a screen of its own; the row says how they stand once it is left.
+  Future<void> _openOnline() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => OnlineOrdersScreen(api: widget.api, by: widget.by ?? '', status: _online),
+      ),
+    );
+    await _readOnline();
+  }
+
   /// The 86 board: what is sold out and what is running low, read again each time it is opened.
   Future<void> _openBoard() async {
     final rows = await showDialog<List<BoardRow>>(
@@ -951,6 +978,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _openBoard,
+                ),
+                // the orders from the website (docs/online-orders.md): how they arrive and the ones to look at
+                ListTile(
+                  key: const ValueKey('online-orders'),
+                  leading: const Icon(Icons.language),
+                  title: const Text('Online orders'),
+                  subtitle: Text(
+                    _online?.summary ?? 'The hub has not answered about online orders (an older hub: update it)',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _online == null ? null : _openOnline,
                 ),
                 // the night as it stands, on one screen (docs/today.md)
                 if (_may('reports'))

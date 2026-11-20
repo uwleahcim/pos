@@ -102,6 +102,7 @@ def test_what_is_said_of_an_order_names_no_customer(inbox):
         "said": "it has no dishes",
         "tries": MOST_TRIES,
         "fetched_ms": 1000,
+        "settled_ms": None,
         "via": "poll",
     }
     assert "Pat" not in str(about)

@@ -114,8 +114,9 @@ class ChangeFeed:
     def changed(self, topic: str) -> None:
         """Something that is not an order changed: `menu` (a save, the 86 board), `settings`, `notes` (a note
         for the shift was put up, changed or taken down), `waitlist` (a party was put on the list, changed,
-        sat down or taken off) or `reservations` (a table was booked, or a booking changed or ended). A
-        screen that does not know a topic ignores it."""
+        sat down or taken off), `reservations` (a table was booked, or a booking changed or ended) or
+        `online` (there is an online order to look at, or somebody looked). A screen that does not know a
+        topic ignores it."""
         self._tell((), (topic,), None)
 
     def _tell(self, order_ids: Iterable[str], topics: Iterable[str], cursor: int | None) -> None:
