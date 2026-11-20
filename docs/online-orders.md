@@ -245,6 +245,33 @@ the driver. The fee is the one the website charged. On the order's form it shows
 the map does not move it, and nobody is asked to pick another. A manager or server can still tap another
 price, or No fee, as with any fee. A screen cannot make up a website fee.
 
+## On the screens
+
+An online order is a to-go order like any other: it is in the list of checks, it has its Ready and Picked
+up (or Out and Delivered) steps, it is on the orders-ahead list when it is for later, and on a kitchen
+screen. Four things say that it came from the website.
+
+- **In the list of checks**, a small globe on the corner of the order's number. Only an order the hub took
+  from the website has it; one rung in by hand under the channel Online does not.
+- **How it is paid**, in the list and on the order, as the customer chose on the website: **paid online**,
+  **pays cash at pickup**, **pays by card at the door**, **pays by card over the phone**. Once money is
+  taken for it on the POS it reads as any order does: "paid", or what is still due. If the website took
+  money the hub did not record (it was paid in more than one way there), it says to check GloriaFood for
+  what was paid.
+- **On the order's own screen**, a slim strip under the bar: "From the website · paid online", and under it
+  what the customer wrote for the whole order, "Customer wrote: no onions in anything". A long note shows
+  two lines; a tap shows every word, with GloriaFood's own number for the order (what to find it by in
+  GloriaFood's app) and what the website charged. The strip is to read: nothing on it can be changed.
+- **The payment on the check** reads **Paid online**, where it read "Paid elsewhere". The check's history
+  says the same.
+
+**On a kitchen screen** the customer's note heads the ticket in a dark band, "Customer's note · …", under
+any allergy and before the dishes, as the paper has it under CUSTOMER'S NOTE. It is shown whole, however
+long it is: it may say an allergy. It is on every station's ticket for the order, and on the pass.
+
+The note is what the customer typed. It is not the allergy block: nobody at the restaurant has read it and
+picked the allergens, so it does not turn any dish red. Read it.
+
 ## When something is off
 
 Nothing is dropped quietly. Whatever is not on the POS as a normal order prints a slip, **LOOK**, where the
@@ -303,9 +330,12 @@ If the same order comes twice, by either way or both, it is one order on the POS
 
 ## What is not built
 
-- On the screens: a mark that says an order came from the website, "Paid online" in words, the customer's
-  note on the order's own screen, how online orders are doing under Location, and an alert when one comes
-  in or needs looking at. An online order shows today as any to-go order does, under the channel Online.
+- On the screens: how online orders are doing under Location, and an alert when one comes in or needs
+  looking at. Today only `hubctl online status` and the LOOK slips say.
+- The day's report and Sales count money paid on the website under **Paid elsewhere**, with whatever else
+  was paid outside the POS. A row of its own for it is not built.
+- Typing a note for the whole order on a screen (for a phone order, say). The strip shows one that came
+  with the order; a dish's own note is typed as before.
 - Reservations from GloriaFood into the reservation book.
 - Telling GloriaFood anything back (that an order is ready, that a dish ran out).
 - A second built-in way in beside the tunnel (a small receiver in the cloud that the hub collects from).
@@ -320,6 +350,14 @@ Code: `backend/src/pos/online/` (`gloriafood.py` asks and reads, `inbox.py` writ
 an order into operations, `service.py` is the minute's round and the push, `door.py` is the push door),
 `backend/src/pos/api/online.py` (the calls, and how an order is stored, numbered and printed). Tests:
 `backend/tests/online/`.
+
+- **The screens** read what the hub already sends and write nothing. `apps/pos_app/lib/online_orders.dart`:
+  `OnlineOrder.of(fields)` is the order's `online` field (`Order.online`; null for an order rung in on a
+  screen), `Order.note` its `note`, `paysHow` and `moneyWords` (`to_go_stages.dart`) the words for its
+  money, `paidOnline` the hub's own payment (`elsewhere`, noted "Paid online"). The strip and what a tap
+  shows are `lib/screens/online_strip.dart`; the list's globe is `_marked` in `orders_screen.dart`. A
+  kitchen ticket's `note` (`GET /kitchen/screen`, `GET /kitchen/pass`) is `KitchenTicket.note`. Tests:
+  `apps/pos_app/test/online_orders_test.dart`.
 
 - **A push.** `POST /online/push` on the API, header `Authorization: <the key>` (`POS_GLORIAFOOD_PUSH_KEY`,
   compared in constant time, before the body is read), body as the answer to asking, at most 2 MB. 200

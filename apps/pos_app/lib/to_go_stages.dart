@@ -4,6 +4,7 @@ library;
 
 import 'api.dart';
 import 'local_order.dart';
+import 'online_orders.dart';
 import 'takeout.dart';
 
 /// The chips, in the order an order moves through them; [unpaid] cuts across the other three.
@@ -52,11 +53,13 @@ bool owes(Order order) => switch (order.due) {
 };
 
 /// What a list of checks says of a to-go order's money: "paid", "pay at pickup" while nothing was taken
-/// ("pay at the door" of a delivery, docs/delivery.md), and "$45.01 due" once a deposit was.
+/// ("pay at the door" of a delivery, docs/delivery.md), and "$45.01 due" once a deposit was. An order from
+/// the website says what the customer chose there: "paid online", "pays cash at pickup", "pays by card at
+/// the door" (docs/online-orders.md, "On the screens").
 String moneyWords(Order order) => switch (order.due) {
   final due? when cents(due) > 0 => '\$$due due',
-  _ when order.hasPaid => 'paid',
-  _ => order.isDelivery ? 'pay at the door' : 'pay at pickup',
+  _ when order.hasPaid => order.payments.any(paidOnline) ? 'paid online' : 'paid',
+  _ => paysHow(order) ?? (order.isDelivery ? 'pay at the door' : 'pay at pickup'),
 };
 
 /// How many of [orders] each chip lists at [now].

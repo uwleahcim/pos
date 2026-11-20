@@ -1,5 +1,6 @@
-import 'day_report.dart' show dollars, kindLabel, methodLabel;
+import 'day_report.dart' show dollars, kindLabel;
 import 'delivery_fee.dart';
+import 'online_orders.dart' show paidAs, paidOnlineNote;
 import 'takeout.dart' show EventDetails, channelLabel, handoverLabel, stageLabel;
 import 'voids.dart' show checkName;
 
@@ -452,11 +453,12 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
         title: 'Payment of ${dollars(_text(said['amount']))}',
         under: [
           [
-            methodLabel(_text(said['method'])),
+            // what the website took says so itself, and its note would only say it twice
+            paidAs(_text(said['method']), _text(said['note'])),
             if (tendered.isNotEmpty) '${dollars(tendered)} handed over',
             if (said['check'] is num) 'for check ${_n(said['check'])}',
           ].join(' · '),
-          if (_text(said['note']).isNotEmpty) 'Note: ${_text(said['note'])}',
+          if (_text(said['note']).isNotEmpty && _text(said['note']) != paidOnlineNote) 'Note: ${_text(said['note'])}',
         ],
       );
     case 'allergy' || 'allergy_cleared':

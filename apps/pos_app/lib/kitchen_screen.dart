@@ -138,6 +138,7 @@ class KitchenTicket {
     this.guests,
     this.course = '',
     this.allergies = const [],
+    this.note = '',
     this.alsoAt = const [],
     this.lines = const [],
     this.doneMs,
@@ -158,6 +159,7 @@ class KitchenTicket {
     guests: (json['guests'] as num?)?.toInt(),
     course: json['course'] as String? ?? '',
     allergies: [for (final told in json['allergies'] as List? ?? const []) told.toString()],
+    note: oneLine(json['note']),
     alsoAt: [for (final station in json['also_at'] as List? ?? const []) station.toString()],
     lines: [
       for (final line in json['lines'] as List? ?? const [])
@@ -185,6 +187,10 @@ class KitchenTicket {
 
   /// The allergies told on the order, as the paper heads a ticket with them.
   final List<String> allergies;
+
+  /// What the customer wrote for the whole order (an online order's instructions), as the paper heads every
+  /// station's ticket with it under CUSTOMER'S NOTE: it may say "no onions in anything".
+  final String note;
 
   /// The other stations cooking for the same send.
   final List<String> alsoAt;
@@ -246,6 +252,7 @@ class KitchenTicket {
       guests: guests,
       course: course,
       allergies: allergies,
+      note: note,
       alsoAt: alsoAt,
       lines: now,
       doneMs: all ? (doneMs ?? atMs) : null,

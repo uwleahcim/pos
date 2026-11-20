@@ -586,6 +586,30 @@ class _TicketCard extends StatelessWidget {
                 ],
               ),
             ),
+          // what the customer wrote for the whole order, under a bar of its own as on the paper: read before
+          // the dishes, whole however long it is, and not the allergy block, which a person filled in
+          if (ticket.note.isNotEmpty)
+            Container(
+              key: ValueKey('kitchen-note:${ticket.id}'),
+              color: scheme.inverseSurface,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.sticky_note_2_outlined, size: 18, color: scheme.onInverseSurface),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Customer\'s note · ${ticket.note}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onInverseSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (ticket.alsoAt.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
