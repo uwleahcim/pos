@@ -102,6 +102,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
 | The map service's key for the delivery fee's distance lookup (`POS_MAPS`, `POS_MAPS_KEY`; see `docs/delivery.md`), written by `hubctl maps key` | `/opt/pos/.env`, optional |
 | Google's key for the same lookup when the first service gives no distance (`POS_MAPS_GOOGLE_KEY`; see "A second map service" in `docs/delivery.md`), written by `hubctl maps google` | `/opt/pos/.env`, optional |
+| GloriaFood's key for online orders (`POS_GLORIAFOOD_KEY`; see `docs/online-orders.md`), written by `hubctl online key` | `/opt/pos/.env`, optional |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -130,6 +131,10 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl maps status` / `hubctl maps test "12 Elm St, Winchester MA"` | Whether the hub has a key, how often it asked each service today, and whether live traffic is on / how far an address is, the fee it falls in and which service answered, and with live traffic on how long the drive is right now |
 | `hubctl maps test google "12 Elm St, Winchester MA"` | Ask Google alone, to try its key |
 | `hubctl maps forget` / `hubctl maps forget google` | Remove the first service's key / remove Google's. With neither, nothing is looked up, and the fee is picked by hand |
+| `hubctl online key` | Put the restaurant's GloriaFood key on the hub, so accepted online orders go on the POS by themselves (`docs/online-orders.md`); it asks for the key and does not show it |
+| `hubctl online status` / `hubctl online fetch` | Whether the hub has the key, when GloriaFood last answered, today's online orders and the ones to look at / ask GloriaFood now instead of within the minute |
+| `hubctl online show 123456` | One online order as GloriaFood sent it, by its number, without the customer: for looking at one that went on wrong |
+| `hubctl online forget` | Remove the key: the hub asks nobody, and the orders already on the POS stay |
 
 ## Ports
 

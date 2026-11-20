@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -359,6 +359,74 @@ case "${1:-status}" in
         ;;
     esac
     ;;
+  online)
+    # hubctl online key              puts GloriaFood's key for this restaurant on the hub (asked for and not shown, never on the
+    #                                command line), restarts the API; from then on the hub asks GloriaFood for accepted orders every minute
+    # hubctl online status           whether the hub has the key, when GloriaFood last answered, today's online orders by what became
+    #                                of them, and the ones somebody should look at, each by GloriaFood's own number
+    # hubctl online fetch            asks GloriaFood now instead of within the minute
+    # hubctl online show <number>    one order as GloriaFood sent it, by its number, with everything of the customer taken out:
+    #                                for looking at an order that went on the POS wrong
+    # hubctl online forget           removes the key: the hub asks nobody; the orders already on the POS stay as they are
+    unset_env() {
+      for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
+    }
+    online_status() {
+      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '
+        def at: if . then (. / 1000 | strflocaltime("%H:%M")) else "never" end;
+        (if .configured then "online orders: on (" + .source + "); " + (if .running then "asked every minute" else "NOT being asked: hubctl restart" end) + "; last answer " + (.answered_ms | at) else "online orders: off, no key (hubctl online key)" end),
+        (if .configured and (.writable | not) then "this hub cannot write orders down now (it is the standby), so it asks nobody" else empty end),
+        (if .last_failure then "TROUBLE at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else empty end),
+        "today: \(.today.came) came, \(.today.placed) on the POS, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
+        (if (.look | length) > 0 then "to look at:" else empty end),
+        (.look[] | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "kept" then "not on the POS" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
+    }
+    case "${2:-status}" in
+      key)
+        read -rsp "GloriaFood's key for this restaurant (it is not shown as you paste it): " key
+        echo
+        key=${key//[[:space:]]/}
+        [[ -n "$key" ]] || { echo "no key given; nothing changed" >&2; exit 2; }
+        [[ "$key" =~ ^[A-Za-z0-9._~+/=-]{8,200}$ ]] || { echo "that does not look like a key (letters and digits, 8 or more, no spaces); nothing changed" >&2; exit 2; }
+        unset_env POS_GLORIAFOOD_KEY
+        printf 'POS_GLORIAFOOD_KEY=%s\n' "$key" >> "$POS_HOME/.env"
+        unset key
+        compose up -d api
+        echo "The key is on the hub. Waiting for the API to pick it up..."
+        for _ in $(seq 1 30); do
+          sleep 1
+          if [[ "$(curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '.configured' 2> /dev/null || true)" == true ]]; then
+            sleep 3 # the first round, so the status says whether GloriaFood took the key
+            online_status
+            echo "From now on an order accepted in GloriaFood's app goes on the POS within the minute. hubctl online status says how they are doing."
+            exit 0
+          fi
+        done
+        echo "The API did not come up with the key within 30 s, or is older than online orders (hubctl update). hubctl logs api says why; hubctl online forget takes the key off again."
+        exit 1
+        ;;
+      status)
+        online_status
+        ;;
+      fetch)
+        curl -sS -X POST http://127.0.0.1:8000/online/fetch \
+          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else (if .asked then "asked: \(.came) came, \(.placed) on the POS, \(.kept) not for the POS, \(.failed) could not be put on" else "not asked: this hub cannot write orders down now" end) + (if .status.last_failure then "; TROUBLE: " + .status.last_failure.reason else "" end) end'
+        ;;
+      show)
+        [[ "${3:-}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "usage: hubctl online show <GloriaFood's number for the order>" >&2; exit 2; }
+        curl -sS "http://127.0.0.1:8000/online/orders/$3" | jq 'if (.detail | type) == "object" then .detail.message else . end'
+        ;;
+      forget)
+        unset_env POS_GLORIAFOOD_KEY
+        compose up -d api
+        echo "The key is gone from the hub: it asks GloriaFood for nothing. The orders already on the POS stay as they are. (The key itself is removed in GloriaFood's admin.)"
+        ;;
+      *)
+        echo "usage: hubctl online key | status | fetch | show <number> | forget" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -366,7 +434,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget" >&2
     exit 2
     ;;
 esac

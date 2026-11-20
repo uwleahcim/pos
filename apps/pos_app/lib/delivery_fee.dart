@@ -322,9 +322,13 @@ String reachShort(String by, String upTo) => '$upTo ${feeUnit(by)}';
 String feeWords(String fee) => (double.tryParse(fee) ?? 0) == 0 ? 'Free' : '\$$fee';
 
 /// The fee an order carries, read from its `delivery_fee` field: the band it was picked by and what that
-/// band cost then.
+/// band cost then. An order placed on the restaurant's website carries the fee the website charged, which
+/// has no band ([onWebsite], docs/online-orders.md).
 class OrderFee {
   const OrderFee({this.by, this.upTo, this.amount = '0.00', this.taxed = false, this.measured});
+
+  /// What [by] says of a fee the website charged.
+  static const website = 'online';
 
   /// Null while nobody said what the delivery costs, and for a field this build cannot read.
   static OrderFee? of(Object? value) {
@@ -332,6 +336,9 @@ class OrderFee {
     final amount = value['amount']?.toString();
     if (amount == null || double.tryParse(amount) == null) return null;
     final by = value['by'], upTo = value['up_to']?.toString();
+    if (by == website && double.parse(amount) > 0) {
+      return OrderFee(by: website, amount: amount, taxed: value['taxed'] == true);
+    }
     final measured = Measured.of(value['measured']);
     if ((by != 'miles' && by != 'minutes') || upTo == null || upTo.isEmpty) {
       return double.parse(amount) == 0 ? OrderFee(measured: measured) : null;
@@ -341,7 +348,7 @@ class OrderFee {
 
   final String? by;
 
-  /// The band's reach; null for no fee on purpose.
+  /// The band's reach; null for no fee on purpose, and for a fee the website charged.
   final String? upTo;
   final String amount;
   final bool taxed;
@@ -349,14 +356,25 @@ class OrderFee {
   /// What the map said of the address when the fee was picked; null when nobody asked it.
   final Measured? measured;
 
+  /// Charged on the restaurant's website when the order was placed there: no band of the location's list.
+  bool get onWebsite => by == website;
+
   /// No fee, on purpose.
-  bool get none => upTo == null;
+  bool get none => upTo == null && !onWebsite;
 
-  /// How a form names it: the band's reach, or [FeePick.none].
-  String get pick => upTo ?? FeePick.none;
+  /// How a form names it: the band's reach, [FeePick.none], or [FeePick.kept] for the website's fee, which
+  /// no button of the list stands for.
+  String get pick => onWebsite ? FeePick.kept : upTo ?? FeePick.none;
 
-  /// "$5.00 · up to 4.5 mi", or "No fee".
-  String get words => none ? 'No fee' : '${feeWords(amount)} · ${reachWords(by!, upTo!).toLowerCase()}';
+  /// "Up to 4.5 mi", or "Charged on the website"; nothing for no fee.
+  String get reach => none
+      ? ''
+      : onWebsite
+      ? 'Charged on the website'
+      : reachWords(by!, upTo!);
+
+  /// "$5.00 · up to 4.5 mi", "$4.00 · charged on the website", or "No fee".
+  String get words => none ? 'No fee' : '${feeWords(amount)} · ${reach.toLowerCase()}';
 
   @override
   bool operator ==(Object other) =>

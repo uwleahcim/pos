@@ -11,7 +11,7 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 import 'package:pos_app/screens/theme.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, tapKey;
-import 'delivery_fee_test.dart' show carried, delivery, offered, picked, pumpForm, pumpOrder;
+import 'delivery_fee_test.dart' show carried, delivery, offered, picked, pumpForm, pumpOrder, websiteFee;
 import 'delivery_test.dart' show created, elm, key, linda, lindaDigits, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
@@ -825,6 +825,21 @@ void main() {
         'up_to': '2',
         'measured': {'miles': '1.1', 'minutes': 4, ...Hub.mapMark},
       });
+      await stop(tester);
+    });
+
+    testWidgets('a fee the website charged is not moved by the map: it says how far, and a tap picks', (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: websiteFee), fees: Hub.mapFees);
+      await tapKey(tester, 'when-strip');
+      await tapKey(tester, 'fee-lookup');
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
+      expect((picked(tester, 'kept'), picked(tester, '4.5')), (true, false));
+      await typeAddress(tester, main9); // the customer rang: it goes somewhere else
+      expect(said(tester, 'fee-lookup-found'), '1.1 mi · 4 min drive');
+      expect((picked(tester, 'kept'), picked(tester, '2')), (true, false));
+      await tapKey(tester, 'when-save');
+      final data = dataOf(t.hub, 'set_field', 'o1');
+      expect((data['address'], data.containsKey('delivery_fee')), (main9, false));
       await stop(tester);
     });
 

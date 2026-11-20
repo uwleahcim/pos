@@ -51,6 +51,10 @@ from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
+from ..online.gloriafood import source_from_env
+from ..online.inbox import default_inbox
+from ..online.place import own_word
+from ..online.service import OnlineOrders
 from ..orders.adjustments import APPROVAL_TTL, PricingRules, load_rules
 from ..orders.ahead import orders_ahead
 from ..orders.bag import bag_ops
@@ -115,6 +119,7 @@ from .history import add_history
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
+from .online import add_online_orders
 from .prep import add_prep
 from .reservations import add_reservations
 from .runs import add_runs
@@ -856,17 +861,23 @@ def create_app(
     waste: WasteLog | None = None,
     waitlist: Waitlist | None = None,
     reservations: Reservations | None = None,
+    online: OnlineOrders | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         """The PBX watcher runs for as long as the API does, when a PBX is configured; the face models load
-        on a thread meanwhile, when the hub has them (POS_FACE_MODELS); the push relay's connection to Apple
-        closes with the API; the screens' streams end when the server is told to stop, so it can."""
+        on a thread meanwhile, when the hub has them (POS_FACE_MODELS); GloriaFood is asked for online orders
+        every minute, when the hub has its key; the push relay's connection to Apple closes with the API; the
+        screens' streams end when the server is told to stop, so it can."""
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
         if faces is None:
             app.state.faces.start(FaceEngine.from_env)
+        if online is None:
+            # Only where the API is serving, never where this module is merely loaded: an order GloriaFood
+            # hands over is put on the POS and printed by the one that asked. Nothing without a key.
+            app.state.online.start()
         unhook = end_on_stop(app.state.feed)
         try:
             yield
@@ -948,6 +959,8 @@ def create_app(
     app.state.waitlist = waitlist if waitlist is not None else Waitlist(default_wait_store())
     # The reservation book: the tables booked ahead, a day at a time, and how each booking ended.
     app.state.reservations = reservations if reservations is not None else Reservations(default_book_store())
+    # Online orders: asked of GloriaFood every minute when the hub has its key, and put on the POS.
+    app.state.online = online if online is not None else OnlineOrders(source_from_env(), default_inbox())
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(
@@ -1054,7 +1067,9 @@ def create_app(
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         app.state.menu.refresh()
         # a dish changing checks first: it is filled in from the check it comes from, and keeps its price
-        fresh, refused_moves = carry_ops(store, [op.to_op() for op in ops if op.op_id not in store])
+        # where an order came from online is the hub's to say (pos.online.place): a screen's word is dropped
+        fresh = [own_word(op.to_op()) for op in ops if op.op_id not in store]
+        fresh, refused_moves = carry_ops(store, fresh)
         fresh, refused = price_lines(app.state.menu, fresh)
         refused = refused_moves + refused
         fresh, refused_voids = void_ops(lambda: app.state.settings.get("voids"), app.state.tokens, store, fresh, may)
@@ -2307,6 +2322,7 @@ def create_app(
     add_guest_list(app)
     add_history(app)
     add_runs(app)
+    add_online_orders(app, number_orders)
     return app
 
 

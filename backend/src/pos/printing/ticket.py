@@ -47,7 +47,8 @@ class Ticket:
     station: str  # "Wok"
     # new | modify | void | reprint | allergy (an allergy told or changed after its dishes were sent) | moved
     # (dishes already sent now go to another table than the one on their ticket: `was_at`) | bag (what goes in
-    # the bag of a to-go order changed after it was sent: no dishes, the answer alone)
+    # the bag of a to-go order changed after it was sent: no dishes, the answer alone) | notice (no order at
+    # all: something a person has to look at, in `words`)
     kind: str
     order_id: str
     ticket_no: int
@@ -74,6 +75,15 @@ class Ticket:
     # The takeout counter's copy of a to-go order: what the customer wants in the bag besides the food, a line
     # each ("2 x Chopsticks", "Forks"); empty when nothing was wanted, None while nobody was asked.
     bag: tuple[str, ...] | None = None
+    # What the customer wrote for the whole order (an online order's instructions): on every station's
+    # ticket, since it may say an allergy or "no onions in anything".
+    note: str = ""
+    # A `notice`: its headline, printed white on black, and what there is to say under it, a line each.
+    words: tuple[str, ...] = ()
+
+
+NOTED = frozenset({"new", "modify", "reprint", "allergy"})
+"""The kinds of ticket that carry the customer's note: the ones a cook works from."""
 
 
 def render(
@@ -82,7 +92,7 @@ def render(
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
     b = DIALECTS[dialect](dots=dots, font=font)
     if beep:
-        b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved", "bag") or ticket.late else 1)
+        b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved", "bag", "notice") or ticket.late else 1)
     header = {
         "new": ticket.station,
         "modify": f"*** MODIFY *** {ticket.station}",
@@ -91,6 +101,7 @@ def render(
         "allergy": f"*** ALLERGY *** {ticket.station}",
         "moved": f"*** MOVED *** {ticket.station}",
         "bag": f"*** BAG *** {ticket.station}",
+        "notice": f"*** LOOK *** {ticket.station}",
     }
     if ticket.late:
         # Taken while no backend answered (a terminal capturing only) and printed when one returned: the
@@ -106,6 +117,17 @@ def render(
     if ticket.reprinted_from:
         # A fallback printer's copy: whoever stands here carries it to the station it is for.
         b.line(f"{ticket.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
+    if ticket.kind == "notice":
+        # No order at all: something whoever stands here has to look at, said as plainly as a dish.
+        # It has no number of its own on it: a "#1" here would be read as an order's.
+        b.line(ticket.at.strftime("%H:%M"), center=True)
+        b.rule()
+        for i, said in enumerate(ticket.words):
+            b.line(said, big=i == 0, bold=True, center=i == 0, invert=i == 0)
+        b.rule()
+        b.line(f"{ticket.order_id.rsplit(':', 1)[-1][-20:]}  {ticket.at.strftime('%Y-%m-%d %H:%M:%S')}")
+        b.feed(2).cut()
+        return bytes(b)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))
     if ticket.tab:
         # A bar tab has no table: the name on it is where its drinks go, so it is the biggest thing on it.
@@ -156,6 +178,12 @@ def render(
     if ticket.kind == "allergy":
         b.line("For the dishes you already have:")
     if ticket.allergies or ticket.kind == "allergy":
+        b.rule()
+    if ticket.note and ticket.kind in NOTED:
+        # What the customer wrote for the whole order, on every station's ticket under a bar of its own: it
+        # is read before the dishes, and it is not the kitchen's own allergy block, which a person filled in.
+        b.line("CUSTOMER'S NOTE", bold=True, center=True, invert=True)
+        b.line(ticket.note, bold=True)
         b.rule()
     if ticket.kind == "moved":
         # The cooks' tickets name the table the food was sent for: this one says where it goes now, as big as

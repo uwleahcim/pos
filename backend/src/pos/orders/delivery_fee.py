@@ -29,6 +29,10 @@ Not every service lets its figures be kept (`pos.maps.may_keep`: Google's terms 
 said picks the band on the form and goes no further: `fee_ops` leaves it off the order, and leaves off
 figures that do not say who measured them, since nobody can tell whose terms those fall under.
 
+An order that came from the restaurant's website was charged its fee there (`pos.online.place`): it carries
+what that was, `{"by": "online", "up_to": null, "amount": "5.00"}`, with no band, and is charged it like any
+other. Only the hub writes one: a screen that names no band says no fee, as ever.
+
 The check charges it only while the order is a delivery (`pos.orders.check`): one changed to pickup keeps
 what was picked and is charged nothing. It is a charge of its own on the check and on the bill, "Delivery
 fee", and it is in the sales with the other charges; it is never a gratuity, and nothing here says who the
@@ -54,6 +58,8 @@ CHARGE_NAME = "Delivery fee"
 TAX_CLASS = "delivery_fee"
 """What a taxed fee is taxed as: by the profile's own rule for it, else by its default rule."""
 MEASURES = ("miles", "minutes")
+ONLINE = "online"
+"""What a fee goes by when the customer was charged it on the restaurant's website: no band, the amount alone."""
 MILES_MAX = Decimal(100)
 MINUTES_MAX = Decimal(240)
 FEE_MAX = Decimal("999.99")
@@ -160,7 +166,8 @@ def measured_of(value: Any) -> dict[str, Any] | None:
 def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     """What an order carries of its delivery fee, or None while nobody said: `amount` (dollars, "0.00" for
     no fee on purpose), `by` and `up_to` (the band it was picked by; None with no fee), `taxed`, and, only
-    when the map was asked, `measured`: what it said of the address when the fee was picked."""
+    when the map was asked, `measured`: what it said of the address when the fee was picked. A fee charged
+    on the website goes by `online` and has no band."""
     value = fields.get(FIELD)
     if not isinstance(value, Mapping):
         return None
@@ -168,6 +175,8 @@ def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     if amount is None:
         return None
     by = value.get("by")
+    if by == ONLINE and amount > ZERO:
+        return {"by": ONLINE, "up_to": None, "amount": str(amount), "taxed": value.get("taxed") is True}
     reach = measure(value.get("up_to"), by) if by in MEASURES else None
     measured = measured_of(value)
     told = {} if measured is None else {"measured": measured}
@@ -255,6 +264,7 @@ __all__ = [
     "FIELD",
     "MEASURES",
     "MILES_MAX",
+    "ONLINE",
     "MINUTES_MAX",
     "TAX_CLASS",
     "band_for",

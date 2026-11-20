@@ -78,8 +78,9 @@ class FeePicker extends StatelessWidget {
                 if (taken != null && !listed)
                   ChoiceTile(
                     key: const ValueKey('fee:kept'),
-                    groupLabel: '${feeWords(taken.amount)} · as taken',
-                    name: reach(taken.by!, taken.upTo!),
+                    // the website's own fee is no band: it stays until somebody picks one of the list's
+                    groupLabel: taken.onWebsite ? feeWords(taken.amount) : '${feeWords(taken.amount)} · as taken',
+                    name: taken.onWebsite ? (narrow ? 'Website' : 'On the website') : reach(taken.by!, taken.upTo!),
                     available: true,
                     selected: picked == FeePick.kept,
                     onTap: () => onPick(FeePick.kept),

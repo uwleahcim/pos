@@ -141,6 +141,10 @@ merges after any disconnect.
   day, with what was paid on each; each day's prep list adds its dishes up by station, on screen and on
   paper; a catering order prints a pack sheet with its tickets, every dish with a box to tick):
   `docs/catering.md`
+- Online orders (a pickup or delivery order placed on the restaurant's GloriaFood site and accepted there
+  goes on the POS by itself within the minute, as a to-go order with the website's prices, promotions, fee,
+  tip and payment, and its kitchen tickets print; the hub asks GloriaFood with a key the owner puts on it,
+  `hubctl online key`; an order that cannot go on prints a slip and is listed): `docs/online-orders.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

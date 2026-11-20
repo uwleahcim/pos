@@ -33,6 +33,9 @@ from .split import split_checks, split_of
 
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
+UNTAXED = "untaxed"
+"""The tax class of a charge that is never taxed, whatever the location's tax profile says of the classes it
+knows: a row that only evens a check with what a customer was charged somewhere else (pos.online.place)."""
 
 
 def cents(value: Decimal) -> Decimal:
@@ -151,12 +154,14 @@ def check_for(
             continue
         amount = _charge_amount(charge.kind, Decimal(charge.value or "0"), discounted)
         charge_total += amount
-        taxable.append(TaxableLine(f"charge:{charge.charge_id}", charge.tax_class, amount))
+        charge_class = None if charge.tax_class == UNTAXED else charge.tax_class
+        if charge_class is not None:
+            taxable.append(TaxableLine(f"charge:{charge.charge_id}", charge_class, amount))
         row = _charge_row(charge.charge_id, charge.name, charge.kind, charge.value, amount, charge.gratuity, False)
-        row["taxed"] = exempt is None and _taxed(taxes, charge.tax_class, order_type, on)
+        row["taxed"] = exempt is None and charge_class is not None and _taxed(taxes, charge_class, order_type, on)
         row["applied_by"] = charge.applied_by
         charge_rows.append(row)
-        charge_classes.append(charge.tax_class)
+        charge_classes.append(charge_class)
     # What a delivery costs, as it was picked when the order was taken (pos.orders.delivery_fee): a charge of
     # its own, last, taxed only when the location says its fee is. `delivery` says which band it was.
     fee = fee_charged(state.fields)
@@ -325,4 +330,4 @@ def charge_snapshot(rule: ChargeRule) -> dict[str, Any]:
     }
 
 
-__all__ = ["charge_snapshot", "check_for"]
+__all__ = ["UNTAXED", "charge_snapshot", "check_for"]

@@ -73,6 +73,9 @@ services:
       # Live traffic for a delivery's promised time ("Live traffic" in the same guide), turned on in the app.
       # POS_MAPS_TRAFFIC_DAILY is the most Google is asked about the roads in a day (150 unless set).
       POS_MAPS_TRAFFIC_DAILY: ${POS_MAPS_TRAFFIC_DAILY:-}
+      # Online orders (docs/online-orders.md): GloriaFood's key for this restaurant, written by
+      # `hubctl online key`. Empty: nobody is asked and nothing arrives.
+      POS_GLORIAFOOD_KEY: ${POS_GLORIAFOOD_KEY:-}
     volumes:
       - ./apns:/apns:ro
     ports:

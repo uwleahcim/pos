@@ -117,6 +117,10 @@ ORDER_FIELDS = frozenset(
         # purpose. A screen says only the band, and the hub fills in the rest. Charged only while the order
         # is a delivery.
         "delivery_fee",
+        # An order that came from the restaurant's website (pos.online.place): where from, the website's
+        # own number for it, how the customer chose to pay and what they were charged, {source, id, type,
+        # payment, total}. Only the hub writes it.
+        "online",
     }
 )
 ALLERGY_NOTE_MAX = 80

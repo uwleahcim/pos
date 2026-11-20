@@ -39,6 +39,7 @@ class PackSheet:
     handover: str = ""  # pickup | delivery, or nothing said
     address: str = ""
     note: str = ""  # the note for the event
+    said: str = ""  # what the customer wrote for the whole order (an online order's instructions)
     allergies: tuple[str, ...] = ()
     money: Money | None = None
     bag: tuple[str, ...] | None = None  # as on the takeout station's ticket
@@ -90,6 +91,9 @@ def render_pack(sheet: PackSheet, *, dots: int = 576, font: str | None = None, d
         b.line("  ".join(said), bold=True)
     if sheet.note:
         b.line(f"** {sheet.note} **", bold=True)
+    if sheet.said:
+        b.line("CUSTOMER'S NOTE", bold=True, center=True, invert=True)
+        b.line(sheet.said, bold=True)
     if sheet.money is not None:
         b.line(sheet.money.words, big=True, bold=True, center=sheet.money.owing, invert=sheet.money.owing)
         if sheet.money.detail:
