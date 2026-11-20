@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from ..sync.oplog import Line, OrderState
-from .service import SOON_MS, Takes, _ticket_lines, allergy_lines, allergy_words, is_to_go, starts_ms
+from .service import SOON_MS, Takes, _ticket_lines, allergy_lines, allergy_words, is_to_go, order_note, starts_ms
 
 KEEP_MS = 4 * 60 * 60 * 1000
 """How long a ticket stays on a screen when nobody marks it: past this the food is long gone from the kitchen."""
@@ -90,7 +90,8 @@ def kitchen_screen(
 
     A ticket says whose it is (`table`, `tab`, or `order_no` and `customer` of a to-go order with `channel`
     and `promised_ms`), `server`, `guests`, `course`, since when it is in the kitchen (`since_ms`), the
-    allergies told on the order, the other stations cooking for the same send (`also_at`) and its `lines`.
+    allergies told on the order, what the customer wrote for the whole of it (`note`: an online order's
+    instructions), the other stations cooking for the same send (`also_at`) and its `lines`.
     A line is a dish as the paper ticket words it (`qty`, `label`, `modifiers` with their `depths`, `note`,
     `seat`, `header`, `allergy`), the order line it stands for (`line_id`), the stations of this screen that
     make it (`stations`: what a `done` names) and the ones of them that said it is made (`made`), and whether
@@ -215,6 +216,8 @@ def kitchen_screen(
                 "guests": fields.get("guests") if isinstance(fields.get("guests"), int) else None,
                 "course": (courses.get(course) or course) if course else "",
                 "allergies": list(allergy_lines(state, allergens or {})),
+                # what the customer wrote for the whole order (an online order's instructions)
+                "note": order_note(state),
                 "also_at": list(others),
                 "lines": rows,
             }

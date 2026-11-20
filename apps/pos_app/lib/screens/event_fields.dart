@@ -302,8 +302,9 @@ class _WhenDialogState extends State<WhenDialog> {
   late String? _fee = widget.fee == null ? null : FeePick.kept;
   late final _asker = DistanceAsker()..source = widget.distance;
 
-  /// Somebody tapped a price: from then on the map says how far and picks nothing.
-  bool _feeByHand = false;
+  /// Somebody tapped a price: from then on the map says how far and picks nothing. Nor does it move a fee
+  /// the website charged, which the customer was told and may have paid: only a tap does.
+  late bool _feeByHand = widget.fee?.onWebsite ?? false;
 
   /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand.
   Future<void> _lookUp({bool again = false, bool fresh = false}) async {

@@ -29,6 +29,9 @@ Map<String, dynamic> carried(String upTo, String amount, {String by = 'miles', b
   'taxed': taxed,
 };
 
+/// The fee of an order placed on the restaurant's website, as the hub wrote it down (docs/online-orders.md).
+const websiteFee = <String, dynamic>{'by': 'online', 'up_to': null, 'amount': '4.00', 'taxed': false};
+
 /// Linda's delivery to Elm Street, with the [fee] it carries.
 Map<String, dynamic> delivery({Map<String, dynamic>? fee, bool brought = true}) {
   final o = order(delivery: brought);
@@ -143,6 +146,14 @@ void main() {
         final read = OrderFee.of(none);
         expect((read?.none, read?.pick, read?.words), (true, FeePick.none, 'No fee'));
       }
+      // charged on the website: it has no band, and it is not "no fee"
+      final online = OrderFee.of({...websiteFee, 'taxed': true});
+      expect((online?.onWebsite, online?.none, online?.upTo), (true, false, null));
+      expect((online?.amount, online?.taxed, online?.pick), ('4.00', true, FeePick.kept));
+      expect((online?.words, online?.reach), (r'$4.00 · charged on the website', 'Charged on the website'));
+      expect(fee?.onWebsite, isFalse);
+      // delivered for nothing by the website is no fee like any other
+      expect(OrderFee.of({...websiteFee, 'amount': '0.00'})?.none, isTrue);
       // nobody said, or nothing this build can read
       for (final unreadable in [
         null,
@@ -179,6 +190,11 @@ void main() {
       expect(FeePick.listed(taken, null), isFalse);
       // no fee on purpose is always as the list has it
       expect(FeePick.changed(FeePick.none, const OrderFee(), null), isNull);
+      // the website's fee is no band of any list: it is kept until a band, or no fee, is picked
+      final online = OrderFee.of(websiteFee)!;
+      expect((FeePick.listed(online, fees), FeePick.listed(online, null)), (false, false));
+      expect(FeePick.changed(FeePick.kept, online, fees), isNull);
+      expect((FeePick.changed('2', online, fees), FeePick.changed(FeePick.none, online, fees)), ('2', FeePick.none));
     });
 
     test('the history says what was picked and what it was before', () {
@@ -199,6 +215,11 @@ void main() {
       said = words(null, none);
       expect(said.title, 'Delivery fee taken back');
       expect(said.under, ['It was no fee']);
+      said = words(websiteFee, null);
+      expect(said.title, r'Delivery fee $4.00');
+      expect(said.under, ['Charged on the website']);
+      said = words(carried('2', '3.00'), websiteFee);
+      expect(said.under, ['Up to 2 mi', r'It was $4.00 · charged on the website']);
     });
 
     test('the fee on a check is told from a charge staff put on', () {
@@ -432,6 +453,34 @@ void main() {
       await tapKey(tester, 'fee:2');
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': '2'});
+      await stop(tester);
+    });
+
+    testWidgets('a fee the website charged stays until somebody picks another, and nobody is asked to', (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: websiteFee), fees: Hub.milesFees);
+      await tapKey(tester, 'leaving-chip');
+      expect(offered(tester).first, r'$4.00, On the website');
+      expect((picked(tester, 'kept'), picked(tester, '2'), picked(tester, 'none')), (true, false, false));
+      expect(enabled(tester, 'when-save'), isTrue); // the order has its fee: none of the list's has to be picked
+      await tapKey(tester, 'when-save');
+      expect(kinds(t.hub, 'o1'), isEmpty);
+      await tapKey(tester, 'leaving-chip');
+      await tapKey(tester, 'fee:2');
+      expect((picked(tester, 'kept'), picked(tester, '2')), (false, true));
+      await tapKey(tester, 'when-save');
+      expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': '2'});
+      await stop(tester);
+    });
+
+    testWidgets('where the location charges no fee, what the website charged still shows', (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: websiteFee));
+      await tapKey(tester, 'leaving-chip');
+      expect(key('fee-picker'), findsOneWidget);
+      expect((picked(tester, 'kept'), picked(tester, 'none')), (true, false));
+      expect(key('fee:2'), findsNothing);
+      await tapKey(tester, 'fee:none'); // taken off by hand, as any fee can be
+      await tapKey(tester, 'when-save');
+      expect(dataOf(t.hub, 'set_field', 'o1')['delivery_fee'], {'up_to': null});
       await stop(tester);
     });
 

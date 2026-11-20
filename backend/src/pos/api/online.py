@@ -1,0 +1,123 @@
+"""Online orders on the wire. The rules live in `pos.online`; these are the calls (docs/online-orders.md).
+
+- `GET /online/status`: how the online orders are doing: whether the hub has GloriaFood's key
+  (`configured`), whether it is asking every minute (`running`) and can write orders down (`writable`),
+  when GloriaFood was last asked and last answered (`asked_ms`, `answered_ms`) and why it did not
+  (`last_failure`: `at_ms`, `reason`), today's orders by what became of them (`today`: `came`, `placed`,
+  `kept`, `failed`), how many are still to be put on the POS (`waiting`), and the ones a person should look
+  at (`look`), each by GloriaFood's number (`id`), with its `kind`, `state`, the POS order it became
+  (`order_id`) and what there is to say of it (`said`). Nothing of a customer is in it, and no key.
+- `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
+  that round did (`asked`, `came`, `placed`, `kept`, `failed`) and the `status` after it. 409 `no_key`
+  when the hub has no key.
+- `GET /online/orders/{id}`: one order as GloriaFood sent it, by GloriaFood's number, with everything of
+  the customer taken out (`pos.online.place.hidden`): for looking at the shape of an order that went on
+  wrong. 404 `unknown_order`; 410 `forgotten` once the order is older than the hub keeps it as it came.
+
+Putting an order on the POS is this module's too (`add_online_orders` sets `OnlineOrders.put`): the
+operations `pos.online.place` makes are numbered, stored and printed as a screen's are, by the same steps.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+
+from ..online.gloriafood import NAME
+from ..online.inbox import Arrival
+from ..online.place import DEVICE, Placed, ext_id_of, hidden, ops_for, order_id_for
+from ..online.service import SEVERAL, UNREADABLE, OnlineOrders
+from ..orders.check import check_for
+from ..orders.counts import holds
+from ..sync.hlc import Clock
+
+LOOK = "Look at it in GloriaFood's own app."
+
+
+def add_online_orders(app: FastAPI, number_orders: Any) -> None:
+    """Wires the online orders into the hub: how one is put on the POS, the slip for one somebody has to
+    look at, and the calls above. `number_orders` is the hub's own numbering of to-go orders."""
+    online: OnlineOrders = app.state.online
+    clock = Clock(DEVICE, lambda: app.state.store.now_ms())
+
+    def put(order: Mapping[str, Any]) -> Placed:
+        store = app.state.store
+        ext_id = ext_id_of(order)
+        if ext_id is not None and store.entry(order_id_for(ext_id)) is not None:
+            # It is on the POS: what became of it could not be written down the last time. One order.
+            return Placed(order_id_for(ext_id), ())
+        menu = app.state.menu
+        menu.refresh()
+        placed = ops_for(
+            order,
+            menu,
+            stamp=clock.now,
+            check_of=lambda state: check_for(state, app.state.taxes, app.state.pricing),
+            rules=app.state.pricing,
+            minutes=app.state.settings.get("quotes").get("minutes"),
+            now_ms=store.now_ms(),
+        )
+        # Stored and taken off the numbers left as one step, like a screen's order. An online order is
+        # never refused for a dish that ran out: it was sold, and somebody accepted it.
+        with menu.counting():
+            accepted = store.append(number_orders(app.state.numbers, list(placed.ops)))
+            counted = menu.counts()
+            if accepted and counted:
+                menu.take({dish: n for dish, n in holds(store.state(placed.order_id), counted).items() if n})
+        if accepted:
+            app.state.feed.poke()  # the screens hear of it now, before the tickets print
+            app.state.printing.on_ops(store.for_order, list(accepted))
+            app.state.notifier.on_ops(store.for_order, list(accepted))
+        return placed
+
+    def notice(arrival: Arrival, said: str) -> None:
+        """The slip for an order somebody has to look at: one that is not on the POS, or is on it and was
+        not sent to the kitchen."""
+        number = f"Online order {arrival.ext_id}"
+        if arrival.kind == UNREADABLE:
+            words = [
+                "ONLINE ORDERS: LOOK",
+                "GloriaFood sent the hub something it could not read. There may be online orders in it that "
+                "are not on the POS.",
+                "Look at GloriaFood's own app and ring in by hand what is missing.",
+            ]
+        elif arrival.kind == SEVERAL:
+            words = ["NOT ON THE POS", f"{said}.", "The hub lists them: sudo hubctl online status."]
+        elif arrival.state == "placed":
+            state = app.state.store.view(arrival.order_id) if arrival.order_id else None
+            order_no = state.fields.get("order_no") if state is not None else None
+            if isinstance(order_no, int):
+                number = f"Online order #{order_no} ({arrival.ext_id})"
+            words = [
+                "NOT SENT TO THE KITCHEN",
+                f"{number}: {said}.",
+                "Send it from the order if it still has to be cooked. If it was rung in by hand meanwhile, "
+                "void one of the two.",
+            ]
+        else:
+            words = ["NOT ON THE POS", f"{number}: {said}.", f"{LOOK} Ring it in by hand if it still has to be made."]
+        app.state.printing.notice(words, key=f"online:{arrival.source}:{arrival.ext_id}")
+
+    online.put = put
+    online.notice = notice
+
+    @app.get("/online/status")
+    def online_status() -> dict[str, Any]:
+        return online.status()
+
+    @app.post("/online/fetch")
+    def online_fetch() -> dict[str, Any]:
+        if not online.configured:
+            raise HTTPException(409, {"error": "no_key", "message": "This hub has no key for online orders."})
+        return {**online.round(), "status": online.status()}
+
+    @app.get("/online/orders/{ext_id}")
+    def online_order(ext_id: str) -> dict[str, Any]:
+        arrival = online.inbox.get(online.source.name if online.source is not None else NAME, ext_id)
+        if arrival is None:
+            raise HTTPException(404, {"error": "unknown_order", "message": "No online order with that number."})
+        if arrival.raw is None:
+            raise HTTPException(410, {"error": "forgotten", "message": "That order is older than the hub keeps."})
+        return {**arrival.about(), "order": hidden(arrival.raw)}

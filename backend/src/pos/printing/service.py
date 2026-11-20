@@ -38,7 +38,7 @@ import itertools
 import os
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -308,6 +308,12 @@ def allergy_lines(state: OrderState, names: Mapping[str, str]) -> tuple[str, ...
     )
 
 
+def order_note(state: OrderState) -> str:
+    """What the customer wrote for the whole order, on one line (an online order's instructions)."""
+    note = state.fields.get("note")
+    return " ".join(note.split()) if isinstance(note, str) else ""
+
+
 def ticket_for(
     state: OrderState,
     sent: list[Line],
@@ -367,6 +373,7 @@ def ticket_for(
         was_at=was_at,
         tab=state.is_tab,
         was_tab=was_tab,
+        note=order_note(state),
     )
 
 
@@ -860,6 +867,7 @@ class PrintService:
             handover=str(fields.get("handover") or ""),
             address=" ".join(str(fields.get("address") or "").split()),
             note=" ".join(str(fields.get("event_note") or "").split()),
+            said=order_note(state),
             allergies=allergy_lines(state, names),
             money=self.money(state),
             bag=self.bag(state),
@@ -993,6 +1001,30 @@ class PrintService:
             ticket = replace(ticket, bag=self.bag(state), allergies=())  # the dishes' business, not the bag's
             jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", printers=printers))
         return jobs
+
+    def notice(self, words: Sequence[str], *, key: str) -> list[PrintJob]:
+        """A slip that is no order: something a person has to look at (an online order that could not be
+        put on the POS). `words` is its headline and then what there is to say, a line each. It prints where
+        the to-go orders print, since that is where somebody packs and hands over; with no takeout station,
+        at the first printer. Nothing with no printer."""
+        printers = self.printers
+        if not printers or not words:
+            return []
+        takeout = self.takeout_station()
+        printer = next((p for p in printers if takeout is not None and takeout in p.stations), printers[0])
+        with self._lock:
+            ticket_no = next(self._tickets)
+        slip = Ticket(
+            station=self.head(printer),
+            kind="notice",
+            order_id=key,
+            ticket_no=ticket_no,
+            table="",
+            lines=(),
+            at=datetime.fromtimestamp(self._now() / 1000),
+            words=tuple(words),
+        )
+        return [self.queue(slip, printer, job_id=f"{key}:notice:{printer.id}", printers=printers)]
 
     def money(self, state: OrderState) -> Money | None:
         """What the takeout counter's ticket for this order says about the money, as the order stands: None

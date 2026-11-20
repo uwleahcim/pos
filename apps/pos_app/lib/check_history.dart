@@ -509,7 +509,7 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
             ? 'No delivery fee'
             : 'Delivery fee ${feeWords(now.amount)}',
         under: [
-          if (now != null && !now.none) reachWords(now.by!, now.upTo!),
+          if (now != null && !now.none) now.reach,
           // the hub was asked how far the address is, and this is what whoever picked was told
           if (now?.measured case final measured?) 'The map said ${measured.words}',
           if (was != null) 'It was ${was.none ? 'no fee' : was.words}',
