@@ -69,6 +69,7 @@ class Arrival:
             "said": self.said,
             "tries": self.tries,
             "fetched_ms": self.fetched_ms,
+            "settled_ms": self.settled_ms,
             "via": self.via,
         }
 

@@ -46,6 +46,7 @@ import 'floor_view.dart';
 import 'hand_over.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
+import 'online_orders_screen.dart';
 import 'order_screen.dart';
 import 'orders_ahead_screen.dart';
 import 'phone_bar.dart' show callStripRoom;
@@ -158,6 +159,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Book? _book;
   bool _bookStale = true;
   DateTime _bookRead = DateTime.fromMillisecondsSinceEpoch(0);
+  // How the online orders are doing (docs/online-orders.md), for a manager's alert: read only while a
+  // manager or an owner is signed in, when the hub says there is something to look at, and now and then (that
+  // the website stopped answering is nothing the hub announces). Null until it was read, and from an older hub.
+  OnlineStatus? _online;
+  bool _onlineStale = true;
+  int _onlineTicks = 0; // of this screen's two-second timer since it was last due by itself
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
   Timer? _clock;
@@ -189,6 +196,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _deskCalls = widget.deskPhones?.calls ?? 0;
     // Under an open check nobody sees the list: it stops asking, and reads again the moment it is back.
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
+      // the online orders are read again every half minute, told or not
+      if (++_onlineTicks >= 15) {
+        _onlineTicks = 0;
+        _onlineStale = true;
+        if (_inFront) unawaited(_readOnline());
+      }
       if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
     });
     _live = widget.api.live.changes.listen((change) {
@@ -196,10 +209,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (change.notes || change.everything) _notesStale = true;
       if (change.waitlist || change.everything) _waitStale = true;
       if (change.reservations || change.everything) _bookStale = true;
+      if (change.online || change.everything) _onlineStale = true;
       if (_inFront && change.anyOrder) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
       if (_inFront && change.waitlist) unawaited(_readWait());
       if (_inFront && change.reservations) unawaited(_readBook());
+      if (_inFront && change.online) unawaited(_readOnline());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
@@ -327,6 +342,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_readNotes());
     unawaited(_readWait());
     unawaited(_readBook());
+    unawaited(_readOnline());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -414,6 +430,41 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  /// How the online orders are doing, for the alert above the checks: read for a manager or an owner only,
+  /// when the hub says there is something new to look at, and every half minute by this screen's own timer
+  /// (that the website stopped answering, or answers again, is nothing the hub announces). The answer is the
+  /// one already held unless something changed.
+  Future<void> _readOnline() async {
+    if (!_onlineStale || !alwaysRoles.contains(widget.session.staff?.role)) return;
+    _onlineStale = false;
+    try {
+      final online = await widget.api.onlineStatus();
+      if (!mounted || identical(online, _online)) return;
+      setState(() => _online = online);
+    } on ApiException {
+      // nothing answers: the alert keeps what it said, and the status bar shows the outage
+    }
+  }
+
+  /// How the online orders are doing, on a screen of its own: opening it is the looking, so the alert is over
+  /// on every screen. A row there that is a check on the POS opens that check.
+  Future<void> _onlineOrders() async {
+    final orderId = await Navigator.of(context).push<Object?>(
+      PosPageRoute(
+        builder: (_) => OnlineOrdersScreen(
+          api: widget.api,
+          by: widget.session.staff?.name ?? '',
+          status: _online,
+          opensChecks: true,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _onlineStale = true;
+    unawaited(_readOnline());
+    if (orderId is String && orderId.isNotEmpty) await _open(orderId);
+  }
+
   /// The book was changed from here, or may have been on a screen that was just left: it is read again now.
   void _bookChanged() {
     _bookStale = true;
@@ -490,7 +541,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _notesFor = id;
     if (id == null) return;
     _notesStale = true;
-    if (mounted && _inFront) unawaited(_readNotes());
+    _onlineStale = true; // a manager who has just signed in is alerted now, not within the half minute
+    if (mounted && _inFront) {
+      unawaited(_readNotes());
+      unawaited(_readOnline());
+    }
   }
 
   static String _noteKey(String staffId, ShiftNote note) => '$staffId/${note.id}/${note.editedMs ?? note.atMs}';
@@ -1000,6 +1055,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           token: token,
           holds: holds,
           staffId: widget.session.staff?.staffId,
+          by: widget.session.staff?.name,
           device: widget.settings.device,
           camera: widget.camera,
           tags: widget.tags,
@@ -1663,6 +1719,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ('Waste', Icons.delete_sweep_outlined, _waste),
       if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
         ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
+      // where the hub takes orders from the website: how they are doing, and the ones to look at
+      if (manages && (_online?.isOn ?? false)) ('Online orders', Icons.language, _onlineOrders),
       if (powers.holds(role, 'reports')) ('Today', Icons.today_outlined, _today),
       if (powers.opensLocation(role)) ('Location', Icons.storefront_outlined, _location),
       if (powers.holds(role, 'menu'))
@@ -1797,6 +1855,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       body: Column(
         children: [
           CaptureBanner(api: widget.api, outbox: widget.outbox),
+          if (manages && OnlineAlertStrip.shows(_online))
+            OnlineAlertStrip(key: const ValueKey('online-alert'), status: _online!, onTap: _onlineOrders),
           if (rush != null && rush.runsAt(now)) RushStrip(key: const ValueKey('rush-strip'), rush: rush, onTap: _rush),
           // One row over the list: the way into the search and the to-go orders by stage; the search box
           // takes the whole of it while a check is being looked for.

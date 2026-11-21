@@ -272,10 +272,53 @@ long it is: it may say an allergy. It is on every station's ticket for the order
 The note is what the customer typed. It is not the allergy block: nobody at the restaurant has read it and
 picked the allergens, so it does not turn any dish red. Read it.
 
+## Under Location, and the alert
+
+What `sudo hubctl online status` says is on a screen too, and a manager is told when there is something to
+look at without anybody running a command.
+
+**The alert.** While a manager or an owner is signed in, one slim line stands above the checks when:
+
+- there is something about an online order **to look at**: it could not be put on the POS; it went on
+  late and was not sent to the kitchen; it went on with a dish as written, or with a total that differs
+  from the website's; or something the website sent could not be read. "Online orders: 1 to look at". An
+  order the hub is still trying to put on does not alert until the hub gives up on it, which is when its
+  slip prints;
+- **no online order is reaching the POS**: the hub has asked GloriaFood for five minutes and got no answer,
+  and nothing says the orders GloriaFood sends by itself are getting in. The line is red: "Online orders
+  are not reaching the POS since 18:40". Until it is over, new orders are in GloriaFood's own app.
+
+A tap opens **Online orders**. Opening it is the looking: the hub writes down that somebody looked, and the
+line goes away **on every manager's screen**, not only this one. Nothing is taken off the list by that. The
+red line is different: it stays until GloriaFood answers again, whoever looked, and goes by itself within
+half a minute of that.
+
+Servers, bartenders and hosts see no such line. An order that comes in the normal way alerts nobody: its
+ticket prints and it is in the list of checks.
+
+**Online orders** opens from that line, from the menu of the list of checks (managers and owners, on a hub
+that takes online orders) and from **Location › Online orders**, whose row says in one line how they stand.
+It shows:
+
+- **what is wrong right now**, in a box at the top, with what to do about it. Besides the red one there
+  are two that alert nobody because the orders still arrive: GloriaFood does not answer the hub's asking
+  while its own sending works, and GloriaFood's sending is turned away while the asking works (the orders
+  come a minute late; the key in GloriaFood's admin is probably not the hub's);
+- **how they arrive**: sent by GloriaFood and asked for by the hub, each on or off, with when the last one
+  came and when GloriaFood last answered;
+- **today**: how many came, how many are on the POS, how many were not for the POS, how many could not be
+  put on, how many wait, and how many came each way;
+- **to look at**: each by GloriaFood's own number (what to find it by in GloriaFood's app), with the time,
+  what became of it and why. The ones nobody has looked at yet are marked **New**. One that is a check on
+  the POS opens that check with a tap (from the list of checks; under Location the screen is to read).
+
+Nothing of a customer is on this screen, and nothing on it changes an order.
+
 ## When something is off
 
 Nothing is dropped quietly. Whatever is not on the POS as a normal order prints a slip, **LOOK**, where the
-to-go orders print, and is listed by `sudo hubctl online status`.
+to-go orders print, alerts a manager's screen, and is listed on the screen Online orders and by
+`sudo hubctl online status`.
 
 | What happened | What the hub does |
 | --- | --- |
@@ -330,8 +373,12 @@ If the same order comes twice, by either way or both, it is one order on the POS
 
 ## What is not built
 
-- On the screens: how online orders are doing under Location, and an alert when one comes in or needs
-  looking at. Today only `hubctl online status` and the LOOK slips say.
+- The alert is for managers and owners. Showing it to a host or a server would be a new line in **Who may
+  do what**; it is not built. It makes no sound, and it is on the list of checks and the floor only: not on
+  a kitchen screen, and not over an open check.
+- A button on a screen to ask GloriaFood now, or to try an order again: `sudo hubctl online fetch` does the
+  first, and an order that would not go on is rung in by hand.
+- The screen names an order by GloriaFood's number, not by the number on the POS's check.
 - The day's report and Sales count money paid on the website under **Paid elsewhere**, with whatever else
   was paid outside the POS. A row of its own for it is not built.
 - Typing a note for the whole order on a screen (for a phone order, say). The strip shows one that came
@@ -339,7 +386,10 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - Reservations from GloriaFood into the reservation book.
 - Telling GloriaFood anything back (that an order is ready, that a dish ran out).
 - A second built-in way in beside the tunnel (a small receiver in the cloud that the hub collects from).
-- Telling the staff on a screen when pushes stop getting through: today only `hubctl online status` says.
+- Noticing that the door or the tunnel is down. The hub cannot see either from where it runs, so no screen
+  says so: the orders arrive by the asking, and `sudo hubctl online status` and
+  `sudo hubctl online tunnel status` say what is down. On a hub that only takes what GloriaFood sends and
+  does not ask, nothing on a screen says when orders stop.
 - With two hubs, sending pushes to whichever hub is taking the orders: a push to the hub in waiting is
   answered with an error, and the asking brings the order.
 - An order from an earlier day is not put into that day's sales automatically.
@@ -358,6 +408,24 @@ an order into operations, `service.py` is the minute's round and the push, `door
   shows are `lib/screens/online_strip.dart`; the list's globe is `_marked` in `orders_screen.dart`. A
   kitchen ticket's `note` (`GET /kitchen/screen`, `GET /kitchen/pass`) is `KitchenTicket.note`. Tests:
   `apps/pos_app/test/online_orders_test.dart`.
+
+- **How they are doing, on the screens.** `GET /online/status` also says, on each `look` row, since when
+  it is as it is (`at_ms`) and whether that is after somebody last looked (`new`; a row still being tried
+  is not new until it is given up on, the moment its slip prints, and a push that could not be read is
+  never new on a hub that also asks, as it prints no slip there), with `news` (how many are) and `seen_ms`;
+  and `trouble`, what is wrong right now: `{code, since_ms, reason, urgent}`, `not_answering` once the
+  asking has failed for `STALE_MS` (urgent unless a push got in and none was turned away after it) and
+  `pushes_refused` (today's orders came only by the asking and a push was turned away after the last one
+  that got in; never urgent, with `count`). `POST /online/seen` `{"by": "Mike"}` keeps when somebody
+  looked and who in the setting `online_seen` and answers the status after it; like a screen's operations
+  it takes no token, since it changes no order, no money and no setting anybody chose (503 `read_only` on
+  a hub that cannot write). The change feed says the topic `online` when there is a new one to look at
+  (`OnlineOrders.news`), slip or none, and when somebody looked. In the app: `OnlineStatus`, `OnlineLook`, `OnlineTrouble` (`lib/online_orders.dart`),
+  `PosApi.onlineStatus` (null from an older hub) and `onlineSeen`, `LiveChange.online`,
+  `lib/screens/online_orders_screen.dart` (the screen, and `OnlineAlertStrip`), `_readOnline` in
+  `orders_screen.dart` (managers and owners only: told by the feed, and every half minute by the screen's
+  own timer, since nothing announces that GloriaFood stopped answering). Tests:
+  `backend/tests/online/test_look.py`, `apps/pos_app/test/online_status_test.dart`.
 
 - **A push.** `POST /online/push` on the API, header `Authorization: <the key>` (`POS_GLORIAFOOD_PUSH_KEY`,
   compared in constant time, before the body is read), body as the answer to asking, at most 2 MB. 200
