@@ -26,6 +26,7 @@ import '../printers.dart';
 import '../session.dart';
 import '../floor.dart';
 import '../moves.dart';
+import '../online_orders.dart';
 import '../split.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
@@ -41,6 +42,7 @@ import 'event_fields.dart';
 import 'lot_comp_dialog.dart';
 import 'menu_editor.dart' show ManagerPinDialog;
 import 'menu_panel.dart';
+import 'online_strip.dart';
 import 'pay_dialog.dart';
 import 'ready_mark.dart';
 import 'split_screen.dart';
@@ -1700,6 +1702,9 @@ class _OrderScreenState extends State<OrderScreen> {
                 onOut: () => unawaited(_wentOut(ready)),
               ),
             if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
+            // an order from the website says so, with how it is paid and what the customer wrote for the
+            // whole of it (docs/online-orders.md, "On the screens")
+            if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
             // an order for later says its day and time, a catering order what its event needs, and a
             // delivery where it goes; a tap changes them
             if (order != null && order.isTakeout && ((order.forLater && order.promisedAt != null) || order.isDelivery))
@@ -3092,9 +3097,11 @@ String _takeoutTitle(Order order, int? readyAt) => [
   if (!order.isOpen) order.status,
 ].join(' · ');
 
-/// "Paid cash (tendered 20.00)", "Paid elsewhere · sending".
-String _paymentLabel(Payment p) =>
-    ['Paid ${p.method}${p.tendered != null ? ' (tendered ${p.tendered})' : ''}', if (p.pending) 'sending'].join(' · ');
+/// "Paid cash (tendered 20.00)", "Paid elsewhere · sending"; "Paid online" for what the website took.
+String _paymentLabel(Payment p) => [
+  paidOnline(p) ? paidOnlineNote : 'Paid ${p.method}${p.tendered != null ? ' (tendered ${p.tendered})' : ''}',
+  if (p.pending) 'sending',
+].join(' · ');
 
 /// "Manager comp · on Peking Duck · Mike approved".
 String _discountLabel(CheckDiscount d, Check check) {

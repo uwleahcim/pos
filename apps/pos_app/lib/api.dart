@@ -24,6 +24,7 @@ import 'kitchen_times.dart';
 import 'kitchen_word.dart';
 import 'live.dart';
 import 'menu.dart';
+import 'online_orders.dart';
 import 'orders_ahead.dart';
 import 'prep_list.dart';
 import 'phone.dart';
@@ -342,6 +343,14 @@ class Order {
   /// How many dishes are on the order: what a kitchen counts when it says an order is big.
   int get dishes => activeLines.fold(0, (n, l) => n + l.qty);
   bool get hasPaid => payments.isNotEmpty;
+
+  /// What the hub keeps on an order it took from the restaurant's website (docs/online-orders.md); null for
+  /// an order rung in on a screen, whatever its channel says.
+  OnlineOrder? get online => OnlineOrder.of(fields);
+
+  /// What the customer wrote for the whole order, on one line: an online order's instructions. It heads
+  /// every station's ticket, on paper and on a kitchen screen.
+  String get note => oneLine(fields['note']);
 
   /// How a to-go order leaves, where to, and the note that goes with it; on a catering order what its
   /// event needs: the guests too.

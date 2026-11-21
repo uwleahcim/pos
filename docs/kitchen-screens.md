@@ -35,6 +35,9 @@ Each ticket has:
   **red** after 20. A manager sets the two numbers (see "The colours").
 - **An allergy told on the order**, in a red band before anything else, and again under the dish of the
   seat it was told for.
+- **The customer's note**, in a dark band under any allergy: what the customer wrote for the whole order
+  on the website (`online-orders.md`), whole however long it is, as the paper has it under CUSTOMER'S NOTE.
+  It is the customer's own words, not an allergy somebody picked: read it.
 - **Also at**: the other stations cooking for the same send, as the paper says it.
 - **Its dishes**, as the station's paper ticket words them: how many, the kitchen's name of the dish, its
   choices (a choice on a choice stands further in), the note, the seat. A part of a combination says "with
@@ -287,7 +290,8 @@ The device is still a POS screen.
   list of orders): `stations` (`code`, `name`), `warn` and `late` (minutes), `tickets` (the longest in the
   kitchen first) and `recent` (the last ten finished, the latest first). A ticket: `id` (the order and the
   moment its dishes reached the kitchen), `order_id`, `since_ms`, `table`, `tab`, `order_no`, `customer`,
-  `to_go`, `channel`, `promised_ms`, `server`, `guests`, `course`, `allergies`, `also_at`, `lines` and,
+  `to_go`, `channel`, `promised_ms`, `server`, `guests`, `course`, `allergies`, `note` (what the customer
+  wrote for the whole order, on one line), `also_at`, `lines` and,
   when finished, `done_ms`. A line: `line_id`, `stations` (the ones of this screen that make it), `made`
   (the ones of them that said so), `qty`, `label`, `modifiers`, `depths`, `note`, `seat`, `header`,
   `allergy`, `void`, `changed`, `done`, `done_ms`. Nothing in the answer moves with the clock, so a screen
