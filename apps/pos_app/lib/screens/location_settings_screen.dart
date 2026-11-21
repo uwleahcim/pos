@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
+import '../contests.dart';
 import '../bag.dart';
 import '../camera.dart';
 import '../coursing.dart';
@@ -24,6 +25,7 @@ import '../waste.dart';
 import 'adjustments_screen.dart';
 import 'bag_question_dialog.dart';
 import 'bill_dialog.dart';
+import 'contests_screen.dart';
 import 'day_report_screen.dart';
 import 'delivery_fee_dialog.dart';
 import 'dishes_screen.dart';
@@ -168,6 +170,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   LiveDrive? _live; // live traffic for deliveries, as the hub has it; null until it answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
+  ContestList? _contests; // the contests the location keeps (docs/contests.md); null from an older hub
   List<BoardRow>? _board; // what is sold out and what has a number left; null until the hub answers
   OnlineStatus? _online; // how the online orders are doing; null until the hub answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
@@ -288,6 +291,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     } on ApiException {
       // nothing answered about the 86 board: the card says so
     }
+    await _readContests();
     await _readOnline();
     try {
       final clock = await widget.api.clockSetting();
@@ -792,6 +796,50 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Waste reasons saved')));
   }
 
+  Future<void> _readContests() async {
+    try {
+      final contests = await widget.api.contestList();
+      if (mounted) setState(() => _contests = contests);
+    } on ApiException {
+      // nothing answered about contests: the row says so
+    }
+  }
+
+  /// The contests for the staff (docs/contests.md): every one the location keeps with its whole board, and,
+  /// for a manager or an owner, setting one up.
+  Future<void> _openContests() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ContestsScreen(
+          api: widget.api,
+          device: widget.device ?? '',
+          token: widget.token,
+          edits: _may(settingsPower),
+        ),
+      ),
+    );
+    if (mounted) await _readContests();
+  }
+
+  /// One line on the contests: the ones on the staff's screens by name, or that there is none.
+  String get _contestsSummary {
+    final contests = _contests;
+    if (contests == null) return 'The hub has not answered about contests (an older hub: update it)';
+    final running = [
+      for (final c in contests.contests)
+        if (c.state == 'running') c.name,
+    ];
+    final coming = [
+      for (final c in contests.contests)
+        if (c.isComing) c.name,
+    ];
+    if (running.isNotEmpty) return 'Running: ${running.join(', ')}';
+    if (coming.isNotEmpty) return 'Coming: ${coming.join(', ')}';
+    return contests.contests.isEmpty
+        ? 'None set up: a board of who rings in the most sales, or the most of a dish'
+        : 'None running';
+  }
+
   Future<void> _tableTimers() async {
     final saved = await showDialog<TableTimers>(
       context: context,
@@ -1099,11 +1147,21 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             ),
           ),
           // what the managers tell the staff, and each other
-          if (_may('notes') || _may('logbook')) ...[
+          if (_may('notes') || _may('logbook') || _may('reports')) ...[
             const SizedBox(height: 12),
             Card(
               child: Column(
                 children: _divided([
+                  // a board for the staff: reading every number of it is a report
+                  if (_may('reports'))
+                    ListTile(
+                      key: const ValueKey('contests'),
+                      leading: const Icon(Icons.emoji_events_outlined),
+                      title: const Text('Contests'),
+                      subtitle: Text(_contestsSummary),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _contests == null ? null : _openContests,
+                    ),
                   if (_may('notes'))
                     ListTile(
                       key: const ValueKey('shift-notes'),

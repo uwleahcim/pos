@@ -26,10 +26,12 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **Guests**, under that: every customer who ordered with a phone number in the last 12 months, with their
   visits, what they spent and their favourite dishes, and the regulars, the guests who stopped coming and
   the new ones each a list (see `guest-list.md`). Not a setting either.
-- **Notes for the shift**, on the card under those: what everybody sees once after signing in (the
-  specials, what is out), who has seen each note, and the notes that came down (see `shift-notes.md`). Not
-  a setting either.
-- **Manager's log**, under it: what happened in a shift, by subject, for the next manager (see
+- **Contests**, on the card under those: the contests for the staff, each with its whole board, and where
+  a manager sets one up: the most sales, or the most of a dish or a category, over some days (see
+  `contests.md`). Not a setting either.
+- **Notes for the shift**, under it: what everybody sees once after signing in (the specials, what is
+  out), who has seen each note, and the notes that came down (see `shift-notes.md`). Not a setting either.
+- **Manager's log**, under that: what happened in a shift, by subject, for the next manager (see
   `shift-notes.md`).
 - **Who may do what**: which roles besides the managers and the owners may approve a void, a discount or a
   tax-exempt check, read the reports and the rest: fourteen powers, each with a button per role (see

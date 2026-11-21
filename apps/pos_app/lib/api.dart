@@ -8,6 +8,7 @@ import 'allergies.dart';
 import 'bag.dart';
 import 'cache.dart';
 import 'check_history.dart';
+import 'contests.dart';
 import 'coursing.dart';
 import 'customers.dart';
 import 'day_report.dart';
@@ -1443,6 +1444,46 @@ class PosApi {
         body: jsonEncode({'reasons': reasons}),
       ),
     ),
+  );
+
+  // Contests for the staff (docs/contests.md). ---------------------------------------------------------------
+
+  /// The contests the location keeps, each with where it stands in time and whether the staff's screens show
+  /// it, and what a form needs to set one up. No number is in it. The very same object as last time while
+  /// nothing changed, and the last list read when nothing answers. Null from a hub older than contests.
+  Future<ContestList?> contestList() async {
+    try {
+      return await _repeated('/settings/contests', ContestList.fromJson, remember: 'contests');
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets the contests: the whole list, a new one without an id.
+  Future<ContestList> saveContests(String token, List<Contest> contests) async => ContestList.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/contests'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({
+          'contests': [for (final contest in contests) contest.toJson()],
+        }),
+      ),
+    ),
+  );
+
+  /// The contests on the staff's screens as [staffId] may see each: their own number and place, who is in
+  /// front, and the whole board only where the manager said everybody sees it. The hub adds a board up from
+  /// the checks of all its days, and the first reading of a long contest takes it some seconds, so this
+  /// waits as long as the sales report does.
+  Future<MyContests> myContests(String staffId) async =>
+      MyContests.fromJson(await _get('/contests', query: {'staff_id': staffId}, timeout: const Duration(seconds: 90)));
+
+  /// One contest with its whole board (a token whose holder may read the reports). It waits as long as
+  /// [myContests], for the same reason.
+  Future<Contest> contestBoard(String token, String contestId) async => Contest.fromJson(
+    await _get('/reports/contests/$contestId', headers: _bearer(token), timeout: const Duration(seconds: 90)),
   );
 
   // Online orders (docs/online-orders.md). -------------------------------------------------------------------

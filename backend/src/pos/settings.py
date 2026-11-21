@@ -78,6 +78,10 @@
 - `powers`: who may do what (`pos/identity/powers.py`): `roles`, for each power (approve a void, read the
   sales, change the menu) the roles it is handed to besides the managers and the owners, who hold every
   power always. To start it says what the hub did before the table could be changed.
+- `contests`: the contests a manager set up for the staff (`pos/orders/contest.py`, which also checks them):
+  `contests`, each with its name, what it counts (sales, a dish or a category), its first and last day, the
+  roles that take part and who sees the numbers. None to start. Only what a contest is lives here: who is
+  ahead is added up from the sales each time it is asked.
 
 Stored like staff preferences: in memory on a laptop, in PostgreSQL on every hub and in the cloud.
 """
@@ -175,6 +179,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # Who may do what, as the hub did before the table could be changed: only a manager or an owner approves
     # a void or a discount and opens the back office; servers and bartenders take tables, hosts give them out.
     "powers": {"roles": STANDARD_POWERS},
+    # None until a manager sets one up.
+    "contests": {"contests": []},
 }
 WEEK_STARTS = ("mon", "sun")
 ORIGIN_MAX = 200
