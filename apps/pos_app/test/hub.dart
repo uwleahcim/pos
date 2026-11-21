@@ -422,6 +422,17 @@ class Hub {
   String? dishesAuth;
   int? refuseDishes;
 
+  /// Suggestions taken over a span of days (docs/goes-with.md). [suggestions] answers
+  /// `GET /reports/suggestions` by the days asked for, written as [sales] writes them; a span it has nothing
+  /// for took nothing, and null is a hub older than the report. Each ask is in [suggestionsAsks] and the
+  /// token of the last one in [suggestionsAuth]. [refuseSuggestions] answers with a status instead. While
+  /// [suggestionsHeld] is set no answer goes out until a test completes it.
+  Map<String, Map<String, dynamic>>? suggestions = {};
+  Completer<void>? suggestionsHeld;
+  final suggestionsAsks = <String>[];
+  String? suggestionsAuth;
+  int? refuseSuggestions;
+
   /// How long the kitchen took over a span of days (docs/kitchen-times.md). [kitchenTimes] answers
   /// `GET /reports/kitchen` by the days asked for, written as [sales] writes them; a span it has nothing for
   /// timed nothing, and null is a hub older than the report. Each ask is in [kitchenTimesAsks] and the token
@@ -2598,6 +2609,35 @@ class Hub {
               'before': {'first': name(first.subtract(back)), 'last': name(last.subtract(back))},
               'dishes': <Object>[],
               'categories': <Object>[],
+              'max_days': 92,
+              'now_ms': clockNow,
+            },
+      );
+    }
+    if (path == '/reports/suggestions') {
+      if (suggestions == null) return json({'detail': 'Not Found'}, 404);
+      suggestionsAuth = request.headers['authorization'];
+      if (refuseSuggestions != null) {
+        return json({
+          'detail': {'error': refuseSuggestions == 422 ? 'too_long' : 'sign_in', 'message': salesRefusal},
+        }, refuseSuggestions!);
+      }
+      final from = request.url.queryParameters['from'], to = request.url.queryParameters['to'];
+      final asked = from == null && to == null ? '' : '${from ?? to}..${to ?? from}';
+      suggestionsAsks.add(asked);
+      if (suggestionsHeld != null) await suggestionsHeld!.future;
+      final first = from ?? to ?? dayRunning, last = to ?? from ?? dayRunning;
+      return json(
+        suggestions![asked] ??
+            {
+              'from': first,
+              'to': last,
+              'days': DateTime.parse(last).difference(DateTime.parse(first)).inDays + 1,
+              'running': last == dayRunning,
+              'taken': 0,
+              'amount': '0.00',
+              'dishes': <Object>[],
+              'staff': <Object>[],
               'max_days': 92,
               'now_ms': clockNow,
             },

@@ -35,7 +35,7 @@ from ..sync.oplog import Op, OpStore, OrderState
 if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
 
-CARRIED = ("item", "qty", "note", "course", "request", "priced", "by", "by_id")
+CARRIED = ("item", "qty", "note", "course", "request", "priced", "by", "by_id", "went_with")
 """What a dish keeps when it changes checks, read from the check it comes from, never from the terminal."""
 
 

@@ -494,6 +494,8 @@ class _OrderScreenState extends State<OrderScreen> {
       'by_id': ?_staffId,
       if (line.note.isNotEmpty) 'note': line.note,
       'request': line.request.toJson(),
+      // it was taken from what goes with that dish: the report of suggestions taken reads it
+      'went_with': ?line.wentWith,
     };
   }
 

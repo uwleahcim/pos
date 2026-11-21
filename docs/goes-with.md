@@ -55,12 +55,57 @@ A manager: the menu editor › the dish › **Goes with**.
 
 Deleting a dish takes it out of every other dish's list.
 
+## Suggestions taken (a report)
+
+Since 21 November 2026. Whoever may **see the reports** (managers and owners to start, see `roles.md`):
+orders screen › **Location** (PIN) › **Suggestions taken**.
+
+It answers, for any days from one to 92: did the suggestions bring anything, with which dish, and who
+takes them.
+
+- **The days**: Today, Yesterday, 7 days, 4 weeks, or other days from the calendar. It opens on the seven
+  days just gone.
+- **Suggested dishes added**, and what **they were sold for**: every dish that was added from the tray
+  "Goes with" in those days.
+- **Who added them**: each person who rang suggested dishes in, the most first, with how many and for how
+  much.
+- **With which dish**: each dish something was added with, the one that brought the most first. Under its
+  name: how many of it went out in those days, and how many dishes were added with it ("31 sold · 27 added
+  with it"). Under that, each dish that was added, and each dish it suggests today that nobody took
+  ("none").
+- **Sold with nothing added**: the dishes that suggest something today and went out in those days without
+  anybody adding anything. These are the suggestions to change, or to talk to the staff about.
+
+What counts:
+
+- **A dish added from the tray**, by a tap or from its sheet after a hold. The same dish rung from the menu
+  is not counted, even on the same check: the report says what the tray brought, not what was sold. Dishes
+  sold (`dishes-sold.md`) says that.
+- **For whoever rang it in**, on the day of its check, at its menu price, as in "by person" in the day's
+  report. A comp or a discount takes nothing from it.
+- **As many as the line holds.** Two of it rung with the quantity count as two. Changing how many, or its
+  options, keeps it a suggested dish, and so does moving it to another check. More of it added later from
+  the check, once the kitchen has it, is a new line and not counted.
+- **Not a voided dish**, not one taken off before it was sent, and nothing on a voided check.
+- **"Sold"** counts every one of that dish in those days, on every kind of order. An online order has no
+  tray, so a dish that sells mostly online will look as if nobody takes its suggestions.
+- More than one dish can be added with one, so more can be added than were sold.
+- **Counting starts with this update.** Nothing was marked before, so earlier days read as nothing added.
+- A dish taken off the menu since stays in the report under the name it was sold by.
+
+It is a report and nothing else: a suggested dish is a sale like any other, on the same ticket, bill and
+sales figures as before, and reading the report changes nothing. It names the staff, so it sits behind the
+manager's PIN with the other reports.
+
 ## What it does not do
 
 - It adds nothing by itself, changes no price and gives no discount. A suggested dish that is tapped is a
   dish on the check like any other: on the kitchen ticket, on the bill and in the sales.
 - It prints nothing and shows nothing to the customer.
-- It does not count how often a suggestion was taken. Dishes sold (`dishes-sold.md`) says what sold.
+- It does not show the report to the staff, hold it beside the days before, or count for a contest
+  (`contests.md`).
+- It does not say how often a person rang a dish that suggests something and added nothing: the report
+  counts what was added, by person, and what was sold, by dish.
 - It does not suggest by time of day, by table or by what is already on the check. One dish, one list.
 - A choice inside a dish (the rice that comes with it, an extra) is not this: that is an option group
   (`modifiers.md`).
@@ -72,6 +117,10 @@ Deleting a dish takes it out of every other dish's list.
 
 Nothing to import and nothing to turn on. Then set the dishes in the menu editor. An app on an older hub
 suggests nothing; an app that is not rebuilt yet rings as before and leaves the lists alone.
+
+For the report the same two steps, hub first. A screen that is not rebuilt yet still suggests, and what is
+added at it is not counted until it is. On a hub that is not updated, Location's row opens a screen that
+says the hub is older.
 
 ## For developers
 
@@ -90,3 +139,16 @@ suggests nothing; an app that is not rebuilt yet rings as before and leaves the 
   tiles and their focus. The editor's part is in `lib/screens/menu_editor.dart`: `goesWith`,
   `setGoesWith`, `wholeDishes`, and `removeItem` cleans the lists.
 - Tests: `backend/tests/menu/test_goes_with.py`, `apps/pos_app/test/goes_with_test.dart`.
+- The report. A dish added from the tray carries `went_with` on its `add_line`: the item code of the dish
+  whose suggestions the tray showed (`ChosenLine.wentWith`, read in `_offeredWith` when the tile is tapped,
+  sent by the order screen's `_lineData`). The hub keeps it on the line (`Line.went_with` in
+  `sync/oplog.py`; anything that is not a short string is dropped), hands it on to the line that replaces
+  it and to the line a move makes on another check (`CARRIED` in `orders/moves.py`), and shows it in the
+  order's view. It changes no figure. `Sold.went_with` remembers it with the sale, and
+  `orders/suggested.py` (`suggestions_report`) adds it up over the same remembered sales as the sales
+  report: `GET /reports/suggestions?from=&to=` (the `reports` power) answers `taken`, `amount`, `dishes`
+  (each with `sold`, `taken`, `amount` and `added`), `staff` and `running`. A dish that suggests something
+  on the menu as it stands and sold with nothing taken is among `dishes` with `taken` 0. App:
+  `lib/suggestions_report.dart`, `lib/screens/suggestions_screen.dart`, the row in
+  `location_settings_screen.dart`. Tests: `backend/tests/orders/test_suggested.py`,
+  `apps/pos_app/test/suggestions_test.dart`.

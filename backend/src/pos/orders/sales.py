@@ -90,8 +90,8 @@ class Picked(NamedTuple):
 
 
 class Sold(NamedTuple):
-    """The same dish sold the same way in the same hour of one check and rung in by the same person, added
-    up."""
+    """The same dish sold the same way in the same hour of one check, rung in by the same person and taken
+    from the same suggestion or from none, added up."""
 
     item: str | None
     entry: str
@@ -105,6 +105,7 @@ class Sold(NamedTuple):
     picked: tuple[Picked, ...] = ()  # its choices, in the order of the check
     by_id: str = ""  # who rang it in: their staff id where the line carries one,
     by: str = ""  # and their name as the line says it (the day's report counts its staff by these two)
+    went_with: str = ""  # the dish whose suggestion it was taken from (docs/goes-with.md); "" for any other
 
 
 def _same(thing: Any) -> Any:
@@ -220,6 +221,7 @@ def sale_of(
             _picked(priced.get("modifiers"), one),
             intern(str(line.by_id or "")),
             intern(str(line.by or "")),
+            intern(str(line.went_with or "")),
         )
         sold = lines.setdefault(key, [ZERO, 0])
         sold[0] += Decimal(row["total"])

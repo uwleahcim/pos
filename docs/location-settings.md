@@ -23,6 +23,8 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   earlier (see `sales-report.md`). Not a setting either.
 - **Dishes sold**, under that: every dish of the same days, best to worst or worst first, with its sizes
   and its options (see `dishes-sold.md`). Not a setting either.
+- **Suggestions taken**, under that: the dishes added from "Goes with" on the order screen in the same
+  days, by person and under the dish each went with (see `goes-with.md`). Not a setting either.
 - **Guests**, under that: every customer who ordered with a phone number in the last 12 months, with their
   visits, what they spent and their favourite dishes, and the regulars, the guests who stopped coming and
   the new ones each a list (see `guest-list.md`). Not a setting either.

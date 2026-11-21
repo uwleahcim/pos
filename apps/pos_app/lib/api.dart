@@ -37,6 +37,7 @@ import 'runs.dart';
 import 'sales_report.dart';
 import 'settings.dart';
 import 'shift_notes.dart';
+import 'suggestions_report.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
 import 'today.dart';
@@ -1763,6 +1764,19 @@ class PosApi {
       timeout: const Duration(seconds: 90),
     ),
   );
+
+  /// The suggestions taken in a span of days (manager token): the dishes added from the tray "Goes with ..."
+  /// under the dish each went with, and who rang them in (docs/goes-with.md). The days are asked as
+  /// [salesReport] asks them, and it waits as long: the same checks are read. 404 from a hub older than it.
+  Future<SuggestionsReport> suggestionsReport(String token, {String? from, String? to}) async =>
+      SuggestionsReport.fromJson(
+        await _get(
+          '/reports/suggestions',
+          query: {'from': ?from, 'to': ?to},
+          headers: _bearer(token),
+          timeout: const Duration(seconds: 90),
+        ),
+      );
 
   /// The guest list (manager token): every customer who ordered with a phone number in the last year, with
   /// how often they came, what they spent and what they order most (docs/guest-list.md). A year of orders

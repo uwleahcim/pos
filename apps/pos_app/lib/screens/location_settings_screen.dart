@@ -43,6 +43,7 @@ import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
 import 'shift_notes_screen.dart';
+import 'suggestions_screen.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
 import 'theme.dart';
@@ -1094,6 +1095,20 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => DishesScreen(api: widget.api, token: widget.token),
+                      ),
+                    ),
+                  ),
+                // what the tray "Goes with" brought (docs/goes-with.md)
+                if (_may('reports'))
+                  ListTile(
+                    key: const ValueKey('suggestions-report'),
+                    leading: const Icon(Icons.add_task_outlined),
+                    title: const Text('Suggestions taken'),
+                    subtitle: const Text('What was added from "Goes with", by person and by dish'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => SuggestionsScreen(api: widget.api, token: widget.token),
                       ),
                     ),
                   ),

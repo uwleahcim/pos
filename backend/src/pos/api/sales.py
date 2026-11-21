@@ -19,6 +19,11 @@
   `options` (each under the `group` it belongs to); `categories`, the same added up by menu and category;
   and `span` and `before`, the days and what all their dishes come to (`pos.orders.dishes`).
 
+- `GET /reports/suggestions?from=&to=` (manager token), the same days asked the same way, with nothing
+  held beside them: the suggestions taken (docs/goes-with.md): how many dishes were added from "Goes with
+  ..." and for how much, under the dish each went with (`dishes`, each with how many of it were `sold`) and
+  by who rang them in (`staff`) (`pos.orders.suggested`).
+
 Reading any of them changes nothing and nothing is written down: all are reckoned from the log. What each
 check comes to is remembered in memory while its log stays as it was (`pos.orders.sales.SaleMemo`), so the
 first reading of a long span takes a few seconds and the next ones do not, whichever of them is read.
@@ -37,6 +42,7 @@ from .. import localtime
 from ..identity.tokens import Grant
 from ..orders.dishes import dishes_report
 from ..orders.sales import MAX_DAYS, Sale, SaleMemo, comparison, day_sheet, sales_reports, span_ms
+from ..orders.suggested import suggestions_report
 from ..sync.oplog import OrderEntry
 from .auth import holder_from
 
@@ -161,3 +167,17 @@ def add_sales_report(app: FastAPI, memo: SaleMemo | None = None) -> None:
         before = comparison(*span)
         report = dishes_report(sold_in(before, span), span, before, defs=app.state.menu.defs, now_ms=now_ms)
         return {**report, "max_days": MAX_DAYS, "now_ms": now_ms}
+
+    @app.get("/reports/suggestions")
+    def read_suggestions(
+        first: str | None = Query(None, alias="from", pattern=DAY, description="the first day of service"),
+        last: str | None = Query(None, alias="to", pattern=DAY, description="the last day of service"),
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        """The suggestions taken in a span of days: the dishes added from "Goes with ...", under the dish
+        each went with, and who rang them in."""
+        manager(authorization)
+        now_ms = app.state.store.now_ms()
+        span = the_span(first, last, now_ms)
+        report = suggestions_report(sold_in(span, span), span, defs=app.state.menu.defs, now_ms=now_ms)
+        return {**report, "max_days": MAX_DAYS}

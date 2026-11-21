@@ -29,6 +29,7 @@ class ChosenLine {
     this.modifiers = const [],
     this.itemId,
     this.zhName,
+    this.wentWith,
   });
 
   /// What the line is recorded as: the dish's English name, whoever rings it in.
@@ -47,6 +48,24 @@ class ChosenLine {
   /// The choices that differ from the menu's defaults, each with the price of one, as the check lists them.
   final List<CheckModifier> modifiers;
   final String? itemId;
+
+  /// The dish (its item code) whose suggestion this one was added from, in the tray "Goes with ..."; null
+  /// for a dish rung any other way. The hub keeps it on the line for the report of suggestions taken
+  /// (docs/goes-with.md); nothing else about the line is different.
+  final String? wentWith;
+
+  /// The same line as one taken from what goes with [dish].
+  ChosenLine suggestedWith(String dish) => ChosenLine(
+    name: name,
+    request: request,
+    qty: qty,
+    note: note,
+    unitPrice: unitPrice,
+    modifiers: modifiers,
+    itemId: itemId,
+    zhName: zhName,
+    wentWith: dish,
+  );
 }
 
 /// How often a menu on screen asks whether it changed, and how long one read is kept at most: lunch ends
@@ -851,6 +870,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   Future<void> _tap(MenuEntry entry, {FocusNode? from, bool offered = false}) async {
     if (!entry.available) return;
     final keyed = _byKey(from);
+    final wentWith = _offeredWith(offered);
     if (_pending != null && _pending!.entry == entry) {
       _closePending();
       return;
@@ -905,6 +925,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       choices: choices,
       tile: from,
       offered: offered,
+      wentWith: wentWith,
     );
 
     if (pending.isComplete) {
@@ -925,14 +946,20 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       return;
     }
     if (_pending != null) _closePending();
+    final wentWith = _offeredWith(offered);
     final chosen = await showDialog<ChosenLine>(
       context: context,
       builder: (_) => ItemSheet(api: widget.api, entry: entry, onEightySix: () => _eightySix(entry)),
     );
     if (chosen == null) return;
-    _choose(chosen);
+    _choose(wentWith == null ? chosen : chosen.suggestedWith(wentWith));
     _rung(entry, tile: from, offered: offered);
   }
+
+  /// The dish whose suggestions the tray shows, by its item code, for a tile tapped there ([offered]): what
+  /// the line says it went with. Read when the tile is tapped, not when it was built: the tiles are kept
+  /// while the same dishes are suggested, and two dishes can suggest the same ones.
+  String? _offeredWith(bool offered) => offered ? (_offer ?? _lastOffer)?.of.item : null;
 
   /// The tiles of one grid (`grid` names it: the categories, the open category's dishes, what the search
   /// found).
@@ -1780,6 +1807,7 @@ class _PendingItemSelection {
     required this.choices,
     this.tile,
     this.offered = false,
+    this.wentWith,
   }) {
     _askPicked(detail?.groups ?? const [], choices, '');
   }
@@ -1790,6 +1818,9 @@ class _PendingItemSelection {
   /// It was tapped among the dishes that go with another dish: once it is on the order those are back in the
   /// tray, and it suggests nothing itself ([_MenuPanelState._rung]).
   final bool offered;
+
+  /// That other dish, by its item code: what the line says it went with ([ChosenLine.wentWith]).
+  final String? wentWith;
 
   static String variantKey(VariantOffer v) => 'req-variant:${v.variantId}';
   static String optionKey(_Ask ask, OptionDetail o) => 'req-option:${ask.path}${ask.group.groupId}:${o.optionId}';
@@ -1929,6 +1960,7 @@ class _PendingItemSelection {
       unitPrice: localPrice(name, availableVariants, detail, request).unitPrice,
       modifiers: pickedModifiers(groups, request),
       itemId: entry.item,
+      wentWith: wentWith,
     );
   }
 }
