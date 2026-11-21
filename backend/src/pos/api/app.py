@@ -111,6 +111,7 @@ from ..waitlist import Waitlist, default_wait_store
 from ..waste import WasteLog, default_waste_store
 from .auth import holder_from, manager_from, powers_of
 from .conditional import ConditionalGet
+from .contests import add_contests
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
@@ -2322,6 +2323,7 @@ def create_app(
     add_prep(app)
     add_kitchen(app)
     add_sales_report(app)
+    add_contests(app)  # after the sales: it reads through their remembered checks
     add_today(app)
     add_guest_list(app)
     add_history(app)

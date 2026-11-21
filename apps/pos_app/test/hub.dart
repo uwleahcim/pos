@@ -536,6 +536,198 @@ class Hub {
     if (alwaysRoles.contains(role)) settingsPower,
   ];
 
+  /// Contests for the staff (docs/contests.md). [contests] is the location's list as the hub keeps it; null
+  /// is a hub older than contests. `GET /settings/contests` answers it, each with where it stands on
+  /// [contestsToday], and what a form needs. `PUT /settings/contests` keeps the list sent ([contestsSaved]
+  /// holds each body, [contestsAuth] the token of the last): a new one is given an id from its name and
+  /// what it counts is named from [contestDishes] and [contestCategories]; [refuseContests] answers 422
+  /// with these words instead. [contestBoards] holds each contest's rows by its id (the one in front first)
+  /// and [contestOthers] what the people outside it rang. `GET /contests?staff_id=` answers the contests on
+  /// the staff's screens as that person may see each ([contestAsks] keeps who asked), and
+  /// `GET /reports/contests/<id>` the whole board ([contestBoardAsks] keeps the ids, [contestBoardAuth] the
+  /// token of the last; [refuseContestBoard] is a status it answers with instead).
+  List<Map<String, dynamic>>? contests = [];
+  String contestsToday = '2026-11-16';
+  final contestsSaved = <Map<String, dynamic>>[];
+  String? contestsAuth;
+  String? refuseContests;
+  final contestBoards = <String, List<Map<String, dynamic>>>{};
+  final contestOthers = <String, Map<String, dynamic>>{};
+  final contestAsks = <String>[];
+  final contestBoardAsks = <String>[];
+  String? contestBoardAuth;
+  int? refuseContestBoard;
+  static const contestDishes = {'TSINGTAO': 'Tsingtao', 'MAITAI': 'Mai Tai', 'WINGS': 'Chicken wings'};
+  static const contestCategories = [
+    {'code': 'sides', 'name': 'Appetizers', 'menu': 'Food'},
+    {'code': 'chefs', 'name': "Chef's Specials", 'menu': 'Food'},
+    {'code': 'beer', 'name': 'Beer', 'menu': 'Drinks'},
+    {'code': 'cocktails', 'name': 'Cocktails', 'menu': 'Drinks'},
+  ];
+
+  /// A contest as the hub keeps it: on sales, for the Monday the tests run on, unless said otherwise.
+  static Map<String, dynamic> contest(
+    String id,
+    String name, {
+    String counts = 'sales',
+    String? item,
+    String? category,
+    String what = '',
+    String first = '2026-11-16',
+    String last = '2026-11-16',
+    List<String> roles = const ['server', 'bartender'],
+    String board = 'own',
+    String note = '',
+  }) => {
+    'id': id,
+    'name': name,
+    'note': note,
+    'counts': counts,
+    'item': item,
+    'category': category,
+    'what': what,
+    'first': first,
+    'last': last,
+    'roles': roles,
+    'board': board,
+    'set_by': 'Mike',
+    'set_ms': DateTime(2026, 11, 16, 15).millisecondsSinceEpoch,
+  };
+
+  /// A row of a board: [place] null is somebody with nothing yet.
+  static Map<String, dynamic> contestRow(
+    String staffId,
+    String name,
+    int? place, {
+    int count = 0,
+    String amount = '0.00',
+    String role = 'server',
+  }) => {'staff_id': staffId, 'name': name, 'role': role, 'count': count, 'amount': amount, 'place': place};
+
+  Map<String, dynamic> _contestAbout(Map<String, dynamic> contest) {
+    final today = DateTime.parse(contestsToday);
+    final first = DateTime.parse(contest['first'] as String), last = DateTime.parse(contest['last'] as String);
+    return {
+      ...contest,
+      'state': today.isBefore(first) ? 'coming' : (today.isAfter(last) ? 'over' : 'running'),
+      'shown': !today.isAfter(last.add(const Duration(days: 7))),
+      'days': last.difference(first).inDays + 1,
+    };
+  }
+
+  Map<String, dynamic> _contestList() => {
+    'contests': [for (final contest in contests!) _contestAbout(contest)],
+    'today': contestsToday,
+    'roles': ['server', 'bartender', 'host', 'cashier', 'kitchen', 'driver', 'manager', 'owner'],
+    'standard_roles': ['server', 'bartender'],
+    'categories': contestCategories,
+    'limits': {'contests': 12, 'name': 40, 'note': 80, 'days': 92, 'shown_days': 7},
+  };
+
+  static final _contestBoard = RegExp(r'^/reports/contests/([^/]+)$');
+
+  /// Contests: the location's list, a save of it, what one person sees, and one whole board.
+  http.Response _contests(http.Request request) {
+    final path = request.url.path;
+    if (contests == null) return json({'detail': 'Not Found'}, 404);
+    List<Map<String, dynamic>> rows(String id) => contestBoards[id] ?? const [];
+    List<String> front(String id) => [
+      for (final row in rows(id))
+        if (row['place'] == 1) row['name'] as String,
+    ];
+    final whole = _contestBoard.firstMatch(path)?.group(1);
+    if (whole != null) {
+      contestBoardAuth = request.headers['authorization'];
+      contestBoardAsks.add(whole);
+      if (contestBoardAuth == null || refuseContestBoard != null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, refuseContestBoard ?? 401);
+      }
+      final contest = contests!.where((c) => c['id'] == whole).firstOrNull;
+      if (contest == null) {
+        return json({
+          'detail': {'error': 'unknown_contest', 'message': 'There is no such contest.'},
+        }, 404);
+      }
+      var count = 0, amount = 0.0;
+      for (final row in rows(whole)) {
+        count += row['count'] as int;
+        amount += double.parse(row['amount'] as String);
+      }
+      return json({
+        ..._contestAbout(contest),
+        'standings': rows(whole),
+        'total': {'count': count, 'amount': amount.toStringAsFixed(2)},
+        'others': contestOthers[whole] ?? {'count': 0, 'amount': '0.00'},
+        'front': front(whole),
+        'of': rows(whole).length,
+        'today': contestsToday,
+        'now_ms': clockNow,
+      });
+    }
+    if (path == '/contests') {
+      final staffId = request.url.queryParameters['staff_id'] ?? '';
+      contestAsks.add(staffId);
+      return json({
+        'contests': [
+          for (final contest in contests!.map(_contestAbout))
+            if (contest['shown'] == true)
+              {
+                ...contest,
+                'takes_part': rows(contest['id'] as String).any((row) => row['staff_id'] == staffId),
+                'me': rows(contest['id'] as String).where((row) => row['staff_id'] == staffId).firstOrNull,
+                'of': rows(contest['id'] as String).length,
+                'front': front(contest['id'] as String),
+                'standings': contest['board'] == 'all' ? rows(contest['id'] as String) : null,
+              },
+        ],
+        'today': contestsToday,
+        'now_ms': clockNow,
+      });
+    }
+    if (request.method == 'PUT') {
+      contestsAuth = request.headers['authorization'];
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      contestsSaved.add(body);
+      if (contestsAuth == null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, 401);
+      }
+      if (refuseContests != null) {
+        return json({
+          'detail': {'error': 'bad_value', 'message': refuseContests},
+        }, 422);
+      }
+      final before = {for (final contest in contests!) contest['id']: contest};
+      contests = [
+        for (final sent in (body['contests'] as List).cast<Map<String, dynamic>>())
+          {
+            ...?before[sent['id']],
+            ...sent,
+            'id':
+                sent['id'] ??
+                (sent['name'] as String)
+                    .toLowerCase()
+                    .replaceAll(RegExp('[^a-z0-9]+'), '-')
+                    .replaceAll(RegExp(r'^-|-$'), ''),
+            'what': switch (sent['counts']) {
+              'dish' => contestDishes[sent['item']] ?? before[sent['id']]?['what'] ?? '',
+              'category' =>
+                contestCategories.where((c) => c['code'] == sent['category']).firstOrNull?['name'] ??
+                    before[sent['id']]?['what'] ??
+                    '',
+              _ => '',
+            },
+            'set_by': before[sent['id']]?['set_by'] ?? 'Mike',
+            'set_ms': before[sent['id']]?['set_ms'] ?? clockNow,
+          },
+      ];
+    }
+    return json(_contestList());
+  }
+
   /// The waste log (docs/waste-log.md). [waste] holds today's entries, the newest first; null is a hub older
   /// than the log. `GET /waste` answers them with [wasteReasons]. `POST /waste` writes one at the top by
   /// whoever the body names ([wasteWritten] keeps the bodies), a dish named and priced from [wasteDishes];
@@ -2080,6 +2272,9 @@ class Hub {
     if (path == '/reservations' || path.startsWith('/reservations/')) return _reservations(request);
     if (path == '/logbook' || path.startsWith('/logbook/')) return _logbook(request);
     if (path == '/waste' || path.startsWith('/waste/') || path == '/reports/waste') return _waste(request);
+    if (path == '/contests' || path == '/settings/contests' || path.startsWith('/reports/contests/')) {
+      return _contests(request);
+    }
     if (path == '/signin' && request.method == 'POST') {
       final body = jsonDecode(request.body) as Map;
       final tagUid = body['tag_uid'] as String?;

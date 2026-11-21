@@ -328,6 +328,7 @@ DOORS = [
     ("reports", "get", "/reports/sales/sheet", None),
     ("reports", "get", "/reports/dishes", None),
     ("reports", "get", "/reports/today", None),
+    ("reports", "get", "/reports/contests/none", None),  # no such contest: 404 for whoever may read one
     ("guests", "get", "/reports/guests", None),
     ("time_clock", "get", f"/timeclock/report?since={T0}&until={T0 + 1000}", None),
     ("menu", "get", "/admin/menu", None),
@@ -338,6 +339,7 @@ LOCKED = [
     ("put", "/settings/voids", DEFAULTS["voids"]),
     ("put", "/settings/time_clock", {"enabled": True}),
     ("put", "/settings/powers", {"roles": {}}),
+    ("put", "/settings/contests", {"contests": []}),
     ("get", "/admin/staff", None),
     ("post", "/print/discover", {}),
 ]

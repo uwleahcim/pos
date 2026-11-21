@@ -37,6 +37,7 @@ import 'booked_table_dialog.dart';
 import 'booking_dialog.dart';
 import 'check_search_bar.dart';
 import 'compact.dart';
+import 'contests_screen.dart';
 import 'deliveries_screen.dart';
 import 'display_dialog.dart';
 import 'driver_picker.dart';
@@ -144,6 +145,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   String? _notesFor; // who is signed in, as the notes last heard; null while nobody is
   bool _notesBusy = false; // a reading is out, or the notes are on the screen
   int _notesUp = 0; // how many are up: the menu then offers them to read again
+  // How many contests are on the staff's screens (docs/contests.md): the menu then offers their boards. Read
+  // with the quotes: when the hub says a setting changed, and now and then, which is also how a contest
+  // comes off the menu a week after it ended.
+  int _contestsShown = 0;
   // What "Got it" was tapped on here, until the hub has kept it: shown once even when the hub was slow to hear.
   final _notesGot = <String>{};
   DateTime _quotesRead = DateTime.fromMillisecondsSinceEpoch(0);
@@ -373,6 +378,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _quotesStale = false;
     _quotesRead = now;
     unawaited(_readClockSetting());
+    unawaited(_readContests());
     unawaited(_readPowers());
     try {
       final quotes = await widget.api.quotes();
@@ -532,6 +538,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // nothing answers: the menu keeps the entry it had
     }
   }
+
+  Future<void> _readContests() async {
+    try {
+      final shown = (await widget.api.contestList())?.shown ?? 0;
+      if (mounted && shown != _contestsShown) setState(() => _contestsShown = shown);
+    } on ApiException {
+      // nothing answers: the menu keeps the entry it had
+    }
+  }
+
+  /// The contests for the staff: each with where the person signed in stands, and who is in front.
+  Future<void> _contests() => Navigator.of(context).push(
+    PosPageRoute<void>(
+      builder: (_) => ContestsScreen(api: widget.api, device: widget.settings.device, staff: widget.session.staff),
+    ),
+  );
 
   /// Somebody else took the screen (a sign-in on a locked screen, a hands-free switch), or the same person
   /// came back to it: their notes are read at the next chance.
@@ -1715,6 +1737,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       // where the hub says who takes deliveries out (docs/delivery.md)
       if (_roster.drivers.isNotEmpty) ('Deliveries', Icons.delivery_dining_outlined, _deliveries),
       if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
+      if (_contestsShown > 0) ('Contests', Icons.emoji_events_outlined, _contests),
       if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
       ('Waste', Icons.delete_sweep_outlined, _waste),
       if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
