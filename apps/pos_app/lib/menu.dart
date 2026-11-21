@@ -88,6 +88,7 @@ class MenuEntry {
     this.tags = const [],
     this.asksPrice = false,
     this.asksName = false,
+    this.goesWith = const [],
   });
 
   factory MenuEntry.fromJson(Map<String, dynamic> json) {
@@ -109,6 +110,10 @@ class MenuEntry {
       variants: variants,
       asksName: json['asks_name'] as bool? ?? false,
       asksPrice: (json['asks_price'] as bool? ?? false) || (json['asks_name'] as bool? ?? false),
+      goesWith: [
+        for (final code in json['goes_with'] as List? ?? const [])
+          if (code is String) code,
+      ],
     );
   }
 
@@ -148,6 +153,11 @@ class MenuEntry {
 
   /// An off-menu dish (Open Food): whoever rings it types what it is, and its price.
   final bool asksName;
+
+  /// The dishes the menu says go with this one, by item code in the order a manager put them in the menu
+  /// editor: once this dish is rung, the order screen shows them as tiles under the dishes, one tap each
+  /// (docs/goes-with.md). Empty for most dishes, and from an older hub, which does not say.
+  final List<String> goesWith;
 
   /// One tap adds it: a single variant and no questions to ask.
   bool get quickAdd => !hasOptions && variants.length == 1 && !asksPrice;

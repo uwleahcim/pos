@@ -72,6 +72,9 @@ class Category:
     active: bool = True
 
 
+GOES_WITH_MOST = 4  # how many dishes one dish can suggest (`Item.goes_with`): two rows of tiles on a phone
+
+
 @dataclass(frozen=True)
 class Item:
     code: str
@@ -99,6 +102,22 @@ class Item:
         """A dish with no price of its own (`attrs.asks_price`): the price is typed when it is rung (market
         price). A dish that asks its name asks its price as well."""
         return bool(self.attrs.get("asks_price")) or self.asks_name
+
+    @property
+    def goes_with(self) -> tuple[str, ...]:
+        """The dishes a screen suggests once this one is rung (`attrs.goes_with`: item codes, in the order
+        they are shown; a manager sets them on the dish in the menu editor). Only ever a suggestion: nothing
+        is added to a check unless someone taps it, and a dish that names none says nothing. At most
+        `GOES_WITH_MOST`, never the dish itself and none twice; anything that is not a list of codes reads
+        as none (`admin.problems` refuses to save such a thing)."""
+        codes = self.attrs.get("goes_with")
+        if not isinstance(codes, (list, tuple)):
+            return ()
+        out: list[str] = []
+        for code in codes:
+            if isinstance(code, str) and code and code != self.code and code not in out:
+                out.append(code)
+        return tuple(out[:GOES_WITH_MOST])
 
 
 @dataclass(frozen=True)

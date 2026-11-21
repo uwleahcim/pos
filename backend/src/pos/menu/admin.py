@@ -11,7 +11,7 @@ from __future__ import annotations
 import types
 import typing
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -229,7 +229,23 @@ def apply(defs: Definitions, changes: list[Mapping[str, Any]]) -> Definitions:
         else:
             raise ChangeError(f"change {n}: op must be put or delete")
     linked.sync(new)
+    _forget_gone_dishes(new)
     return new
+
+
+def _forget_gone_dishes(defs: Definitions) -> None:
+    """A dish that was deleted is no longer suggested by the others (`Item.goes_with`): whoever deletes it,
+    with whatever app, the menu keeps no name of a dish that is not there. A dish taken off sale keeps its
+    place in the lists (it is suggested again once it is back on); the menu the screens read leaves it out."""
+    for code, item in list(defs.items.items()):
+        named = item.attrs.get("goes_with")
+        if not isinstance(named, (list, tuple)):
+            continue  # nothing named, or not a list at all: `problems` says so
+        kept = [c for c in named if not isinstance(c, str) or c in defs.items]
+        if len(kept) == len(named):
+            continue
+        attrs = {k: v for k, v in item.attrs.items() if k != "goes_with"}
+        defs.items[code] = replace(item, attrs={**attrs, **({"goes_with": kept} if kept else {})})
 
 
 def _cascade(defs: Definitions, kind: str, key: str) -> None:
@@ -275,6 +291,20 @@ def _references(defs: Definitions) -> list[Problem]:
     for i in defs.items.values():
         need(f"item {i.code}", "category", i.category, defs.categories)
         need(f"item {i.code}", "station", i.station, defs.stations)
+        named = i.attrs.get("goes_with")
+        if named is None:
+            continue
+        if not isinstance(named, (list, tuple)) or not all(isinstance(c, str) and c for c in named):
+            out.append(Problem("bad_goes_with", f"item {i.code}: what it goes with must be a list of dishes"))
+        elif len(named) > d.GOES_WITH_MOST:
+            out.append(
+                Problem(
+                    "too_many_goes_with",
+                    f"item {i.code}: it goes with {len(named)} dishes; a dish can suggest {d.GOES_WITH_MOST} at most",
+                )
+            )
+        elif i.code in named or len(set(named)) != len(named):
+            out.append(Problem("bad_goes_with", f"item {i.code}: it cannot go with itself, or with a dish twice"))
     for v in defs.variants.values():
         need(f"size {v.id}", "item", v.item, defs.items)
         if v.id != f"{v.item}:{v.code}":

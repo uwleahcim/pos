@@ -311,6 +311,8 @@ class MenuService:
                     "needs_choice": self._needs_choice(e),
                     # a dish whose price, or name and price, are typed when it is rung; said only for those
                     **self._asks(e.item),
+                    # the dishes a screen suggests once this one is rung; said only for a dish that has any
+                    **self._goes_with(e.item),
                 }
                 for e in section.entries
             ],
@@ -331,6 +333,15 @@ class MenuService:
             **({"asks_price": True} if item.asks_price else {}),
             **({"asks_name": True} if item.asks_name else {}),
         }
+
+    def _goes_with(self, item_code: str) -> dict[str, list[str]]:
+        """The dishes a screen suggests once this one is rung (`Item.goes_with`), by item code in the order
+        the manager put them: only dishes still on sale. Which of them is on a menu open right now, and not
+        sold out, is the screen's to see: it shows a suggestion as that dish's own tile. Empty for a dish
+        that suggests nothing, so the menu reads as it always did."""
+        items = self.defs.items
+        codes = [c for c in items[item_code].goes_with if c in items and items[c].active]
+        return {"goes_with": codes} if codes else {}
 
     def _needs_choice(self, entry: ResolvedEntry) -> bool:
         """Whether a tap on this dish has to ask something before it can go on the check: a size, a
