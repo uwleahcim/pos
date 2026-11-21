@@ -94,8 +94,8 @@ and sets nothing up.
 
 - A contest on several dishes at once, or on a whole menu (Food, Drinks).
 - Counting for the table's server instead of whoever rang it in.
-- Counting the add-ons the app suggests (`goes-with.md`): there is no record yet of which suggestion was
-  taken.
+- A contest on the add-ons the app suggests. Which suggestions were taken, and by whom, is a report of
+  its own (`goes-with.md`, "Suggestions taken").
 - Prizes, points or pay. The contest says who is in front; what the winner gets is the manager's to give.
 - A message or a sound when somebody takes the lead, and printing a board.
 - Teams, and a board across several locations.

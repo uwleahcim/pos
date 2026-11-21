@@ -89,7 +89,8 @@ merges after any disconnect.
 - Off-menu dishes and market prices (Open Food and its like ask what the dish is and its price when rung; any
   dish can be set to ask its price; a report lists every typed price): `docs/off-menu-dish.md`
 - What goes with a dish (a manager says on each dish which dishes go with it; once it is rung the order
-  screen shows them under the menu, one tap each; nothing is added that nobody tapped): `docs/goes-with.md`
+  screen shows them under the menu, one tap each; nothing is added that nobody tapped; a report says how
+  many were added, with which dish and by whom): `docs/goes-with.md`
 - The time clock (off to start; staff clock in and out and take breaks with their PIN at any screen; a
   shift nobody ended is closed at 4 AM and marked; a manager reads the hours and corrects a shift with a
   reason the log keeps): `docs/time-clock.md`

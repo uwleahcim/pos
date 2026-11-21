@@ -327,6 +327,7 @@ DOORS = [
     ("reports", "get", "/reports/sales", None),
     ("reports", "get", "/reports/sales/sheet", None),
     ("reports", "get", "/reports/dishes", None),
+    ("reports", "get", "/reports/suggestions", None),
     ("reports", "get", "/reports/today", None),
     ("reports", "get", "/reports/contests/none", None),  # no such contest: 404 for whoever may read one
     ("guests", "get", "/reports/guests", None),

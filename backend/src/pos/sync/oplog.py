@@ -27,7 +27,9 @@ KINDS = frozenset(
         "set_field",  # data: any order fields
         # A dish that came from another check also names where from (`from`: order_id, line_id; the hub adds
         # that check's table) and, when the kitchen already has it, when it was sent (`sent`, a stamp).
-        "add_line",  # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?
+        # data: line_id, item, qty?, seat?, course?, note?, rank?, request?, priced?, by?, by_id?, went_with? (the
+        # dish whose suggestion this one was taken from: docs/goes-with.md)
+        "add_line",
         # A dish going to another check (pos.orders.moves): this check lets it go, the other takes it with an
         # `add_line` that names where it came from. No void: the kitchen has cooked it or will, and it is
         # still to be paid for, over there.
@@ -185,6 +187,9 @@ class Line:
     replaces: str | None = None  # the line this one took the place of: an edit voids a line and adds the changed one
     by: str = ""  # who added it (name) and their staff id: several people can work one check, hands-free
     by_id: str | None = None
+    # The dish (its item code) whose suggestion this one was added from, on the tray "Goes with ..."; None
+    # for a dish rung any other way. It changes nothing about the line: a report reads it (docs/goes-with.md).
+    went_with: str | None = None
     # The checks of a split table this dish was put on by hand, by number; None while nobody did, and
     # the split's own rule places it (its seat's check, or the first).
     checks: list[int] | None = None
@@ -414,6 +419,7 @@ class OrderState:
                     "replaces": line.replaces,
                     "by": line.by,
                     "by_id": line.by_id,
+                    "went_with": line.went_with,
                     "checks": line.checks,
                     "moved_to": line.moved_to,
                     "moved_from": line.moved_from,
@@ -467,11 +473,15 @@ def apply(state: OrderState, op: Op) -> None:
             replaces=data.get("replaces") if isinstance(data.get("replaces"), str) else None,
             by=str(data.get("by") or ""),
             by_id=data.get("by_id") if isinstance(data.get("by_id"), str) else None,
+            went_with=_went_with(data.get("went_with")),
             checks=_checks(data.get("checks")),
         )
         if line.checks is None and line.replaces in state.lines:
             # an edit voids a dish and adds the changed one: it stays on the checks the dish was put on
             line.checks = state.lines[line.replaces].checks
+        if line.went_with is None and line.replaces in state.lines:
+            # and it is still the dish that was taken from a suggestion
+            line.went_with = state.lines[line.replaces].went_with
         rank = _rank(data.get("rank"))
         if rank is None:  # after everything on the check so far
             rank = max((other.rank for other in state.lines.values()), default=0.0) + 1
@@ -715,6 +725,15 @@ def _stamp(value: Any) -> HLC | None:
 def _count(value: Any) -> int:
     """How many of a dish, as a terminal sent it; 0 for anything that is not a whole number."""
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+WENT_WITH_MAX = 120
+"""The longest item code kept as the dish a suggestion was taken from."""
+
+
+def _went_with(value: Any) -> str | None:
+    """The dish a suggested one went with, as a terminal says it: an item code. None for anything else."""
+    return value if isinstance(value, str) and 0 < len(value) <= WENT_WITH_MAX else None
 
 
 def _checks(value: Any) -> list[int] | None:

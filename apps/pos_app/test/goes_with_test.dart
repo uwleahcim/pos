@@ -87,6 +87,16 @@ List<String> rung(Terminal t) => [
     if (op['kind'] == 'add_line') ((((op['data'] as Map)['request'] as Map)['variant_id']) as String).split(':').first,
 ];
 
+/// The dishes rung so far with the dish each says it went with (`went_with`), null where it says none.
+List<(String, Object?)> wentWith(Terminal t) => [
+  for (final op in t.hub.opsFor('o1'))
+    if (op['kind'] == 'add_line')
+      (
+        ((((op['data'] as Map)['request'] as Map)['variant_id']) as String).split(':').first,
+        (op['data'] as Map)['went_with'],
+      ),
+];
+
 Future<Terminal> pumpOrder(WidgetTester tester, Map<String, dynamic> menu, {Size? size}) async {
   final t = await terminal(tester);
   t.session.staff = const Staff(staffId: 's1', name: 'Amy', role: 'server', method: 'pin');
@@ -483,6 +493,80 @@ void main() {
     expect(rung(t), ['EGGROLL', 'TSINGTAO']);
     // still about the egg roll
     expect(titleOf(tester), 'Goes with Egg roll');
+  });
+
+  // What the report of suggestions taken reads (docs/goes-with.md, "Suggestions taken"): a dish added from
+  // the tray says which dish it went with. Nothing else about the line is different.
+  testWidgets('a dish added from the tray says which dish it went with, and no other dish says anything', (
+    tester,
+  ) async {
+    final t = await pumpOrder(
+      tester,
+      menuWith({
+        'EGGROLL': ['TSINGTAO', 'TEA'],
+        'SPRINGROLL': ['TSINGTAO', 'TEA'],
+      }),
+    );
+    await open(tester, 'apps');
+    await tap(tester, onMenu('EGGROLL'));
+    await tap(tester, inTray('TSINGTAO'));
+    await tap(tester, inTray('TSINGTAO'));
+    expect(wentWith(t), [('EGGROLL', null), ('TSINGTAO', 'EGGROLL'), ('TSINGTAO', 'EGGROLL')]);
+
+    // the spring roll suggests the very same dishes: the tray is about it now, and so is what is taken
+    await tap(tester, onMenu('SPRINGROLL'));
+    expect(titleOf(tester), 'Goes with Spring roll');
+    await tap(tester, inTray('TEA'));
+    expect(wentWith(t).last, ('TEA', 'SPRINGROLL'));
+
+    // the same beer rung from its own category was nobody's suggestion
+    await open(tester, 'bar');
+    await tap(tester, onMenu('TSINGTAO'));
+    expect(wentWith(t).last, ('TSINGTAO', null));
+    final sent = t.hub.opsFor('o1').where((op) => op['kind'] == 'add_line').toList();
+    expect((sent[0]['data'] as Map).containsKey('went_with'), isFalse);
+    expect((sent.last['data'] as Map).containsKey('went_with'), isFalse);
+  });
+
+  testWidgets('a suggested dish that asks its size, or is added from its sheet, says it too', (tester) async {
+    final t = await pumpOrder(
+      tester,
+      menuWith({
+        'EGGROLL': ['DRAFT', 'TSINGTAO'],
+      }),
+    );
+    t.hub.items['TSINGTAO'] = {
+      'item': 'TSINGTAO',
+      'name': 'Tsingtao',
+      'kind': 'standard',
+      'variants': [
+        {'variant_id': 'TSINGTAO:bottle', 'name': 'Bottle', 'price': '6.50', 'status': 'available'},
+      ],
+      'groups': <Map<String, dynamic>>[],
+      'tax_class': 'alcohol',
+      'station': 'bar',
+      'second_name': null,
+    };
+    await open(tester, 'apps');
+    await tap(tester, onMenu('EGGROLL'));
+    await tap(tester, inTray('DRAFT'));
+    final sizes = find.byWidgetPredicate(
+      (w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('req-variant:'),
+    );
+    await tap(tester, sizes.first);
+    expect(wentWith(t), [('EGGROLL', null), ('DRAFT', 'EGGROLL')]);
+
+    await tester.longPress(inTray('TSINGTAO'));
+    await tester.pumpAndSettle();
+    await tap(tester, find.widgetWithText(FilledButton, 'Add'));
+    expect(wentWith(t).last, ('TSINGTAO', 'EGGROLL'));
+
+    // a hold on the dish on the menu itself opens the same sheet, and that one is nobody's suggestion
+    await open(tester, 'bar');
+    await tester.longPress(onMenu('TSINGTAO'));
+    await tester.pumpAndSettle();
+    await tap(tester, find.widgetWithText(FilledButton, 'Add'));
+    expect(wentWith(t).last, ('TSINGTAO', null));
   });
 
   group('the menu editor', () {
