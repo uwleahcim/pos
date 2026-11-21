@@ -107,6 +107,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   static const _childAspectRatio = 1.55;
   static const _searchBarHeight = 56.0;
   static const _itemsDividerHeight = 1.0;
+  static const _offerGrid = 'offer'; // the grid of the dishes that go with a dish: its tiles and their focus
 
   List<Menu>? _menus;
   String? _menuCode; // the menu whose categories show (Food, Drinks, Lunch); the first one until a tab is tapped
@@ -119,12 +120,16 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   var _counted = 0; // goes up whenever the count on a tile may have changed: see [_tilesOf]
   (String, List<Menu>?, List<MenuEntry>)? _lastFound; // what the search last found, for what words on what menus
   (List<Menu>?, MenuSearch<MenuEntry>)? _searchable; // the dishes prepared for the search, for what menus
+  (List<Menu>?, Map<String, List<(String, MenuEntry)>>)? _placed; // where each dish is, for what menus: [_places]
   (List<Menu>, String, Widget)? _tabsBuilt; // the tabs as last built, for which menus with which one on screen
   (bool, Widget)? _searchBuilt; // the search field as last built, with or without its Clear button
   (_PendingItemSelection, int, int, double, Widget)? _trayBuilt; // the choices tray as last built: see [_trayFor]
   var _answered = 0; // goes up with every answer given in the choices tray
   _PendingItemSelection? _pending;
   _PendingItemSelection? _lastPending; // kept while the required-selections tray animates closed
+  _Offer? _offer; // the dishes that go with the dish rung last, in the same tray once it asks nothing: [_rung]
+  _Offer? _lastOffer; // kept while that tray animates closed
+  var _trayOffered = false; // what the tray showed last: the dishes that go with one, not a dish's choices
   int? _revision;
   DateTime _loadedAt = DateTime(0);
   Timer? _watch;
@@ -160,6 +165,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   final _dishLevel = FocusNode(debugLabel: 'menu dishes', canRequestFocus: false, skipTraversal: true);
   final _choiceLevel = FocusNode(debugLabel: 'menu choices', canRequestFocus: false, skipTraversal: true);
   final _trayScroll = ScrollController();
+  final _offerScroll = ScrollController();
   _Wanted? _wanted; // the tile the focus goes to as soon as it is on screen
   FocusNode? _toShow; // the tile that took the focus while the trays moved: brought into view once they rest
   var _keying = false; // a key is being handled right now: what a tile does this moment, the keyboard did
@@ -227,6 +233,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       c.dispose();
     }
     _trayScroll.dispose();
+    _offerScroll.dispose();
     for (final node in [..._focus.values, _searchFocus, _topLevel, _dishLevel, _choiceLevel]) {
       node.dispose();
     }
@@ -326,6 +333,16 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           _error = null;
           _itemCache.clear();
         });
+        final shown = _offer;
+        if (shown != null) {
+          // the tray moves only if it now holds more or fewer dishes: a menu read again moves nothing else
+          final now = _offerOn(shown);
+          if (now?.entries.length != shown.entries.length) _startTransition(resetScroll: false);
+          setState(() {
+            _offer = now;
+            if (now != null) _lastOffer = now;
+          });
+        }
       }
       unawaited(_prefetch(revision));
     } on ApiException catch (err) {
@@ -390,6 +407,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       _menuCode = code;
       _path = <String>[];
       _pending = null;
+      _offer = null;
       _search.clear();
     });
   }
@@ -472,6 +490,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     setState(() {
       _path = [..._path.take(depth), section.sectionId];
       _pending = null;
+      _offer = null;
       _search.clear();
     });
     if (!keyed) {
@@ -503,6 +522,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     setState(() {
       _path = [for (final s in open.take(keep)) s.sectionId];
       _pending = null;
+      _offer = null;
     });
     if (!focus) return;
     final closed = open[keep];
@@ -523,6 +543,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     setState(() {
       _pending = pending;
       _lastPending = pending;
+      // another dish from the menu: what went with the one before is over. A suggested dish asking its
+      // size keeps the suggestions, which are back in the tray once it is answered.
+      if (!pending.offered) _offer = null;
     });
   }
 
@@ -530,6 +553,85 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (_pending == null) return;
     _startTransition(resetScroll: false);
     setState(() => _pending = null);
+  }
+
+  void _closeOffer() {
+    if (_offer == null) return;
+    _startTransition(resetScroll: false);
+    setState(() => _offer = null);
+  }
+
+  /// Every place a dish has on the menus open now, by its item code: where the dishes that go with a dish are
+  /// looked up. Prepared once for the menus as they were read.
+  Map<String, List<(String, MenuEntry)>> get _places {
+    final last = _placed;
+    if (last != null && identical(last.$1, _menus)) return last.$2;
+    final places = <String, List<(String, MenuEntry)>>{};
+    for (final m in _openMenus) {
+      for (final s in m.sections) {
+        for (final e in s.allEntries) {
+          places.putIfAbsent(e.item, () => []).add((m.menu, e));
+        }
+      }
+    }
+    _placed = (_menus, places);
+    return places;
+  }
+
+  /// The dishes the menu says go with [rung], as they can be rung right now, in the order the manager put
+  /// them: each where it is on the menu on screen, else on another menu that is open (a beer with the duck,
+  /// from the Drinks tab). One that is on no open menu, or sold out, is not suggested.
+  List<MenuEntry> _goingWith(MenuEntry rung) {
+    if (rung.goesWith.isEmpty) return const [];
+    final here = _menu?.menu;
+    final places = _places;
+    final out = <MenuEntry>[];
+    for (final code in rung.goesWith) {
+      final sold = [
+        for (final place in places[code] ?? const <(String, MenuEntry)>[])
+          if (place.$2.available) place,
+      ];
+      final entry = (sold.where((place) => place.$1 == here).firstOrNull ?? sold.firstOrNull)?.$2;
+      if (entry != null && !out.any((e) => e.item == entry.item)) out.add(entry);
+    }
+    return out;
+  }
+
+  /// A dish from the menu just went on the order ([tile] is its tile): the dishes the menu says go with it
+  /// open in the tray under the dishes, each as its own tile, one tap to add. Only a suggestion: nothing goes
+  /// on the order by itself, and a dish that names none opens nothing. Another of the same dish leaves the
+  /// tray as it is; another dish replaces it with its own, or closes it.
+  ///
+  /// A dish rung from that tray ([offered]) changes nothing here: what was suggested suggests nothing
+  /// further, and the tray stays for the next of them.
+  void _rung(MenuEntry entry, {FocusNode? tile, bool offered = false}) {
+    if (offered || !mounted) return;
+    final with_ = _goingWith(entry);
+    final open = _offer;
+    if (with_.isEmpty) {
+      _closeOffer();
+      return;
+    }
+    if (open != null && _sameEntry(open.of, entry) && listEquals(open.entries, with_)) return;
+    final offer = _Offer(entry, with_, tile);
+    _startTransition(resetScroll: false);
+    setState(() {
+      _offer = offer;
+      _lastOffer = offer;
+    });
+  }
+
+  /// The menu was read again while the tray showed what goes with a dish: the same dish as the menu has it
+  /// now, with what goes with it now (a dish just 86'd is gone from the tray, one a manager added is in it).
+  _Offer? _offerOn(_Offer? offer) {
+    if (offer == null) return null;
+    final of = (_places[offer.of.item] ?? const <(String, MenuEntry)>[])
+        .map((place) => place.$2)
+        .where((e) => _sameEntry(e, offer.of))
+        .firstOrNull;
+    if (of == null) return null;
+    final with_ = _goingWith(of);
+    return with_.isEmpty ? null : _Offer(of, with_, offer.tile);
   }
 
   void _choose(ChosenLine chosen) {
@@ -591,6 +693,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       final chosen = pending.toChosenLine();
       _closePending();
       _choose(chosen);
+      _rung(pending.entry, tile: pending.tile, offered: pending.offered);
       final tile = pending.tile;
       if (tile != null) _want(tile);
     } else {
@@ -634,6 +737,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   void _clearSearch() => setState(() {
     _search.clear();
     _pending = null;
+    _offer = null;
   });
 
   /// The field's Clear button: the button goes away with the text, so the focus (its own while it was being
@@ -682,6 +786,13 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   bool _backOut() {
     final open = _open;
     if (_choiceLevel.hasFocus) {
+      final offer = _offer;
+      if (_pending == null && offer != null) {
+        // from the dishes that go with a dish, back to that dish
+        _closeOffer();
+        if (offer.tile != null) _want(offer.tile!);
+        return true;
+      }
       final tile = (_pending ?? _lastPending)?.tile;
       _closePending();
       if (tile != null) _want(tile);
@@ -700,6 +811,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _closeTo(0);
       } else {
         _closePending();
+        _closeOffer();
       }
       _want(_searchFocus);
       return true;
@@ -709,7 +821,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         _closeTo(0);
         return true;
       }
-      if (_pending == null && _search.text.isEmpty) return false;
+      if (_pending == null && _offer == null && _search.text.isEmpty) return false;
       _clearSearch();
       return true;
     }
@@ -733,7 +845,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   ///
   /// [from] is the tile tapped. When Enter was pressed on it, the focus goes into the choices that open; it
   /// is back on the tile once they are made ([_settlePending]). Touched or clicked, the tile keeps the focus.
-  Future<void> _tap(MenuEntry entry, {FocusNode? from}) async {
+  ///
+  /// Once the dish is on the order, the dishes the menu says go with it open in the tray ([_rung]); a dish
+  /// tapped there is [offered], and is rung the same way without suggesting anything itself.
+  Future<void> _tap(MenuEntry entry, {FocusNode? from, bool offered = false}) async {
     if (!entry.available) return;
     final keyed = _byKey(from);
     if (_pending != null && _pending!.entry == entry) {
@@ -747,7 +862,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
     if (availableVariants.isEmpty) return;
     if (entry.asksPrice) {
       // its price, or what it is and its price, has to be typed: the dish's own sheet asks, a tap or a hold
-      await _longPress(entry);
+      await _longPress(entry, from: from, offered: offered);
       return;
     }
 
@@ -789,11 +904,13 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       requiredGroups: requiredGroups,
       choices: choices,
       tile: from,
+      offered: offered,
     );
 
     if (pending.isComplete) {
       if (_pending != null) _closePending();
       _choose(pending.toChosenLine());
+      _rung(entry, tile: from, offered: offered);
       return;
     }
 
@@ -802,7 +919,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   }
 
   /// Long-pressing an item opens the popup [ItemSheet] to customize modifiers, size, quantity, or note.
-  Future<void> _longPress(MenuEntry entry) async {
+  Future<void> _longPress(MenuEntry entry, {FocusNode? from, bool offered = false}) async {
     if (!entry.available) {
       await _eightySix(entry);
       return;
@@ -812,7 +929,9 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
       context: context,
       builder: (_) => ItemSheet(api: widget.api, entry: entry, onEightySix: () => _eightySix(entry)),
     );
-    if (chosen != null) _choose(chosen);
+    if (chosen == null) return;
+    _choose(chosen);
+    _rung(entry, tile: from, offered: offered);
   }
 
   /// The tiles of one grid (`grid` names it: the categories, the open category's dishes, what the search
@@ -894,14 +1013,15 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
   Widget _entryTile(String grid, MenuEntry e, {required int qty, required bool selected}) {
     final node = _focusOf(grid, _entryKey(e));
     _dishOf[node] = e;
+    final offered = grid == _offerGrid; // a tile of the tray that says what goes with a dish
     return _EntryButton(
       key: ValueKey(_entryKey(e)),
       entry: e,
       qty: qty,
       selected: selected,
       focusNode: node,
-      onTap: () => _tap(e, from: node),
-      onLongPress: () => _longPress(e),
+      onTap: () => _tap(e, from: node, offered: offered),
+      onLongPress: () => _longPress(e, from: node, offered: offered),
     );
   }
 
@@ -921,7 +1041,10 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
           isDense: true,
         ),
         onEditingComplete: _submitSearch,
-        onChanged: (_) => setState(() => _pending = null),
+        onChanged: (_) => setState(() {
+          _pending = null;
+          _offer = null;
+        }),
       ),
     );
     _searchBuilt = (searching, field);
@@ -1033,14 +1156,24 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final topContentHeight = searching ? totalSearchContentHeight : totalCategoriesContentHeight;
         final minCategoriesHeight = math.min(topContentHeight, gridHeightForRows(1));
 
+        // The tray under the dishes: a dish's size and choices while one asks, else the dishes that go with
+        // the dish rung last ([_rung]). One tray, so the two never stack on a phone.
         double targetRequiredHeight = 0.0;
         final pending = _pending;
-        if (pending != null) {
-          final requiredCount =
-              (pending.needsVariant ? pending.availableVariants.length : 0) +
-              pending.asks.fold<int>(0, (sum, a) => sum + a.group.options.length);
-          final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
-          final neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
+        final offer = pending == null ? _offer : null;
+        if (pending != null || offer != null) {
+          final double neededRequiredHeight;
+          if (pending != null) {
+            final requiredCount =
+                (pending.needsVariant ? pending.availableVariants.length : 0) +
+                pending.asks.fold<int>(0, (sum, a) => sum + a.group.options.length);
+            final requiredRows = requiredCount == 0 ? 1 : (requiredCount / crossAxisCount).ceil();
+            neededRequiredHeight = _itemsDividerHeight + gridHeightForRows(requiredRows);
+          } else {
+            final rows = (offer!.entries.length / crossAxisCount).ceil();
+            neededRequiredHeight = _GoesWithSection.heightOver(context) + gridHeightForRows(rows);
+          }
+          _trayOffered = pending == null;
           final minTopReserve = searching ? (_searchBarHeight + gridHeightForRows(1)) : minCategoriesHeight;
           final minItemsReserve = here != null ? (_itemsDividerHeight + gridHeightForRows(1)) : 0.0;
           final maxRequiredHeight = math.max(0.0, constraints.maxHeight - minTopReserve - minItemsReserve);
@@ -1097,10 +1230,14 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
 
         final displayOpen = open.isNotEmpty ? open : _lastOpen;
         final displayHere = displayOpen.lastOrNull;
-        final displayPending = pending ?? _lastPending;
+        // while the tray closes it still shows what it showed last
+        final displayPending = pending ?? (_trayOffered ? null : _lastPending);
+        final displayOffer = offer ?? (pending == null && _trayOffered ? _lastOffer : null);
+        // the dish the tray is about stays in view while the tray opens under it
+        final subject = pending?.entry ?? offer?.of;
 
-        final pendingTopIndex = pending != null && here == null
-            ? topEntries.indexWhere((e) => _sameEntry(e, pending.entry))
+        final pendingTopIndex = subject != null && here == null
+            ? topEntries.indexWhere((e) => _sameEntry(e, subject))
             : -1;
         final extraBottomSpace = _categoriesScroll.syncViewport(
           totalTileCount: siblings.length + topEntries.length,
@@ -1121,7 +1258,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         final searchExtraBottomSpace = searching
             ? _searchScroll.syncViewport(
                 totalTileCount: found.length,
-                selectedTileIndex: pending != null ? found.indexWhere((e) => _sameEntry(e, pending.entry)) : -1,
+                selectedTileIndex: subject != null ? found.indexWhere((e) => _sameEntry(e, subject)) : -1,
                 crossAxisCount: crossAxisCount,
                 tileHeight: tileHeight,
                 gridPadding: _gridPadding,
@@ -1136,7 +1273,7 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
         double itemsExtraBottomSpace = 0.0;
         if (displayHere != null) {
           itemsScroll = _itemsScrollFor(displayHere.sectionId);
-          final entryIdx = pending != null ? displayHere.entries.indexWhere((e) => _sameEntry(e, pending.entry)) : -1;
+          final entryIdx = subject != null ? displayHere.entries.indexWhere((e) => _sameEntry(e, subject)) : -1;
           final selectedItemTileIndex = entryIdx >= 0 ? displayHere.sections.length + entryIdx : -1;
           itemsExtraBottomSpace = itemsScroll.syncViewport(
             totalTileCount: displayHere.sections.length + displayHere.entries.length,
@@ -1283,6 +1420,42 @@ class _MenuPanelState extends State<MenuPanel> with SingleTickerProviderStateMix
                     minHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
                     maxHeight: math.max(currentRequiredHeight, _itemsDividerHeight + 1.0),
                     child: _level(_choiceLevel, _trayFor(displayPending, crossAxisCount, tileHeight)),
+                  ),
+                ),
+              )
+            else if (currentRequiredHeight > 0.5 && displayOffer != null)
+              SizedBox(
+                key: const ValueKey('goes-with'),
+                height: currentRequiredHeight,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.topCenter,
+                    // never laid out shorter than its own top line: while the tray opens and closes that
+                    // line is cut by the tray's edge, not squeezed
+                    minHeight: math.max(currentRequiredHeight, _GoesWithSection.least(context)),
+                    maxHeight: math.max(currentRequiredHeight, _GoesWithSection.least(context)),
+                    child: _level(
+                      _choiceLevel,
+                      // While the trays move a tile here is not where it was a moment ago: a second tap meant
+                      // for the dish above (two of it, quickly) must not ring a suggestion instead.
+                      IgnorePointer(
+                        ignoring: _transition.isAnimating,
+                        child: _GoesWithSection(
+                          of: displayOffer.of,
+                          crossAxisCount: crossAxisCount,
+                          tileHeight: tileHeight,
+                          onClose: _closeOffer,
+                          scroll: _offerScroll,
+                          tiles: _tilesOf(
+                            _offerGrid,
+                            focus: _offerGrid,
+                            sections: const [],
+                            entries: displayOffer.entries,
+                            depth: 0,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1606,12 +1779,17 @@ class _PendingItemSelection {
     required this.requiredGroups,
     required this.choices,
     this.tile,
+    this.offered = false,
   }) {
     _askPicked(detail?.groups ?? const [], choices, '');
   }
 
   /// The focus node of the tile that was tapped: the keyboard's focus goes back to it from the tray.
   final FocusNode? tile;
+
+  /// It was tapped among the dishes that go with another dish: once it is on the order those are back in the
+  /// tray, and it suggests nothing itself ([_MenuPanelState._rung]).
+  final bool offered;
 
   static String variantKey(VariantOffer v) => 'req-variant:${v.variantId}';
   static String optionKey(_Ask ask, OptionDetail o) => 'req-option:${ask.path}${ask.group.groupId}:${o.optionId}';
@@ -1751,6 +1929,124 @@ class _PendingItemSelection {
       unitPrice: localPrice(name, availableVariants, detail, request).unitPrice,
       modifiers: pickedModifiers(groups, request),
       itemId: entry.item,
+    );
+  }
+}
+
+/// The dishes the menu says go with a dish that was just rung ([_MenuPanelState._rung]), as the tray under
+/// the dishes shows them.
+class _Offer {
+  const _Offer(this.of, this.entries, this.tile);
+
+  /// The dish that was rung.
+  final MenuEntry of;
+
+  /// What goes with it, each as it can be rung right now.
+  final List<MenuEntry> entries;
+
+  /// The focus node of the tile it was rung from: Escape in the tray takes the keyboard's focus back there.
+  final FocusNode? tile;
+}
+
+/// The tray that says what goes with the dish just rung: a line naming that dish, then each suggestion as the
+/// dish's own tile, in the menu's grid. A tap adds one, a hold opens its sheet, and it shows how many are on
+/// the order, exactly as its tile in its own category does. Closed with its button, by pulling down, or by
+/// going on to another dish or category.
+class _GoesWithSection extends StatelessWidget {
+  const _GoesWithSection({
+    required this.of,
+    required this.crossAxisCount,
+    required this.tileHeight,
+    required this.onClose,
+    required this.scroll,
+    required this.tiles,
+  });
+
+  final MenuEntry of;
+  final int crossAxisCount;
+  final double tileHeight;
+  final VoidCallback onClose;
+  final ScrollController scroll;
+  final List<Widget> tiles;
+
+  static const _lineHeight = 32.0;
+  static const _topPadding = 2.0;
+
+  /// The room the tray takes beyond a plain grid of its tiles: the rule on top and the line that names the
+  /// dish, less the padding it does without over its first row. The line grows with large type.
+  static double heightOver(BuildContext context) =>
+      _MenuPanelState._itemsDividerHeight + _line(context) + _topPadding - _MenuPanelState._gridPadding;
+
+  /// The least height it can be laid out in: its rule, the line that names the dish, and a sliver of tiles.
+  static double least(BuildContext context) => _MenuPanelState._itemsDividerHeight + _line(context) + 1.0;
+
+  static double _line(BuildContext context) =>
+      math.max(_lineHeight, MediaQuery.textScalerOf(context).scale(12) * 1.5 + 8);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final (name, _) = namesShown(of.name, of.secondName, chineseFirst: DishLanguage.chineseOf(context));
+    return ColoredBox(
+      color: scheme.surfaceContainer,
+      child: DrillDown(
+        onClose: onClose,
+        header: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Divider(height: _MenuPanelState._itemsDividerHeight, thickness: _MenuPanelState._itemsDividerHeight),
+            SizedBox(
+              height: _line(context),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 14, right: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Goes with $name',
+                        key: const ValueKey('goes-with-title'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('goes-with-close'),
+                      tooltip: 'Close',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: _lineHeight),
+                      icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
+                      onPressed: onClose,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        child: GridView(
+          controller: scroll,
+          padding: const EdgeInsets.fromLTRB(
+            _MenuPanelState._gridPadding,
+            _topPadding,
+            _MenuPanelState._gridPadding,
+            _MenuPanelState._gridPadding,
+          ),
+          physics: DrillDown.physics,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            mainAxisSpacing: _MenuPanelState._gridSpacing,
+            crossAxisSpacing: _MenuPanelState._gridSpacing,
+            mainAxisExtent: tileHeight,
+          ),
+          children: tiles,
+        ),
+      ),
     );
   }
 }

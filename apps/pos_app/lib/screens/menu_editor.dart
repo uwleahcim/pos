@@ -560,6 +560,7 @@ class ItemEditor extends StatelessWidget {
     final entries = catalog.entriesOf(itemKey);
     final own = catalog.attachmentsOf('item', itemKey);
     final inherited = catalog.attachmentsOf('category', item['category'] as String);
+    final with_ = goesWith(catalog, item);
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -821,6 +822,52 @@ class ItemEditor extends StatelessWidget {
                 onChanged();
               },
             ),
+          ],
+        ),
+        _heading(context, 'Goes with'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Text(
+            'Once this dish is rung, the order screen shows these under the dishes, one tap each. '
+            'Nothing is added unless somebody taps it. Up to $goesWithMost, shown in this order.',
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final code in with_)
+              InputChip(
+                key: ValueKey('$itemKey/goes-with/$code'),
+                label: Text(
+                  catalog.get('item', code)?['active'] == false
+                      ? '${nameOf(catalog.get('item', code))} (not on sale)'
+                      : nameOf(catalog.get('item', code)),
+                ),
+                onDeleted: () {
+                  setGoesWith(item, [...with_.where((c) => c != code)]);
+                  onChanged();
+                },
+              ),
+            if (with_.length < goesWithMost)
+              ActionChip(
+                key: ValueKey('$itemKey/goes-with/add'),
+                avatar: const Icon(Icons.add, size: 18),
+                label: const Text('Add a dish'),
+                onPressed: () async {
+                  final picked = await showDialog<String>(
+                    context: context,
+                    builder: (_) => _SearchPickDialog(
+                      title: 'Goes with which dish?',
+                      options: wholeDishes(catalog, except: {itemKey, ...with_}),
+                    ),
+                  );
+                  if (picked == null) return;
+                  setGoesWith(item, [...with_, picked]);
+                  onChanged();
+                },
+              ),
           ],
         ),
         const SizedBox(height: 32),
@@ -1592,6 +1639,41 @@ void setAsks(Map<String, dynamic> item, {required bool price, required bool name
   };
 }
 
+/// How many dishes one dish can suggest (the hub's `GOES_WITH_MOST`): two rows of tiles on a phone.
+const goesWithMost = 4;
+
+/// The dishes a dish goes with (`attrs.goes_with`: item codes, in the order the order screen shows them once
+/// the dish is rung; docs/goes-with.md). Only dishes the catalog still has, never the dish itself and none
+/// twice, and no more than [goesWithMost]: what the hub would make of the list.
+List<String> goesWith(MenuCatalog catalog, Map<String, dynamic> item) {
+  final named = _attrs(item)['goes_with'];
+  if (named is! List) return const [];
+  final out = <String>[];
+  for (final code in named) {
+    if (code is! String || code == item['code'] || out.contains(code)) continue;
+    if (catalog.get('item', code) != null) out.add(code);
+  }
+  return out.length > goesWithMost ? out.sublist(0, goesWithMost) : out;
+}
+
+/// Sets the dishes a dish goes with, leaving the rest of its `attrs` as they are. A dish that goes with
+/// nothing carries no key, as before there was anything to go with.
+void setGoesWith(Map<String, dynamic> item, List<String> codes) {
+  item['attrs'] = <String, dynamic>{
+    for (final e in _attrs(item).entries)
+      if (e.key != 'goes_with') e.key: e.value,
+    if (codes.isNotEmpty) 'goes_with': [...codes],
+  };
+}
+
+/// Every dish by its code, for picking a whole dish and not one of its sizes: "Name · Category", in the
+/// catalog's order, without [except].
+Map<String, String> wholeDishes(MenuCatalog catalog, {Set<String> except = const {}}) => {
+  for (final category in catalog.categories())
+    for (final item in catalog.itemsIn(category['code'] as String))
+      if (!except.contains(item['code'])) item['code'] as String: '${nameOf(item)} · ${nameOf(category)}',
+};
+
 Widget _heading(BuildContext context, String text) {
   final theme = Theme.of(context);
   return Padding(
@@ -1788,9 +1870,19 @@ void removeVariant(MenuCatalog catalog, String variantId) {
   }
 }
 
-/// A dish goes with its sizes, its places on the menus and its own option groups. The backend refuses the
-/// save if something else still needs it (a combo that offers it), and says what.
+/// A dish goes with its sizes, its places on the menus and its own option groups, and no other dish goes on
+/// suggesting it ([goesWith]). The backend refuses the save if something else still needs it (a combo that
+/// offers it), and says what.
 void removeItem(MenuCatalog catalog, String itemKey) {
+  for (final other in catalog.all('item')) {
+    final named = _attrs(other)['goes_with'];
+    if (named is List && named.contains(itemKey)) {
+      setGoesWith(other, [
+        for (final code in named)
+          if (code is String && code != itemKey) code,
+      ]);
+    }
+  }
   for (final v in catalog.variantsOf(itemKey)) {
     catalog.delete('variant', v['id'] as String);
   }
