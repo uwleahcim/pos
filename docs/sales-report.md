@@ -67,7 +67,9 @@ the order a night runs (4 AM round to 3 AM), again with the days before as the t
 delivery; `bar-tabs.md`), each with the days before. Under the categories, **Each dish of these days, best to worst** opens the list of dishes sold for
 the same days (`dishes-sold.md`).
 
-**Money taken:** every payment recorded in those days, by how it was paid, whatever check it was for.
+**Money taken:** every payment recorded in those days, by how it was paid, whatever check it was for. What
+the restaurant's website took for its orders is a row of its own, **Paid online**, as in The day
+([day-report.md](day-report.md)).
 
 **Comps and discounts:** each kind, how many times and how much.
 
@@ -99,7 +101,7 @@ finished.
 | Tax-exempt checks, Tax-exempt sales, Tax not charged | the checks a manager marked tax exempt: how many, what they came to, and the tax that was left off. Their sales are in every column before |
 | Voids after sending, and its amount | dishes voided after the kitchen had them, on the day they were voided |
 | Checks voided whole, and its amount | checks voided whole. They are no sale and are in no other column |
-| Cash, Card, Paid elsewhere | the money taken that day, by how it was paid |
+| Cash, Card, Paid online, Paid elsewhere | the money taken that day, by how it was paid. Paid online is what the restaurant's website took for its orders; the column is on every sheet, zeroes where there was none |
 | Money taken | all of it together |
 
 - Every day of the span has its line, a day with nothing sold too (a line of zeroes), so a month is always

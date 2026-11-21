@@ -15,7 +15,8 @@ The figures add up, and the report is laid out so that anybody can check them:
 - `sales.net` = gross - discounts. `sales.total` = net + charges + gratuity + tax: what the day's checks come
   to. The tax is one figure, as a guest sees it.
 - `money.taken` is every payment recorded during the day, by how it was paid, whatever check it was for:
-  what should be in the drawer and on the card slips that night. Every payment is in it, cash like any other.
+  what should be in the drawer and on the card slips that night, and under `online` what the restaurant's
+  website took for its orders. Every payment is in it, cash like any other.
 - `money` then settles the day's own checks: total = `paid_this_day` + `paid_other_days` + `due` - `over`.
 
 What the report cannot know is said rather than guessed: the money counted in the drawer (nobody types it in
@@ -31,7 +32,7 @@ from typing import Any
 
 from .. import localtime
 from ..menu.defs import Definitions
-from ..sync.oplog import OrderState, promised_ms
+from ..sync.oplog import OrderState, Payment, promised_ms
 from ..tax import TaxProfile
 from .adjustments import PricingRules
 from .check import check_for
@@ -40,10 +41,27 @@ from .typed import typed_rows
 from .voids import void_rows
 
 ZERO = Decimal("0.00")
-METHODS = ("cash", "card", "elsewhere")
+WEBSITE = "online"
+"""What the restaurant's website took, as a report names it. It is no way of paying a screen can send (the
+hub refuses a `pay` that says it): only the name of a row. See `how_paid`."""
+PAID_ONLINE = "Paid online"
+"""The note on the payment the hub records for an online order paid on the website (`pos.online.place`),
+and what the row is called."""
+METHODS = ("cash", "card", WEBSITE, "elsewhere")
 """How a payment can have been taken, in the order the report lists them; anything else follows by name."""
-PAID_AS = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
+PAID_AS = {"cash": "Cash", "card": "Card", WEBSITE: PAID_ONLINE, "elsewhere": "Paid elsewhere"}
 """What each is called on paper and in a table."""
+
+
+def how_paid(payment: Payment) -> str:
+    """The row of the money taken a payment belongs in: its method, and `online` for what the website took.
+
+    The website's money is on the log as a payment taken elsewhere with the note "Paid online", and the
+    check says "Paid online" for exactly that, so the reports do too: the same payment reads the same on
+    the check and in the day's money. It only says under which name a payment that was recorded is listed;
+    every payment is in one row and in the total, whatever its note."""
+    method = payment.method or "cash"
+    return WEBSITE if method == "elsewhere" and payment.note == PAID_ONLINE else method
 
 
 def order_day(state: OrderState) -> date | None:
@@ -206,7 +224,7 @@ def day_report(
             amount = Decimal(payment.amount or "0")
             at_ms = payment.stamp.wall_ms if payment.stamp is not None else None
             if at_ms is not None and since <= at_ms < until:
-                method = payment.method or "cash"
+                method = how_paid(payment)
                 taken.add(method, amount, method=method)
                 money["taken_total"] += amount
                 paid_then += amount

@@ -272,6 +272,84 @@ def test_the_money_taken_is_every_payment_of_the_day_by_how_it_was_paid():
     assert report["money"]["on_voided"] == "0.00"
 
 
+def website(h: Hub, order_id: str, when: int, request: dict | None = None) -> str:
+    """A to-go order the restaurant's website took the money for, with its payment as the importer writes it
+    (`pos.online.place`): paid elsewhere, noted "Paid online". Answers what it came to."""
+    h.to_go(order_id, when, name="Kim")
+    h.ring(order_id, "L1", request or EGGROLL, when)
+    h.op(order_id, "fire", when)
+    total = h.check(order_id)["total"]
+    h.op(
+        order_id,
+        "pay",
+        when,
+        payment_id=f"{order_id}:paid",
+        method="elsewhere",
+        amount=total,
+        note="Paid online",
+        by="Online order",
+    )
+    return total
+
+
+def test_what_the_website_took_is_a_row_of_its_own_and_no_total_moves():
+    h = evening()
+    before = h.report()
+    total = website(h, "g1", at(19, 40))
+    report = h.report()
+    taken = {t["method"]: (t["count"], t["amount"]) for t in report["money"]["taken"]}
+    # between the card slips and whatever else was paid outside the POS
+    assert [t["method"] for t in report["money"]["taken"]] == ["cash", "card", "online", "elsewhere"]
+    assert taken.pop("online") == (1, total)
+    # every other way of paying reads as it did, Lee's order paid elsewhere among them
+    assert taken == {t["method"]: (t["count"], t["amount"]) for t in before["money"]["taken"]}
+    # and the day's money is that one payment more: the row splits what was taken, it adds and hides nothing
+    assert money(report["money"]["taken_total"]) == money(before["money"]["taken_total"]) + money(total)
+    assert added(report["money"]["taken"]) == money(report["money"]["taken_total"])
+    assert money(report["money"]["paid_this_day"]) == money(before["money"]["paid_this_day"]) + money(total)
+    assert report["money"]["due"] == before["money"]["due"]
+
+
+def test_only_a_payment_taken_elsewhere_and_noted_as_the_website_notes_it_is_paid_online():
+    h = Hub(now=at(18))
+    h.to_go("p1", at(18))
+    h.ring("p1", "L1", PUPU, at(18))
+    ways = [
+        ("cash", "Paid online"),  # cash is cash, whatever somebody typed beside it
+        ("card", "Paid online"),
+        ("elsewhere", ""),
+        ("elsewhere", "by phone"),
+        ("elsewhere", "Paid online, she says"),
+        ("elsewhere", "Paid online"),  # the words the website's payment carries, and the check says for it
+    ]
+    for n, (method, note) in enumerate(ways):
+        h.op("p1", "pay", at(18, 1 + n), payment_id=f"P{n}", method=method, amount="1.00", note=note, by="Amy")
+    report = h.report()
+    assert [(t["method"], t["count"], t["amount"]) for t in report["money"]["taken"]] == [
+        ("cash", 1, "1.00"),
+        ("card", 1, "1.00"),
+        ("online", 1, "1.00"),
+        ("elsewhere", 3, "3.00"),
+    ]
+    assert report["money"]["taken_total"] == "6.00"
+    # no screen can send a payment under that name: it is how the reports say it, not a way of paying
+    answer = h.c.post(
+        "/orders/p1/ops",
+        json=[
+            {
+                "op_id": "p1-pay-online",
+                "order_id": "p1",
+                "hlc": str(HLC(at(18, 30), 1, "t1")),
+                "device": "t1",
+                "kind": "pay",
+                "data": {"payment_id": "PX", "method": "online", "amount": "1.00"},
+            }
+        ],
+    )
+    assert [r["error"] for r in answer.json()["refused"]] == ["invalid_payment"]
+    assert h.report()["money"]["taken_total"] == "6.00"
+
+
 def test_the_days_checks_settle_paid_owed_and_over():
     h = evening()
     report = h.report()
@@ -493,6 +571,22 @@ def test_the_day_prints_where_the_bills_print():
     text = [line.strip() for line in decode(h.printing.store.get(quiet.json()["job_id"]).data).text if line.strip()]
     assert text[1] == "Tuesday, November 10, 2026" and "The day is still running" not in text
     assert "Nothing: every check is closed and paid" in text
+
+
+def test_the_paper_has_the_row_for_what_the_website_took():
+    h = evening()
+    total = website(h, "g1", at(19, 40))
+    answer = h.c.post("/reports/day/print", json={}, headers=h.manager())
+    text = [line.strip() for line in decode(h.printing.store.get(answer.json()["job_id"]).data).text if line.strip()]
+    start = text.index("MONEY TAKEN")
+    assert [line.split("  ")[0] for line in text[start + 1 : start + 6]] == [
+        "Cash (2)",
+        "Card (2)",
+        "Paid online (1)",
+        "Paid elsewhere (1)",
+        "TAKEN THIS DAY",
+    ]
+    assert text[start + 3].endswith(total) and text[start + 5].endswith(h.report()["money"]["taken_total"])
 
 
 def test_the_paper_says_who_is_still_on_the_clock_and_the_hours_worked():

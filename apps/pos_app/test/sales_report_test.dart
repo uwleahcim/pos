@@ -504,6 +504,35 @@ void main() {
       expect(find.byKey(const ValueKey('sales-note')), findsOneWidget);
     });
 
+    testWidgets('what the website took is a row of its own, held beside the days before', (tester) async {
+      Map<String, dynamic> withOnline(Map<String, dynamic> span, int count, String amount, String total) => {
+        ...span,
+        'money': {
+          'taken': [
+            ...((span['money'] as Map)['taken'] as List).where((m) => (m as Map)['method'] != 'elsewhere'),
+            {'method': 'online', 'count': count, 'amount': amount},
+            ...((span['money'] as Map)['taken'] as List).where((m) => (m as Map)['method'] == 'elsewhere'),
+          ],
+          'taken_total': total,
+        },
+      };
+      final sales = week();
+      sales['span'] = withOnline(sales['span'] as Map<String, dynamic>, 21, '612.40', '15710.67');
+      sales['before'] = withOnline(sales['before'] as Map<String, dynamic>, 18, '500.00', '13928.70');
+      await pumpSales(tester, sales: {theWeek: sales, '': today()});
+      expect(row(tester, 'sales-taken:online'), [
+        'Paid online',
+        r'21 payments · $500.00 before · up 22.5%',
+        r'$612.40',
+      ]);
+      expect(row(tester, 'sales-taken:elsewhere'), ['Paid elsewhere', '11 payments · nothing before', r'$398.00']);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('sales-taken:online'))).dy,
+        lessThan(tester.getTopLeft(find.byKey(const ValueKey('sales-taken:elsewhere'))).dy),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('more sold is green and less is red; a table\'s time and the comps are neither', (tester) async {
       await pumpSales(tester);
       Color? moved(String key) {

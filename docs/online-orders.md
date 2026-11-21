@@ -264,6 +264,10 @@ screen. Four things say that it came from the website.
   GloriaFood's app) and what the website charged. The strip is to read: nothing on it can be changed.
 - **The payment on the check** reads **Paid online**, where it read "Paid elsewhere". The check's history
   says the same.
+- **In the day's report and in Sales**, the money the website took is a row of its own, **Paid online**,
+  under Money taken, and a column of the accountant's sheet: the figure to hold against the statement of
+  the payment company the website uses. It was under Paid elsewhere before; no total changed
+  ([day-report.md](day-report.md)).
 
 **On a kitchen screen** the customer's note heads the ticket in a dark band, "Customer's note · …", under
 any allergy and before the dishes, as the paper has it under CUSTOMER'S NOTE. It is shown whole, however
@@ -379,8 +383,6 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - A button on a screen to ask GloriaFood now, or to try an order again: `sudo hubctl online fetch` does the
   first, and an order that would not go on is rung in by hand.
 - The screen names an order by GloriaFood's number, not by the number on the POS's check.
-- The day's report and Sales count money paid on the website under **Paid elsewhere**, with whatever else
-  was paid outside the POS. A row of its own for it is not built.
 - Typing a note for the whole order on a screen (for a phone order, say). The strip shows one that came
   with the order; a dish's own note is typed as before.
 - Reservations from GloriaFood into the reservation book.

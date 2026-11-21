@@ -490,7 +490,9 @@ def test_the_reports_count_an_online_order_as_the_sale_it_is():
     assert (sales["sales"]["charges"], sales["sales"]["gratuity"]) == ("4.00", "6.00")
     day = hub.client.get("/reports/day", headers=manager).json()
     assert day["sales"] == sales["sales"]
-    assert day["money"]["taken"] == [{"method": "elsewhere", "count": 1, "amount": money(told["total_price"])}]
+    # what the website took has its own row in the day's money, and the Sales say the same
+    assert day["money"]["taken"] == [{"method": "online", "count": 1, "amount": money(told["total_price"])}]
+    assert sales["money"]["taken"] == day["money"]["taken"]
     assert (day["money"]["due"], [who["name"] for who in day["staff"]]) == ("0.00", ["Online order"])
     dishes = hub.client.get("/reports/dishes", headers=manager).json()
     assert {(d["item"], d["name"], d["count"]) for d in dishes["dishes"] if d["count"]} == {
