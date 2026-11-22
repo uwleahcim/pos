@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/api.dart';
@@ -185,6 +187,49 @@ void main() {
       final other = OnlineTrouble.fromJson({'code': 'tunnel_down', 'reason': 'the tunnel is not connected'});
       expect((other.headline, other.words), ('Online orders: something is wrong', 'the tunnel is not connected'));
       expect(const OnlineTrouble().words, 'The hub says something is wrong with the online orders.');
+    });
+
+    test('what came of asking now is said in a sentence or two', () {
+      OnlineAsked asked(Map<String, dynamic> more) => OnlineAsked.fromJson({...Hub().onlineFetched, ...more});
+      expect((asked({}).words, asked({}).bad), ('GloriaFood has no new order.', false));
+      expect(asked({'came': 1, 'placed': 1}).words, '1 order came. 1 put on the POS.');
+      expect(asked({'came': 1, 'known': 1}).words, '1 order came, and it was here already.');
+      expect(asked({'came': 2, 'known': 2}).words, '2 orders came, all of them here already.');
+      expect(asked({'came': 1, 'kept': 1}).words, '1 order came. 1 not for the POS.');
+      final mixed = asked({'came': 3, 'known': 1, 'placed': 1, 'failed': 1});
+      expect(
+        mixed.words,
+        '3 orders came, 1 of them here already. 1 put on the POS, 1 could not be put on (see To look at).',
+      );
+      expect(mixed.bad, isTrue);
+      // one that waited from an earlier round went on with this one
+      expect(asked({'placed': 1}).words, 'GloriaFood has no new order. 1 put on the POS.');
+      final silence = asked({'answered': false, 'reason': 'GloriaFood did not answer in time'});
+      expect(
+        (silence.words, silence.bad),
+        ('GloriaFood did not answer in time. The hub asks again by itself within the minute.', true),
+      );
+      final soon = asked({'asked': false, 'answered': false, 'soon': true});
+      expect((soon.words, soon.bad), ('GloriaFood was asked a few seconds ago. Wait a moment and ask again.', false));
+      final standby = asked({'asked': false, 'answered': false});
+      expect(standby.words, 'This hub cannot write orders down now, so it asked for none.');
+      // a hub from before the button says only what the round did: whether the website answered is in its status
+      const before = {'asked': true, 'came': 1, 'known': 0, 'placed': 1, 'kept': 0, 'failed': 0};
+      final fine = OnlineAsked.fromJson({...before, 'status': Hub.onlineStatus(came: 1, placed: 1)});
+      expect((fine.answered, fine.words, fine.status?.placed), (true, '1 order came. 1 put on the POS.', 1));
+      final refused = OnlineAsked.fromJson({
+        ...before,
+        'came': 0,
+        'placed': 0,
+        'status': {
+          ...Hub.onlineStatus(),
+          'last_failure': {'at_ms': 1, 'reason': 'GloriaFood refused the key'},
+        },
+      });
+      expect(
+        (refused.answered, refused.words),
+        (false, 'GloriaFood refused the key. The hub asks again by itself within the minute.'),
+      );
     });
 
     test('an answer that is no status, and one from before the count of new ones, alert nobody wrongly', () {
@@ -490,6 +535,106 @@ void main() {
       expect((shown('online-new:7781'), shown('online-new:unread-1'), shown('online-new:7702')), (1, 1, 0));
       // opened by itself (from Location), a row opens nothing
       expect(tester.widget<ListTile>(key('online-look:7781')).onTap, isNull);
+      await stop(tester);
+    });
+
+    String askedWords(WidgetTester tester) => tester.widget<Text>(key('online-asked')).data!;
+    bool askedInRed(WidgetTester tester) {
+      final text = tester.widget<Text>(key('online-asked'));
+      return text.style?.color == Theme.of(tester.element(key('online-asked'))).colorScheme.error;
+    }
+
+    testWidgets('Ask now asks the website this moment and says what came of it', (tester) async {
+      final t = await pumpScreen(tester, Hub.onlineStatus(answeredMs: ago(2), came: 1, placed: 1));
+      expect((shown('online-ask'), shown('online-asked')), (1, 0));
+      expect(find.descendant(of: key('online-ask'), matching: find.text('Ask now')), findsOneWidget);
+      // the hub asks, an order comes and goes on the POS; while it asks, the button is a spinner
+      t.hub.onlineFetched = {...t.hub.onlineFetched, 'came': 1, 'placed': 1};
+      t.hub.onlineOnFetch = () => t.hub.online = Hub.onlineStatus(answeredMs: ago(0), came: 2, placed: 2);
+      final held = t.hub.onlineFetchHeld = Completer<void>();
+      final reads = t.hub.onlineAsks;
+      await tester.tap(key('online-ask'));
+      await tester.pump();
+      expect((tester.widget<TextButton>(key('online-ask')).onPressed, shown('online-ask-busy')), (null, 1));
+      expect(find.text('Asking GloriaFood'), findsOneWidget);
+      await tester.tap(key('online-ask'), warnIfMissed: false); // a second press while it asks is no second asking
+      await tester.pump();
+      held.complete();
+      t.hub.onlineFetchHeld = null;
+      await tester.pumpAndSettle();
+      expect((tester.widget<TextButton>(key('online-ask')).onPressed != null, shown('online-ask-busy')), (true, 0));
+      expect(t.hub.onlineFetches, 1);
+      expect((askedWords(tester), askedInRed(tester)), ('1 order came. 1 put on the POS.', false));
+      // how they stand now came with the answer: the figures move with no second read
+      final today = find.descendant(of: key('online-today'), matching: find.byType(Text));
+      expect(tester.widgetList<Text>(today).map((text) => text.data).take(4), ['2', 'came', '2', 'on the POS']);
+      expect(rowWords(tester, 'online-asking'), 'On · GloriaFood last answered ${clockTime(ago(0))}');
+      expect(t.hub.onlineAsks, reads);
+      // asked again: nothing new this time, and the words say that
+      t.hub.onlineFetched = {...t.hub.onlineFetched, 'came': 0, 'placed': 0};
+      await tapKey(tester, 'online-ask');
+      expect((t.hub.onlineFetches, askedWords(tester)), (2, 'GloriaFood has no new order.'));
+      await stop(tester);
+    });
+
+    testWidgets('Ask now says so when the website was just asked, did not answer, or no hub answers', (tester) async {
+      final t = await pumpScreen(tester, Hub.onlineStatus(answeredMs: ago(1)));
+      t.hub.onlineFetched = {...t.hub.onlineFetched, 'asked': false, 'answered': false, 'soon': true};
+      await tapKey(tester, 'online-ask');
+      expect(
+        (askedWords(tester), askedInRed(tester)),
+        ('GloriaFood was asked a few seconds ago. Wait a moment and ask again.', false),
+      );
+      t.hub.onlineFetched = {
+        ...t.hub.onlineFetched,
+        'asked': true,
+        'soon': false,
+        'reason': 'GloriaFood could not be reached (ConnectError)',
+      };
+      await tapKey(tester, 'online-ask');
+      expect(
+        (askedWords(tester), askedInRed(tester)),
+        ('GloriaFood could not be reached (ConnectError). The hub asks again by itself within the minute.', true),
+      );
+      // an order that came and could not be put on the POS: in red, it is new, and looking is told the hub
+      t.hub.onlineFetched = {...Hub().onlineFetched, 'came': 1, 'failed': 1};
+      t.hub.onlineOnFetch = () => t.hub.online = Hub.onlineStatus(came: 1, failed: 1, look: [lost()]);
+      await tapKey(tester, 'online-ask');
+      expect((askedWords(tester), askedInRed(tester)), ('1 order came. 1 could not be put on (see To look at).', true));
+      expect((shown('online-look:7781'), shown('online-new:7781')), (1, 1));
+      expect(t.hub.onlineSeenBy, ['Mike']);
+      // no hub answers: said, and what was read stays
+      t.hub.onlineDown = true;
+      final presses = t.hub.onlineFetches;
+      await tapKey(tester, 'online-ask');
+      expect(
+        (askedWords(tester), askedInRed(tester), t.hub.onlineFetches),
+        ('The hub is not answering, so GloriaFood was not asked.', true, presses),
+      );
+      expect(shown('online-look:7781'), 1);
+      await stop(tester);
+    });
+
+    testWidgets('only a hub that asks has the button, and it fits a small phone', (tester) async {
+      // orders are sent by GloriaFood only: the hub has no key to ask with
+      await pumpScreen(tester, Hub.onlineStatus(asks: false, pushedMs: ago(3)));
+      expect((shown('online-asking'), shown('online-ask')), (1, 0));
+      await stop(tester);
+      await pumpScreen(tester, Hub.onlineStatus(asks: false, pushes: false)); // off altogether
+      expect(shown('online-ask'), 0);
+      await stop(tester);
+      // the minute's round has stopped: asking by hand is what is left
+      final t = await pumpScreen(tester, Hub.onlineStatus(running: false), size: const Size(320, 568));
+      expect(rowWords(tester, 'online-asking'), 'NOT RUNNING. On the hub: sudo hubctl restart');
+      t.hub.onlineFetched = {...t.hub.onlineFetched, 'came': 12, 'known': 3, 'placed': 8, 'kept': 1, 'failed': 1};
+      await tapKey(tester, 'online-ask');
+      expect(t.hub.onlineFetches, 1);
+      expect(
+        askedWords(tester),
+        '12 orders came, 3 of them here already. 8 put on the POS, 1 not for the POS, 1 could not be put on (see To '
+        'look at).',
+      );
+      expect(tester.takeException(), isNull);
       await stop(tester);
     });
 

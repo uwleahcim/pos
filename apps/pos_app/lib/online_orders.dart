@@ -201,6 +201,96 @@ class OnlineTrouble {
   }
 }
 
+/// What came of asking the website for orders now, out of the hub's own turn (`POST /online/fetch`: the
+/// button "Ask now" on the screen Online orders). Nothing of a customer.
+class OnlineAsked {
+  const OnlineAsked({
+    this.asked = false,
+    this.soon = false,
+    this.answered = false,
+    this.reason = '',
+    this.came = 0,
+    this.known = 0,
+    this.placed = 0,
+    this.kept = 0,
+    this.failed = 0,
+    this.status,
+  });
+
+  factory OnlineAsked.fromJson(Map<String, dynamic> json) {
+    int count(Object? value) => _whole(value) ?? 0;
+    final status = json['status'] is Map ? (json['status'] as Map).cast<String, dynamic>() : null;
+    final asked = json['asked'] == true;
+    // a hub from before the button says only that it asked: whether the website answered is then read off
+    // the status that came with it
+    final failure = status?['last_failure'] is Map ? status!['last_failure'] as Map : null;
+    return OnlineAsked(
+      asked: asked,
+      soon: json['soon'] == true,
+      answered: json['answered'] is bool ? json['answered'] == true : asked && failure == null,
+      reason: oneLine(json.containsKey('reason') ? json['reason'] : failure?['reason']),
+      came: count(json['came']),
+      known: count(json['known']),
+      placed: count(json['placed']),
+      kept: count(json['kept']),
+      failed: count(json['failed']),
+      status: status == null ? null : OnlineStatus.fromJson(status),
+    );
+  }
+
+  /// The website was asked. Not when it was asked a few seconds ago ([soon]), and not by a hub that cannot
+  /// write orders down.
+  final bool asked;
+
+  /// It was asked so shortly before that the hub left it alone this time.
+  final bool soon;
+
+  /// It answered, and [reason] is why it did not.
+  final bool answered;
+  final String reason;
+
+  /// How many orders it gave, and how many of them the hub had already.
+  final int came;
+  final int known;
+
+  /// What the hub did just now with every order it had waiting: put on the POS, nothing the POS takes,
+  /// could not be put on.
+  final int placed;
+  final int kept;
+  final int failed;
+
+  /// How the online orders stand after it.
+  final OnlineStatus? status;
+
+  /// Something went wrong, or is left for a person.
+  bool get bad => asked && (!answered || failed > 0);
+
+  /// What to tell whoever asked.
+  String get words {
+    if (soon) return 'GloriaFood was asked a few seconds ago. Wait a moment and ask again.';
+    if (!asked) return 'This hub cannot write orders down now, so it asked for none.';
+    final did = [
+      if (placed > 0) '$placed put on the POS',
+      if (kept > 0) '$kept not for the POS',
+      if (failed > 0) '$failed could not be put on (see To look at)',
+    ].join(', ');
+    final after = did.isEmpty ? '' : ' $did.';
+    if (!answered) {
+      final why = reason.isEmpty ? 'GloriaFood did not answer' : reason;
+      return '$why. The hub asks again by itself within the minute.$after';
+    }
+    if (came == 0) return 'GloriaFood has no new order.$after';
+    final here = known == 0
+        ? ''
+        : known < came
+        ? ', $known of them here already'
+        : came == 1
+        ? ', and it was here already'
+        : ', all of them here already';
+    return '${came == 1 ? '1 order came' : '$came orders came'}$here.$after';
+  }
+}
+
 /// How the online orders are doing, as the hub says it (`GET /online/status`): how they arrive, today's by
 /// what became of them, the ones to look at, and what is wrong right now. Nothing of a customer.
 class OnlineStatus {

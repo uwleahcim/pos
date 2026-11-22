@@ -55,6 +55,10 @@ MOST_OLD_SLIPS = 3
 days after the integration was made brings them all at once."""
 INTERVAL_SECONDS = 60.0
 """How often GloriaFood is asked: what its own pages say a POS should do."""
+ASK_GAP_MS = 15_000
+"""A person who asks out of turn (`OnlineOrders.ask_now`: the button on a screen, `hubctl online fetch`) is
+not passed on to GloriaFood sooner than this after it was last asked, whoever asked then: its pages want one
+request a minute from a POS, and a button is easy to lean on. The minute's own round is never held back."""
 DAY_MS = 24 * 60 * 60_000
 FORGET_EVERY_MS = 60 * 60_000
 UNREAD_SLIP_MS = 15 * 60_000
@@ -146,13 +150,29 @@ class OnlineOrders:
         many of them were here already (`known`: a push brought them first), how many were `placed`, `kept`
         (nothing the POS takes) and `failed`, and `asked`: whether GloriaFood was asked at all (not without
         a key, and not by a hub that cannot write)."""
+        return self._round()[0]
+
+    def ask_now(self) -> dict[str, Any]:
+        """A round out of turn, because a person asked for one. Gives what `round` gives and, beside it,
+        whether GloriaFood `answered` this asking, the `reason` it did not (a few words; None otherwise) and
+        `soon`: GloriaFood was asked less than `ASK_GAP_MS` ago, so it was left alone and nothing was done
+        (every figure is nothing then, and `asked` is False). Whoever asks again a moment later is served."""
+        done, about = self._round(gap_ms=ASK_GAP_MS)
+        return {**done, **about}
+
+    def _round(self, gap_ms: int = 0) -> tuple[dict[str, Any], dict[str, Any]]:
+        """One round, and what `ask_now` says beside it. With `gap_ms`, a round that would ask GloriaFood
+        less than that after it was last asked does nothing at all."""
         with self._asking:
             done = {"asked": False, "came": 0, "known": 0, "placed": 0, "kept": 0, "failed": 0}
+            about: dict[str, Any] = {"answered": False, "reason": None, "soon": False}
             if not self.inbox.writable():
-                return done
+                return done, about
             answer: list[dict[str, Any]] | FetchFailed | None = None
             now = self._now()
             if self.source is not None:
+                if gap_ms and self._asked_ms is not None and 0 <= now - self._asked_ms < gap_ms:
+                    return done, {**about, "soon": True}
                 done["asked"] = True
                 self._asked_ms = now
                 try:
@@ -162,15 +182,17 @@ class OnlineOrders:
             with self._lock:
                 if isinstance(answer, FetchFailed):
                     self._failed(now, answer)
+                    about["reason"] = answer.reason
                 elif answer is not None:
                     self._answered_ms, self._failure, self._failing_ms = now, None, None
+                    about["answered"] = True
                     done["came"] = len(answer)
                     done["known"], _ = self._take(answer, now, POLL)
                 else:
                     self._write_down()
                 self._settle(done)
                 self._forget()
-            return done
+            return done, about
 
     def admit(self, authorization: str | None) -> None:
         """Whether a push is let in, by the `Authorization` header it came with, before anything of it is
@@ -537,4 +559,4 @@ def _to_look_at(row: Arrival) -> bool:
     return row.state == "kept" and row.kind in ORDER_TYPES
 
 
-__all__ = ["INTERVAL_SECONDS", "NAME", "SEVERAL", "UNREADABLE", "OnlineOrders", "PushRefused", "Source"]
+__all__ = ["ASK_GAP_MS", "INTERVAL_SECONDS", "NAME", "SEVERAL", "UNREADABLE", "OnlineOrders", "PushRefused", "Source"]

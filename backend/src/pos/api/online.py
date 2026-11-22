@@ -30,8 +30,12 @@
   screen's operations it takes no token: it changes no order, no money and no setting anybody chose. 503
   `read_only` on a hub that cannot write.
 - `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
-  that round did (`asked`, `came`, `known`: here already, `placed`, `kept`, `failed`) and the `status` after
-  it. 409 `no_key` when the hub has no key for asking.
+  that round did (`asked`, `came`, `known`: here already, `placed`, `kept`, `failed`), whether GloriaFood
+  `answered` and the `reason` it did not, and the `status` after it. It is the button **Ask now** on the
+  Online orders screen and `hubctl online fetch`. GloriaFood is not asked again within fifteen seconds of
+  the last asking (`pos.online.service.ASK_GAP_MS`): then nothing is done and `soon` is true. Like the
+  screens' other calls here it takes no token: it does what the hub's own minute does, no oftener than
+  that. 409 `no_key` when the hub has no key for asking.
 - `GET /online/orders/{id}`: one order as GloriaFood sent it, by GloriaFood's number, with everything of
   the customer taken out (`pos.online.place.hidden`): for looking at the shape of an order that went on
   wrong. 404 `unknown_order`; 410 `forgotten` once the order is older than the hub keeps it as it came.
@@ -188,7 +192,7 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
     def online_fetch() -> dict[str, Any]:
         if not online.configured:
             raise HTTPException(409, {"error": "no_key", "message": "This hub has no key for online orders."})
-        return {**online.round(), "status": status()}
+        return {**online.ask_now(), "status": status()}
 
     @app.get("/online/orders/{ext_id}")
     def online_order(ext_id: str) -> dict[str, Any]:
