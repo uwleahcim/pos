@@ -249,6 +249,106 @@ class Waitlist {
   }
 }
 
+/// The wait the hub suggests telling a party of [from] to [to] guests that comes now, and what it goes by
+/// (`GET /waitlist/suggest`; docs/waitlist.md, "A suggested wait"). The hub works it out from how tonight's
+/// parties waited; this is its answer read into names, and the words the screen says about it.
+class WaitSuggestion {
+  const WaitSuggestion({
+    required this.from,
+    required this.to,
+    required this.minutes,
+    int? aboutMinutes,
+    this.byLongest = false,
+    this.ahead = 0,
+    this.eachMinutes = 1,
+    this.longestMinutes,
+    this.seated = 0,
+    this.like = true,
+  }) : aboutMinutes = aboutMinutes ?? minutes;
+
+  factory WaitSuggestion.fromJson(Map<String, dynamic> json) => WaitSuggestion(
+    from: _i(json['from'], 1),
+    to: _i(json['to'], 1),
+    minutes: _i(json['minutes']),
+    aboutMinutes: _ms(json['about_minutes']),
+    byLongest: json['by'] == 'longest',
+    ahead: _i(json['ahead']),
+    eachMinutes: _i(json['each_minutes'], 1),
+    longestMinutes: _ms(json['longest_minutes']),
+    seated: _i(json['seated']),
+    like: json['like'] != false,
+  );
+
+  /// The sizes it is for.
+  final int from;
+  final int to;
+
+  /// The wait to mark: one of the waits the screen offers.
+  final int minutes;
+
+  /// What it was worked out as; more than [minutes] where the wait is longer than the longest on offer.
+  final int aboutMinutes;
+
+  /// It goes by a party ahead that has already waited that long, and not by the pace of the line.
+  final bool byLongest;
+
+  /// The parties in line ahead of whoever comes now: waiting, and not yet told their table is ready.
+  final int ahead;
+
+  /// What a place in line took for the last [seated] parties that sat down.
+  final int eachMinutes;
+
+  /// The longest any party of these sizes ahead has waited; null with none of them ahead.
+  final int? longestMinutes;
+  final int seated;
+
+  /// The parties counted for the pace are of these sizes; false where too few of them have sat down tonight
+  /// and every size was counted, the ones [ahead] too.
+  final bool like;
+
+  bool fits(int size) => size >= from && size <= to;
+
+  /// "30 min", or "1 h 30 or more (about 1 h 50)" past the longest wait on offer.
+  String get words =>
+      aboutMinutes > minutes ? '${waitWords(minutes)} or more (about ${waitWords(aboutMinutes)})' : waitWords(minutes);
+
+  /// Why, in a sentence: "3 parties of 3 to 4 are ahead, at about 6 min a party tonight." [most] is the
+  /// largest party the list takes: a band that reaches it is "7 or more".
+  String why({int most = 60}) {
+    final own = to >= most
+        ? ' of $from or more'
+        : from == to
+        ? ' of $from'
+        : ' of $from to $to';
+    if (byLongest) return 'A party$own ahead has waited ${waitWords(longestMinutes ?? aboutMinutes)} already.';
+    final sizes = like ? own : '';
+    final each = waitWords(eachMinutes);
+    if (ahead == 0) {
+      final nobody = like ? 'No party$sizes is' : 'Nobody is';
+      return '$nobody waiting ahead. Tonight the first in line sat after about $each.';
+    }
+    return '$ahead ${ahead == 1 ? 'party$sizes is' : 'parties$sizes are'} ahead, at about $each a party tonight.';
+  }
+}
+
+/// The waits the hub suggests right now, by how many the party is. Nothing where tonight's list says too
+/// little, from a hub older than the suggestion, and with no hub answering.
+class WaitSuggestions {
+  const WaitSuggestions(this.rows);
+
+  factory WaitSuggestions.fromJson(Map<String, dynamic> json) => WaitSuggestions([
+    for (final row in _rows(json['suggest']))
+      if (row['minutes'] is num && (row['minutes'] as num) > 0) WaitSuggestion.fromJson(row),
+  ]);
+
+  static const none = WaitSuggestions([]);
+
+  final List<WaitSuggestion> rows;
+
+  /// The suggestion for a party of [size]; null where there is none.
+  WaitSuggestion? forSize(int size) => rows.where((row) => row.fits(size)).firstOrNull;
+}
+
 /// A wait in words: "8 min", "1 h 05".
 String waitWords(int minutes) =>
     minutes < 60 ? '$minutes min' : '${minutes ~/ 60} h ${(minutes % 60).toString().padLeft(2, '0')}';

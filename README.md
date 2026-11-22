@@ -60,8 +60,9 @@ merges after any disconnect.
   name; on no floor map; given a table when the party sits down, onto that table's check or beside it):
   `docs/bar-tabs.md`
 - The waitlist (the parties waiting for a table in the order they came: name, guests, the wait they were
-  told, a phone number and a note; the wait turns amber, then red; Seat brings up the floor map and the
-  table tapped is theirs; tonight's list only, and no names kept after it): `docs/waitlist.md`
+  told, a phone number and a note; the wait turns amber, then red; the wait to tell the next party is
+  suggested from how tonight's parties waited; Seat brings up the floor map and the table tapped is
+  theirs; tonight's list only, and no names kept after it): `docs/waitlist.md`
 - Reservations (the book of tables booked for today and the days ahead: name, guests, day and time, a
   table to hold, a phone number and a note; a time turns amber, then red; Seat brings up the floor map and
   the table tapped is theirs; cancelled and no-show, with a way back; a table booked for today says so on

@@ -1088,11 +1088,42 @@ class Hub {
   /// in [waitPosts], as its method and path and what it carried. The hub's clock is [clockNow].
   /// [refuseWait] answers the next change with a status and a reason, and [waitDown] fails every call of the
   /// list as if no hub answered, while the rest of the hub goes on.
+  ///
+  /// [waitSuggest] are the waits `GET /waitlist/suggest` suggests, a row for each band of sizes ([suggested]
+  /// makes one); null is a hub older than the suggestion, which refuses the call as such a hub does (405: it
+  /// knows the path only for putting a party right). [suggestAsks] counts the asks.
   List<Map<String, dynamic>>? parties;
+  List<Map<String, dynamic>>? waitSuggest;
+  int suggestAsks = 0;
   int waitAsks = 0;
   final waitPosts = <(String, Map<String, dynamic>)>[];
   (int, String, String)? refuseWait;
   bool waitDown = false;
+
+  /// A wait the hub suggests for parties of [from] to [to] guests, and what it goes by.
+  static Map<String, dynamic> suggested(
+    int from,
+    int to,
+    int minutes, {
+    int? about,
+    String by = 'pace',
+    int ahead = 0,
+    int each = 5,
+    int? longest,
+    int seated = 4,
+    bool like = true,
+  }) => {
+    'from': from,
+    'to': to,
+    'minutes': minutes,
+    'about_minutes': about ?? minutes,
+    'by': by,
+    'ahead': ahead,
+    'each_minutes': each,
+    'longest_minutes': longest,
+    'seated': seated,
+    'like': like,
+  };
 
   /// A waiting party as the hub answers it: [quoted] minutes told (none when null), counted from [atMs].
   static Map<String, dynamic> waitParty(
@@ -1852,6 +1883,15 @@ class Hub {
     if (path == '/waitlist' && request.method == 'GET') {
       waitAsks += 1;
       return json(_waitOut());
+    }
+    if (path == '/waitlist/suggest' && request.method == 'GET') {
+      suggestAsks += 1;
+      final rows = waitSuggest;
+      if (rows == null) return json({'detail': 'Method Not Allowed'}, 405);
+      return json({
+        'suggest': rows,
+        'quotes': [5, 10, 15, 20, 30, 45, 60, 90],
+      });
     }
     final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
     waitPosts.add(('${request.method} $path', body));
