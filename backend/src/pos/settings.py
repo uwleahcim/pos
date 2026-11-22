@@ -136,6 +136,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "big_orders": {"dishes": 0, "minutes": 0},
     },
     "rush": {"minutes": 0, "until": 0, "by": ""},
+    # Who the hosts put in tonight's turn for a table, or took out of it (pos/floor/turn.py): the words of
+    # one day of service, by staff id. No screen sets it as a setting: `POST /floor/turn` adds a word.
+    "turn": {"day": "", "said": {}},
     # When somebody last looked at the online orders that need looking at, and who (docs/online-orders.md,
     # "On the screens"): what came up after that is new, on every screen.
     "online_seen": {"at_ms": 0, "by": ""},

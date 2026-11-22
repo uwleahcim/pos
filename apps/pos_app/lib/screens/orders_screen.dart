@@ -62,6 +62,7 @@ import 'table_moves.dart';
 import 'theme.dart';
 import 'time_clock_card.dart';
 import 'today_screen.dart';
+import 'turn_dialog.dart';
 import 'waste_screen.dart';
 import 'to_go_chips.dart';
 import 'reservations_screen.dart';
@@ -1164,6 +1165,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return _roster;
   }
 
+  /// How whoever is signed in says who is in tonight's turn for a table (docs/table-servers.md); null for
+  /// somebody who gives no tables out.
+  SayTurn? _sayTurn(Roster roster) {
+    final me = widget.session.staff;
+    if (me == null || !roster.assigns(me.staffId)) return null;
+    return (server, on) => widget.api.sayTurn(me.staffId, server.staffId, on: on);
+  }
+
   /// The table whose checks are being moved: the next table tapped is where they go.
   TableSpot? _moving;
 
@@ -1361,6 +1370,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           plan: plan,
           servers: assigns ? roster.servers : const [],
           me: roster.byId(staff?.staffId),
+          onSayTurn: _sayTurn(roster),
           title: 'Seat ${party.name} at ${to.label}',
           guests: party.size,
         ),
@@ -1499,6 +1509,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           plan: plan,
           servers: assigns ? roster.servers : const [],
           me: roster.byId(staff?.staffId),
+          onSayTurn: _sayTurn(roster),
           title: 'Seat ${tab.tabLabel} at ${to.label}',
         ),
       );
@@ -1657,6 +1668,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         plan: plan,
         servers: assigns ? roster.servers : const [],
         me: roster.byId(me?.staffId),
+        onSayTurn: _sayTurn(roster),
       ),
     );
     if (seating == null || !mounted) return;
@@ -2862,9 +2874,14 @@ class _GuestsDialog extends StatefulWidget {
     this.me,
     this.title,
     this.guests,
+    this.onSayTurn,
   });
   final TableSpot table;
   final FloorPlan plan;
+
+  /// How whoever seats the party says who is in tonight's turn for a table; null for somebody who gives no
+  /// tables out. The turn itself comes with the [plan].
+  final SayTurn? onSayTurn;
 
   /// How many the party is, when that is known already (a party off the waitlist); the table's seats when not.
   final int? guests;
@@ -2886,11 +2903,28 @@ class _GuestsDialogState extends State<_GuestsDialog> {
   late int _guests = widget.guests ?? (widget.table.kind == 'counter' ? 1 : widget.table.seats);
   // A manager who serves starts on their own name; a host has to say whose table it is.
   late StaffMember? _server = widget.servers.where((s) => s.staffId == widget.me?.staffId).firstOrNull;
+  // Tonight's turn for a table as the floor had it, and then as the hub answers a host who changes it here.
+  late List<String> _turn = widget.plan.turn ?? const [];
+
+  void _editTurn(SayTurn say) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => TurnDialog(
+        servers: widget.servers,
+        turn: _turn,
+        onSay: say,
+        onChanged: (turn) {
+          if (mounted) setState(() => _turn = turn);
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final sayTurn = widget.plan.turn == null ? null : widget.onSayTurn; // a hub older than the turn keeps none
     return AlertDialog(
       title: Text(widget.title ?? 'Seat ${widget.table.label}'),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
@@ -2942,18 +2976,29 @@ class _GuestsDialogState extends State<_GuestsDialog> {
               ],
             ),
             if (widget.servers.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Server', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant)),
+              SizedBox(height: sayTurn == null ? 16 : 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Server', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant)),
+                  ),
+                  if (sayTurn != null)
+                    TextButton(
+                      key: const ValueKey('turn-edit'),
+                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                      onPressed: () => _editTurn(sayTurn),
+                      child: const Text("Tonight's turn"),
+                    ),
+                ],
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: sayTurn == null ? 8 : 0),
               Align(
                 alignment: Alignment.centerLeft,
                 child: ServerPicker(
                   servers: widget.servers,
                   plan: widget.plan,
                   picked: _server,
+                  turn: _turn,
                   onPicked: (server) => setState(() => _server = server),
                 ),
               ),

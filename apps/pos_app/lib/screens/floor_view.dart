@@ -97,8 +97,9 @@ class FloorViewState extends State<FloorView> {
       if (_inFront && _poll.due()) unawaited(_reader.now(must: false));
     });
     _live = widget.api.live.changes.listen((change) {
-      // a table booked, a reservation changed or ended: the tables kept for today come with the floor
-      if (_inFront && (change.anyOrder || change.reservations)) _reader();
+      // a table booked, a reservation changed or ended, somebody put in tonight's turn or taken out: the
+      // tables kept for today and the turn come with the floor
+      if (_inFront && (change.anyOrder || change.reservations || change.floor)) _reader();
     });
     _second = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_inFront) _tick();

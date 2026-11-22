@@ -39,7 +39,7 @@ from ..customers import (
 )
 from ..customers import ReadOnlyError as NotesReadOnly
 from ..devices import DevicesSeen
-from ..floor import FloorPlan, load_floor, table_status
+from ..floor import FloorPlan, in_turn, last_sat, load_floor, punched, said, say, table_status
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.powers import May, clean_powers, holds, standard, table
@@ -357,6 +357,14 @@ class RushIn(BaseModel):
     """The kitchen is behind: minutes added to every new quote until the night is over. 0 takes it off."""
 
     minutes: int = 0
+
+
+class TurnIn(BaseModel):
+    """A host's word on tonight's turn for a table: `server_id` is in it (`on`) or out of it, says `staff_id`."""
+
+    staff_id: str = Field(max_length=120)
+    server_id: str = Field(max_length=120)
+    on: bool
 
 
 class CourseIn(BaseModel):
@@ -1297,8 +1305,10 @@ def create_app(
         `holds` are the tables booked for today: under each table's id, the reservations still standing that
         hold it, the earliest first, each with its `name`, `size` and `time` and the moments the map counts
         against (`pos.reservations.Booking.as_hold`); a table nobody booked is not in it.
-        Nothing here moves with the clock: an answer stays the same until an order, a setting or the
-        reservation book changes (and when a new day of service begins)."""
+        `turn` is tonight's turn for a table (`pos.floor.turn`): the staff ids of the people in it, whose
+        turn it is first; nobody until a host says who is on, or the time clock does.
+        Nothing here moves with the clock: an answer stays the same until an order, a setting, the
+        reservation book or who is on the time clock changes (and when a new day of service begins)."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
@@ -1317,9 +1327,62 @@ def create_app(
                 ),
                 "moves": True,  # a table's check can move and merge here (pos.orders.moves)
                 "holds": app.state.reservations.holds(),
+                "turn": turn_now(),
                 "cursor": store.cursor,
             }
         )
+
+    def turn_now() -> list[str]:
+        """Tonight's turn for a table as it stands: the people in it by staff id, whose turn it is first."""
+        store: OpStore | PgOpStore = app.state.store
+        settings: SettingStore = app.state.settings
+        day = localtime.service_day_of(store.now_ms())
+        since, until = localtime.service_day(day)
+        words = said(settings.get("turn"), day)
+        clock: TimeClock = app.state.clock
+        punches = punched(clock.store.began(since, until)) if settings.get("time_clock")["enabled"] else {}
+        if not words and not punches:
+            return []  # nobody was said to be on: the day's checks need no reading
+        takers = [person for person in roster(app.state.staff, powers_of(app.state)) if person["takes_tables"]]
+        return in_turn(takers, words, punches, last_sat(store.views(store.index(opened_since=since)), since))
+
+    @app.post("/floor/turn")
+    def say_turn(body: TurnIn) -> dict[str, Any]:
+        """A host's word on tonight's turn for a table: `server_id` is in it (`on`) or out of it. Whoever gives
+        tables out says it (`assign_tables`: 403 `not_allowed` from anybody else), of somebody who takes them
+        (422 `no_tables` for putting in one who does not; anybody can be taken out). 404 `unknown_staff` for
+        an id the hub does not know. Staff have no token: the screen passes who is signed in, as it does when
+        a party is sat. The word holds until the night is over or another is said, and the time clock's later
+        word counts over it (`pos.floor.turn`). Answers with the `turn` as it stands now."""
+        directory: Directory = app.state.staff
+        host, server = directory.get(body.staff_id), directory.get(body.server_id)
+        if host is None or server is None:
+            raise HTTPException(404, {"error": "unknown_staff", "message": "Nobody here has this id."})
+        powers = powers_of(app.state)
+        if not holds(powers, host.role, "assign_tables"):
+            raise HTTPException(
+                403, {"error": "not_allowed", "message": "Whoever gives tables out says who is in the turn."}
+            )
+        if body.on and not holds(powers, server.role, "take_tables"):
+            raise HTTPException(422, {"error": "no_tables", "message": f"{server.name} does not take tables."})
+        store: OpStore | PgOpStore = app.state.store
+        settings: SettingStore = app.state.settings
+        now = store.now_ms()
+        word = say(
+            settings.get("turn"),
+            localtime.service_day_of(now),
+            server.staff_id,
+            body.on,
+            at_ms=now,
+            by_id=host.staff_id,
+            by=host.name,
+        )
+        try:
+            settings.put("turn", word)
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("floor")
+        return {"turn": turn_now()}
 
     # Location settings: a manager (token from /admin/session) sets them, every terminal reads them ---------
     def write_setting(key: str, data: Mapping[str, Any], clean: Callable[[Mapping[str, Any]], dict[str, Any]]) -> Any:
