@@ -1506,6 +1506,13 @@ class PosApi {
   Future<OnlineStatus> onlineSeen(String by) async =>
       OnlineStatus.fromJson(await _post('/online/seen', {'by': by.length > 80 ? by.substring(0, 80) : by}));
 
+  /// Asks the website for orders now, out of the hub's own turn: the button "Ask now". Answers with what
+  /// came of it and how the online orders stand after. The hub waits for the website, so this waits longer
+  /// than most calls. 409 from a hub with no key for asking.
+  Future<OnlineAsked> onlineFetch() async => OnlineAsked.fromJson(
+    await _post('/online/fetch', const <String, dynamic>{}, timeout: const Duration(seconds: 30)),
+  );
+
   // The waitlist (docs/waitlist.md). ------------------------------------------------------------------------
 
   /// Tonight's waitlist: who is waiting, in the order they came, and who went off the list earlier. The very

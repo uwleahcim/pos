@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from pos.online.gloriafood import FetchFailed
 from pos.online.inbox import KEEP_DAYS, MOST_TRIES, Arrival, Inbox
-from pos.online.service import UNREAD_SLIP_MS
+from pos.online.service import ASK_GAP_MS, UNREAD_SLIP_MS
 
 from ..printing.fake_printer import decode
 from .hub import MINUTE, NOW, Hub
@@ -438,6 +438,59 @@ def test_asking_now_does_a_round_and_says_what_it_did():
     done = answer.json()
     assert {name: done[name] for name in NONE} == {**NONE, "came": 1, "placed": 1}
     assert done["status"]["today"]["placed"] == 1 and on_the_pos(hub, 301)
+
+
+def ask_now(hub: Hub) -> dict:
+    """Somebody pressed "Ask now" on a screen (or ran `hubctl online fetch`)."""
+    answer = hub.client.post("/online/fetch")
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_asking_now_says_whether_gloriafood_answered_and_why_it_did_not():
+    hub = Hub()
+    done = ask_now(hub)
+    assert (done["asked"], done["answered"], done["soon"], done["reason"]) == (True, True, False, None)
+    hub.clock += MINUTE
+    hub.food.fail = FetchFailed("GloriaFood did not answer in time")
+    hub.food.queue.append(lunch())
+    done = ask_now(hub)
+    assert {name: done[name] for name in NONE} == NONE
+    assert (done["answered"], done["soon"], done["reason"]) == (False, False, "GloriaFood did not answer in time")
+    assert done["status"]["last_failure"]["reason"] == done["reason"]
+    hub.food.fail = None
+    hub.clock += MINUTE
+    done = ask_now(hub)
+    assert (done["answered"], done["reason"], done["came"], done["placed"]) == (True, None, 1, 1)
+
+
+def test_somebody_leaning_on_the_button_does_not_ask_gloriafood_again_and_again():
+    hub = Hub()
+    assert ask_now(hub)["asked"] and hub.food.asked == 1
+    hub.food.queue.append(lunch())
+    hub.clock += ASK_GAP_MS - 1
+    again = ask_now(hub)  # too soon after the last asking: GloriaFood is left alone, and the answer says so
+    assert {name: again[name] for name in NONE} == {**NONE, "asked": False}
+    assert (again["soon"], again["answered"], again["reason"]) == (True, False, None)
+    assert hub.food.asked == 1 and not on_the_pos(hub, 301)
+    assert again["status"]["asked_ms"] == NOW  # when it was asked is not moved by a press that asked nobody
+    hub.clock += 1
+    then = ask_now(hub)
+    assert (then["asked"], then["soon"], then["came"], then["placed"]) == (True, False, 1, 1)
+    assert hub.food.asked == 2 and on_the_pos(hub, 301)
+    # the minute's own round is never held back: it asks whenever its minute comes
+    hub.clock += 1_000
+    assert hub.online.round() == NONE and hub.food.asked == 3
+    # and a press soon after the minute's round waits its turn like any other
+    hub.clock += 1_000
+    assert ask_now(hub)["soon"] and hub.food.asked == 3
+
+
+def test_asking_now_on_a_hub_that_cannot_write_asks_nobody_and_is_not_too_soon():
+    hub = Hub(inbox=Standby())
+    done = ask_now(hub)
+    assert (done["asked"], done["soon"], done["answered"], done["reason"]) == (False, False, False, None)
+    assert hub.food.asked == 0
 
 
 # Only the hub says where an order came from ----------------------------------------------------------------

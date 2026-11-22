@@ -152,8 +152,9 @@ merges after any disconnect.
   goes on the POS by itself, as a to-go order with the website's prices, promotions, fee, tip and payment,
   and its kitchen tickets print; GloriaFood sends it the moment it is accepted, through a push door that
   is the only thing of the hub reachable from outside, `hubctl online push key`, and the hub also asks
-  every minute as the net under that, `hubctl online key`; an order that came both ways is one order; one
-  that cannot go on prints a slip and is listed): `docs/online-orders.md`
+  every minute as the net under that, `hubctl online key`, or this moment when a manager presses Ask now;
+  an order that came both ways is one order; one that cannot go on prints a slip and is listed; what the
+  website took is its own row, Paid online, in the day's money): `docs/online-orders.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

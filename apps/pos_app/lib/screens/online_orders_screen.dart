@@ -42,6 +42,9 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
   String? _error; // nothing to show, and why
   bool _away = false; // no hub answers: what shows is as last read
   bool _older = false; // the hub that answers has no online orders
+  bool _asking = false; // somebody pressed "Ask now" and the hub has not said what came of it
+  OnlineAsked? _asked; // what came of the last asking from this screen
+  String? _askError; // or why it could not be asked
   Timer? _timer;
   late final _reader = Paced(const Duration(seconds: 10), _read);
   StreamSubscription<LiveChange>? _live;
@@ -91,6 +94,35 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
       setState(() {
         _away = err.status == null;
         if (_status == null) _error = err.status == null ? 'The hub is not answering' : err.message;
+      });
+    }
+  }
+
+  /// "Ask now": the hub asks the website for orders this moment, as it does every minute by itself, and
+  /// says what came of it. It changes nothing a round of the hub's own would not.
+  Future<void> _askNow() async {
+    if (_asking) return;
+    setState(() {
+      _asking = true;
+      _asked = null;
+      _askError = null;
+    });
+    try {
+      final asked = await widget.api.onlineFetch();
+      if (!mounted) return;
+      _mark(asked.status);
+      setState(() {
+        _asking = false;
+        _asked = asked;
+        if (asked.status != null) _status = asked.status;
+        _away = false;
+      });
+      if ((asked.status?.news ?? 0) > 0) await _looked();
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _asking = false;
+        _askError = err.status == null ? 'The hub is not answering, so GloriaFood was not asked.' : err.message;
       });
     }
   }
@@ -199,6 +231,47 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
                   title: const Text('Asked for every minute'),
                   subtitle: Text(_askWords(status, now)),
                 ),
+                // Only a hub that has the key for asking can ask. Under the row and not beside it: on a
+                // phone a button at the end of the row leaves its words a column a few letters wide.
+                if (status.asks)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(start: 44, end: 8),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton(
+                        key: const ValueKey('online-ask'),
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                        onPressed: _asking ? null : () => unawaited(_askNow()),
+                        child: _asking
+                            ? const Row(
+                                key: ValueKey('online-ask-busy'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  SizedBox(width: 10),
+                                  Text('Asking GloriaFood'),
+                                ],
+                              )
+                            : const Text('Ask now'),
+                      ),
+                    ),
+                  ),
+                if (_asked != null || _askError != null)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(start: 56, end: 16, bottom: 12),
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        _askError ?? _asked!.words,
+                        key: const ValueKey('online-asked'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: _askError != null || _asked!.bad ? scheme.error : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  )
+                else if (status.asks)
+                  const SizedBox(height: 4),
               ],
             ),
           ),

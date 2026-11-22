@@ -68,7 +68,7 @@ Without a key the hub asks nobody, and everything is as it was. Then add the pus
 | --- | --- |
 | `sudo hubctl online key` | Puts the key for asking on the hub (asked for, never shown, never on the command line) |
 | `sudo hubctl online status` | Whether pushes are taken and when the last one came, whether the hub asks and when GloriaFood last answered, pushes turned away, today's online orders by how they came and what became of them, and the ones to look at |
-| `sudo hubctl online fetch` | Asks GloriaFood now instead of within the minute |
+| `sudo hubctl online fetch` | Asks GloriaFood now instead of within the minute, as **Ask now** on the screen Online orders does. Not within fifteen seconds of the last asking |
 | `sudo hubctl online show 123456` | One order as GloriaFood sent it, by GloriaFood's number, with everything of the customer taken out: for looking at an order that went on wrong |
 | `sudo hubctl online forget` | Takes the key for asking off the hub: it asks nobody. Orders already on the POS stay |
 | `sudo hubctl online push key` | Puts the key GloriaFood's pushes carry on the hub and opens the push door. Asked for and never shown; press Enter alone and the hub makes one, shown once, for you to put into GloriaFood's admin |
@@ -309,14 +309,32 @@ It shows:
   while its own sending works, and GloriaFood's sending is turned away while the asking works (the orders
   come a minute late; the key in GloriaFood's admin is probably not the hub's);
 - **how they arrive**: sent by GloriaFood and asked for by the hub, each on or off, with when the last one
-  came and when GloriaFood last answered;
+  came and when GloriaFood last answered. Under the asking is **Ask now** (below);
 - **today**: how many came, how many are on the POS, how many were not for the POS, how many could not be
   put on, how many wait, and how many came each way;
 - **to look at**: each by GloriaFood's own number (what to find it by in GloriaFood's app), with the time,
   what became of it and why. The ones nobody has looked at yet are marked **New**. One that is a check on
   the POS opens that check with a tap (from the list of checks; under Location the screen is to read).
 
-Nothing of a customer is on this screen, and nothing on it changes an order.
+**Ask now** has the hub ask GloriaFood for orders this moment instead of at its next minute, for when a
+customer says they just ordered and the order is not on the POS yet, or when the box at the top says
+GloriaFood has not answered. It does exactly what the hub does by itself every minute: an order GloriaFood
+gives goes on the POS, is numbered and prints its tickets as always, and one that is here already is not put
+on twice. Under the button the screen says what came of it: "1 order came. 1 put on the POS.", "GloriaFood
+has no new order.", or why GloriaFood did not answer, in red. The figures under **Today** move with it.
+
+- Only an order **accepted** in GloriaFood's app can come. One still waiting to be accepted there is not
+  GloriaFood's to give yet.
+- GloriaFood asks a POS not to ask too often, so the hub passes on **one asking in fifteen seconds** at
+  most, whoever presses and on whichever screen: a press sooner than that asks nobody and says "GloriaFood
+  was asked a few seconds ago. Wait a moment and ask again." The hub's own minute is never held back by it.
+- The button is there on a hub that has the key for asking. A hub that only takes what GloriaFood sends
+  has nothing to ask with.
+- It is on this screen only, so for managers and owners. `sudo hubctl online fetch` does the same from the
+  hub.
+
+Nothing of a customer is on this screen. Nothing on it changes an order that is on the POS: Ask now can
+only bring one that would have come within the minute anyway.
 
 ## When something is off
 
@@ -380,8 +398,7 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - The alert is for managers and owners. Showing it to a host or a server would be a new line in **Who may
   do what**; it is not built. It makes no sound, and it is on the list of checks and the floor only: not on
   a kitchen screen, and not over an open check.
-- A button on a screen to ask GloriaFood now, or to try an order again: `sudo hubctl online fetch` does the
-  first, and an order that would not go on is rung in by hand.
+- A button on a screen to try an order again that would not go on the POS: it is rung in by hand.
 - The screen names an order by GloriaFood's number, not by the number on the POS's check.
 - Typing a note for the whole order on a screen (for a phone order, say). The strip shows one that came
   with the order; a dish's own note is typed as before.
@@ -463,6 +480,8 @@ an order into operations, `service.py` is the minute's round and the push, `door
   and `online_difference`.
 - **Calls.** `POST /online/push`, `GET /online/status` (with `push`: `configured`, `pushed_ms`, `refused`;
   `today.by_push`, `today.by_poll`, `today.unread`), `POST /online/fetch` (409 `no_key`; `known` counts the
-  orders that were here already), `GET /online/orders/{id}` (404 `unknown_order`, 410 `forgotten`).
+  orders that were here already; `answered` and `reason` say whether GloriaFood answered; `soon` is a
+  press within `ASK_GAP_MS` of the last asking, which asks nobody: `OnlineOrders.ask_now`; the app's
+  `PosApi.onlineFetch` and `OnlineAsked`), `GET /online/orders/{id}` (404 `unknown_order`, 410 `forgotten`).
 - **Printing.** `Ticket.note` and `PackSheet.said` carry the customer's note; a `notice` ticket is the
   slip (`PrintService.notice`). The kitchen screen's tickets carry `note` too.

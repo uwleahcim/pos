@@ -954,6 +954,25 @@ class Hub {
   bool onlineReadOnly = false;
   bool onlineDown = false;
 
+  /// "Ask now" (`POST /online/fetch`): [onlineFetches] counts the presses that reached the hub, each
+  /// answered with [onlineFetched] (what that round did) and the status as [online] has it then, after
+  /// [onlineOnFetch] ran (a test moves the status there, as the round would). While [onlineFetchHeld] is
+  /// set the answer waits for it. A hub with no key for asking refuses with 409.
+  int onlineFetches = 0;
+  Map<String, dynamic> onlineFetched = const {
+    'asked': true,
+    'answered': true,
+    'reason': null,
+    'soon': false,
+    'came': 0,
+    'known': 0,
+    'placed': 0,
+    'kept': 0,
+    'failed': 0,
+  };
+  void Function()? onlineOnFetch;
+  Completer<void>? onlineFetchHeld;
+
   /// How the online orders are doing, as a hub with both keys says it on a quiet day: [look] are the ones
   /// to look at ([onlineLook] makes one) and [trouble] what is wrong right now.
   static Map<String, dynamic> onlineStatus({
@@ -1028,6 +1047,16 @@ class Hub {
     if (request.url.path == '/online/status' && request.method == 'GET') {
       onlineAsks += 1;
       return json(status);
+    }
+    if (request.url.path == '/online/fetch' && request.method == 'POST') {
+      if (status['configured'] != true) {
+        return json({
+          'detail': {'error': 'no_key', 'message': 'This hub has no key for online orders.'},
+        }, 409);
+      }
+      onlineFetches += 1;
+      onlineOnFetch?.call();
+      return json({...onlineFetched, 'status': online});
     }
     if (request.url.path == '/online/seen' && request.method == 'POST') {
       if (onlineReadOnly) {
@@ -2278,6 +2307,7 @@ class Hub {
       if (known != null) return json(known);
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;
     if (path.startsWith('/online/')) return _online(request);
     if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);
     if (path == '/reservations' || path.startsWith('/reservations/')) return _reservations(request);
