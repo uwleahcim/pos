@@ -8,6 +8,9 @@ types it in.
 This is the hub's half. The screens show such an order as they show any to-go order; what they do not show
 yet is listed under [What is not built](#what-is-not-built).
 
+A **table booked on the website** goes into the reservation book the same way
+([Tables booked on the website](#tables-booked-on-the-website)).
+
 **Nothing here was tried against GloriaFood itself**, and nothing against Cloudflare. It was written from
 GloriaFood's own description of how a POS gets orders, and tested against orders made up in that shape from
 the restaurant's real menu. The first real orders are the test: see [The first days](#the-first-days).
@@ -176,6 +179,13 @@ order while the asking is on.
   it is one order. If it is not, the asking brings only what the push missed, which is all it is for.
 - **Whether GloriaFood sends anything a second time when an order changes** after it was accepted. The
   first arrival stands; a later one with the same number changes nothing on the POS.
+- **How a booked table reads.** GloriaFood's pages say `persons` is how many sit down. They do not say in so
+  many words that `fulfill_at` is the time of the table, though it is the only time a reservation carries.
+  Hold the first few reservations in the book against GloriaFood's app: the name, how many, and above all
+  the time.
+- **Whether GloriaFood tells the hub when a guest changes or cancels a table.** Its pages do not say that
+  it does. Until a real one shows otherwise, a change or a cancellation made on the website does not reach
+  the book.
 
 ## Two things to change once it is on
 
@@ -186,10 +196,10 @@ order while the asking is on.
 
 ## What arrives
 
-**Pickup and delivery orders that were accepted.** Nothing else:
+**Pickup and delivery orders that were accepted** go on the POS. **Tables that were booked** go into the
+reservation book ([Tables booked on the website](#tables-booked-on-the-website)). Nothing else:
 
-- A table reservation, a table booked with its dishes ordered ahead, and an order placed from a table are
-  left where they are, in GloriaFood's app. (Reservations into the book is a later piece.)
+- An order placed from a table (a QR code on the table) is left where it is, in GloriaFood's app.
 - An order nobody accepted, or one that was rejected, never reaches the hub.
 
 ### The dishes
@@ -244,6 +254,47 @@ that goes with the bag and not on the kitchen's tickets, the apartment, floor an
 the driver. The fee is the one the website charged. On the order's form it shows as **On the website**;
 the map does not move it, and nobody is asked to pick another. A manager or server can still tap another
 price, or No fee, as with any fee. A screen cannot make up a website fee.
+
+## Tables booked on the website
+
+Since 22 November 2026. A table a guest books on the website, once it is accepted in GloriaFood's app, is
+written into the reservation book by the hub (`reservations.md`): the name, how many they are, the day and
+the time, the phone number, and what the guest wrote as the note. It comes the same two ways an order does,
+pushed or asked for, and is in the book once however often it comes. Nothing has to be turned on beyond
+online orders themselves.
+
+- **In the book** it stands among the others in the order of the times, with a small **online** beside its
+  time: the guest booked it themselves, and nobody here spoke to them. A tap shows "booked on the website
+  (GloriaFood 1234567)", the number to find it by in GloriaFood's app.
+- **It is a reservation like any other from then on.** A host holds a table for it, changes it, seats it,
+  cancels it. Somebody who calls about it is found by the number they gave the website. No table is held
+  for it until a host picks one.
+- **It is no check and no sale**, and no money is taken for it.
+- **Only what the book needs is copied.** No e-mail address, no consent to marketing.
+- **Made to fit the book.** A name longer than the book's 24 letters is shortened to the family name, or
+  the first name. A note longer than 80 letters is cut and ends in "…": the whole of it is in GloriaFood's
+  app. A phone number the book would not take is left out, and the list To look at says so.
+- **A table booked with its dishes ordered ahead** goes into the book too. Its note begins "Ordered ahead:
+  dishes in GloriaFood." **The dishes are not put on the POS**, and nothing is recorded for them, paid on
+  the website or not: every one is listed under To look at, for a manager, to be rung in from GloriaFood's
+  app when the party sits, so the sale is in the POS's figures.
+
+When it does not go as it should:
+
+| What happened | What the hub does |
+| --- | --- |
+| **It does not say for how many, or for when**, or it is for more than 60 | It is **not in the book**. A slip prints, NOT IN THE BOOK, a manager's screen is alerted, and it is listed under To look at: look at it in GloriaFood's app and write it into the book by hand |
+| **The day is full** (200 reservations), or it is more than a year ahead | The same, in the book's own words |
+| **It reaches the hub after its time, the same day** (the hub was off) | It goes into the book, late as it is. A slip says RESERVATION CAME LATE, and it is listed: see whether the party is here |
+| **It is for a day that is over** | It is not put in the book: there is nothing left to do about it. It is listed under To look at that day, and no slip prints |
+| **The book cannot be written just then** | It is tried again each minute, five times, like an order |
+| **A host cancelled it in the book, and GloriaFood hands it over again** | Nothing: the first one stands as the host left it |
+
+Not built: a change or a cancellation the guest makes on the website afterwards does not reach the book
+(cancel it there by hand); the dishes of a table booked with them going on the POS by themselves; a table
+that reached the hub before it was updated to this (it is in GloriaFood's app and is not put in the book
+afterwards; one that came earlier on the day of the update is listed under To look at as "Not in the
+book"); and telling the guest anything back.
 
 ## On the screens
 
@@ -338,9 +389,10 @@ only bring one that would have come within the minute anyway.
 
 ## When something is off
 
-Nothing is dropped quietly. Whatever is not on the POS as a normal order prints a slip, **LOOK**, where the
-to-go orders print, alerts a manager's screen, and is listed on the screen Online orders and by
-`sudo hubctl online status`.
+Nothing is dropped quietly. An order that is not on the POS as a normal order prints a slip, **LOOK**,
+where the to-go orders print, alerts a manager's screen, and is listed on the screen Online orders and by
+`sudo hubctl online status`. (For a table that was booked, the same is said under
+[Tables booked on the website](#tables-booked-on-the-website).)
 
 | What happened | What the hub does |
 | --- | --- |
@@ -387,6 +439,9 @@ If the same order comes twice, by either way or both, it is one order on the POS
   for 30 days, in case an order has to be looked at again, and then dropped. What became of it stays.
 - **On the POS order** go the name, the number, the address and the customer's notes: what a to-go order
   holds. The e-mail address and the customer's marketing consent are not copied.
+- **Into the reservation book**, for a table that was booked, go the name, how many, the time, the number
+  and the note, and they are kept as the book keeps any reservation: 30 days after its day
+  (`reservations.md`). Nothing of it is sent anywhere, and nothing is sent to the guest.
 - **The status, the slips and the hub's log** name no customer: an order is told of by its number.
 - The customer's address is sent to no map service by this. (Staff can look the distance up from the
   order's form, as for any delivery.)
@@ -402,7 +457,8 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - The screen names an order by GloriaFood's number, not by the number on the POS's check.
 - Typing a note for the whole order on a screen (for a phone order, say). The strip shows one that came
   with the order; a dish's own note is typed as before.
-- Reservations from GloriaFood into the reservation book.
+- For a table booked on the website: what is listed at the end of
+  [Tables booked on the website](#tables-booked-on-the-website).
 - Telling GloriaFood anything back (that an order is ready, that a dish ran out).
 - A second built-in way in beside the tunnel (a small receiver in the cloud that the hub collects from).
 - Noticing that the door or the tunnel is down. The hub cannot see either from where it runs, so no screen
@@ -416,9 +472,28 @@ If the same order comes twice, by either way or both, it is one order on the POS
 ## For developers
 
 Code: `backend/src/pos/online/` (`gloriafood.py` asks and reads, `inbox.py` writes down, `place.py` turns
-an order into operations, `service.py` is the minute's round and the push, `door.py` is the push door),
-`backend/src/pos/api/online.py` (the calls, and how an order is stored, numbered and printed). Tests:
-`backend/tests/online/`.
+an order into operations, `book.py` reads a booked table for the reservation book, `service.py` is the
+minute's round and the push, `door.py` is the push door), `backend/src/pos/api/online.py` (the calls, and
+how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
+
+- **A booked table.** An arrival whose `type` is `table_reservation` or `order_ahead`
+  (`book.RESERVATION_TYPES`) is handed to `OnlineOrders.book` instead of `put`. `book.wanted(order,
+  now_ms=)` reads it (`persons`, `fulfill_at`, the name, `client_phone`, `instructions`) and raises
+  `CannotPlace` (no size, no time: `failed` at once, with a slip) or `NotAnOrder` (not accepted, or its day
+  is over: `kept`). `pos.api.online` hands what it read to `Reservations.take(booking_id, name, size,
+  at_ms, phone=, note=, by_id="online", by="the website")`: the booking's id is `gf-<GloriaFood's id>`
+  (`Booking.online` is the number after `gf-`, sent as `online` on every booking), one that is in the book
+  under that id stands as it is, and what the book refuses (`too_many`, `too_far`) becomes `CannotPlace`
+  with the book's words. The arrival's state is `booked`, counted as `booked` in a round's answer and in
+  `today` of the status; its `order_id` stays empty. A `booked` row is to look at when there is something
+  to say of it (`said`): it came after its time (`late`, which also prints a slip), its dishes were ordered
+  ahead, or its phone number was left out. A `kept` row of these kinds is listed the day it came. The feed
+  says `reservations` when one went into the book. No call on the wire writes a booking under such an id.
+  In the app: `OnlineLook.isTable`, `inTheBook`, `lost`; `OnlineStatus.booked`, `OnlineAsked.booked`;
+  `Booking.online`, `isOnline`, `bookedBy` (`lib/reservations.dart`); the row's mark is
+  `booking-online:<id>` in `reservations_screen.dart`. Tests: `backend/tests/online/test_book.py`,
+  `test_service.py` ("Tables booked on the website"), `backend/tests/test_reservations.py` (`take`),
+  `apps/pos_app/test/online_status_test.dart`, `reservations_test.dart`.
 
 - **The screens** read what the hub already sends and write nothing. `apps/pos_app/lib/online_orders.dart`:
   `OnlineOrder.of(fields)` is the order's `online` field (`Order.online`; null for an order rung in on a
@@ -464,7 +539,7 @@ an order into operations, `service.py` is the minute's round and the push, `door
   `Accept: application/json`, `Glf-Api-Version: 2`, no body. Answer `{"count": n, "orders": [...]}`.
   Only a hub whose database is writable asks, since an order is handed over once.
 - **The inbox.** Table `online_order`: the order as it came (`raw`, dropped after 30 days), how it came
-  first (`via`: `push` or `poll`), its state (`new`, `placed`, `kept`, `failed`), the POS order it became,
+  first (`via`: `push` or `poll`), its state (`new`, `placed`, `booked`, `kept`, `failed`), the POS order it became,
   what there is to say of it, and how often it was tried.
 - **The order.** `gf-<GloriaFood's id>`, written by the device `online`. Its operations have fixed ids
   (`gf-<id>:create`, `:line-N`, `:off`, `:tip`, `:difference`, `:paid`, `:fire`, ...), so the same order

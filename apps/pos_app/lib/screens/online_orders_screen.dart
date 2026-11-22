@@ -298,6 +298,7 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
                     children: [
                       _figure(context, '${status.came}', 'came'),
                       _figure(context, '${status.placed}', 'on the POS'),
+                      if (status.booked > 0) _figure(context, '${status.booked}', 'in the reservation book'),
                       if (status.kept > 0) _figure(context, '${status.kept}', 'not for the POS'),
                       if (status.failed > 0) _figure(context, '${status.failed}', 'could not be put on', bad: true),
                       if (status.waiting > 0) _figure(context, '${status.waiting}', 'waiting'),
@@ -432,12 +433,14 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final opens = widget.opensChecks && row.onThePos;
-    final lost = row.state != 'placed' && row.state != 'kept'; // it should be on the POS, or be read, and is not
+    final lost = row.lost;
     return ListTile(
       key: ValueKey('online-look:${row.id}'),
       leading: Icon(
         row.onThePos
             ? Icons.receipt_long_outlined
+            : row.inTheBook
+            ? Icons.event_available_outlined
             : lost
             ? Icons.error_outline
             : Icons.history,

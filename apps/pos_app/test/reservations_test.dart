@@ -197,6 +197,13 @@ void main() {
       expect(chen.levelAt(at + 15 * minute), TimerLevel.late);
       expect(chen.label, 'Chen, party of 4');
       expect((chen.isBooked, chen.isSeated, chen.isHere), (true, false, false));
+      // who wrote it into the book: a person, or the guest on the website
+      expect((chen.isOnline, chen.bookedBy), (false, 'booked by Holly'));
+      final pat = Booking.fromJson(Hub.booking('gf-401', 'Pat', 2, time: '19:00', online: '401'));
+      expect((pat.isOnline, pat.online, pat.bookedBy), (true, '401', 'booked on the website (GloriaFood 401)'));
+      // a hub from before reservations came from the website says nothing of it
+      final old = Booking.fromJson(Hub.booking('b', 'Chen', 4, time: '18:30', by: '')..remove('online'));
+      expect((old.isOnline, old.bookedBy), (false, ''));
     });
 
     test('only today\'s book has a colour, and its next change is the nearest time that is near or past', () {
@@ -317,6 +324,42 @@ void main() {
       }
       expect(key('book-earlier'), findsNothing);
       expect(key('booking-add'), findsOneWidget);
+      await stop(tester);
+    });
+
+    testWidgets('a table the guest booked on the website says so, in the book and on its own sheet', (tester) async {
+      await pumpBook(
+        tester,
+        bookings: [
+          ...week(),
+          Hub.booking(
+            'gf-401',
+            'Pat Example',
+            4,
+            time: '19:30',
+            phone: '+1 781 555 0142',
+            note: 'High chair',
+            online: '401',
+          ),
+        ],
+      );
+      expect(standing(tester), ['Okafor', 'Chen', 'Garcia', 'Pat Example']);
+      expect(tester.widget<Text>(key('booking-online:gf-401')).data, 'online');
+      expect(find.descendant(of: key('booking:gf-401'), matching: find.text('High chair')), findsOneWidget);
+      // one a host wrote in has no such mark
+      expect(key('booking-online:b2'), findsNothing);
+      // it is seated, changed and cancelled like any other
+      expect(key('booking-seat:gf-401'), findsOneWidget);
+      await tester.tap(find.text('Pat Example'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(key('booking-sheet-when')).data,
+        'Mon 16 Nov at 19:30 · booked on the website (GloriaFood 401)',
+      );
+      expect(tester.widget<SelectableText>(key('booking-sheet-phone')).data, '+1 781 555 0142');
+      for (final what in ['seat', 'here', 'change', 'cancel', 'no_show']) {
+        expect(key('booking-do:$what'), findsOneWidget);
+      }
       await stop(tester);
     });
 
@@ -798,9 +841,11 @@ void main() {
     ) async {
       final bookings = week()
         ..[0]['name'] = 'Bartholomew-Featherstonehaugh'.substring(0, 24)
-        ..[0]['note'] = 'Birthday, a cake is in the fridge, and a high chair for the baby please';
+        ..[0]['note'] = 'Birthday, a cake is in the fridge, and a high chair for the baby please'
+        ..[0]['online'] = '1234567890'; // and the guest booked it on the website: one more mark in the row
       await pumpBook(tester, bookings: bookings, size: const Size(320, 640));
       expect(tester.takeException(), isNull);
+      expect(key('booking-online:b2'), findsOneWidget);
       final screen = tester.getRect(find.byType(Scaffold).last);
       final seat = tester.getRect(key('booking-seat:b2'));
       expect(seat.right <= screen.right, isTrue, reason: '$seat');

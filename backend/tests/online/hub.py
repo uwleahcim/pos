@@ -20,6 +20,7 @@ from pos.orders.adjustments import PricingRules
 from pos.orders.numbers import OrderNumbers
 from pos.printing.jobs import JobStore
 from pos.printing.service import Printer, PrintService
+from pos.reservations import Reservations
 from pos.settings import SettingStore
 from pos.sync.oplog import OpStore
 from pos.tax import massachusetts
@@ -76,6 +77,7 @@ class Hub:
             stations if printers else [], store=self.jobs, direct=False, now=lambda: self.clock
         )
         self.menu = MenuService(load_restaurant_menu()[0])
+        self.book = Reservations(now_ms=lambda: self.clock)
         self.online = OnlineOrders(
             self.food if key else None, self.inbox, push_key=PUSH_KEY if push else None, now=lambda: self.clock
         )
@@ -90,6 +92,7 @@ class Hub:
                 today=lambda: localtime.day_of(self.clock),
                 settings=SettingStore(),
                 online=self.online,
+                reservations=self.book,
                 location="The Restaurant",
             )
         )
@@ -115,6 +118,10 @@ class Hub:
 
     def status(self) -> dict[str, Any]:
         return self.client.get("/online/status").json()
+
+    def booked(self, day: str = "2027-01-15") -> list[dict[str, Any]]:
+        """The reservations standing in the book of a day (the day of `NOW` unless told otherwise)."""
+        return self.client.get("/reservations", params={"day": day}).json()["booked"]
 
     def manager(self) -> dict[str, str]:
         token = self.client.post("/admin/session", json={"device": "office", "pin": "9999"}).json()["token"]

@@ -154,7 +154,8 @@ merges after any disconnect.
   is the only thing of the hub reachable from outside, `hubctl online push key`, and the hub also asks
   every minute as the net under that, `hubctl online key`, or this moment when a manager presses Ask now;
   an order that came both ways is one order; one that cannot go on prints a slip and is listed; what the
-  website took is its own row, Paid online, in the day's money): `docs/online-orders.md`
+  website took is its own row, Paid online, in the day's money; a table booked on the website goes into
+  the reservation book, once, marked online): `docs/online-orders.md`
 - A check's history (every step of one check, oldest first: who did it, at which screen and when, who
   approved, and the picture taken with it; for a manager, from the check, The day or the voids report):
   `docs/check-history.md`

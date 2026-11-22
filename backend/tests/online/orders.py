@@ -172,6 +172,7 @@ def order(
         "fulfill_at": fulfill,
         "updated_at": accepted,
         "for_later": False,
+        "persons": 0,  # how many sit down, for a table that is booked: nothing for a pickup or a delivery
         "instructions": None,
         "restaurant_id": 1,
         "restaurant_name": "The Restaurant",
@@ -199,3 +200,18 @@ def order(
         **money(rows, taxed_fee=taxed_fee),
         **more,
     }
+
+
+def reservation(
+    number: int,
+    guests: int = 4,
+    *,
+    at: str = "2027-01-16T00:30:00.000Z",
+    kind: str = "table_reservation",
+    rows: list[dict[str, Any]] | None = None,
+    **more: Any,
+) -> dict[str, Any]:
+    """A table booked on the website, as the API hands it over: an order with no dishes (or, as an
+    `order_ahead`, with the dishes ordered ahead), how many they are in `persons`, and the time the table is
+    for in `fulfill_at` (half past seven on the evening of `tests.online.hub.NOW` unless told otherwise)."""
+    return order(number, rows or [], kind=kind, fulfill=at, for_later=True, persons=guests, **more)

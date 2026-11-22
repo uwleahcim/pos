@@ -22,6 +22,10 @@ Either way the same three things happen, in this order:
    for a person: `status` lists it and `notice`, when the API set one, prints a slip where the to-go orders
    print. So does an order that reached the hub after its time and was not sent to the kitchen.
 
+**A table booked on the website** comes the same two ways and is written down the same. It is no order:
+instead of being put on the POS it is handed to `book`, which the API sets and which writes it into the
+reservation book (`pos.online.book`). One the book cannot take is told like an order that would not go on.
+
 One order at a time is written down and put on the POS (`_lock`), whichever way it came, so the two ways
 cannot both place the same order. Asking GloriaFood is done outside that lock: a push never waits for it.
 
@@ -40,6 +44,7 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from .. import localtime
+from .book import RESERVATION_TYPES, Booked
 from .gloriafood import NAME, FetchFailed, allowed
 from .inbox import KEEP_DAYS, MOST_TRIES, POLL, PUSH, Arrival, Inbox
 from .place import ORDER_TYPES, CannotPlace, NotAnOrder, Placed, ext_id_of
@@ -103,10 +108,12 @@ class OnlineOrders:
         self.source = source
         self.inbox = inbox if inbox is not None else Inbox()
         self._push_key = push_key or None  # what a push must carry; None: every push is turned away
-        # Set by the API: `put` stores an order's operations and prints its tickets; `notice` prints a slip
-        # for an order somebody has to look at (the arrival, and the words for it); `news` tells the screens
-        # that there is something new to look at, slip or none.
+        # Set by the API: `put` stores an order's operations and prints its tickets; `book` writes a table
+        # that was booked into the reservation book; `notice` prints a slip for an order somebody has to look
+        # at (the arrival, and the words for it); `news` tells the screens that there is something new to
+        # look at, slip or none.
         self.put: Callable[[Mapping[str, Any]], Placed] | None = None
+        self.book: Callable[[Mapping[str, Any]], Booked] | None = None
         self.notice: Callable[[Arrival, str], None] | None = None
         self.news: Callable[[], None] | None = None
         self._now = now
@@ -147,9 +154,10 @@ class OnlineOrders:
 
     def round(self) -> dict[str, Any]:
         """Asks, writes down and puts on the POS, once. Gives what happened: how many orders `came`, how
-        many of them were here already (`known`: a push brought them first), how many were `placed`, `kept`
-        (nothing the POS takes) and `failed`, and `asked`: whether GloriaFood was asked at all (not without
-        a key, and not by a hub that cannot write)."""
+        many of them were here already (`known`: a push brought them first), how many were `placed`, how
+        many booked tables went into the reservation book (`booked`), how many were `kept` (nothing the POS
+        takes) and `failed`, and `asked`: whether GloriaFood was asked at all (not without a key, and not by
+        a hub that cannot write)."""
         return self._round()[0]
 
     def ask_now(self) -> dict[str, Any]:
@@ -164,7 +172,7 @@ class OnlineOrders:
         """One round, and what `ask_now` says beside it. With `gap_ms`, a round that would ask GloriaFood
         less than that after it was last asked does nothing at all."""
         with self._asking:
-            done = {"asked": False, "came": 0, "known": 0, "placed": 0, "kept": 0, "failed": 0}
+            done = {"asked": False, "came": 0, "known": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0}
             about: dict[str, Any] = {"answered": False, "reason": None, "soon": False}
             if not self.inbox.writable():
                 return done, about
@@ -207,8 +215,9 @@ class OnlineOrders:
         """Orders GloriaFood sent by itself, in a push that was let in (`admit`). `read` gives them, and
         raises `FetchFailed` for a push that cannot be read. They are written down and put on the POS now,
         before GloriaFood is answered. Gives how many were `received`, how many of them were here already
-        (`known`), how many orders were `placed`, `kept` and `failed` just now, and how many could not be
-        written down (`unwritten`: held in memory until the next round).
+        (`known`), how many orders were `placed`, `booked` (a table, into the reservation book), `kept` and
+        `failed` just now, and how many could not be written down (`unwritten`: held in memory until the
+        next round).
 
         `PushRefused` for one this hub cannot take: a hub that cannot write orders down (503: the other hub
         takes them, and the asking brings whatever is missed), and a push that cannot be read (422: it is
@@ -225,7 +234,8 @@ class OnlineOrders:
             raise PushRefused(err.reason, 422) from None
         with self._lock:
             self._pushed_ms = now
-            done = {"received": len(orders), "known": 0, "placed": 0, "kept": 0, "failed": 0, "unwritten": 0}
+            done = dict.fromkeys(("known", "placed", "booked", "kept", "failed", "unwritten"), 0)
+            done["received"] = len(orders)
             done["known"], done["unwritten"] = self._take(orders, now, PUSH)
             self._settle(done, new_only=True)
             return done
@@ -356,15 +366,24 @@ class OnlineOrders:
             return []
 
     def _place(self, arrival: Arrival) -> tuple[Arrival, str]:
-        """Puts one order on the POS and writes what became of it. Gives the order as it is now (`placed`,
-        `kept` or `failed`) and what a slip should say of it, when somebody has to look at it."""
+        """Puts one order on the POS, or one booked table into the reservation book, and writes what became
+        of it. Gives it as it is now (`placed`, `booked`, `kept` or `failed`) and what a slip should say of
+        it, when somebody has to look at it."""
         now = self._now()
         settled = replace(arrival, settled_ms=now)
         tell = ""
+        # a booked table goes to the book where the hub was given one; without, it is kept as no order
+        book = self.book if arrival.kind in RESERVATION_TYPES and arrival.raw is not None else None
+        where = "on the POS" if book is None else "in the book"
+        placed: Placed | None = None
+        booked: Booked | None = None
         try:
-            if self.put is None or arrival.raw is None:
+            if book is not None and arrival.raw is not None:
+                booked = book(arrival.raw)
+            elif self.put is None or arrival.raw is None:
                 raise CannotPlace("this hub is not set up to put it on the POS")
-            placed = self.put(arrival.raw)
+            else:
+                placed = self.put(arrival.raw)
         except NotAnOrder as err:
             settled = replace(settled, state="kept", said=err.reason)
             tell = err.reason if err.old else ""
@@ -373,14 +392,18 @@ class OnlineOrders:
             tell = err.reason
         except Exception as err:  # noqa: BLE001 - one order that will not go on must not stop the others
             # the place in the code, without the words: an error's words can quote what a customer wrote
-            where = "".join(traceback.format_tb(err.__traceback__)[-3:])
-            log.error("online order %s could not be put on the POS (%s)\n%s", arrival.ext_id, type(err).__name__, where)
-            said = f"it could not be put on the POS ({type(err).__name__})"
+            trace = "".join(traceback.format_tb(err.__traceback__)[-3:])
+            log.error("online order %s could not be put %s (%s)\n%s", arrival.ext_id, where, type(err).__name__, trace)
+            said = f"it could not be put {where} ({type(err).__name__})"
             settled = replace(settled, state="failed", said=said, tries=arrival.tries + 1)
             tell = said if settled.tries >= MOST_TRIES else ""
         else:
-            settled = replace(settled, state="placed", order_id=placed.order_id, said=placed.said)
-            tell = placed.said if placed.late else ""
+            if booked is not None:
+                settled = replace(settled, state="booked", said=booked.said)
+                tell = booked.said if booked.late else ""
+            elif placed is not None:
+                settled = replace(settled, state="placed", order_id=placed.order_id, said=placed.said)
+                tell = placed.said if placed.late else ""
         try:
             self.inbox.settle(settled)
         except Exception:  # noqa: BLE001 - it stays as it was and is looked at again: an order placed twice is one order
@@ -461,6 +484,7 @@ class OnlineOrders:
                 "by_push": by_push,
                 "by_poll": by_poll,
                 "placed": sum(row.state == "placed" for row in orders),
+                "booked": sum(row.state == "booked" for row in orders),
                 "kept": sum(row.state == "kept" for row in orders),
                 "failed": sum(row.state == "failed" for row in orders),
                 "unread": len(today) - len(orders),
@@ -550,13 +574,14 @@ def _since(row: Arrival) -> int:
 
 
 def _to_look_at(row: Arrival) -> bool:
-    """Whether a person should look at an order: one that failed, one that went on the POS with something
-    to say of it, and one the POS would take as an order that was kept all the same (it came a day late)."""
+    """Whether a person should look at an order: one that failed, one that went on the POS or into the
+    reservation book with something to say of it, and one the hub would take, as an order or as a booked
+    table, that was kept all the same (it came a day late, or its day is over)."""
     if row.state == "failed":
         return True
-    if row.state == "placed":
+    if row.state in ("placed", "booked"):
         return bool(row.said)
-    return row.state == "kept" and row.kind in ORDER_TYPES
+    return row.state == "kept" and row.kind in (*ORDER_TYPES, *RESERVATION_TYPES)
 
 
 __all__ = ["ASK_GAP_MS", "INTERVAL_SECONDS", "NAME", "SEVERAL", "UNREADABLE", "OnlineOrders", "PushRefused", "Source"]

@@ -422,10 +422,10 @@ case "${1:-status}" in
         (if .last_failure then "TROUBLE asking at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else empty end),
         (if .push.refused then "  turned away: \(.push.refused.count) without the right key since the hub started, the last at " + (.push.refused.at_ms | at) + " (" + .push.refused.reason + ")" else empty end),
         (if .push.refused and .today.by_push == 0 and .today.by_poll > 0 then "  => orders come only by asking while pushes are turned away: the key in GloriaFood'"'"'s admin is probably not the one on the hub (hubctl online push key)" else empty end),
-        "today: \(.today.came) came (\(.today.by_push) sent by GloriaFood, \(.today.by_poll) asked for), \(.today.placed) on the POS, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
+        "today: \(.today.came) came (\(.today.by_push) sent by GloriaFood, \(.today.by_poll) asked for), \(.today.placed) on the POS, \(.today.booked // 0) tables into the reservation book, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
         (if .today.unread > 0 then "  \(.today.unread) of what GloriaFood sent could not be read (below)" else empty end),
         (if (.look | length) > 0 then "to look at:" else empty end),
-        (.look[] | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "kept" then "not on the POS" elif .kind == "unreadable" then "could not be read" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
+        (.look[] | (.kind == "table_reservation" or .kind == "order_ahead") as $table | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "booked" then "in the reservation book" elif .state == "kept" then (if $table then "not in the reservation book" else "not on the POS" end) elif .kind == "unreadable" then "could not be read" elif $table then "NOT IN THE RESERVATION BOOK" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
     }
     push_try() { # an empty push to an address, with or without the hub's key: prints the answer's number and what it said
       local url=$1 key=${2:-}
@@ -516,7 +516,7 @@ case "${1:-status}" in
         ;;
       fetch)
         curl -sS -X POST http://127.0.0.1:8000/online/fetch \
-          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else (if .asked then "asked: \(.came) came" + (if .known > 0 then " (\(.known) of them here already)" else "" end) + ", \(.placed) on the POS, \(.kept) not for the POS, \(.failed) could not be put on" elif .soon then "not asked: GloriaFood was asked a few seconds ago; try again in a moment" else "not asked: this hub cannot write orders down now" end) + (if .status.last_failure then "; TROUBLE: " + .status.last_failure.reason else "" end) end'
+          | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else (if .asked then "asked: \(.came) came" + (if .known > 0 then " (\(.known) of them here already)" else "" end) + ", \(.placed) on the POS, \(.booked // 0) tables into the reservation book, \(.kept) not for the POS, \(.failed) could not be put on" elif .soon then "not asked: GloriaFood was asked a few seconds ago; try again in a moment" else "not asked: this hub cannot write orders down now" end) + (if .status.last_failure then "; TROUBLE: " + .status.last_failure.reason else "" end) end'
         ;;
       show)
         [[ "${3:-}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "usage: hubctl online show <GloriaFood's number for the order>" >&2; exit 2; }

@@ -17,8 +17,8 @@ from .orders import order, row
 DAY = 24 * 60 * MINUTE
 CHICKEN = ("Sweet & Sour Chicken", 2)
 COMBO = ("Maki Combination",)
-ROUND = {"asked": True, "came": 0, "known": 0, "placed": 0, "kept": 0, "failed": 0}
-TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "kept": 0, "failed": 0, "unread": 0}
+ROUND = {"asked": True, "came": 0, "known": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0}
+TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0, "unread": 0}
 CUSTOMER = ("Pat", "Example", "555", "Restaurant Row", "3B", "Ring the bell")
 
 

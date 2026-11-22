@@ -680,6 +680,14 @@ class _BookingCard extends StatelessWidget {
                               style: small?.copyWith(color: scheme.onPrimaryContainer, fontWeight: FontWeight.w600),
                             ),
                           ),
+                        if (booking.isOnline)
+                          // the guest booked it on the website: nobody here spoke to them
+                          Text(
+                            'online',
+                            key: ValueKey('booking-online:${booking.id}'),
+                            semanticsLabel: 'booked on the website',
+                            style: small?.copyWith(color: scheme.tertiary, fontWeight: FontWeight.w600),
+                          ),
                         if (booking.note.isNotEmpty) Text(booking.note, style: small),
                         if (clash != null)
                           Text(
@@ -760,7 +768,7 @@ class _BookingSheet extends StatelessWidget {
                 '${on == null ? booking.day : dayName(on)} at ${booking.time}',
                 if (booking.tableLabel.isNotEmpty) 'table ${booking.tableLabel}',
                 if (!booking.isBooked) endedWords(booking),
-                if (booking.by.isNotEmpty) 'booked by ${booking.by}',
+                if (booking.bookedBy.isNotEmpty) booking.bookedBy,
               ].join(' · '),
               key: const ValueKey('booking-sheet-when'),
               style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
