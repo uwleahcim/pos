@@ -92,8 +92,9 @@ List<String> onlineFacts(OnlineOrder online) => [
 int? _whole(Object? value) => value is num ? value.toInt() : null;
 
 /// One thing a person should look at: an order that did not go on the POS, one that went on with something
-/// to say of it, or something the website sent that could not be read. By the website's own number, with
-/// nothing of the customer.
+/// to say of it, a table booked on the website that is not in the reservation book or is there with
+/// something to say of it, or something the website sent that could not be read. By the website's own
+/// number, with nothing of the customer.
 class OnlineLook {
   const OnlineLook({
     this.id = '',
@@ -117,8 +118,8 @@ class OnlineLook {
 
   /// The website's own number for the order: what to look it up by in GloriaFood's app.
   final String id;
-  final String kind; // pickup | delivery | unreadable | several | whatever else the website sends
-  final String state; // placed | kept | failed | new
+  final String kind; // pickup | delivery | table_reservation | order_ahead | unreadable | several | ...
+  final String state; // placed | booked | kept | failed | new
   /// The POS's order it became; empty when it is on no check.
   final String orderId;
 
@@ -134,19 +135,33 @@ class OnlineLook {
   /// It is a check on the POS, and what is said of it is about that check.
   bool get onThePos => state == 'placed' && orderId.isNotEmpty;
 
-  /// What it is, as a row's first words: "Order 1234567", or what it is when it has no number.
+  /// It is a table that was booked on the website (with its dishes ordered ahead or without): it belongs in
+  /// the reservation book, not on a check.
+  bool get isTable => kind == 'table_reservation' || kind == 'order_ahead';
+
+  /// It is in the reservation book, and what is said of it is about that reservation.
+  bool get inTheBook => state == 'booked';
+
+  /// It should be on the POS, in the book, or be read, and is not.
+  bool get lost => state != 'placed' && state != 'booked' && state != 'kept';
+
+  /// What it is, as a row's first words: "Order 1234567", "Reservation 1234567", or what it is when it has
+  /// no number.
   String get name => switch (kind) {
     'unreadable' => 'Something the website sent',
     'several' => 'Orders from earlier days',
+    _ when isTable => id.isEmpty ? 'A reservation' : 'Reservation $id',
     _ => id.isEmpty ? 'An order' : 'Order $id',
   };
 
-  /// What became of it, as `hubctl online status` says it: only the one that should be on the POS and is
-  /// not shouts.
+  /// What became of it, as `hubctl online status` says it: only the one that should be on the POS or in the
+  /// book and is not shouts.
   String get stateWords => switch (state) {
     'placed' => 'On the POS',
-    'kept' => 'Not on the POS',
-    _ => kind == 'unreadable' ? 'Could not be read' : 'NOT ON THE POS',
+    'booked' => 'In the book',
+    'kept' => isTable ? 'Not in the book' : 'Not on the POS',
+    _ when kind == 'unreadable' => 'Could not be read',
+    _ => isTable ? 'NOT IN THE BOOK' : 'NOT ON THE POS',
   };
 }
 
@@ -212,6 +227,7 @@ class OnlineAsked {
     this.came = 0,
     this.known = 0,
     this.placed = 0,
+    this.booked = 0,
     this.kept = 0,
     this.failed = 0,
     this.status,
@@ -232,6 +248,7 @@ class OnlineAsked {
       came: count(json['came']),
       known: count(json['known']),
       placed: count(json['placed']),
+      booked: count(json['booked']),
       kept: count(json['kept']),
       failed: count(json['failed']),
       status: status == null ? null : OnlineStatus.fromJson(status),
@@ -253,9 +270,10 @@ class OnlineAsked {
   final int came;
   final int known;
 
-  /// What the hub did just now with every order it had waiting: put on the POS, nothing the POS takes,
-  /// could not be put on.
+  /// What the hub did just now with every order it had waiting: put on the POS, a booked table written into
+  /// the reservation book, nothing the POS takes, could not be put on.
   final int placed;
+  final int booked;
   final int kept;
   final int failed;
 
@@ -271,6 +289,7 @@ class OnlineAsked {
     if (!asked) return 'This hub cannot write orders down now, so it asked for none.';
     final did = [
       if (placed > 0) '$placed put on the POS',
+      if (booked > 0) '$booked put in the reservation book',
       if (kept > 0) '$kept not for the POS',
       if (failed > 0) '$failed could not be put on (see To look at)',
     ].join(', ');
@@ -305,6 +324,7 @@ class OnlineStatus {
     this.byPush = 0,
     this.byPoll = 0,
     this.placed = 0,
+    this.booked = 0,
     this.kept = 0,
     this.failed = 0,
     this.unread = 0,
@@ -334,6 +354,7 @@ class OnlineStatus {
       byPush: count(today['by_push']),
       byPoll: count(today['by_poll']),
       placed: count(today['placed']),
+      booked: count(today['booked']),
       kept: count(today['kept']),
       failed: count(today['failed']),
       unread: count(today['unread']),
@@ -366,11 +387,13 @@ class OnlineStatus {
   /// When the website last sent one.
   final int? pushedMs;
 
-  // Today's orders, by what became of them and by how they came first.
+  // Today's orders, by what became of them and by how they came first. [booked] are the tables booked on
+  // the website that went into the reservation book.
   final int came;
   final int byPush;
   final int byPoll;
   final int placed;
+  final int booked;
   final int kept;
   final int failed;
 
@@ -417,7 +440,8 @@ class OnlineStatus {
     if (late != null) return late.headline;
     if (!writable) return 'This hub is the standby: it takes no online orders now';
     if (asks && !running) return 'The hub has stopped asking GloriaFood: sudo hubctl restart';
-    final today = came == 0 ? 'None yet today' : 'Today $came came, $placed on the POS';
+    final tables = booked == 0 ? '' : ', $booked in the reservation book';
+    final today = came == 0 ? 'None yet today' : 'Today $came came, $placed on the POS$tables';
     return look.isEmpty ? today : '$today · ${look.length} to look at';
   }
 }

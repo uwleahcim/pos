@@ -11,6 +11,10 @@ past midnight on Friday is in Friday's book. Today and later days can be booked 
 over is only read. The names, numbers and notes are kept for `KEEP_DAYS` after the day, so a no-show can be
 called back, and are taken off after that; how many they were, when, and how it ended is kept.
 
+A table booked somewhere else, on the restaurant's website, is written into the book by the hub itself
+(`take`, from `pos.online.book`) under the number it has there, so the same one given twice is one
+reservation. It is kept like any other: a host seats it, changes it or takes it out.
+
 A reservation is not a check and not a sale, and no money is taken for one. Sitting it down opens a table's
 check the way a party walking in does, and that check is where everything that is sold is kept. Kept in
 memory or in PostgreSQL.
@@ -57,6 +61,9 @@ MOST_OF_A_CALLER = 6
 WHYS: tuple[tuple[str, str], ...] = (("cancelled", "Cancelled"), ("no_show", "No-show"))
 """How a reservation ends without a table: it was called off, or nobody came."""
 WHY_NAMES = dict(WHYS)
+WEBSITE = "gf-"
+"""What the id of a reservation that came from the website begins with; the rest is the website's own number
+for it. One written on a screen has an id of digits and the letters a to f, which never begins this way."""
 
 MINUTE_MS = 60_000
 _TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -102,6 +109,12 @@ class Booking:
         """The time it is for on the restaurant's clock, as "18:30"."""
         return datetime.fromtimestamp(self.at_ms / 1000, localtime.zone()).strftime("%H:%M")
 
+    @property
+    def online(self) -> str:
+        """The website's own number for a reservation that came from there: what to find it by in the
+        website's app. Empty for one written on a screen."""
+        return self.booking_id[len(WEBSITE) :] if self.booking_id.startswith(WEBSITE) else ""
+
     def as_json(self) -> dict[str, Any]:
         return {
             "id": self.booking_id,
@@ -116,6 +129,7 @@ class Booking:
             "table_label": self.table_label,
             "made_ms": self.made_ms,
             "by": self.by,
+            "online": self.online,
             "status": self.status,
             "soon_ms": self.at_ms - SOON_MIN * MINUTE_MS,
             "late_ms": self.at_ms + LATE_MIN * MINUTE_MS,
@@ -449,6 +463,47 @@ class Reservations:
         self.store.forget(localtime.service_day(self.today() - timedelta(days=KEEP_DAYS))[0])
         self.store.put(booking)
         return booking
+
+    def take(
+        self,
+        booking_id: str,
+        name: object,
+        size: object,
+        at_ms: int,
+        *,
+        phone: object = "",
+        note: object = "",
+        by_id: str,
+        by: str,
+    ) -> tuple[Booking, bool]:
+        """A table that was booked somewhere else (on the website) is written into the book under the id it
+        is known by there, for the moment it was booked for. Gives the reservation as the book has it, and
+        whether it is new: one that is in the book under that id already is the same one given again, and
+        stands as it is, whatever a host did with it since. The book's own rules hold as they do for `add`."""
+        booking_id = booking_id[:80]
+        known = self.store.get(booking_id)
+        if known is not None:
+            return known, False
+        today, day = self.today(), localtime.service_day_of(at_ms)
+        if day < today:
+            raise Refused("past_day", "A table is booked for today or a later day.")
+        if (day - today).days > MOST_AHEAD_DAYS:
+            raise Refused("too_far", f"A table is booked {MOST_AHEAD_DAYS} days ahead at most.")
+        booking = Booking(
+            booking_id,
+            _line(name, NAME_MAX, "The name", needed=True),
+            _size(size),
+            at_ms,
+            _phone(phone),
+            _line(note, NOTE_MAX, "The note"),
+            made_ms=self.now_ms(),
+            by_id=by_id,
+            by=by,
+        )
+        self._room(booking.at_ms)
+        self.store.forget(localtime.service_day(today - timedelta(days=KEEP_DAYS))[0])
+        self.store.put(booking)
+        return booking, True
 
     def change(
         self,

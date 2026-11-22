@@ -32,6 +32,7 @@ class Booking implements ArrivingParty {
     this.tableLabel = '',
     this.madeMs = 0,
     this.by = '',
+    this.online = '',
     this.status = 'booked',
     this.soonMs,
     this.lateMs,
@@ -59,6 +60,7 @@ class Booking implements ArrivingParty {
       tableLabel: _s(json['table_label']),
       madeMs: _i(json['made_ms']),
       by: _s(json['by']),
+      online: _s(json['online']),
       status: _s(json['status'], 'booked'),
       soonMs: _ms(json['soon_ms']),
       lateMs: _ms(json['late_ms']),
@@ -112,6 +114,10 @@ class Booking implements ArrivingParty {
   final int madeMs;
   final String by;
 
+  /// The website's own number for a table that was booked there and that the hub wrote into the book by
+  /// itself (docs/online-orders.md): what to find it by in GloriaFood's app. Empty for one a person wrote in.
+  final String online;
+
   /// `booked`, `seated`, `cancelled` or `no_show`.
   final String status;
 
@@ -136,6 +142,13 @@ class Booking implements ArrivingParty {
   final int? clashAtMs;
 
   bool get isBooked => status == 'booked';
+
+  /// It was booked on the website, by the guest.
+  bool get isOnline => online.isNotEmpty;
+
+  /// Who wrote it into the book, as the reservation's own sheet says it: "booked by Holly", or, for one from
+  /// the website, "booked on the website (GloriaFood 1234567)". Empty when the hub does not say.
+  String get bookedBy => isOnline ? 'booked on the website (GloriaFood $online)' : (by.isEmpty ? '' : 'booked by $by');
   bool get isSeated => status == 'seated';
   bool get isHere => arrivedMs != null;
 

@@ -6,7 +6,8 @@ it came, and only then turned into a check; what became of it is written beside 
 
 - `new`: written down, not yet looked at;
 - `placed`: it is on the POS, as the order `order_id`;
-- `kept`: not something the POS takes as an order (a table reservation, an order that was not accepted);
+- `booked`: it was a table booked on the website and is in the reservation book (`pos.online.book`);
+- `kept`: not something the POS takes as an order (an order placed from a table, one that was not accepted);
   `said` tells why. Nothing is lost: it is still in the website's own app;
 - `failed`: it could not be put on the POS; `said` tells why, and it is tried again a few times.
 
@@ -23,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-STATES = ("new", "placed", "kept", "failed")
+STATES = ("new", "placed", "booked", "kept", "failed")
 POLL, PUSH = "poll", "push"
 """How an order reached the hub first: the hub asked for it, or the website's service sent it."""
 MOST_TRIES = 5

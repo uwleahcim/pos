@@ -593,6 +593,90 @@ def test_asking_who_calls_changes_nothing_in_the_book():
     assert len(book.of_phone("781 555 0101")) == reservations.MOST_OF_A_CALLER
 
 
+# A table booked somewhere else (the website) ---------------------------------------------------------------
+
+
+def taken(book: Reservations, number: str = "gf-401", when: int = at(18, 30), **more) -> tuple:
+    told = {"phone": "+1 781 555 0142", "note": "high chair", "by_id": "online", "by": "the website", **more}
+    return book.take(number, told.pop("name", "Pat Example"), told.pop("size", 4), when, **told)
+
+
+def test_a_table_booked_on_the_website_is_in_the_book_under_the_website_s_own_number():
+    book, wall = book_at()
+    pat, new = taken(book, when=at(19, 30, day=17))
+    assert new and (pat.booking_id, pat.name, pat.size, pat.at_ms) == ("gf-401", "Pat Example", 4, at(19, 30, day=17))
+    assert (pat.phone, pat.note, pat.table, pat.by, pat.made_ms) == (
+        "+1 781 555 0142",
+        "high chair",
+        "",
+        "the website",
+        at(15),
+    )
+    told = book.book(pat.day)
+    (row,) = told["booked"]
+    assert (row["id"], row["online"], row["day"], row["time"], row["status"]) == (
+        "gf-401",
+        "401",
+        TUE,
+        "19:30",
+        "booked",
+    )
+    assert told["ahead"] == [{"day": TUE, "parties": 1, "guests": 4}]
+    # one written on a screen came from no website
+    chen = book.add("Chen", 2, MON, "18:30", by_id="s4", by="Holly")
+    assert chen.online == "" and book.book()["booked"][0]["online"] == ""
+    # somebody who calls about it is found by the number they gave the website
+    assert [b.booking_id for b in book.of_phone("781-555-0142")] == ["gf-401"]
+
+
+def test_the_same_one_given_again_changes_nothing_whatever_was_done_with_it_since():
+    book, wall = book_at()
+    pat, _ = taken(book)
+    again, new = taken(book, name="Somebody Else", size=9, when=at(21))
+    assert not new and again == pat and len(book.book()["booked"]) == 1
+    # a host put it right, and then took it out of the book: it is not booked again behind their back
+    book.change("gf-401", "Pat Example", 6, MON, "19:00", phone="+1 781 555 0142", table="A7", table_label="A7")
+    assert taken(book)[0].size == 6
+    book.cancel("gf-401", by="Holly")
+    gone, new = taken(book)
+    assert not new and gone.status == "cancelled" and book.book()["booked"] == []
+
+
+def test_the_book_s_own_rules_hold_for_a_table_booked_elsewhere(monkeypatch):
+    book, wall = book_at()
+    for change, code in (
+        ({"when": at(18, 30, day=15)}, "past_day"),
+        ({"when": at(18, 30) + (MOST_AHEAD_DAYS + 1) * 24 * 60 * MINUTE}, "too_far"),
+        ({"size": 0}, "bad_size"),
+        ({"size": MOST_GUESTS + 1}, "bad_size"),
+        ({"name": ""}, "no_name"),
+        ({"name": "x" * (NAME_MAX + 1)}, "long_text"),
+        ({"note": "x" * (NOTE_MAX + 1)}, "long_text"),
+        ({"phone": "call me maybe"}, "bad_phone"),
+    ):
+        with pytest.raises(Refused) as no:
+            taken(book, **change)
+        assert no.value.code == code, change
+    assert book.book()["booked"] == []
+    # a time of today that has passed is taken, as it is from a screen
+    assert taken(book, when=at(14))[1]
+    # and a day that is full takes no more
+    monkeypatch.setattr(reservations, "MOST_A_DAY", 1)
+    with pytest.raises(Refused) as full:
+        taken(book, "gf-402")
+    assert full.value.code == "too_many"
+    assert taken(book, "gf-402", when=at(18, 30, day=17))[1]  # another day has room
+
+
+def test_a_screen_cannot_write_a_reservation_as_the_website_s():
+    c, _ = hub()
+    made = c.post(
+        "/reservations",
+        json={**WHO, "id": "gf-401", "online": "401", "name": "Chen", "size": 4, "day": MON, "time": "18:30"},
+    ).json()["booking"]
+    assert made["online"] == "" and not made["id"].startswith("gf-") and made["by"] == "Holly"
+
+
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
 def test_the_book_is_kept_in_postgres():
     import psycopg
@@ -644,6 +728,12 @@ def test_the_book_is_kept_in_postgres():
             back = later.back(garcia.booking_id)
             assert back.status == "booked" and back.ended_ms is None
             assert [b["name"] for b in later.book()["booked"]] == ["Garcia", "Okafor"]
+
+            # a table booked on the website is kept under the website's number, once
+            pat, new = taken(later, when=at(21))
+            assert new and again.get("gf-401") == pat and not taken(later, size=9)[1]
+            assert [(b["name"], b["online"]) for b in later.book()["booked"]][-1] == ("Pat Example", "401")
+            later.cancel("gf-401", by="Holly")
 
             # two for the same time stay in the order they were written, whatever was changed since
             later.change(okafor.booking_id, "Okafor", 7, MON, "18:30")

@@ -967,6 +967,7 @@ class Hub {
     'came': 0,
     'known': 0,
     'placed': 0,
+    'booked': 0,
     'kept': 0,
     'failed': 0,
   };
@@ -985,6 +986,7 @@ class Hub {
     int came = 0,
     int byPush = 0,
     int placed = 0,
+    int booked = 0,
     int kept = 0,
     int failed = 0,
     int unread = 0,
@@ -1005,6 +1007,7 @@ class Hub {
       'by_push': byPush,
       'by_poll': came - byPush,
       'placed': placed,
+      'booked': booked, // tables booked on the website that went into the reservation book
       'kept': kept,
       'failed': failed,
       'unread': unread,
@@ -1162,6 +1165,7 @@ class Hub {
     String phone = '',
     String note = '',
     String by = 'Holly',
+    String online = '',
     int? arrivedMs,
     int? atMs,
   }) {
@@ -1179,7 +1183,8 @@ class Hub {
       'table': table,
       'table_label': table,
       'made_ms': at - 86400000,
-      'by': by,
+      'by': online.isEmpty ? by : 'the website',
+      'online': online, // the website's own number for one that was booked there
       'status': 'booked',
       'soon_ms': at - 15 * 60000,
       'late_ms': at + 15 * 60000,

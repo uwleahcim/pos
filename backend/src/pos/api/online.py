@@ -15,10 +15,11 @@
   not (`last_failure`: `at_ms`, `reason`); whether it takes pushes (`push.configured`), when the last one
   came (`push.pushed_ms`) and the last one it turned away (`push.refused`: `at_ms`, `reason`, `count`
   since the hub started); today's orders by what became of them and by how they came first (`today`:
-  `came`, `by_push`, `by_poll`, `placed`, `kept`, `failed`, and `unread`: what GloriaFood sent that could
-  not be read), how many are still to be put on the POS (`waiting`), and the ones a person should look at
-  (`look`), each by GloriaFood's number (`id`), with its `kind`, `state`, how it came (`via`), the POS order
-  it became (`order_id`) and what there is to say of it (`said`). Nothing of a customer is in it, and no key.
+  `came`, `by_push`, `by_poll`, `placed`, `booked` (tables, into the reservation book), `kept`, `failed`,
+  and `unread`: what GloriaFood sent that could not be read), how many are still to be put on the POS
+  (`waiting`), and the ones a person should look at (`look`), each by GloriaFood's number (`id`), with its
+  `kind`, `state`, how it came (`via`), the POS order it became (`order_id`) and what there is to say of it
+  (`said`). Nothing of a customer is in it, and no key.
   `look` rows also say since when they are as they are (`at_ms`) and whether that is after somebody last
   looked (`new`; never for one that is still being tried, nor for a push that could not be read on a hub
   that also asks); `news` counts those, and `seen_ms` is when somebody last looked. `trouble` lists what is
@@ -30,7 +31,7 @@
   screen's operations it takes no token: it changes no order, no money and no setting anybody chose. 503
   `read_only` on a hub that cannot write.
 - `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
-  that round did (`asked`, `came`, `known`: here already, `placed`, `kept`, `failed`), whether GloriaFood
+  that round did (`asked`, `came`, `known`: here already, `placed`, `booked`, `kept`, `failed`), whether GloriaFood
   `answered` and the `reason` it did not, and the `status` after it. It is the button **Ask now** on the
   Online orders screen and `hubctl online fetch`. GloriaFood is not asked again within fifteen seconds of
   the last asking (`pos.online.service.ASK_GAP_MS`): then nothing is done and `soon` is true. Like the
@@ -42,6 +43,9 @@
 
 Putting an order on the POS is this module's too (`add_online_orders` sets `OnlineOrders.put`): the
 operations `pos.online.place` makes are numbered, stored and printed as a screen's are, by the same steps.
+So is writing a table that was booked on the website into the reservation book (`OnlineOrders.book`): what
+`pos.online.book` reads of it is handed to `Reservations.take`, once, and the screens that show the book are
+told. No call here writes a reservation: a screen cannot make one up as the website's.
 """
 
 from __future__ import annotations
@@ -54,13 +58,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from ..online.book import BY as BOOKED_BY
+from ..online.book import RESERVATION_TYPES, Booked, wanted
 from ..online.door import body_of
 from ..online.gloriafood import NAME, pushed
 from ..online.inbox import Arrival
-from ..online.place import DEVICE, Placed, ext_id_of, hidden, ops_for, order_id_for
+from ..online.place import DEVICE, CannotPlace, Placed, ext_id_of, hidden, ops_for, order_id_for
 from ..online.service import SEVERAL, UNREADABLE, OnlineOrders, PushRefused
 from ..orders.check import check_for
 from ..orders.counts import holds
+from ..reservations import Refused, Reservations
 from ..sync.hlc import Clock
 from ..sync.pgstore import ReadOnlyError
 
@@ -69,6 +76,8 @@ SEEN = "online_seen"
 TOPIC = "online"
 """What the change feed says when there is something new to look at, or somebody looked."""
 LOOK = "Look at it in GloriaFood's own app."
+BOOK_TOPIC = "reservations"
+"""What the change feed says when the reservation book changed (`pos.api.reservations`)."""
 PUSH_ERRORS = {401: "refused", 404: "not_found", 422: "unreadable", 503: "standby"}
 """What a push that is turned away is answered, by status: one word, and nothing of why."""
 
@@ -115,9 +124,33 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             app.state.notifier.on_ops(store.for_order, list(accepted))
         return placed
 
+    def book(order: Mapping[str, Any]) -> Booked:
+        """A table booked on the website goes into the reservation book, once: under the website's own
+        number for it, so one that is there already is the same one given again, and stands as a host left
+        it. What the book's own rules refuse is said in the book's words, for a person to write in by hand."""
+        reservations: Reservations = app.state.reservations
+        want = wanted(order, now_ms=reservations.now_ms())
+        try:
+            booking, new = reservations.take(
+                want.booking_id,
+                want.name,
+                want.size,
+                want.at_ms,
+                phone=want.phone,
+                note=want.note,
+                by_id=DEVICE,
+                by=BOOKED_BY,
+            )
+        except Refused as err:
+            raise CannotPlace(f"the book would not take it ({err.message.rstrip('.')})") from None
+        if not new:
+            return Booked(booking.booking_id)
+        app.state.feed.changed(BOOK_TOPIC)  # the book and the floor map read it now
+        return Booked(booking.booking_id, want.said, late=want.late)
+
     def notice(arrival: Arrival, said: str) -> None:
         """The slip for an order somebody has to look at: one that is not on the POS, or is on it and was
-        not sent to the kitchen."""
+        not sent to the kitchen; and for a booked table that is not in the book, or came after its time."""
         number = f"Online order {arrival.ext_id}"
         if arrival.kind == UNREADABLE:
             words = [
@@ -128,6 +161,18 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             ]
         elif arrival.kind == SEVERAL:
             words = ["NOT ON THE POS", f"{said}.", "The hub lists them: sudo hubctl online status."]
+        elif arrival.kind in RESERVATION_TYPES and arrival.state == "booked":
+            words = [
+                "RESERVATION CAME LATE",
+                f"Online reservation {arrival.ext_id}: {said}.",
+                "It is in the book now. See whether the party is here.",
+            ]
+        elif arrival.kind in RESERVATION_TYPES:
+            words = [
+                "NOT IN THE BOOK",
+                f"Online reservation {arrival.ext_id}: {said}.",
+                f"{LOOK} Write it into the book by hand if the table is still to come.",
+            ]
         elif arrival.state == "placed":
             state = app.state.store.view(arrival.order_id) if arrival.order_id else None
             order_no = state.fields.get("order_no") if state is not None else None
@@ -155,6 +200,7 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         return online.status(seen_ms())
 
     online.put = put
+    online.book = book
     online.notice = notice
     online.news = lambda: app.state.feed.changed(TOPIC)  # the screens hear that there is something to look at
 

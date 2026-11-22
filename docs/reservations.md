@@ -27,6 +27,9 @@ waitlist ([On the waitlist's button](#on-the-waitlists-button)).
 Anyone signed in can open the book, book a table and seat a party. No PIN is asked: whoever answers the
 phone takes the booking.
 
+A table a guest books on the restaurant's website is written into the book by the hub itself, since 22
+November 2026 ([From the website](#from-the-website)).
+
 ## Booking a table
 
 **Book a table**, at the bottom of the book.
@@ -207,6 +210,23 @@ Under the standing reservations is a line that counts the day's others: "2 seate
 **Put back** on a row returns the reservation to the book as it was. For a party that was seated by
 mistake, the check opened at the table stays as it is: close or void it as any check opened by mistake.
 
+## From the website
+
+Where online orders are on (`online-orders.md`), a table a guest books on the website is in the book by
+itself once it is accepted in GloriaFood's app: the name, how many, the day and the time, the phone number,
+and what the guest wrote as the note.
+
+- It has a small **online** beside its time. A tap shows "booked on the website (GloriaFood 1234567)": the
+  number to find it by in GloriaFood's app.
+- From then on it is a reservation like any other: hold a table for it, change it, seat it, cancel it. No
+  table is held until somebody picks one.
+- A note that ends in "…" was longer than the book takes; the whole of it is in GloriaFood's app.
+- A note that begins "Ordered ahead: dishes in GloriaFood." means the guest ordered their dishes with the
+  table. They are **not on the POS**: ring them in from GloriaFood's app when the party sits.
+- One the book could not take (it did not say for how many, or the day is full) prints a slip, NOT IN THE
+  BOOK: write it in by hand.
+- A guest who changes or cancels on the website afterwards does not change the book. Cancel it here.
+
 ## Good to know
 
 - **A reservation is not a check and not a sale.** Nothing in the book is in the sales, the day's report or
@@ -238,8 +258,9 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 - On the map: the name on a table that is seated, the booked tables in the list beside the map while Mine
   is on, a count of late reservations in the bar over the map, and a table that says "booked" while a
   reservation is being made. How long a table is kept (an hour and a half each way) is fixed, not a setting.
-- **Booking by the guests themselves** (a web page), and a **text or e-mail to confirm or remind**. Both
-  need an outside service the hub does not have.
+- A **text or e-mail to confirm or remind**: it needs an outside service the hub does not have. (Guests
+  book for themselves on the website, where online orders are on: [From the website](#from-the-website).
+  A change or a cancellation they make there afterwards does not reach the book.)
 - **Deposits** and card holds: payments are parked.
 - A suggested table by size, and turn times that say when a table will be free.
 - Standing reservations (every Friday), and a list of regulars from the book.
@@ -248,6 +269,10 @@ mistake, the check opened at the table stays as it is: close or void it as any c
 
 ## For developers
 
+- From the website: `Reservations.take(booking_id, name, size, at_ms, ...)` writes a table booked elsewhere
+  under the id it has there (`gf-<GloriaFood's number>`), once; `Booking.online` is that number, sent as
+  `online` on every booking (empty for one written on a screen). It is called by the hub alone
+  (`pos.api.online`, from `pos.online.book`), never from a call on the wire. `online-orders.md` has the rest.
 - Hub: `backend/src/pos/reservations.py` (`Reservations`, `Booking`, `BookStore`, `PgBookStore` with the
   table `reservation`; the rules, the limits, `day_of` and `at_of` for the day of service),
   `backend/src/pos/api/reservations.py` (`GET /reservations?day=`, `POST /reservations`,

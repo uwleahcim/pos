@@ -9,18 +9,18 @@ from decimal import Decimal
 
 from pos.online.gloriafood import FetchFailed
 from pos.online.inbox import KEEP_DAYS, MOST_TRIES, Arrival, Inbox
-from pos.online.service import ASK_GAP_MS, UNREAD_SLIP_MS
+from pos.online.service import ASK_GAP_MS, UNREAD_SLIP_MS, OnlineOrders
 
 from ..printing.fake_printer import decode
 from .hub import MINUTE, NOW, Hub
-from .orders import extra, order, row
+from .orders import extra, order, reservation, row
 
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
 CHICKEN = ("Sweet & Sour Chicken", 2)  # wok 1 and the soup station; its ticket is drawn in Chinese
 COMBO = ("Maki Combination",)  # the sushi bar
-NONE = {"asked": True, "came": 0, "known": 0, "placed": 0, "kept": 0, "failed": 0}
-TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "kept": 0, "failed": 0, "unread": 0}
+NONE = {"asked": True, "came": 0, "known": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0}
+TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0, "unread": 0}
 CUSTOMER = ("Pat", "Example", "555", "Restaurant Row", "3B", "Ring the bell")
 
 
@@ -309,14 +309,14 @@ def test_an_order_with_no_dishes_fails_for_good_at_once():
 
 def test_what_is_no_order_for_the_pos_is_kept_without_a_slip():
     hub = Hub()
-    booked = order(301, [], kind="table_reservation")
+    from_a_table = order(301, [row(*CHICKEN)], kind="dine_in")
     turned_down = lunch(302, status="rejected")
-    assert hub.accept(booked, turned_down) == {**NONE, "came": 2, "kept": 2}
+    assert hub.accept(from_a_table, turned_down) == {**NONE, "came": 2, "kept": 2}
     assert not on_the_pos(hub, 301) and not on_the_pos(hub, 302)
-    assert hub.inbox.get("gloriafood", "301").said == "it is a table reservation"
+    assert hub.inbox.get("gloriafood", "301").said == "it is an order placed from a table"
     assert hub.inbox.get("gloriafood", "302").said == "it was not accepted (rejected)"
     status = hub.status()
-    # a reservation is nothing to look at; an order the POS would take and did not is
+    # an order from a table is nothing to look at; an order the POS would take and did not is
     assert [look["id"] for look in status["look"]] == ["302"] and hub.slips() == [] and tickets(hub) == []
 
 
@@ -558,3 +558,204 @@ def test_the_reports_count_an_online_order_as_the_sale_it_is():
     assert hub.client.get("/orders", params={"brief": True}).json()["orders"][0]["order_id"] == "gf-301"
     steps = hub.client.get("/orders/gf-301/history", headers=manager).json()["steps"]
     assert steps[0]["what"] == "opened" and steps[0]["device"] == "online"
+
+
+# Tables booked on the website ------------------------------------------------------------------------------
+
+TOMORROW = "2027-01-16"
+SEVEN_TOMORROW = "2027-01-17T00:00:00.000Z"  # 19:00 on Saturday, by the restaurant's clock
+
+
+def test_a_table_booked_on_the_website_is_one_reservation_in_the_book():
+    hub = Hub()
+    told = reservation(401, 4, at=SEVEN_TOMORROW, instructions="A high chair, please")
+    assert hub.accept(told) == {**NONE, "came": 1, "booked": 1}
+    (booking,) = hub.booked(TOMORROW)
+    assert (booking["name"], booking["size"], booking["day"], booking["time"]) == ("Pat Example", 4, TOMORROW, "19:00")
+    assert (booking["phone"], booking["note"]) == ("+1 781 555 0142", "A high chair, please")
+    assert (booking["id"], booking["online"], booking["by"]) == ("gf-401", "401", "the website")
+    assert (booking["table"], booking["status"], booking["made_ms"]) == ("", "booked", NOW)
+    # nothing else of the customer is in the book
+    assert "pat@example.com" not in json.dumps(hub.client.get("/reservations", params={"day": TOMORROW}).json())
+    # it is no order: no check, no ticket, no slip, and nothing for anybody to look at
+    assert not on_the_pos(hub, 401) and hub.papers() == {}
+    arrival = hub.inbox.get("gloriafood", "401")
+    assert (arrival.state, arrival.said, arrival.order_id, arrival.tries) == ("booked", "", None, 0)
+    status = hub.status()
+    assert status["today"] == {**TODAY, "came": 1, "by_poll": 1, "booked": 1} and status["look"] == []
+    # handed over again, it is the same reservation
+    hub.clock += MINUTE
+    assert hub.accept(told) == {**NONE, "came": 1, "known": 1}
+    assert len(hub.booked(TOMORROW)) == 1
+
+
+def test_orders_and_reservations_that_come_together_each_go_where_they_belong():
+    hub = Hub()
+    assert hub.accept(lunch(301), reservation(401), reservation(402, 2, at=SEVEN_TOMORROW)) == {
+        **NONE,
+        "came": 3,
+        "placed": 1,
+        "booked": 2,
+    }
+    assert on_the_pos(hub, 301) and [b["online"] for b in hub.booked()] == ["401"]
+    assert [(b["online"], b["size"]) for b in hub.booked(TOMORROW)] == [("402", 2)]
+    assert tickets(hub) == ["gf-301:fire:front", "gf-301:fire:sushi", "gf-301:fire:wok"] and hub.slips() == []
+
+
+def test_the_screens_are_told_that_the_book_changed_and_only_then():
+    hub = Hub()
+    said: list[str] = []
+    hub.client.app.state.feed.changed = said.append
+    hub.accept(reservation(401))
+    assert said == ["reservations"]
+    hub.clock += MINUTE
+    hub.accept(reservation(401), reservation(402, 0))  # one that is here already, and one that cannot be booked
+    assert "reservations" not in said[1:]
+
+
+def test_a_reservation_a_host_took_out_of_the_book_is_not_booked_again():
+    hub = Hub()
+    hub.accept(reservation(401))
+    hub.book.cancel("gf-401", by="Holly")
+    assert hub.booked() == []
+    # the hub that takes over was not told what became of it, and is given it again
+    other = OnlineOrders(hub.food, Inbox(), now=lambda: hub.clock)
+    other.put, other.book = hub.online.put, hub.online.book
+    hub.food.queue.append(reservation(401))
+    assert other.round() == {**NONE, "came": 1, "booked": 1}
+    assert hub.booked() == [] and hub.book.store.get("gf-401").status == "cancelled"
+
+
+def test_a_table_booked_with_its_dishes_ordered_ahead_is_in_the_book_and_somebody_is_told_of_the_dishes():
+    hub = Hub()
+    told = reservation(401, 6, kind="order_ahead", rows=[row(*CHICKEN)], payment="ONLINE", instructions="Window")
+    assert hub.accept(told) == {**NONE, "came": 1, "booked": 1}
+    (booking,) = hub.booked()
+    assert (booking["size"], booking["note"]) == (6, "Ordered ahead: dishes in GloriaFood. Window")
+    # its dishes are not put on the POS by this, and no money is recorded for them
+    assert not on_the_pos(hub, 401) and hub.papers() == {}
+    (look,) = hub.status()["look"]
+    assert (look["id"], look["kind"], look["state"], look["new"]) == ("401", "order_ahead", "booked", True)
+    assert look["said"] == (
+        "its dishes were ordered ahead and are not on the POS: they are in GloriaFood's app, to ring in when "
+        "the party sits"
+    )
+
+
+def test_a_reservation_the_book_cannot_take_is_not_dropped_a_slip_and_the_list_say_so():
+    hub = Hub()
+    assert hub.accept(reservation(401, 0), reservation(402, 75)) == {**NONE, "came": 2, "failed": 2}
+    assert hub.booked() == []
+    slips = sorted(hub.slips())
+    assert len(slips) == 2 and all("NOT IN THE BOOK" in slip and "by hand" in slip for slip in slips)
+    assert "Online reservation 401: it does not say how many they are." in slips[0]
+    assert "Online reservation 402: it is for 75 guests, and the book takes 60 at most." in slips[1]
+    status = hub.status()
+    assert sorted((look["id"], look["state"], look["new"]) for look in status["look"]) == [
+        ("401", "failed", True),
+        ("402", "failed", True),
+    ]
+    assert status["today"] == {**TODAY, "came": 2, "by_poll": 2, "failed": 2}
+    # it is not tried again and again: nothing about it will change
+    hub.clock += MINUTE
+    assert hub.accept() == NONE and len(hub.slips()) == 2
+
+
+def test_a_day_that_is_full_or_too_far_ahead_is_said_in_the_book_s_own_words(monkeypatch):
+    from pos import reservations
+
+    hub = Hub()
+    hub.accept(reservation(401))
+    monkeypatch.setattr(reservations, "MOST_A_DAY", 1)
+    assert hub.accept(reservation(402), reservation(403, at="2029-01-16T00:30:00.000Z")) == {
+        **NONE,
+        "came": 2,
+        "failed": 2,
+    }
+    assert hub.inbox.get("gloriafood", "402").said == (
+        "the book would not take it (Fri 15 Jan has 1 reservations already)"
+    )
+    assert hub.inbox.get("gloriafood", "403").said == (
+        "the book would not take it (A table is booked 366 days ahead at most)"
+    )
+    assert [b["online"] for b in hub.booked()] == ["401"]
+
+
+def test_a_reservation_for_a_day_that_is_over_is_listed_today_and_prints_nothing():
+    hub = Hub()
+    assert hub.accept(reservation(401, at="2027-01-15T00:30:00.000Z")) == {**NONE, "came": 1, "kept": 1}
+    assert hub.booked("2027-01-14") == [] and hub.slips() == []
+    (look,) = hub.status()["look"]
+    assert (look["id"], look["state"]) == ("401", "kept")
+    assert look["said"] == "it was for Jan 14, a day that is over: it was not put in the book"
+    hub.clock += DAY
+    assert hub.status()["look"] == []
+
+
+def test_a_reservation_of_today_that_reaches_the_hub_after_its_time_is_booked_and_a_slip_says_so():
+    hub = Hub()
+    hub.clock = NOW + 2 * HOUR  # the hub was off: the table was for 19:30 and it is 20:01
+    assert hub.accept(reservation(401)) == {**NONE, "came": 1, "booked": 1}
+    assert [b["time"] for b in hub.booked()] == ["19:30"]
+    (slip,) = hub.slips()
+    assert "RESERVATION CAME LATE" in slip
+    assert "Online reservation 401: it reached the hub after its time (19:30)." in slip
+    (look,) = hub.status()["look"]
+    assert (look["state"], look["said"]) == ("booked", "it reached the hub after its time (19:30)")
+
+
+def test_a_reservation_that_cannot_be_written_into_the_book_now_is_tried_again(monkeypatch):
+    hub = Hub()
+    put = hub.book.store.put
+    broken = True
+
+    def flaky(booking):
+        if broken:
+            raise RuntimeError("Pat Example cannot be written")  # an error may quote the customer: it is not kept
+        put(booking)
+
+    monkeypatch.setattr(hub.book.store, "put", flaky)
+    assert hub.accept(reservation(401)) == {**NONE, "came": 1, "failed": 1}
+    arrival = hub.inbox.get("gloriafood", "401")
+    assert (arrival.state, arrival.tries) == ("failed", 1)
+    assert arrival.said == "it could not be put in the book (RuntimeError)"
+    assert hub.slips() == [] and hub.status()["waiting"] == 1
+    broken = False
+    hub.clock += MINUTE
+    assert hub.accept() == {**NONE, "booked": 1}
+    assert [b["online"] for b in hub.booked()] == ["401"] and hub.status()["look"] == []
+
+
+def test_nothing_of_who_booked_is_in_the_status_a_slip_or_the_log(caplog):
+    hub = Hub()
+    caplog.set_level(logging.DEBUG)
+    hub.accept(
+        reservation(401, 0, instructions="Ring the bell"),
+        reservation(402, kind="order_ahead", rows=[row(*CHICKEN)], instructions="Ring the bell"),
+        reservation(403, at="2027-01-15T00:30:00.000Z", instructions="Ring the bell"),
+    )
+    told = json.dumps(hub.status()) + " ".join(hub.slips()) + caplog.text
+    for word in CUSTOMER:
+        assert word not in told, word
+    shown = hub.client.get("/online/orders/402").json()
+    assert shown["order"]["persons"] == 4 and "Pat" not in json.dumps(shown)
+
+
+def test_a_pushed_reservation_is_in_the_book_before_gloriafood_is_answered_and_once():
+    hub = Hub(push=True)
+    assert hub.push(reservation(401)).json() == {"received": 1}
+    assert [b["online"] for b in hub.booked()] == ["401"] and hub.food.asked == 0
+    hub.clock += MINUTE
+    assert hub.accept(reservation(401)) == {**NONE, "came": 1, "known": 1}
+    assert len(hub.booked()) == 1
+    assert hub.status()["today"] == {**TODAY, "came": 1, "by_push": 1, "booked": 1}
+
+
+def test_a_hub_that_was_not_given_the_book_keeps_a_reservation_as_before_and_lists_it():
+    online = OnlineOrders(None, Inbox(), now=lambda: NOW)
+    hub = Hub()
+    online.put = hub.online.put
+    online._unwritten.append(Arrival("gloriafood", "401", NOW, reservation(401), kind="table_reservation"))
+    assert online.round() == {**NONE, "asked": False, "kept": 1}
+    (look,) = online.status()["look"]
+    assert (look["state"], look["said"]) == ("kept", "it is a table reservation")

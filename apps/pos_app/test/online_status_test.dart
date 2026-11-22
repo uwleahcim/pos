@@ -134,11 +134,42 @@ void main() {
       expect(OnlineLook.fromJson({'id': '9', 'fetched_ms': 77}).atMs, 77);
     });
 
+    test('a table booked on the website is a reservation: in the book, or not in it', () {
+      OnlineLook row(String kind, String state, {String said = ''}) =>
+          OnlineLook.fromJson(Hub.onlineLook('401', atMs: 5, kind: kind, state: state, said: said));
+      final ahead = row('order_ahead', 'booked', said: 'its dishes were ordered ahead and are not on the POS');
+      expect((ahead.name, ahead.stateWords), ('Reservation 401', 'In the book'));
+      expect((ahead.isTable, ahead.inTheBook, ahead.lost, ahead.onThePos), (true, true, false, false));
+      // one the book could not take shouts, as an order that is not on the POS does
+      final gone = row('table_reservation', 'failed');
+      expect((gone.name, gone.stateWords, gone.lost), ('Reservation 401', 'NOT IN THE BOOK', true));
+      // one for a day that is over was left out on purpose
+      final over = row('table_reservation', 'kept');
+      expect((over.stateWords, over.lost, over.inTheBook), ('Not in the book', false, false));
+      expect(OnlineLook.fromJson(Hub.onlineLook('', atMs: 5, kind: 'table_reservation')).name, 'A reservation');
+      // an order is as it was
+      final order = row('pickup', 'failed');
+      expect((order.name, order.stateWords, order.isTable, order.lost), ('Order 401', 'NOT ON THE POS', false, true));
+      // and the day's count of them, which a hub from before reservations does not send
+      expect(OnlineStatus.fromJson(Hub.onlineStatus(came: 3, placed: 1, booked: 2)).booked, 2);
+      expect(
+        OnlineStatus.fromJson({
+          ...Hub.onlineStatus(),
+          'today': {'came': 1, 'placed': 1},
+        }).booked,
+        0,
+      );
+    });
+
     test('the one line of the row under Location', () {
       String summary(Map<String, dynamic> json) => OnlineStatus.fromJson(json).summary;
       expect(summary(Hub.onlineStatus(asks: false, pushes: false)), 'Off: the hub has no key from GloriaFood');
       expect(summary(Hub.onlineStatus()), 'None yet today');
       expect(summary(Hub.onlineStatus(came: 12, placed: 12)), 'Today 12 came, 12 on the POS');
+      expect(
+        summary(Hub.onlineStatus(came: 12, placed: 10, booked: 2)),
+        'Today 12 came, 10 on the POS, 2 in the reservation book',
+      );
       // looked at already: listed, and no alert
       expect(
         summary(Hub.onlineStatus(came: 12, placed: 11, failed: 1, look: [lost(isNew: false)])),
@@ -196,6 +227,13 @@ void main() {
       expect(asked({'came': 1, 'known': 1}).words, '1 order came, and it was here already.');
       expect(asked({'came': 2, 'known': 2}).words, '2 orders came, all of them here already.');
       expect(asked({'came': 1, 'kept': 1}).words, '1 order came. 1 not for the POS.');
+      // a table that was booked on the website
+      expect(asked({'came': 1, 'booked': 1}).words, '1 order came. 1 put in the reservation book.');
+      final both = asked({'came': 3, 'placed': 1, 'booked': 1, 'failed': 1});
+      expect(
+        both.words,
+        '3 orders came. 1 put on the POS, 1 put in the reservation book, 1 could not be put on (see To look at).',
+      );
       final mixed = asked({'came': 3, 'known': 1, 'placed': 1, 'failed': 1});
       expect(
         mixed.words,
@@ -535,6 +573,68 @@ void main() {
       expect((shown('online-new:7781'), shown('online-new:unread-1'), shown('online-new:7702')), (1, 1, 0));
       // opened by itself (from Location), a row opens nothing
       expect(tester.widget<ListTile>(key('online-look:7781')).onTap, isNull);
+      await stop(tester);
+    });
+
+    testWidgets('tables booked on the website are counted, and one to look at says what it is, on a phone', (
+      tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        Hub.onlineStatus(
+          answeredMs: ago(1),
+          came: 5,
+          placed: 2,
+          booked: 2,
+          failed: 1,
+          look: [
+            Hub.onlineLook(
+              '401',
+              atMs: ago(3),
+              kind: 'order_ahead',
+              state: 'booked',
+              said:
+                  'its dishes were ordered ahead and are not on the POS: they are in GloriaFood\'s app, to ring in '
+                  'when the party sits',
+            ),
+            Hub.onlineLook(
+              '402',
+              atMs: ago(5),
+              kind: 'table_reservation',
+              said: 'it does not say how many they are',
+              isNew: false,
+            ),
+          ],
+        ),
+        size: const Size(320, 780),
+      );
+      expect(tester.takeException(), isNull);
+      final today = find.descendant(of: key('online-today'), matching: find.byType(Text));
+      expect(tester.widgetList<Text>(today).map((text) => text.data), [
+        '5',
+        'came',
+        '2',
+        'on the POS',
+        '2',
+        'in the reservation book',
+        '1',
+        'could not be put on',
+        '0 sent by GloriaFood, 5 asked for by the hub',
+      ]);
+      await tester.scrollUntilVisible(key('online-look:402'), 200, scrollable: find.byType(Scrollable).first);
+      expect(find.textContaining('Reservation 401 · '), findsOneWidget);
+      expect(rowWords(tester, 'online-look:401'), startsWith('In the book: its dishes were ordered ahead'));
+      expect(rowWords(tester, 'online-look:402'), 'NOT IN THE BOOK: it does not say how many they are');
+      Icon mark(String id) =>
+          tester.widget<Icon>(find.descendant(of: key('online-look:$id'), matching: find.byType(Icon)));
+      final scheme = Theme.of(tester.element(key('online-look:401'))).colorScheme;
+      // the one in the book is no failure; the one that is not shouts
+      expect((mark('401').icon, mark('401').color), (Icons.event_available_outlined, scheme.onSurfaceVariant));
+      expect((mark('402').icon, mark('402').color), (Icons.error_outline, scheme.error));
+      expect((shown('online-new:401'), shown('online-new:402')), (1, 0));
+      // a reservation is no check: the row opens nothing
+      expect(tester.widget<ListTile>(key('online-look:401')).onTap, isNull);
+      expect(tester.takeException(), isNull);
       await stop(tester);
     });
 
