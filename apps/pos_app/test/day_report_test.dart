@@ -211,8 +211,10 @@ void main() {
         ['Tables', 'To go', 'Delivery', 'drive'],
       );
       expect(
-        [methodLabel('cash'), methodLabel('card'), methodLabel('elsewhere'), methodLabel('gift')],
-        ['Cash', 'Card', 'Paid elsewhere', 'gift'],
+        [
+          for (final how in ['cash', 'card', 'online', 'elsewhere', 'gift']) methodLabel(how),
+        ],
+        ['Cash', 'Card', 'Paid online', 'Paid elsewhere', 'gift'],
       );
     });
 
@@ -350,6 +352,31 @@ void main() {
       expect(find.byKey(const ValueKey('day-over')), findsNothing);
       expect(find.byKey(const ValueKey('day-paid-other')), findsNothing);
       expect(find.textContaining('The cash in the drawer is not counted here yet'), findsOneWidget);
+    });
+
+    testWidgets('what the website took is a row of its own, beside what else was paid outside the POS', (tester) async {
+      final report = evening();
+      report['money'] = {
+        ...report['money'] as Map<String, dynamic>,
+        'taken': [
+          {'method': 'cash', 'count': 2, 'amount': '25.00'},
+          {'method': 'card', 'count': 2, 'amount': '8.84'},
+          {'method': 'online', 'count': 3, 'amount': '74.19'},
+          {'method': 'elsewhere', 'count': 1, 'amount': '18.14'},
+        ],
+        'taken_total': '126.17',
+      };
+      await pumpDay(tester, days: {'': report});
+      expect(row(tester, 'day-taken'), ['Money taken', r'$126.17']);
+      expect(row(tester, 'day-taken:online'), ['Paid online', '3 payments', r'$74.19']);
+      expect(row(tester, 'day-taken:elsewhere'), ['Paid elsewhere', '1 payment', r'$18.14']);
+      // in the hub's order: after the card slips, before the rest
+      final tops = [
+        for (final how in ['cash', 'card', 'online', 'elsewhere'])
+          tester.getTopLeft(find.byKey(ValueKey('day-taken:$how'))).dy,
+      ];
+      expect(tops, [...tops]..sort());
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('money on a voided check, money paid over and money from other days are said', (tester) async {

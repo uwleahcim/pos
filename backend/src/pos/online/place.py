@@ -60,6 +60,7 @@ from ..menu.gloriafood import split_number
 from ..menu.service import MenuService
 from ..orders.adjustments import PricingRules
 from ..orders.check import UNTAXED
+from ..orders.day import PAID_ONLINE
 from ..orders.delivery_fee import ONLINE
 from ..sync.hlc import HLC
 from ..sync.oplog import Op, OrderState, replay
@@ -365,7 +366,7 @@ def ops_for(
                     "payment_id": f"{order_id}:paid",
                     "method": "elsewhere",
                     "amount": str(total),
-                    "note": "Paid online",
+                    "note": PAID_ONLINE,  # the words the reports know the website's money by
                     "by": BY,
                 },
             )

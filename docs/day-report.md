@@ -43,11 +43,19 @@ step (see `check-history.md`).
 | Sales tax | one line, as a guest sees it: the tax that was charged. Under it, how much was not charged on tax-exempt checks, when there were any |
 | Total | what the day's checks come to |
 
-**Money taken** is every payment recorded during the day, by how it was paid: cash, card, and paid
-elsewhere (a phone order settled through another system). It counts a payment on the day it was taken,
+**Money taken** is every payment recorded during the day, by how it was paid: cash, card, paid online, and
+paid elsewhere (a phone order settled through another system). It counts a payment on the day it was taken,
 whatever check it was for, so it is what should be in the drawer and on the card slips that night. When
 some of it was for a check of another day (a deposit on Saturday's catering, last night's tab), a line says
 how much.
+
+**Paid online** is what the restaurant's website took for its orders ([online-orders.md](online-orders.md)):
+money that is in no drawer and on no card slip of yours, and the figure to hold against the statement of
+the payment company the website uses. It is the payment that reads "Paid online" on the check. The row is
+there on a day the website took something, between Card and Paid elsewhere, on the screen and on paper. It
+adds nothing and leaves nothing out: that money was under Paid elsewhere before, the day's total is the
+same, and every payment is still in exactly one row. A day from before the update reads the new way too,
+since the report is added up afresh every time it is asked.
 
 Under it, **The day's checks** settles them: what they come to, what was paid this day, what was paid on
 other days, and what is **still owed**.
@@ -147,6 +155,9 @@ The first line of the bill's own heading, when the location has one, prints abov
 
 ## For developers
 
+- A payment's row is `how_paid(payment)`: its method, or `online` for one taken `elsewhere` with the note
+  "Paid online" (`PAID_ONLINE`, the note `pos.online.place` writes and the app's `paidOnline` reads). `online`
+  is a row's name and no method: the hub refuses a `pay` that says it.
 - Figures: `backend/src/pos/orders/day.py`. `order_day(state)` says which day a check counts on;
   `day_report(states, day, taxes=, rules=, defs=, now_ms=)` adds everything up from `check_for`, the void,
   taken-off and typed rows and each order's payments. Its docstring states the sums that have to hold:

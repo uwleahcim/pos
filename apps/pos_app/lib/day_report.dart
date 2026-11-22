@@ -22,10 +22,13 @@ String dollars(String amount) {
 /// Whether an amount of the hub's is anything at all: "0.00" and "" are not.
 bool isMoney(String amount) => (double.tryParse(amount) ?? 0) != 0;
 
-/// How a payment was taken, as the report says it.
+/// How a payment was taken, as the report says it. `online` is what the restaurant's website took for its
+/// orders: the hub lists it apart from whatever else was paid outside the POS (docs/day-report.md), and
+/// the words are the ones the check says for that payment.
 String methodLabel(String method) => switch (method) {
   'cash' => 'Cash',
   'card' => 'Card',
+  'online' => 'Paid online',
   'elsewhere' => 'Paid elsewhere',
   _ => method,
 };

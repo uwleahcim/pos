@@ -14,7 +14,7 @@ import pytest
 from pos.orders.sales import MAX_DAYS, SaleMemo, comparison, day_sheet, sale_of, sales_report, sales_reports
 from pos.tax import massachusetts
 
-from .test_day import BEER, DSN, EGGROLL, PUPU, WINGS, Hub, added, at, evening, money, prepaid
+from .test_day import BEER, DSN, EGGROLL, PUPU, WINGS, Hub, added, at, evening, money, prepaid, website
 
 
 def sales(h: Hub, first: str | None = None, last: str | None = None) -> dict:
@@ -360,10 +360,11 @@ SHEET = [
     "Checks voided whole, amount",
     "Cash",
     "Card",
+    "Paid online",
     "Paid elsewhere",
     "Money taken",
 ]
-PAID = {"cash": "Cash", "card": "Card", "elsewhere": "Paid elsewhere"}
+PAID = {"cash": "Cash", "card": "Card", "online": "Paid online", "elsewhere": "Paid elsewhere"}
 
 
 def sheet(h: Hub, first: str | None = None, last: str | None = None) -> dict:
@@ -429,6 +430,7 @@ def test_the_sheet_is_a_line_for_each_day_and_a_line_of_totals_every_cell_as_tex
         "Checks voided whole, amount": "2.95",
         "Cash": "25.00",
         "Card": "8.84",
+        "Paid online": "0.00",  # the column is there on every sheet, so a month's sheets line up
         "Paid elsewhere": "18.14",
         "Money taken": "51.98",
     }
@@ -499,14 +501,41 @@ def test_the_totals_are_the_lines_added_up_and_read_what_the_sales_read():
     ):
         assert total[column] == span["sales"][figure], column
     assert total["Money taken"] == span["money"]["taken_total"] == "78.09"
-    assert {PAID[row["method"]]: row["amount"] for row in span["money"]["taken"]} == {
-        name: total[name] for name in PAID.values()
-    }
+    taken = {PAID[row["method"]]: row["amount"] for row in span["money"]["taken"]}
+    # a way nobody paid in these days is no row of the sales and a column of zeroes on the sheet
+    assert {name: total[name] for name in PAID.values()} == {name: taken.get(name, "0.00") for name in PAID.values()}
     assert money(total["Dinner"]) + money(total["Lunch"]) == money(total["Dishes sold"])  # the menus split it
     for line in lines(answer).values():  # and every line adds up the way the sales do
         assert money(line["Net sales"]) == money(line["Dishes sold"]) - money(line["Comps and discounts"])
         assert money(line["Total"]) == sum(money(line[c]) for c in ("Net sales", "Charges", "Gratuity", "Sales tax"))
         assert money(line["Money taken"]) == sum(money(line[name]) for name in PAID.values())
+
+
+def test_what_the_website_took_is_a_row_of_the_sales_and_a_column_of_the_sheet():
+    h = week_before(evening())
+    before = sales(h, "2026-11-09", "2026-11-17")["span"]
+    monday, sunday = website(h, "g1", at(19, 40)), website(h, "g0", at(18, day=15), PUPU)
+    h.now = at(21)
+    span = sales(h, "2026-11-09", "2026-11-17")["span"]
+    assert [m["method"] for m in span["money"]["taken"]] == ["cash", "card", "online", "elsewhere"]
+    taken = {m["method"]: (m["count"], m["amount"]) for m in span["money"]["taken"]}
+    assert taken.pop("online") == (2, str(money(monday) + money(sunday)))
+    assert taken == {m["method"]: (m["count"], m["amount"]) for m in before["money"]["taken"]}  # the others as before
+    assert money(span["money"]["taken_total"]) == money(before["money"]["taken_total"]) + money(monday) + money(sunday)
+    # a day asked alone says what the day's report says, row for row
+    for day in ("2026-11-15", "2026-11-16"):
+        assert sales(h, day, day)["span"]["money"]["taken"] == h.report(day)["money"]["taken"], day
+    # the sheet: each day's own, in its column, and the money taken still every column added up
+    answer = lines(sheet(h, "2026-11-09", "2026-11-17"))
+    assert (answer["2026-11-15"]["Paid online"], answer["2026-11-16"]["Paid online"]) == (sunday, monday)
+    assert answer["2026-11-16"]["Paid elsewhere"] == "18.14"  # Lee's order, paid outside the POS another way
+    assert answer["Total"]["Paid online"] == str(money(monday) + money(sunday))
+    for day, line in answer.items():
+        assert money(line["Money taken"]) == sum(money(line[name]) for name in PAID.values()), day
+        if day != "Total":
+            as_the_day_reads(h, day, line)
+    # reckoned afresh from the orders, with nothing remembered, it is the same
+    assert afresh(h, date(2026, 11, 9), date(2026, 11, 17))["money"] == span["money"]
 
 
 def test_charges_a_gratuity_and_a_check_charged_no_tax_are_on_the_line_of_their_day():

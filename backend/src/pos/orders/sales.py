@@ -51,7 +51,7 @@ from ..sync.oplog import OrderEntry, OrderState, is_tab
 from ..tax import TaxProfile
 from .adjustments import PricingRules
 from .check import _money, check_for
-from .day import METHODS, PAID_AS, ZERO, _guests, _Menu, _most_first, _Tally, kind_of, order_day
+from .day import METHODS, PAID_AS, ZERO, _guests, _Menu, _most_first, _Tally, how_paid, kind_of, order_day
 from .voids import void_rows
 
 MAX_DAYS = 92
@@ -183,7 +183,7 @@ def sale_of(
     if its_day is None:
         return None
     payments = tuple(
-        (payment.stamp.wall_ms, intern(str(payment.method or "cash")), Decimal(payment.amount or "0"))
+        (payment.stamp.wall_ms, intern(how_paid(payment)), Decimal(payment.amount or "0"))
         for payment in state.payments.values()
         if payment.stamp is not None
     )
