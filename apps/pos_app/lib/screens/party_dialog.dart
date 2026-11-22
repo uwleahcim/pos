@@ -8,6 +8,10 @@ import 'guests_picker.dart';
 /// what it told the host. A name and how many they are; the wait they were told, a phone number and a note
 /// when there is one. The hub keeps it and says what it does not take. Pops the list as the hub has it
 /// afterwards; nothing when it was closed.
+///
+/// For a new party the hub is asked what wait to tell (docs/waitlist.md, "A suggested wait"): that wait's
+/// button is outlined and a line under the buttons says why. It marks and does not pick: the wait told is
+/// the one the host taps.
 class PartyDialog extends StatefulWidget {
   const PartyDialog({
     super.key,
@@ -44,6 +48,20 @@ class _PartyDialogState extends State<PartyDialog> {
   late int? _quoted = widget.party?.quotedMinutes;
   bool _busy = false;
   String? _message;
+  // What the hub suggests telling a party that comes now; nothing until it has answered, and for a party
+  // that is only being put right.
+  WaitSuggestions _suggested = WaitSuggestions.none;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.party == null) _askSuggested();
+  }
+
+  Future<void> _askSuggested() async {
+    final suggested = await widget.api.waitSuggestions();
+    if (mounted && suggested.rows.isNotEmpty) setState(() => _suggested = suggested);
+  }
 
   @override
   void dispose() {
@@ -104,6 +122,7 @@ class _PartyDialogState extends State<PartyDialog> {
     final label = theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant);
     final quotes = {...list.quotes, ?party?.quotedMinutes}.toList()..sort();
     final waited = party?.waitedAt((widget.nowMs ?? widget.api.nowMs)());
+    final suggested = _suggested.forSize(_size);
     return AlertDialog(
       title: Text(party == null ? 'Add to the waitlist' : 'Change ${party.name}'),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
@@ -154,10 +173,30 @@ class _PartyDialogState extends State<PartyDialog> {
                       visualDensity: VisualDensity.compact,
                       showCheckmark: false,
                       selected: _quoted == minutes,
+                      // the wait the hub suggests is outlined; it is told only when it is tapped
+                      side: suggested?.minutes == minutes ? BorderSide(color: scheme.primary, width: 2) : null,
+                      tooltip: suggested?.minutes == minutes ? 'Suggested' : null,
                       onSelected: (_) => setState(() => _quoted = minutes),
                     ),
                 ],
               ),
+              if (suggested != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: 'Suggested: ${suggested.words}. ',
+                          style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(text: suggested.why(most: list.mostGuests)),
+                      ],
+                    ),
+                    key: ValueKey('party-suggested:${suggested.minutes}'),
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
               if (waited != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),

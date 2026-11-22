@@ -1535,6 +1535,17 @@ class PosApi {
     }
   }
 
+  /// The wait the hub suggests telling a party that comes now, by how many they are, from how tonight's
+  /// parties waited (docs/waitlist.md, "A suggested wait"). It is a help and never in the way: nothing from
+  /// a hub older than it, and nothing where no hub answers soon.
+  Future<WaitSuggestions> waitSuggestions() async {
+    try {
+      return WaitSuggestions.fromJson(await _get('/waitlist/suggest'));
+    } on ApiException {
+      return WaitSuggestions.none;
+    }
+  }
+
   static Map<String, dynamic> _party(String staffId, String name, int size, String phone, int? quoted, String note) => {
     'staff_id': staffId,
     'name': name,

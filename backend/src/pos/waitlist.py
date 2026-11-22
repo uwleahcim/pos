@@ -12,6 +12,13 @@ they waited and how it ended is kept, so the waits can be counted later.
 
 A party is not a check and not a sale. Sitting it down opens a table's check the way a party walking in does,
 and that check is where everything that is sold is kept. Kept in memory or in PostgreSQL.
+
+**A suggested wait** (`suggestions`). What to tell the next party is worked out from how tonight's parties
+waited: each place in line took so many minutes for the last parties that sat down, and so many parties are
+in line now. Parties of about the same size are counted together (`SIZE_BANDS`), since they wait for the
+same kind of table; where too few of a size have sat down, every size is. A party ahead that has already
+waited longer than that says the wait is at least as long as theirs, where it is of the same size. It is
+a suggestion for the screen to mark: the wait a party is told is still what the host taps.
 """
 
 from __future__ import annotations
@@ -43,6 +50,16 @@ QUOTES = (5, 10, 15, 20, 30, 45, 60, 90)
 """The waits the screens offer as buttons, in minutes."""
 AMBER_BEFORE_MIN = 5
 """A wait turns amber this many minutes before the time the party was told; it turns red at that time."""
+SIZE_BANDS: tuple[tuple[int, int], ...] = ((1, 2), (3, 4), (5, 6), (7, MOST_GUESTS))
+"""The sizes that wait for the same kind of table: a wait is suggested from the parties of its own band."""
+SUGGEST_LAST = 6
+"""A suggested wait goes by the last so many parties that sat down,"""
+SUGGEST_WITHIN_MIN = 120
+"""and only by the ones that sat down within so many minutes: the pace of lunch says nothing of dinner."""
+SUGGEST_LIKE_NEEDS = 3
+"""A band is counted on its own once so many of its parties have sat down."""
+SUGGEST_NEEDS = 2
+"""Short of that every size is counted together, and with fewer than this of any size nothing is suggested."""
 WHYS: tuple[tuple[str, str], ...] = (("left", "Left"), ("no_show", "No-show"))
 """Why a party went off the list without a table: it left, or it was called and nobody came."""
 WHY_NAMES = dict(WHYS)
@@ -294,6 +311,67 @@ class PgWaitStore(WaitStore):
         )
 
 
+def _in_line(party: Party, at_ms: int) -> bool:
+    """Whether a party that was on the list at `at_ms` still stood in line for a table then: not off the list
+    yet, and not yet told its table is ready."""
+    return (party.ended_ms is None or party.ended_ms > at_ms) and (party.called_ms is None or party.called_ms > at_ms)
+
+
+def _suggested(parties: Sequence[Party], own: Sequence[Party], now_ms: int, needs: int) -> dict[str, Any] | None:
+    """The wait to tell a party that joins `parties` (in the order they came) at `now_ms`, `own` being the
+    ones of its own size among them; None where fewer than `needs` of `parties` sat down lately."""
+    lately = now_ms - SUGGEST_WITHIN_MIN * MINUTE_MS
+    sat = [(place, p) for place, p in enumerate(parties) if p.seated_ms is not None and p.seated_ms >= lately]
+    sat = sorted(sat, key=lambda found: found[1].seated_ms or 0)[-SUGGEST_LAST:]
+    if len(sat) < needs:
+        return None
+    waited = places = 0
+    for place, party in sat:
+        waited += max(0, (party.seated_ms or party.at_ms) - party.at_ms)
+        places += 1 + sum(1 for earlier in parties[:place] if _in_line(earlier, party.at_ms))
+    # `waited / places` is what one place in line took: a party with two ahead of it waited for three places
+    ahead = [p for p in parties if p.status == "waiting" and p.called_ms is None]
+    pace_ms = (len(ahead) + 1) * waited // places
+    # a table for eight that will not come says nothing of a table for two: only its own size holds it up
+    slowest = [max(0, now_ms - p.at_ms) for p in own if p.status == "waiting" and p.called_ms is None]
+    longest_ms = max(slowest, default=0)
+    about = max(1, -(-max(pace_ms, longest_ms) // MINUTE_MS))  # to the whole minute above
+    return {
+        "minutes": next((quote for quote in QUOTES if quote >= about), QUOTES[-1]),
+        "about_minutes": about,
+        "by": "pace" if pace_ms >= longest_ms else "longest",
+        "ahead": len(ahead),
+        "each_minutes": max(1, round(waited / places / MINUTE_MS)),
+        "longest_minutes": longest_ms // MINUTE_MS if slowest else None,
+        "seated": len(sat),
+    }
+
+
+def suggestions(parties: Sequence[Party], now_ms: int) -> list[dict[str, Any]]:
+    """The wait to tell a party that comes at `now_ms`, for each band of sizes (`from` to `to` guests) that
+    tonight's `parties` say enough about; a band they say too little about is left out.
+
+    `minutes` is the wait to tell, one of the waits the screens offer: the first that is not under
+    `about_minutes`, what it was worked out as (the longest of them where that is longer still). It is worked
+    out `by` the `pace`: the parties in line `ahead` (waiting, and not yet told their table is ready) and the
+    newcomer take a place each, and a place took `each_minutes` for the last `seated` parties that sat down.
+    `like` says the parties counted are the band's own; false where too few of them have sat down and every
+    size was counted, the ones ahead too. Or it is worked out `by` the `longest` wait among the band's own
+    parties ahead, `longest_minutes` (null with none of them ahead), where that is more: whoever comes now
+    sits after them."""
+    line = sorted(parties, key=lambda p: p.at_ms)  # in the order they came; the same moment stays as it was
+    out: list[dict[str, Any]] = []
+    for low, high in SIZE_BANDS:
+        own = [p for p in line if low <= p.size <= high]
+        found = _suggested(own, own, now_ms, SUGGEST_LIKE_NEEDS)
+        like = found is not None
+        if found is None:
+            found = _suggested(line, own, now_ms, SUGGEST_NEEDS)
+        if found is not None:
+            out.append({"from": low, "to": high, "like": like, **found})
+    return out
+
+
 def default_wait_store() -> WaitStore:
     """PostgreSQL when DATABASE_URL is set (every hub and the cloud), memory otherwise (tests, a laptop)."""
     dsn = os.environ.get("DATABASE_URL")
@@ -485,6 +563,12 @@ class Waitlist:
         )
         self.store.put(waiting)
         return waiting
+
+    def suggest(self) -> dict[str, Any]:
+        """The wait to tell a party that comes now, by how many they are (`suggestions`), with the waits the
+        screens offer. It is read off the clock, so it is asked when a party is added and not with the list."""
+        now = self.now_ms()
+        return {"suggest": suggestions(self._tonight(now), now), "quotes": list(QUOTES)}
 
     def tonight(self) -> dict[str, Any]:
         """Tonight's list: who is `waiting`, in the order they came, and who went off it `earlier` (the last

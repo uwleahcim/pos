@@ -36,11 +36,55 @@ today neither shows (`reservations.md`, "On the waitlist's button").
 
 - **Name.** It cannot be left empty, and takes 24 letters.
 - **How many guests.** A tap on 1 to 6 or 8, or minus and plus for any number up to 60. It starts at 2.
-- **Wait told.** No time, or 5, 10, 15, 20, 30, 45 minutes, 1 hour, 1 hour 30. It starts at no time.
+- **Wait told.** No time, or 5, 10, 15, 20, 30, 45 minutes, 1 hour, 1 hour 30. It starts at no time. Once a
+  few parties have sat down tonight, one of the waits has an outline: the wait the hub suggests (below).
 - **Phone**, if they give one. Seven digits or more.
 - **Note**: high chair, booth, birthday. 60 letters.
 
 **Add to the list** puts them at the end. The list keeps who added them and when.
+
+## A suggested wait
+
+When a party is added, the hub works out what wait to tell it from how tonight's parties waited. That
+wait's button gets an **outline**, and a line under the buttons says why:
+
+> **Suggested: 30 min.** 3 parties of 3 to 4 are ahead, at about 6 min a party tonight.
+
+**It marks; it does not pick.** No wait is told until it is tapped. Left alone, the party is added with no
+time told, as before. The host knows what the screen cannot: a big table about to pay, a party that will
+take the bar.
+
+How it is worked out:
+
+- **A place in line.** For the last parties that sat down, the hub knows how long each waited and how many
+  stood ahead of it when it came. A party that came with two ahead and sat after 18 minutes waited for
+  three places, 6 minutes each. Over the last six parties that gives "about 6 min a party tonight".
+- **Who is ahead now.** The parties waiting, less the ones marked **Called** (their table is ready). The
+  party being added takes the place after them: three ahead is four places, some 24 minutes.
+- **The next wait on the buttons.** 24 minutes is told as 30: a table that comes early is forgiven, one
+  that comes late is not.
+- **Parties of about the same size wait for the same kind of table**, so they are counted together: 1 to 2
+  guests, 3 to 4, 5 to 6, 7 or more. Change the guests and the suggestion follows. Until three parties of
+  a size have sat down, every size is counted together, and the line says "3 parties are ahead" without a
+  size.
+- **Somebody ahead who has waited longer.** If the pace says 15 minutes and a party of that size ahead has
+  already waited 41, the wait is at least theirs: "A party of 3 to 4 ahead has waited 41 min already."
+  Only a party of the same size counts for this: eight guests waiting an hour for the one large table do
+  not make the wait for a table for two an hour.
+- **Past the longest button**, the top one is outlined and the line says the figure: "1 h 30 or more
+  (about 1 h 50)".
+
+Nothing is suggested, and the question looks as it always did:
+
+- until two parties have sat down off the list in the last two hours (lunch says nothing of dinner);
+- for a party that is only being changed: its wait was told when it came;
+- with the hub away, or a hub that is not updated.
+
+**Keep the list tidy and the suggestion is better.** A party that left and was never taken off still
+counts as ahead, and its long wait pulls the suggestion up. **Left** or **No-show** puts it right.
+
+The suggestion is a reading of tonight's list and nothing more: it knows nothing of the tables, the
+kitchen or the reservations to come, and it is not kept. Nothing is sent to the guest.
 
 ## Reading the list
 
@@ -120,9 +164,9 @@ it as any check opened by mistake.
   service the hub can send through, and the hub has none yet (its texts go to its log). Called is the mark
   for a call made by voice or by phone.
 - Dragging a party onto a table (it is Seat, then a tap on the table).
-- Server rotation: suggesting whose turn it is by guests or by who was sat last. The seat question already
-  shows what every server has on the floor.
-- A suggested wait worked out from the tables.
+- A suggested wait that knows the tables: which are about to pay, which are booked. The suggestion goes by
+  how tonight's parties waited.
+- A report of how the waits told compared with the waits that came.
 - The party's name on the check or on the table.
 - A report of waits over many days.
 - A booked party on this list: reservations have their own book (`reservations.md`), one tap from here.
@@ -138,10 +182,19 @@ it as any check opened by mistake.
   `too_many`, `not_waiting`; 422 `no_name`, `long_text`, `bad_size`, `bad_quote`, `bad_phone`; 503
   `read_only`. The answer carries no clock, so an unchanged list is a 304; `due_ms` and `amber_ms` are
   stamped by the hub and the app counts against `PosApi.nowMs()`.
+- The suggested wait: `pos.waitlist.suggestions` (the rule, with `SIZE_BANDS`, `SUGGEST_LAST`,
+  `SUGGEST_WITHIN_MIN`, `SUGGEST_LIKE_NEEDS`, `SUGGEST_NEEDS`) and `GET /waitlist/suggest`, which answers
+  `suggest`: a row for each band of sizes the list says enough about, with `from`, `to`, `minutes`,
+  `about_minutes`, `by` (`pace` or `longest`), `ahead`, `each_minutes`, `longest_minutes`, `seated`, `like`.
+  It reads the clock, so it is its own call and not part of the list (which must stay a 304 while nobody
+  changes it); it names nobody and changes nothing. App: `WaitSuggestion`, `WaitSuggestions`
+  (`lib/waitlist.dart`), `PosApi.waitSuggestions` (empty from an older hub, which answers 405, and with no
+  hub), asked once by `PartyDialog` when a new party's question opens.
 - App: `lib/waitlist.dart` (`Waitlist`, `WaitParty`, `WaitCounts`, `waitWords`),
   `lib/screens/waitlist_screen.dart` (`WaitlistScreen`, pops a `SeatParty`, or an `OpenReservations` for
   the reservation book),
   `lib/screens/party_dialog.dart` (`PartyDialog`), `PosApi.waitlist`, `addParty`, `changeParty`,
   `partyCalled`, `seatParty`, `partyLeft`, `partyBack`; `LiveChange.waitlist`; in
   `lib/screens/orders_screen.dart` the button, `_seatingParty`, `_seatPartyAt` and `_partySeated`.
-- Tests: `backend/tests/test_waitlist.py`, `apps/pos_app/test/waitlist_test.dart`.
+- Tests: `backend/tests/test_waitlist.py`, `backend/tests/test_wait_suggest.py`,
+  `apps/pos_app/test/waitlist_test.dart`, `apps/pos_app/test/wait_suggest_test.dart`.

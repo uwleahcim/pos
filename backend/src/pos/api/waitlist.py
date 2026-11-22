@@ -8,6 +8,11 @@
   guests wait, how many were seated or left, and the `average_wait_minutes` of the seated. `quotes` are the
   waits to offer as buttons. Every stamp is the hub's clock; the answer does not say what time it is now, so
   a list nobody changed reads as unchanged (304).
+- `GET /waitlist/suggest`: the wait to tell a party that comes now (`pos.waitlist.suggestions`). `suggest` has
+  a row for each band of sizes tonight's list says enough about: `from` and `to` (guests), `minutes` (the
+  wait to mark, one of `quotes`), `about_minutes`, `by` (`pace` or `longest`), `ahead`, `each_minutes`,
+  `longest_minutes`, `seated` and `like`. It reads the clock, names nobody and changes nothing; a screen
+  asks it when a party is being added.
 - `POST /waitlist` `{staff_id, name, size, phone, quoted_minutes, note}`: puts a party on the list.
   409 `too_many` past sixty waiting.
 - `PUT /waitlist/{id}` (the same body): puts right what a waiting party told the host.
@@ -92,6 +97,11 @@ def add_waitlist(app: FastAPI) -> None:
     def read_waitlist() -> dict[str, Any]:
         """Tonight's waitlist: who is waiting, in the order they came, and who went off it earlier."""
         return waitlist().tonight()
+
+    @app.get("/waitlist/suggest")
+    def suggest_wait() -> dict[str, Any]:
+        """The wait to tell a party that comes now, by how many they are, from how tonight's parties waited."""
+        return waitlist().suggest()
 
     @app.post("/waitlist")
     def add_party(body: PartyIn) -> dict[str, Any]:
