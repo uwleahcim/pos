@@ -1277,6 +1277,14 @@ class Hub {
     {'staff_id': 's4', 'name': 'Holly', 'role': 'host', 'takes_tables': false, 'assigns_tables': true},
   ];
 
+  /// Tonight's turn for a table (`turn` of `GET /floor`, docs/table-servers.md): the staff ids of the people
+  /// in it, whose turn it is first. Null for a hub older than the turn. Every word a host said of it
+  /// (`POST /floor/turn`) is kept in [turnSaid]: somebody put in goes to the end, somebody taken out is
+  /// gone. A reason in [refuseTurn] refuses every word with it.
+  List<String>? turn;
+  final turnSaid = <Map<String, dynamic>>[];
+  String? refuseTurn;
+
   /// The floor it serves when a test changed it (the fixture otherwise), and what each person saved of their
   /// own settings (`PUT /staff/<id>/preferences`), in order.
   Map<String, dynamic>? floor;
@@ -3146,8 +3154,28 @@ class Hub {
           if (powers != null) 'powers': held,
         });
       case '/floor':
-        // a hub with a reservation book says which tables are booked for today
-        return json({...floor ?? fixture('floor'), if (bookings != null) 'holds': tableHolds});
+        // a hub with a reservation book says which tables are booked for today, and one that keeps a turn
+        // for a table who is in it
+        return json({
+          ...floor ?? fixture('floor'),
+          if (bookings != null) 'holds': tableHolds,
+          if (turn != null) 'turn': turn,
+        });
+      case '/floor/turn' when request.method == 'POST':
+        final word = jsonDecode(request.body) as Map<String, dynamic>;
+        if (refuseTurn != null) {
+          return json({
+            'detail': {'error': 'not_allowed', 'message': refuseTurn},
+          }, 403);
+        }
+        turnSaid.add(word);
+        final id = word['server_id'] as String;
+        turn = [
+          for (final other in turn ?? const <String>[])
+            if (other != id) other,
+          if (word['on'] == true) id,
+        ];
+        return json({'turn': turn});
       case '/menu':
         return json({...menu ?? fixture('menu'), if (revision != 0) 'revision': revision});
       case '/menu/revision':

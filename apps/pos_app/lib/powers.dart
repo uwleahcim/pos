@@ -52,7 +52,11 @@ const powerGroups = [
   ]),
   PowerGroup('Tables', [
     Power('take_tables', 'Take tables', 'A table can be theirs, and a host can seat a party for them.'),
-    Power('assign_tables', 'Give tables out', 'Seat a party for another server, and hand a table over.'),
+    Power(
+      'assign_tables',
+      'Give tables out',
+      "Seat a party for another server, hand a table over, and say who is in tonight's turn.",
+    ),
   ]),
   PowerGroup('Deliveries', [
     Power('deliver', 'Take deliveries out', 'A delivery can be handed to them: they are offered as a driver.'),

@@ -45,8 +45,8 @@ merges after any disconnect.
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`
 - Whose table it is (the server's name on each busy table, a server taking a table by opening it, the host
-  giving a table to a server and handing one over, the `host` role, and **Mine**, which fades the other
-  servers' tables on the floor map): `docs/table-servers.md`
+  giving a table to a server and handing one over, the `host` role, whose turn the next table is, and
+  **Mine**, which fades the other servers' tables on the floor map): `docs/table-servers.md`
 - Printers and stations (where a dish prints, the printers with their fallbacks set from the app, finding them on
   the network, to-go orders at the takeout counter with PAID or NOT PAID on the bag's ticket, tickets that say
   "Ticket 2 of 3" and name the other stations cooking): `docs/printing.md`

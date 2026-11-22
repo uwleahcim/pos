@@ -82,6 +82,11 @@ def add_time_clock(app: FastAPI) -> None:
     def out(shift: Shift) -> dict[str, Any]:
         return shift.as_json(clock().now_ms(), breaks_paid=setting()["breaks_paid"])
 
+    def told() -> None:
+        """Who is on the clock changed, and with it who is in tonight's turn for a table (`pos.floor.turn`):
+        the floor maps read again."""
+        app.state.feed.changed("floor")
+
     def who(body: PunchIn) -> SignIn:
         """The person at the clock, by their own PIN or tag: the checks of `POST /signin`."""
         app.state.devices.heard(body.device)
@@ -125,6 +130,7 @@ def add_time_clock(app: FastAPI) -> None:
                     punch_id=body.punch_id,
                     breaks_paid=paid,
                 )
+                told()
         except Refused as err:
             raise refused(err) from err
         except ReadOnlyError as err:
@@ -186,6 +192,7 @@ def add_time_clock(app: FastAPI) -> None:
             raise refused(err) from err
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        told()
         return out(shift)
 
     @app.put("/timeclock/shifts/{shift_id}")
@@ -207,6 +214,7 @@ def add_time_clock(app: FastAPI) -> None:
             raise refused(err) from err
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        told()
         return out(shift)
 
     @app.delete("/timeclock/shifts/{shift_id}")
@@ -225,4 +233,5 @@ def add_time_clock(app: FastAPI) -> None:
             raise refused(err) from err
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        told()
         return out(shift)

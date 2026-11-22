@@ -50,7 +50,12 @@ POWERS: tuple[Power, ...] = (
     Power(
         "take_tables", "a table can be theirs: the floor map offers them as a server", ("server", "bartender"), False
     ),
-    Power("assign_tables", "seat a party for someone else and hand a table over", ("host",), False),
+    Power(
+        "assign_tables",
+        "seat a party for someone else, hand a table over and say who is in tonight's turn for a table",
+        ("host",),
+        False,
+    ),
     Power(
         "deliver", "a delivery can be handed to them: the Deliveries screen offers them as a driver", ("driver",), False
     ),

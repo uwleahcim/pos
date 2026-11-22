@@ -237,6 +237,7 @@ class FloorPlan {
     this.timers = TableTimers.off,
     this.moves = false,
     this.holds = const {},
+    this.turn,
   });
   factory FloorPlan.fromJson(Map<String, dynamic> json) => FloorPlan(
     width: (json['width'] as num).toDouble(),
@@ -260,6 +261,7 @@ class FloorPlan {
                 if (row is Map) TableHold.fromJson(row.cast()),
             ],
     },
+    turn: json['turn'] is List ? [for (final id in json['turn'] as List) '$id'] : null,
   );
   final double width, height;
   final List<Room> rooms;
@@ -281,6 +283,10 @@ class FloorPlan {
   /// The tables booked for today, by table id: the reservations still standing that hold each, the earliest
   /// first. Empty from a hub older than the book on the map, and for a table nobody booked.
   final Map<String, List<TableHold>> holds;
+
+  /// Tonight's turn for a table (docs/table-servers.md): the staff ids of the people in it, whose turn it is
+  /// first. Empty while nobody was said to be on; null from a hub older than the turn.
+  final List<String>? turn;
 
   /// What is still to come of the table's reservations at [nowMs], the earliest first: the ones whose
   /// table is still kept. One an hour and a half past its time with nobody seated is no longer among them.
@@ -366,5 +372,6 @@ class FloorPlan {
     timers: timers,
     moves: moves,
     holds: holds,
+    turn: turn,
   );
 }

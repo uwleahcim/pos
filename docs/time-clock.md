@@ -115,6 +115,9 @@ Open the shift › **Correct**. Change the day, the clock-in, the clock-out or a
   ("breaks under 20 minutes count"). Check with whoever does the payroll which breaks have to be paid.
 - **The PIN only.** A tag or a face signs in as always; the time clock asks for the PIN.
 - Nobody has to be clocked in to use the POS, and a manager or owner need not clock in at all.
+- **The turn for a table follows the clock.** A server who clocks in is in tonight's turn for a table at
+  the host stand, and whoever clocks out is out of it ([table-servers.md](table-servers.md#whose-turn-it-is)).
+  A host can still take somebody out or put them in by hand. The turn changes nothing in the hours.
 - Not built: wages, overtime, tips, a schedule, a file for the payroll company, a photo with each punch, a
   reminder at sign-in for somebody not clocked in.
 - Turning the clock off keeps the hours: the Hours screen still reads and corrects them.

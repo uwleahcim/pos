@@ -42,7 +42,7 @@ A change holds on every screen from the moment it is saved.
 | **Approve a tax-exempt check** | Their PIN marks a check exempt from sales tax (`tax-exempt.md`) | Nobody |
 | **Read a check's history** | Every step of a check: who did it, on which screen and when (`check-history.md`) | Nobody |
 | **Take tables** | A table can be theirs, and a host can seat a party for them (`table-servers.md`) | Servers, bartenders |
-| **Give tables out** | Seat a party for another server, and hand a table over | Hosts |
+| **Give tables out** | Seat a party for another server, hand a table over, and say who is in tonight's turn (`table-servers.md`) | Hosts |
 | **Take deliveries out** | A delivery can be handed to them: they are offered as a driver (`delivery.md`) | Drivers |
 | **Set the kitchen rush** | Add minutes to every new quote while the kitchen is behind | Nobody |
 | **Write the notes for the shift** | Put a note up for everybody, change it, take it down, and see who has read it (`shift-notes.md`) | Nobody |
@@ -80,7 +80,8 @@ approval, and it is what puts their name on the void.
 - **Taking a power back works at once.** A back-office session that is open, and an approval that was given
   and not used yet, are weighed against the table again when they are used.
 - **Take tables** is what puts a person in the list a host picks a server from, and gives them "Mine" on the
-  floor map. **Give tables out** is what makes the floor map ask whose table it is when they seat a party.
+  floor map. **Give tables out** is what makes the floor map ask whose table it is when they seat a party,
+  and lets them say who is in tonight's turn for a table (`table-servers.md`).
 - **Take deliveries out** is what puts a person among the names offered when a delivery leaves. It limits
   nobody: whoever is signed in can hand a bag to a driver.
 - **With an older hub** (one that has no table) the app does what it always did. On a hub that has the

@@ -95,6 +95,34 @@ class ServerLoad {
       : '$tables ${tables == 1 ? 'table' : 'tables'} · $guests ${guests == 1 ? 'guest' : 'guests'}';
 }
 
+/// [servers] with the people in tonight's [turn] first, in the order they take their tables, and the others
+/// after them as the hub lists the staff. Somebody in the turn who is not among [servers] is left out.
+List<StaffMember> inTurnFirst(List<StaffMember> servers, List<String> turn) {
+  if (turn.isEmpty) return servers;
+  final byId = {for (final server in servers) server.staffId: server};
+  final first = [for (final id in turn) ?byId[id]];
+  return [
+    ...first,
+    for (final server in servers)
+      if (!turn.contains(server.staffId)) server,
+  ];
+}
+
+/// Where a person stands in tonight's turn, in words: "Next", "2nd", "3rd", "11th".
+String placeInTurn(int place) {
+  if (place <= 1) return 'Next';
+  final teen = place % 100 >= 11 && place % 100 <= 13;
+  final ending = teen
+      ? 'th'
+      : switch (place % 10) {
+          1 => 'st',
+          2 => 'nd',
+          3 => 'rd',
+          _ => 'th',
+        };
+  return '$place$ending';
+}
+
 extension ServedBy on TableCheck {
   /// Whether this check is [server]'s: by id, or by name on a check that carries no id (an older hub's).
   bool isServedBy(StaffMember server) => serverId != null ? serverId == server.staffId : this.server == server.name;

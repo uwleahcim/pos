@@ -679,6 +679,14 @@ class PosApi {
   /// when nothing answers, so a host can still seat a party for a server (ADR 6).
   Future<Roster> staff() => _repeated('/staff', Roster.fromJson, remember: 'staff');
 
+  /// A host's word on tonight's turn for a table (docs/table-servers.md): [serverId] is in it ([on]) or out
+  /// of it, says [staffId]. Answers with the turn as it stands: the staff ids of the people in it, whose
+  /// turn it is first. The hub keeps the turn, so with no backend answering nothing is changed.
+  Future<List<String>> sayTurn(String staffId, String serverId, {required bool on}) async {
+    final json = await _post('/floor/turn', {'staff_id': staffId, 'server_id': serverId, 'on': on});
+    return [for (final id in json['turn'] as List? ?? const []) '$id'];
+  }
+
   /// The location's table timers: whether the floor map draws a countdown ring on each table, and the
   /// minutes each stage is given.
   Future<TableTimers> tableTimers() async => TableTimers.fromJson(await _get('/settings/table_timers'));

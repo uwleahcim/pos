@@ -26,6 +26,44 @@ guests: **Server**, a button for everyone who takes tables, each with what they 
 A party off the waitlist is seated the same way, with its guests already filled in: **Seat** on the party,
 then a tap on its table (`waitlist.md`).
 
+## Whose turn it is
+
+The buttons under **Server** say what each person has on the floor now. They can also say whose turn the
+next table is: the names of the people in tonight's turn stand first, in the order they take their tables,
+and the first of them carries a small **Next**.
+
+- **Next is whoever has waited longest for a table.** First the ones who have had no table today, in the
+  order they came in; then the others, the one sat longest ago first. A table a server opened themselves
+  counts as their turn, and a table handed over counts for the one who took it.
+- **It marks; it does not pick.** The host still taps a name. Giving the table to somebody else is the
+  host's call (a regular asks for Amy, a big party goes to whoever has the room), and whoever was passed
+  over is still next.
+- **Nobody is in the turn that nothing said was working.** The hub does not guess from the staff list who
+  is in tonight: a mark on somebody who went home at three would be worse than none. A person is in the
+  turn in one of two ways:
+  - **A host says so.** Beside **Server** is the button **Tonight's turn**. It lists everyone who takes
+    tables, each with their place ("Next", "2nd", "3rd") or "Not in it". A tap on a name puts that person
+    in, at their place; a tap on somebody who is in takes them out: cut for the night, on a long break,
+    gone home. A bartender or a manager working the floor tonight is put in the same way.
+  - **The time clock says so**, where the location uses it ([time-clock.md](time-clock.md)). A **server**
+    who clocks in is in the turn from that moment, and whoever clocks out is out of it. A bartender or a
+    manager who clocks in is not put in by that: they are in when a host says so.
+- **The later word stands.** A host who takes Amy out at half past eight has cut her, though she is on the
+  clock until her tables have paid. If she clocks in again tomorrow, she is in again.
+- **It is for tonight.** The turn starts empty each day of service (the night ends at four in the morning).
+  Without the time clock, the first host of the day taps in who is on; with it, the names are there as
+  people clock in.
+- Somebody on a break is still on the clock and still in the turn: the host passes them over, or takes
+  them out and puts them back.
+
+While nobody is in the turn, nothing is marked and the buttons stand as they always did.
+
+Only whoever gives tables out says who is in the turn (the hosts, a manager, an owner). Handing a seated
+table over is nobody's turn: that dialog shows no mark.
+
+**Not built:** sections (which tables are whose for the night), counting guests and not tables, a turn kept
+apart for each room, and the time each person was last sat shown on the button.
+
 ## Handing a table over
 
 A host, manager or owner **holds a busy table down** on the floor map. "Who serves A7?" lists the same
@@ -95,6 +133,9 @@ update` to hold; the steps, and what the hub does with a slip in it, are in
   table can be handed over. Update the hub first.
 - **Mine** on a hub older than it works until you sign out: that hub does not keep the choice. With no staff
   list to say who takes tables, the chip is offered to everyone.
+- The turn is kept on the hub. With no hub answering, the names stand as the device last heard them and
+  **Tonight's turn** says the hub cannot be reached; a party is still sat as always. A hub older than the
+  turn shows no mark and no button.
 
 ## For developers
 
@@ -103,6 +144,16 @@ update` to hold; the steps, and what the hub does with a slip in it, are in
 - A check's server is its `server` and `server_id` fields, set by `create` and changed by `set_field`.
   `GET /floor` gives both on each check. `by` and `by_id` on those operations say who sat or handed over the
   table when that was not the server; they stay in the log and are not fields of the order.
+- **The turn** (`pos/floor/turn.py`): `GET /floor` carries `turn`, the staff ids of the people in it, whose
+  turn it is first. `POST /floor/turn` `{staff_id, server_id, on}` is a host's word (403 `not_allowed` from
+  somebody who does not hold `assign_tables`, 422 `no_tables` for putting in somebody who does not hold
+  `take_tables`, 404 `unknown_staff`); it answers with the `turn` as it stands. The words of the day are the
+  location setting `turn` (`{day, said: {staff_id: {on, at_ms, by_id, by}}}`), written over by the next
+  day's first word; the time clock's part is read from the day's shifts (`punched`), and when each person
+  was last sat from the day's checks at a table (`last_sat`). Nothing is kept past the night. The change
+  feed says `floor` after a host's word and after every punch and correction on the time clock, and the
+  floor map reads again. App: `FloorPlan.turn` (null from an older hub), `inTurnFirst`, `placeInTurn`,
+  `ServerPicker(turn:)`, `NextMark`, `lib/screens/turn_dialog.dart`, `PosApi.sayTurn`.
 - App: `lib/roster.dart` (the staff list, a server's load on the floor, the short name),
   `lib/screens/server_picker.dart` (the buttons), `OrdersScreen._onTable` and `_onTableHeld`. A hand-over
   still in the outbox is laid over the floor map by `queuedServers` and `FloorPlan.withServers`.
