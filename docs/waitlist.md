@@ -89,7 +89,11 @@ kitchen or the reservations to come, and it is not kept. Nothing is sent to the 
 ## Reading the list
 
 Each party is a row: how many they are in the square, the name, and under it how long they have waited so
-far, what they were told ("told 20 min", or "no time told"), and the note.
+far, what they were told ("told 20 min", or "no time told"), the guest's tags and the note.
+
+**The tags** are the ones a manager put on that guest in the guest list ("VIP", "Friend of the house"),
+shown as small labels (`guest-list.md`, "Where the tags show"). The list knows the guest by the **phone
+number** typed for the party, so a party added without a number shows none. They are only read here.
 
 - **The wait is plain** while there is time.
 - **Amber** in the last 5 minutes before the time they were told.
@@ -102,7 +106,7 @@ screen says how the list adds up: "4 parties · 14 guests".
 ## A party's buttons
 
 A tap on a row opens the party: when they came, how long they have waited, who added them, the phone
-number and the note, over a grid of buttons.
+number, the guest's tags under it and the note, over a grid of buttons.
 
 - **Seat**: the same as the Seat button on the row (below).
 - **Called**: they were told their table is ready. The row then says "called just now", "called 3 min
@@ -150,6 +154,9 @@ it as any check opened by mistake.
 - **Names and numbers are not kept.** When the next night's first party is added, the names, phone numbers
   and notes of the nights before are taken off the hub. How many they were, how long they waited and how it
   ended stay, for a report of waits later.
+- **A guest's tags are not written into the list.** They are read from the guest list each time the
+  waitlist is, by the party's number, and a tag a manager puts on or takes off shows at once on every
+  screen that has the list open.
 - **A party is not a check and not a sale.** Nothing on the list is in the sales, the day's report or the
   guest list. The check opened when a party sits down is a table's check like any other.
 - **The list is kept on the hub.** With the hub away the screen shows the list as it was last read and
@@ -170,7 +177,8 @@ it as any check opened by mistake.
 - The party's name on the check or on the table.
 - A report of waits over many days.
 - A booked party on this list: reservations have their own book (`reservations.md`), one tap from here.
-- Waitlist guests going onto the guest list.
+- Waitlist guests going onto the guest list, and tagging a guest from their line here: tags are put on in
+  the guest list, which holds the numbers that ordered.
 
 ## For developers
 
@@ -181,7 +189,9 @@ it as any check opened by mistake.
   the change feed `waitlist`). Refusals: 404 `unknown_staff`, `unknown_party`, `unknown_table`; 409
   `too_many`, `not_waiting`; 422 `no_name`, `long_text`, `bad_size`, `bad_quote`, `bad_phone`; 503
   `read_only`. The answer carries no clock, so an unchanged list is a 304; `due_ms` and `amber_ms` are
-  stamped by the hub and the app counts against `PosApi.nowMs()`.
+  stamped by the hub and the app counts against `PosApi.nowMs()`. Every party in an answer carries `tags`:
+  the tags its number carries in the guest list, put on as the answer is made (`tagged`, with
+  `pos.guest_tags.with_tags`) and stored nowhere; `guest-list.md` has the rest.
 - The suggested wait: `pos.waitlist.suggestions` (the rule, with `SIZE_BANDS`, `SUGGEST_LAST`,
   `SUGGEST_WITHIN_MIN`, `SUGGEST_LIKE_NEEDS`, `SUGGEST_NEEDS`) and `GET /waitlist/suggest`, which answers
   `suggest`: a row for each band of sizes the list says enough about, with `from`, `to`, `minutes`,
@@ -197,4 +207,5 @@ it as any check opened by mistake.
   `partyCalled`, `seatParty`, `partyLeft`, `partyBack`; `LiveChange.waitlist`; in
   `lib/screens/orders_screen.dart` the button, `_seatingParty`, `_seatPartyAt` and `_partySeated`.
 - Tests: `backend/tests/test_waitlist.py`, `backend/tests/test_wait_suggest.py`,
-  `apps/pos_app/test/waitlist_test.dart`, `apps/pos_app/test/wait_suggest_test.dart`.
+  `apps/pos_app/test/waitlist_test.dart`, `apps/pos_app/test/wait_suggest_test.dart`; the tags in
+  `backend/tests/orders/test_guest_tags.py` and `apps/pos_app/test/guest_tags_host_test.dart`.

@@ -299,6 +299,8 @@ class _PosAppState extends State<PosApp> {
                       child: PhoneBar(
                         client: phone,
                         onOrder: canOrder ? _orderForCaller : null,
+                        // somebody is signed in: they see the caller's tags while it rings
+                        tagsOf: canOrder ? api.customerTags : null,
                         child: LockLayer(
                           session: session,
                           // (a pickup board or a kitchen screen stands over the pad too: the screen on the

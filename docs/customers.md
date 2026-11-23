@@ -7,8 +7,9 @@ plans for later, pulled forward because the phones are built in.
 
 **What it is not.** Nothing about a customer is typed in for its own sake: no customer list to keep up, no
 form to fill. There are no saved addresses (nothing delivers yet), no points, no messages to customers, and
-the phone system is untouched: the caller's name on the ringing strip is still the phone company's. A
-customer is a phone number that has ordered; a walk-in who gives no number is nobody to remember.
+the phone system is untouched: the caller's name on the ringing strip is still the phone company's (the
+tags a manager put on the caller show under it, since 23 November 2026: "Who sees it"). A customer is a
+phone number that has ordered; a walk-in who gives no number is nobody to remember.
 
 ## On the to-go form
 
@@ -78,6 +79,14 @@ about them, so keep it to what serves the order.
 Anyone who takes the call or the order sees the customer's tags too, and nobody changes them there. The
 tags are put on by a manager in the guest list, so **a tag is something the whole staff may read**: "VIP"
 and "Catering client", not an opinion of a guest.
+
+**While the call still rings** the strip at the top of the screen shows the caller's tags under the number
+and the phone company's name, on every screen where somebody is signed in, so whoever picks up knows who
+it is first. Nothing else about the customer is on the strip: the name the restaurant knows, the note and
+the past orders come with the to-go form once the call is answered. The sign-in pad and a locked screen
+show the number alone, and so does a screen whose hub is not answering or is older than this. The same
+tags show on the customer's reservation and on their line of the waitlist (`guest-list.md`, "Where the
+tags show").
 
 All the customers on one screen, with their visits, what they spent and their favourite dishes, are for a
 manager: Location › **Guests** (`guest-list.md`). A manager can write the note there too, and put tags on

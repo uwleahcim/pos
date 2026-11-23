@@ -6,9 +6,9 @@ what they spent, when they were last here and what they order most. Three lists 
 orders and changes none of them; the two things written here are a guest's **tags** and their **note**.
 
 Since 16 November 2026 (the Toast comparison, row 30). Since 23 November 2026 the tags are put on here
-and shown where that guest's call and order are taken, and the note is written here too. It grows out of
-the customers the to-go form already remembers by their number (`customers.md`): nothing is typed in for
-the list itself.
+and shown where that guest's call and order are taken, and the note is written here too; the tags also show
+on the call while it rings, in the reservation book and on the waitlist. It grows out of the customers the
+to-go form already remembers by their number (`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
 
@@ -112,13 +112,27 @@ the call, as before.
   under the line that says how often they ordered, over the note (`customers.md`, "On the to-go form").
 - **On their order**, in the slim strip under the app bar, before the note, for whoever rings the dishes
   in (`customers.md`, "On the order").
+- **On their call while it still rings**, under the number and the phone company's name, on every screen
+  where somebody is signed in. So whoever picks up knows it is a VIP before saying hello. The sign-in pad
+  and a locked screen show the number alone, as before.
+- **On their reservation**, in the book: small labels on the row, after the time and the table and before
+  the note, and under the number when the reservation is opened (`reservations.md`, "Reading the book").
+- **On their line of the waitlist**, the same way: on the row before the note, and under the number when
+  the party is opened (`waitlist.md`, "Reading the list").
 
-On the form and on the order they are only read, by anyone who takes the call or the order. So **keep a
-tag to what the staff may read**: "VIP" and "Catering client" are good tags, and an opinion of a guest
+The book and the waitlist know a guest by the **phone number** written on the reservation or the party: a
+table booked or a party added without a number shows no tag, whoever they are. The tags are the number's,
+not the reservation's: nothing is copied into the book, so a tag put on today shows on a table booked last
+week, and a tag taken off is gone from it.
+
+In all of these places they are only read, by anyone who takes the call, the order or the door. So **keep
+a tag to what the staff may read**: "VIP" and "Catering client" are good tags, and an opinion of a guest
 is not. A tag is never printed, on no kitchen ticket and no bill, and nothing sends it out of the hub.
 
 A screen asks for a customer once, when the form looks the number up or the order is opened: a tag put on
-while an order is open shows the next time that order is opened.
+while an order is open shows the next time that order is opened. A call asks once, when it starts to ring.
+The book and the waitlist are told when a guest's tags change, and show it at once on every screen that
+has them open.
 
 ## Good to know
 
@@ -141,7 +155,8 @@ while an order is open shows the next time that order is opened.
   them and changes nothing.
 - The list holds names, numbers and what people spent, so it is behind the manager's PIN like the other
   reports. The to-go form shows a caller to whoever takes the order, as before.
-- A tag or a note changes no order, no sale and no figure: not on this screen and not on any report.
+- A tag or a note changes no order, no sale and no figure: not on this screen and not on any report. It
+  changes no reservation and no party on the waitlist either: they only show it.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
 - The first reading after the hub starts takes it some seconds, as it reads a year of orders; after that
   it is quick until the hub is restarted. A year of 30,000 orders with a number adds up in a quarter of a
@@ -150,9 +165,13 @@ while an order is open shows the next time that order is opened.
 ## Not built
 
 - Sending the list out of the POS (a file, a print, an e-mail).
-- The tags on the strip of a call that is still ringing (it says the number and the phone company's
-  name, as before; the tags come up with the to-go form when the call is answered), in the reservation
-  book, on the waitlist and in the list of to-go orders.
+- **Tagging a guest from their reservation or their line of the waitlist.** Tags are put on here, and
+  this list holds the numbers that ordered: somebody who only ever books a table is not in it, so there is
+  no screen to tag them from yet.
+- The tags on the strip of a call once it is answered (the to-go form that opens shows them), on the
+  iPhone's own call screen, on a table held on the floor map, on the check of a table once the party is
+  seated, on the waitlist's row of booked tables, and in the list of to-go orders.
+- The restaurant's own name for a caller on the ringing strip: it still says the phone company's.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
 - Tagging many guests at once, or a guest who has not ordered in the last 12 months.
 - More notes than the one line.
@@ -190,7 +209,8 @@ while an order is open shows the next time that order is opened.
   the year. `PUT /reports/guests/{phone}` takes `{note?, tags?}` (what is left out stays as it is) and
   answers `{phone, note, note_by, note_ms, tags, tags_by, tags_ms}`; it writes only what changed, under
   the session's name; 422 `bad_value` for a tag too long, too many tags or no phone number (nothing is
-  written then), 503 `read_only` on a standby. It does not go on the change feed.
+  written then), 503 `read_only` on a standby. Tags that changed tell the change feed `reservations` and
+  `waitlist` (the screens that show them read again); a note alone tells nobody.
 - App: `lib/guests_report.dart` (`GuestsReport`, `Guest`, `GuestDetail`, `GuestVisit`, `GuestList`,
   `guestsOf`, `GuestSort`, `sortedGuests`, `guestsNamed`; for the tags `GuestTag`, `GuestKept`,
   `guestsTagged`, `tidyTags`, `GuestsReport.keeps` and `withKept`), `lib/screens/guests_screen.dart`
@@ -203,6 +223,19 @@ while an order is open shows the next time that order is opened.
   the same store for `GET /customers/lookup`, the words alone; the app's `CustomerCard.tags`
   (`lib/customers.dart`) shows them with `GuestTagMark` (`lib/screens/guest_tag_mark.dart`) on the to-go
   form and in the order screen's strip. That call has no token, as it never had, and it writes nothing.
+- At the host stand: `with_tags(rows, carried)` (`guest_tags.py`) answers each row with the `tags` its
+  `phone` carries, compared by `phone_digits`, from one reading of `GuestTags.all()`. `tagged()` in
+  `backend/src/pos/api/reservations.py` and in `backend/src/pos/api/waitlist.py` puts them on every
+  reservation (`booked`, `earlier`, `booking`, and `booked` of `GET /reservations/caller`) and every party
+  (`waiting`, `earlier`, `party`) as the answer is made; nothing is stored with either, and the floor's
+  `holds` carry none. App: `Booking.tags` and `WaitParty.tags` (empty from an older hub), shown with
+  `GuestTagMark` by `_BookingCard`, `_BookingSheet`, `_PartyCard` and `_PartySheet`.
+- A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
+  (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
+  short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
+  somebody is signed in; `_PhoneBarState._askTags` asks once for a ringing number and drops an answer that
+  comes after the call moved on; `_RingingBanner.tags`.
 - Tests: `backend/tests/orders/test_guests.py`, `backend/tests/orders/test_guest_tags.py`,
   `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`,
-  `apps/pos_app/test/customers_test.dart` (the form and the strip).
+  `apps/pos_app/test/customers_test.dart` (the form and the strip),
+  `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist).

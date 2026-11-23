@@ -8,6 +8,7 @@ import '../reservations.dart';
 import '../table_timers.dart' show TimerLevel;
 import '../takeout.dart' show clockTime, dayName;
 import 'booking_dialog.dart';
+import 'guest_tag_mark.dart';
 import 'guests_picker.dart';
 import 'theme.dart';
 
@@ -688,6 +689,9 @@ class _BookingCard extends StatelessWidget {
                             semanticsLabel: 'booked on the website',
                             style: small?.copyWith(color: scheme.tertiary, fontWeight: FontWeight.w600),
                           ),
+                        // who it is, as the guest list has them ("VIP"), before what they asked for
+                        for (final tag in booking.tags)
+                          GuestTagMark(tag, key: ValueKey('booking-tag:${booking.id}:$tag')),
                         if (booking.note.isNotEmpty) Text(booking.note, style: small),
                         if (clash != null)
                           Text(
@@ -786,6 +790,16 @@ class _BookingSheet extends StatelessWidget {
                       style: theme.textTheme.titleMedium,
                     ),
                   ],
+                ),
+              ),
+            if (booking.tags.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  key: const ValueKey('booking-sheet-tags'),
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [for (final tag in booking.tags) GuestTagMark(tag)],
                 ),
               ),
             if (booking.note.isNotEmpty)

@@ -3,21 +3,28 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../phone.dart';
+import 'guest_tag_mark.dart';
 
 /// How far from the top of the screen (under the status bar) a form that opens during a call starts, so
 /// that its title is not behind the call strip.
 const callStripRoom = 64.0;
 
-/// Sits over every screen. While a call rings: a banner with the caller, Answer and Decline. During a call:
+/// Sits over every screen. While a call rings: a banner with the caller, the tags the restaurant keeps on
+/// that number ("VIP", where somebody is signed in to see them), Answer and Decline. During a call:
 /// a small strip at the top with the caller, the call time, Hold, Hang up, More and, with [onOrder], To go: a
 /// to-go order for the caller. More opens a panel under the strip with the keypad (tones to the other side, or
 /// the extension to transfer to) and Mute. Otherwise nothing. The ring itself is the [CallRinger]'s, wired
 /// beside the phone in main.dart.
 class PhoneBar extends StatefulWidget {
-  const PhoneBar({super.key, required this.client, required this.child, this.onOrder});
+  const PhoneBar({super.key, required this.client, required this.child, this.onOrder, this.tagsOf});
 
   final PhoneClient client;
   final Widget child;
+
+  /// The tags a manager put on a number in the guest list (docs/guest-list.md, "Where the tags show"),
+  /// asked once for each call that rings and shown on its banner, so whoever picks up knows who it is.
+  /// Null where nobody is signed in: a screen at its sign-in pad or locked shows the number and no more.
+  final Future<List<String>> Function(String number)? tagsOf;
 
   /// To go on the call strip: starts a to-go order for the caller on the orders screen. Null hides the button
   /// (nobody signed in, so no screen to take the order).
@@ -31,10 +38,52 @@ class _PhoneBarState extends State<PhoneBar> {
   Timer? _tick;
   bool _more = false; // the keypad panel is open
 
+  /// The number that rings and whose tags were asked for, and what came back for it: one question a call.
+  String? _asked;
+  List<String> _tags = const [];
+
   @override
   void initState() {
     super.initState();
     widget.client.addListener(_onPhone);
+    _askTags();
+  }
+
+  @override
+  void didUpdateWidget(PhoneBar old) {
+    super.didUpdateWidget(old);
+    // Somebody signed in or out while it rings: the tags are for a person signed in, so ask now, or put
+    // them away.
+    if ((old.tagsOf == null) != (widget.tagsOf == null)) {
+      _asked = null;
+      _tags = const [];
+      _askTags();
+    }
+  }
+
+  /// Asks for the tags of the number that rings, once: the answer is shown when it comes, unless the call
+  /// is another one by then. Nothing is asked where [PhoneBar.tagsOf] is null, and for a call with no
+  /// number.
+  void _askTags() {
+    final client = widget.client;
+    final number = client.state == PhoneState.ringing ? (client.callerNumber?.trim() ?? '') : '';
+    final ask = widget.tagsOf;
+    if (number.isEmpty || ask == null) {
+      _asked = null;
+      _tags = const [];
+      return;
+    }
+    if (number == _asked) return;
+    _asked = number;
+    _tags = const [];
+    unawaited(
+      ask(number).then(
+        (tags) {
+          if (mounted && _asked == number && tags.isNotEmpty) setState(() => _tags = tags);
+        },
+        onError: (Object _) {}, // no answer: the banner is the number, as before
+      ),
+    );
   }
 
   @override
@@ -52,6 +101,7 @@ class _PhoneBarState extends State<PhoneBar> {
       _tick = null;
       _more = false; // the panel goes with the call
     }
+    _askTags();
     if (mounted) setState(() {});
   }
 
@@ -71,7 +121,10 @@ class _PhoneBarState extends State<PhoneBar> {
             top: 0,
             left: 0,
             right: 0,
-            child: SafeArea(bottom: false, child: _RingingBanner(client: client)),
+            child: SafeArea(
+              bottom: false,
+              child: _RingingBanner(client: client, tags: _tags),
+            ),
           )
         else if (client.state == PhoneState.inCall)
           Positioned(
@@ -107,9 +160,12 @@ class _PhoneBarState extends State<PhoneBar> {
 }
 
 class _RingingBanner extends StatelessWidget {
-  const _RingingBanner({required this.client});
+  const _RingingBanner({required this.client, this.tags = const []});
 
   final PhoneClient client;
+
+  /// The tags on the caller's number, under it.
+  final List<String> tags;
 
   @override
   Widget build(BuildContext context) {
@@ -134,22 +190,38 @@ class _RingingBanner extends StatelessWidget {
               children: [
                 Icon(Icons.ring_volume, color: scheme.inversePrimary),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      formatPhoneNumber(client.callerNumber),
-                      style: theme.textTheme.titleMedium?.copyWith(color: scheme.onInverseSurface),
-                    ),
-                    if (name.isNotEmpty)
-                      Text(name, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onInverseSurface)),
-                  ],
+                // Flexible, so that a line of tags wraps inside the banner on a narrow phone.
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        formatPhoneNumber(client.callerNumber),
+                        style: theme.textTheme.titleMedium?.copyWith(color: scheme.onInverseSurface),
+                      ),
+                      if (name.isNotEmpty)
+                        Text(name, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onInverseSurface)),
+                      if (tags.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Wrap(
+                            key: const ValueKey('ringing-tags'),
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [for (final tag in tags) GuestTagMark(tag, key: ValueKey('ringing-tag:$tag'))],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
+            // A Wrap, so that on a narrow phone with large type Decline goes under Answer and not off the
+            // screen.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 FilledButton.icon(
                   onPressed: waiting ? null : client.answer,
@@ -157,7 +229,6 @@ class _RingingBanner extends StatelessWidget {
                   icon: const Icon(Icons.call),
                   label: Text(waiting ? 'Answering…' : 'Answer'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton.icon(
                   onPressed: waiting ? null : client.decline,
                   style: OutlinedButton.styleFrom(

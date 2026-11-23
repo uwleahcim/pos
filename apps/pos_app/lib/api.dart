@@ -661,6 +661,25 @@ class PosApi {
     }
   }
 
+  /// The tags a manager put on this number in the guest list, and nothing else about it: what the banner
+  /// of a call that still rings shows (docs/guest-list.md, "Where the tags show"). None when nothing
+  /// answers, from a hub older than this, and for a number too short to be a customer's: the banner is
+  /// then the number alone, as it was.
+  Future<List<String>> customerTags(String? phone) async {
+    final digits = phoneDigits(phone);
+    if (digits.length < customerDigits) return const [];
+    try {
+      final json = await _get('/customers/tags', query: {'phone': digits});
+      return [
+        if (json['tags'] case final List tags)
+          for (final tag in tags)
+            if (tag is String && tag.trim().isNotEmpty) tag,
+      ];
+    } on ApiException {
+      return const [];
+    }
+  }
+
   /// Keeps the one line about the customer at this number (an empty one takes it off), with who wrote it.
   /// Hands back the note as the hub keeps it: on one line, cut to its length.
   Future<String> saveCustomerNote(String phone, String note, {String? by}) async {

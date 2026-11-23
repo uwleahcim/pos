@@ -11,7 +11,10 @@ may read it (`guests` in the table of powers, `pos/identity/powers.py`), on a gu
 - A guest carries at most `TAGS_MOST`, each `TAG_MAX` letters at most, in the order of the alphabet.
 
 A tag says something about a customer, as the note does, and the screens that take an order show both to
-whoever takes it. It stays on the hub: it is on no kitchen ticket and no bill, and nothing sends it out.
+whoever takes it. So do the screens of the host stand: a reservation and a party on the waitlist are answered
+with the tags their number carries (`with_tags`), and a call that rings asks for its number's
+(`GET /customers/tags`). It stays on the hub: it is on no kitchen ticket and no bill, and nothing sends it
+out.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import os
 import threading
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
+
+from .sync.oplog import phone_digits
 
 TAG_MAX = 24
 """How long a tag may be: a button on a phone."""
@@ -65,6 +70,15 @@ def offered(carried: Mapping[str, Sequence[str]], listed: Iterable[str] | None =
         {"tag": tag, "guests": count}
         for tag, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0].casefold(), pair[0]))
     ]
+
+
+def with_tags(rows: Iterable[Mapping[str, Any]], carried: Mapping[str, Sequence[str]]) -> list[dict[str, Any]]:
+    """Each row with the `tags` its number carries: what a reservation or a party on the waitlist is
+    answered with. The number is the row's `phone`, compared by its digits as a caller's is; a row with no
+    number, or with one nobody tagged, carries none. `carried` is every tagged number (`GuestTags.all`),
+    read once for the whole answer. Nothing is kept with the row: the tags are the number's, wherever it
+    turns up."""
+    return [{**row, "tags": list(carried.get(phone_digits(row.get("phone")), ()))} for row in rows]
 
 
 class GuestTags:

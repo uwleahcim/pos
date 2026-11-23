@@ -2,8 +2,9 @@
 
 - `GET /waitlist`: tonight's list. `waiting` are the parties still waiting, in the order they came, each with
   `id`, `name`, `size`, `phone`, `quoted_minutes` (null: no time was given), `note`, `at_ms`, `by`,
-  `called_ms`, and the moments its wait changes colour: `amber_ms` and `due_ms` (red). `earlier` are the ones
-  that went off the list tonight, the last to go first, with `status` (`seated` or `left`), `table`,
+  `called_ms`, the moments its wait changes colour: `amber_ms` and `due_ms` (red), and `tags`, the words a
+  manager put on its phone number in the guest list (`pos.guest_tags`; none for no number). `earlier` are the
+  ones that went off the list tonight, the last to go first, with `status` (`seated` or `left`), `table`,
   `table_label`, `order_id`, `left_why`, `ended_by` and `waited_minutes`. `counts` has how many parties and
   guests wait, how many were seated or left, and the `average_wait_minutes` of the seated. `quotes` are the
   waits to offer as buttons. Every stamp is the hub's clock; the answer does not say what time it is now, so
@@ -38,6 +39,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ..floor import FloorPlan
+from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..waitlist import Party, ReadOnlyError, Refused, Waitlist
 
@@ -82,6 +84,16 @@ def add_waitlist(app: FastAPI) -> None:
         status = 404 if err.code.startswith("unknown_") else 409 if err.code in ("too_many", "not_waiting") else 422
         return HTTPException(status, {"error": err.code, "message": err.message})
 
+    def tagged(told: dict[str, Any]) -> dict[str, Any]:
+        """Tonight's list with, on each party, the tags its number carries in the guest list: the host
+        sees who is waiting."""
+        carried = app.state.guest_tags.all()
+        told["waiting"] = with_tags(told["waiting"], carried)
+        told["earlier"] = with_tags(told["earlier"], carried)
+        if "party" in told:
+            told["party"] = with_tags([told["party"]], carried)[0]
+        return told
+
     def done(change: Any) -> dict[str, Any]:
         """Makes a change, tells the screens, and answers with the list as it stands and the party changed."""
         try:
@@ -91,12 +103,12 @@ def add_waitlist(app: FastAPI) -> None:
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
         app.state.feed.changed("waitlist")
-        return {**waitlist().tonight(), "party": party.as_json()}
+        return tagged({**waitlist().tonight(), "party": party.as_json()})
 
     @app.get("/waitlist")
     def read_waitlist() -> dict[str, Any]:
         """Tonight's waitlist: who is waiting, in the order they came, and who went off it earlier."""
-        return waitlist().tonight()
+        return tagged(waitlist().tonight())
 
     @app.get("/waitlist/suggest")
     def suggest_wait() -> dict[str, Any]:

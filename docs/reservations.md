@@ -114,7 +114,12 @@ with how many ("Sat 21 Nov · 2"). **Another day** opens a calendar for any day.
 adds the day up: "Today, Mon 16 Nov · 3 reservations · 12 guests".
 
 Each reservation is a row: how many they are in the square, the name, and under it the time, the table held
-("table A7"), and the note.
+("table A7"), the guest's tags and the note.
+
+**The tags** are the ones a manager put on that guest in the guest list ("VIP", "Catering client"), shown
+as small labels (`guest-list.md`, "Where the tags show"). The book knows the guest by the **phone number**
+on the reservation, so a table booked without a number shows none. They are only read here. On a narrow
+phone the labels and the note go onto lines of their own under the time, so nothing is cut short.
 
 - **The time is plain** until a quarter of an hour before it.
 - **Amber** from a quarter of an hour before.
@@ -127,7 +132,7 @@ held for Garcia at 19:15". The book warns and does not refuse: you may well mean
 ## A reservation's buttons
 
 A tap on a row opens the reservation: the day and the time, the table held, who took the booking, the phone
-number and the note, over a grid of buttons.
+number, the guest's tags under it and the note, over a grid of buttons.
 
 - **Seat**: the same as the Seat button on the row (below). Today's reservations only.
 - **Here**: the party has come and waits for its table. The row then says "here since 18:22", so nobody
@@ -238,12 +243,15 @@ and what the guest wrote as the note.
   booked. How many they were, the time and how it ended stay.
 - **Nothing is sent to the guest.** The book sends no text and no e-mail, and nothing in it leaves the hub.
 - **The floor map is told little.** For each table held today: the name, how many and the time. Not the
-  phone number and not the note, which stay in the book. With the hub away the map shows the booked tables
+  phone number, not the note and not the guest's tags, which stay in the book. With the hub away the map shows the booked tables
   as it last read them.
 - **The book is kept on the hub.** With the hub away the screen shows today's book as it was last read and
   says so; booking and changing wait for the hub. Seating still opens the check at the table, and the
   screen says the book could not be told: take the reservation out when the hub is back.
-- **A change on another screen shows at once** on every screen that has the book open.
+- **A change on another screen shows at once** on every screen that has the book open. So does a tag a
+  manager puts on a guest, or takes off.
+- **A guest's tags are not written into the book.** They are read from the guest list each time the book
+  is, by the number on the reservation. A reservation that ended shows them when it is opened.
 - A day takes 200 standing reservations, and a table can be booked a year ahead.
 - An app that is not rebuilt has no Reservations. A hub that is not updated: the screen says the hub is
   older than reservations.
@@ -264,7 +272,9 @@ and what the guest wrote as the note.
 - **Deposits** and card holds: payments are parked.
 - A suggested table by size, and turn times that say when a table will be free.
 - Standing reservations (every Friday), and a list of regulars from the book.
-- A reservation going onto the guest list, or showing what the guest had last time.
+- A reservation going onto the guest list, or showing what the guest had last time. Tagging a guest from
+  their reservation: tags are put on in the guest list, which holds the numbers that ordered.
+- The guest's tags on a table held on the floor map, and on the waitlist's row of booked tables.
 - A report of reservations, no-shows and covers over many days.
 
 ## For developers
@@ -283,7 +293,9 @@ and what the guest wrote as the note.
   `unknown_booking`, `unknown_table`; 409 `too_many`, `not_booked`, `not_today`, `day_over`; 422 `no_name`,
   `long_text`, `bad_size`, `bad_phone`, `bad_day`, `bad_time`, `past_day`, `too_far`, `bad_why`,
   `no_table`; 503 `read_only`. `soon_ms`, `late_ms` and `clash` are stamped by the hub and the app counts
-  against `PosApi.nowMs()`; "today" is the hub's `today`, never the device's clock.
+  against `PosApi.nowMs()`; "today" is the hub's `today`, never the device's clock. Every reservation in
+  an answer carries `tags`: the tags its number carries in the guest list, put on as the answer is made
+  (`tagged`, with `pos.guest_tags.with_tags`) and stored nowhere; `guest-list.md` has the rest.
 - App: `lib/reservations.dart` (`Book`, `Booking`, `BookCounts`, `bookDayWords`, `serviceMinute`,
   `serviceHours`), `lib/screens/reservations_screen.dart` (`ReservationsScreen`, pops a `SeatBooking` or an
   `OpenWaitlist`), `lib/screens/booking_dialog.dart` (`BookingDialog`, `TimeGrid`, `TablePicker`),
@@ -320,4 +332,5 @@ and what the guest wrote as the note.
   `WaitlistScreen` takes that `book` to start with and reads it beside the list.
 - Tests: `backend/tests/test_reservations.py`, `apps/pos_app/test/reservations_test.dart`,
   `apps/pos_app/test/booked_tables_test.dart`, `apps/pos_app/test/call_booking_test.dart`,
-  `apps/pos_app/test/booked_to_come_test.dart`.
+  `apps/pos_app/test/booked_to_come_test.dart`; the tags in `backend/tests/orders/test_guest_tags.py` and
+  `apps/pos_app/test/guest_tags_host_test.dart`.

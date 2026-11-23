@@ -114,7 +114,8 @@ class ChangeFeed:
     def changed(self, topic: str) -> None:
         """Something that is not an order changed: `menu` (a save, the 86 board), `settings`, `notes` (a note
         for the shift was put up, changed or taken down), `waitlist` (a party was put on the list, changed,
-        sat down or taken off), `reservations` (a table was booked, or a booking changed or ended),
+        sat down or taken off), `reservations` (a table was booked, or a booking changed or ended; both
+        of these also when a guest's tags changed, which the list and the book show),
         `online` (there is an online order to look at, or somebody looked) or `floor` (who is in tonight's
         turn for a table changed: a host's word, or the time clock). A screen that does not know a topic
         ignores it."""

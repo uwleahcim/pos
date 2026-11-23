@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// A tag a guest carries ("VIP"), as a small label: under their name in the guest list, and beside what
-/// the restaurant knows of them where their call and their order are taken (docs/guest-list.md, "Tags and
-/// the note").
+/// A tag a guest carries ("VIP"), as a small label: under their name in the guest list, beside what the
+/// restaurant knows of them where their call and their order are taken, and at the host stand on the call
+/// that rings, on their reservation and on their party on the waitlist (docs/guest-list.md, "Tags and the
+/// note" and "Where the tags show").
 class GuestTagMark extends StatelessWidget {
   const GuestTagMark(this.tag, {super.key});
 

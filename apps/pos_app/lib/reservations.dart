@@ -16,6 +16,11 @@ List<Map<String, dynamic>> _rows(Object? value) => [
     for (final row in value)
       if (row is Map) row.cast<String, dynamic>(),
 ];
+List<String> _words(Object? value) => [
+  if (value is List)
+    for (final word in value)
+      if (word is String && word.trim().isNotEmpty) word,
+];
 
 /// One reservation.
 class Booking implements ArrivingParty {
@@ -25,6 +30,7 @@ class Booking implements ArrivingParty {
     required this.size,
     this.phone = '',
     this.note = '',
+    this.tags = const [],
     this.atMs = 0,
     this.day = '',
     this.time = '',
@@ -53,6 +59,7 @@ class Booking implements ArrivingParty {
       size: _i(json['size'], 1),
       phone: _s(json['phone']),
       note: _s(json['note']),
+      tags: _words(json['tags']),
       atMs: _i(json['at_ms']),
       day: _s(json['day']),
       time: _s(json['time']),
@@ -99,6 +106,11 @@ class Booking implements ArrivingParty {
   final int size;
   final String phone;
   final String note;
+
+  /// The tags a manager put on [phone] in the guest list ("VIP"; docs/guest-list.md, "Where the tags
+  /// show"): the number's, read by the hub each time, not kept with the reservation. None for no number,
+  /// from a hub older than this, and for a table as the floor map was told of it.
+  final List<String> tags;
 
   /// The time the table is booked for, by the hub's clock; [day] is the day of service it falls in
   /// ("2026-11-21") and [time] the time on the restaurant's clock ("18:30").
