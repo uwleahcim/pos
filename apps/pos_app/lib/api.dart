@@ -1817,6 +1817,21 @@ class PosApi {
     await _get('/reports/guests/${phoneDigits(phone)}', headers: _bearer(token), timeout: const Duration(seconds: 30)),
   );
 
+  /// Whoever may read the guest list (token) keeps the [note] and the [tags] of the guest at this number:
+  /// either or both; one left out stays as it is, an empty one is taken off. Hands back both as the hub
+  /// keeps them now, each with who wrote it and when. 422 with a `message` for tags the hub will not keep;
+  /// 404 or 405 from a hub older than tags.
+  Future<GuestKept> keepGuest(String token, String phone, {String? note, List<String>? tags}) async =>
+      GuestKept.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/reports/guests/${phoneDigits(phone)}'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode({'note': ?note, 'tags': ?tags}),
+          ),
+        ),
+      );
+
   /// Prints the day's report (manager token) at [printer] (the one this screen keeps for its bills, by id)
   /// or, without one, where the location's bills print. Returns the name of the printer it was sent to.
   /// 409 with a `message` when the location has no printer.

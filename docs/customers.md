@@ -67,7 +67,8 @@ customer's name and number were already on every order they placed; the note is 
 about them, so keep it to what serves the order.
 
 All the customers on one screen, with their visits, what they spent and their favourite dishes, are for a
-manager: Location › **Guests** (`guest-list.md`).
+manager: Location › **Guests** (`guest-list.md`). A manager can write the note there too, and put tags on
+a guest ("VIP").
 
 ## When a hub is not answering
 

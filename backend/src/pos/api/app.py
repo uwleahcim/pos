@@ -40,6 +40,7 @@ from ..customers import (
 from ..customers import ReadOnlyError as NotesReadOnly
 from ..devices import DevicesSeen
 from ..floor import FloorPlan, in_turn, last_sat, load_floor, punched, said, say, table_status
+from ..guest_tags import GuestTags, default_guest_tags
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
 from ..identity.powers import May, clean_powers, holds, standard, table
@@ -865,6 +866,7 @@ def create_app(
     relay: PushRelay | None = None,
     feed: ChangeFeed | None = None,
     customers: CustomerNotes | None = None,
+    guest_tags: GuestTags | None = None,
     clock: TimeClock | None = None,
     notes: ShiftNotes | None = None,
     waste: WasteLog | None = None,
@@ -934,6 +936,8 @@ def create_app(
     app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
     # The one line kept about a customer, by phone number; the rest of a customer is read from the order log.
     app.state.customers = customers if customers is not None else default_notes()
+    # The tags a manager puts on a guest, by phone number too (docs/guest-list.md).
+    app.state.guest_tags = guest_tags if guest_tags is not None else default_guest_tags()
     # Desk phones: the links are the manager's setting, read when a phone answers; the watcher needs POS_AMI_HOST.
     app.state.answered = (
         answered

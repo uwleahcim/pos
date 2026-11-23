@@ -460,6 +460,61 @@ class Hub {
   int? refuseGuests;
   int? refuseGuest;
 
+  /// What the guest list writes about a guest (`PUT /reports/guests/<digits>`): every call is in
+  /// [guestKeeps], the number with what was sent. The hub keeps it as the real one does: the guest's row in
+  /// [guests] and in [guestDetails] gets the note and the tags sent (one left out stays), the tags each
+  /// once and in the order of the alphabet, with [guestKeeper] as who wrote what changed at [clockNow].
+  /// [refuseKeep] answers with that status instead and keeps nothing, [keepRefusal] its reason; while
+  /// [keepHeld] is set no answer goes out until a test completes it.
+  final guestKeeps = <(String, Map<String, dynamic>)>[];
+  String guestKeeper = 'Mike';
+  int? refuseKeep;
+  String keepRefusal = 'a guest carries 6 tags at most';
+  Completer<void>? keepHeld;
+
+  Future<http.Response> _keepGuest(http.Request request, String phone) async {
+    guestsAuth = request.headers['authorization'];
+    final sent = jsonDecode(request.body) as Map<String, dynamic>;
+    guestKeeps.add((phone, sent));
+    if (keepHeld != null) await keepHeld!.future;
+    if (refuseKeep != null) {
+      return json({
+        'detail': {'error': refuseKeep == 422 ? 'bad_value' : 'sign_in', 'message': keepRefusal},
+      }, refuseKeep!);
+    }
+    final rows = (guests?['guests'] as List? ?? const []).cast<Map<String, dynamic>>();
+    final listed = rows.where((row) => row['phone'] == phone).firstOrNull;
+    final detail = guestDetails[phone];
+    final row = listed ?? (detail?['guest'] as Map<String, dynamic>?) ?? <String, dynamic>{'phone': phone};
+    final was = (note: row['note'] as String? ?? '', tags: [...?(row['tags'] as List?)?.cast<String>()]);
+    final note = sent.containsKey('note') ? (sent['note'] as String).trim().replaceAll(RegExp(r'\s+'), ' ') : was.note;
+    final tags = sent.containsKey('tags')
+        ? ({for (final tag in (sent['tags'] as List).cast<String>()) tag.toLowerCase(): tag}.values.toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())))
+        : was.tags;
+    final sameNote = note == was.note, sameTags = '$tags' == '${was.tags}';
+    final before = detail ?? const <String, dynamic>{};
+    final answer = <String, dynamic>{
+      'phone': phone,
+      'note': note,
+      'note_by': sameNote ? (before['note_by'] ?? '') : guestKeeper,
+      'note_ms': note.isEmpty ? null : (sameNote ? before['note_ms'] : clockNow),
+      'tags': tags,
+      'tags_by': sameTags ? (before['tags_by'] ?? '') : guestKeeper,
+      'tags_ms': tags.isEmpty ? null : (sameTags ? before['tags_ms'] : clockNow),
+    };
+    for (final kept in [?listed, ?(detail?['guest'] as Map<String, dynamic>?)]) {
+      kept['note'] = note;
+      kept['tags'] = tags;
+    }
+    if (detail != null) {
+      for (final name in ['note_by', 'note_ms', 'tags_by', 'tags_ms']) {
+        detail[name] = answer[name];
+      }
+    }
+    return json(answer);
+  }
+
   /// Notes for the shift (docs/shift-notes.md). [shiftNotes] are the notes that are up, the newest first,
   /// each as the hub answers it plus `seen_by`: the ids of the staff who have seen it. Null is a hub older
   /// than the notes. `GET /notes` answers them for one person (each ask is in [notesAsks]) and
@@ -2652,6 +2707,11 @@ class Hub {
     }
     if (path.startsWith('/reports/guests/')) {
       if (guests == null) return json({'detail': 'Not Found'}, 404);
+      if (request.method == 'PUT') {
+        // a hub that lists guests and keeps no tags yet has nothing to write them with
+        if (guests!['tags'] is! List) return json({'detail': 'Method Not Allowed'}, 405);
+        return _keepGuest(request, path.substring('/reports/guests/'.length));
+      }
       guestsAuth = request.headers['authorization'];
       final phone = path.substring('/reports/guests/'.length);
       guestAsks.add(phone);

@@ -2,11 +2,12 @@
 
 Every customer who ordered with a phone number in the last 12 months, on one screen: how often they came,
 what they spent, when they were last here and what they order most. Three lists are picked out of it: the
-**regulars**, the guests who **stopped coming**, and the **new** ones. It is for a manager, and it only
-reads.
+**regulars**, the guests who **stopped coming**, and the **new** ones. It is for a manager. It reads the
+orders and changes none of them; the two things written here are a guest's **tags** and their **note**.
 
-Since 16 November 2026 (the Toast comparison, row 30). It grows out of the customers the to-go form already
-remembers by their number (`customers.md`): nothing new is typed in for it, and nothing new is kept.
+Since 16 November 2026 (the Toast comparison, row 30); the tags, and writing the note here, since 23
+November 2026. It grows out of the customers the to-go form already remembers by their number
+(`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
 
@@ -25,7 +26,8 @@ Then every guest, one line each, numbered from the top:
 - their **name** (the one on their latest order that has a name; a number nobody ever gave a name for is
   called by the number), **how many visits** and **what they spent**;
 - under the name, their number, the day of their last visit, and **regular** in green, **stopped coming**
-  in red, or **new**.
+  in red, or **new**;
+- under that, the **tags** they carry, each a small label ("VIP").
 
 What stands above the list changes it:
 
@@ -33,7 +35,12 @@ What stands above the list changes it:
 | --- | --- |
 | **All / Regulars / Stopped coming / New** | every guest, or one of the three lists; each button says how many are on it |
 | **Spent / Visits / Latest** | ranks by what they spent, by how often they came, or by who was here last |
+| **A tag** ("VIP 2") | only the guests who carry it; the button says how many do. A second tap shows everybody again |
 | **Find a name or a number** | any words of the name in any order, or any digits of the number ("0142") |
+
+The tags are one line of buttons that slides sideways, the one most guests carry first. The line is there
+once a guest carries a tag. A tag works together with the rest: "Regulars" and "VIP" is the regulars who
+are VIPs.
 
 ## The three lists
 
@@ -50,8 +57,9 @@ all of it, in the hub's own numbers.
 
 A tap opens a guest:
 
-- **The note** the restaurant keeps about them ("Peanut allergy, side door"), with who wrote it and when.
-  It is written on the to-go form, as before; here it is only read.
+- **Their tags** and **the note** the restaurant keeps about them ("Peanut allergy, side door"), each with
+  who wrote it and when, and the button **Add a tag or a note** (**Change tags and note** once there is
+  one). See below.
 - **A guest since** the day of the first order they ever placed, and how many orders in all. These two look
   past the 12 months, and say what the to-go form says of a caller.
 - What they spend a visit, and their visits in the last 90 days.
@@ -60,6 +68,46 @@ A tap opens a guest:
   came to and its dishes. **A tap on a visit opens that check's history** (`check-history.md`).
 
 Any number of guests can be open at once.
+
+## Tags and the note
+
+A **tag** is a word or two put on a guest to pick them out by: "VIP", "Friend of the house", "Catering
+client", "Regular at the bar". The **note** is the one line the to-go form has always shown to whoever
+takes their call. Both are kept by the guest's phone number.
+
+Open a guest and tap **Add a tag or a note**. A box opens with their name on it:
+
+- **Tags** are buttons. A tap puts one on, a second tap takes it off. The buttons are every tag some guest
+  carries, and two that are always offered: **VIP** and **Friend of the house**.
+- **Another tag**: type one that is no button yet and tap **+** (or Enter). It goes on this guest, and it
+  is a button for every guest from then on. A tag typed and not added is still saved with **Save**.
+- **Note**: the one line, 120 letters at most. Emptying it takes the note away.
+- **Save** keeps both; **Cancel** keeps nothing.
+
+Good to know about tags:
+
+- **There is no list of tags to look after.** A tag exists while some guest carries it. Take it off the
+  last guest and its list is gone, and its button too the next time the guest list is read (VIP and Friend
+  of the house stay).
+- **A tag is spelt one way.** Typing "vip" where "VIP" is in use puts "VIP" on. To spell a tag another way,
+  take it off everybody who carries it and type it again.
+- A guest carries **6 tags** at most, each **24 letters** at most. With six on, the other buttons wait
+  until one is taken off.
+- The hub writes down **who** put the tags on and **when**, and the same for the note, each by itself:
+  changing the tags does not put your name on a note someone else wrote. The name is the one of whoever
+  opened the guest list with their PIN.
+- Another device that has the guest list open shows the change the next time it reads the list (the round
+  arrow).
+- **Find** looks at names and numbers, not at tags: use the tag's button.
+
+Who may write them: whoever may see the guest list, so a manager and an owner, and anybody the owner hands
+"See the guest list" to (`roles.md`). The note can still be written on the to-go form by whoever takes
+the call, as before.
+
+**Keep a tag to what the staff may read.** Today the tags show in the guest list only. The next piece
+shows them, like the note, to whoever takes that guest's call or order. So "VIP" and "Catering client"
+are good tags, and an opinion of a guest is not. A tag is never printed, on no kitchen ticket and no
+bill, and nothing sends it out of the hub.
 
 ## Good to know
 
@@ -82,6 +130,8 @@ Any number of guests can be open at once.
   them and changes nothing.
 - The list holds names, numbers and what people spent, so it is behind the manager's PIN like the other
   reports. The to-go form shows a caller to whoever takes the order, as before.
+- A tag or a note changes no order, no sale and no figure: not on this screen and not on any report.
+- With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
 - The first reading after the hub starts takes it some seconds, as it reads a year of orders; after that
   it is quick until the hub is restarted. A year of 30,000 orders with a number adds up in a quarter of a
   second.
@@ -89,8 +139,11 @@ Any number of guests can be open at once.
 ## Not built
 
 - Sending the list out of the POS (a file, a print, an e-mail).
-- Tags on a guest, or more notes than the one line.
-- Writing or changing the note from this screen.
+- The tags shown where the order is taken (the to-go form, the order screen, a call coming in): that is
+  the next piece.
+- Renaming a tag for everybody who carries it in one go, or a colour for a tag.
+- Tagging many guests at once, or a guest who has not ordered in the last 12 months.
+- More notes than the one line.
 - Messages or offers to guests, points, birthdays.
 - A guest without a phone number, or joining two numbers into one guest.
 - Changing what "regular", "stopped coming" and "new" mean from the app. They are five numbers in the hub
@@ -110,13 +163,29 @@ Any number of guests can be open at once.
 - Which orders: `store.with_phone()` (every index entry that carries a number; `orders.phone <> ''` in
   PostgreSQL) gives "since" and "orders in all" without replaying anything; `in_window` keeps the ones that
   can count in the year, and only those are replayed. Notes: `CustomerNotes.all()`.
-- Wire (`backend/src/pos/api/guests.py`), both with a manager's token: `GET /reports/guests` answers
-  `{first, last, days, regular_visits, regular_days, lapsed_days, new_days, now_ms, guests, totals}`, each
-  guest `{phone, name, note, visits, spent, per_visit, last, first, since_ms, orders_ever, lately, regular,
-  lapsed, new, favourites}`, the one who spent most first. `GET /reports/guests/{phone}` answers `{guest,
-  note_by, note_ms, latest}`, or 404 `no_guest` for a number with no visit in the year.
+- Tags: `backend/src/pos/guest_tags.py`. `GuestTags` (memory) and `PgGuestTags` (table `guest_tag`: `phone`,
+  `tags` as JSON, `updated_by`, `updated_ms`), on `app.state.guest_tags` (`app.state.tags` is the sign-in
+  tags of `face-signin.md`, another thing). `clean_tags(tags, known)` is the one place a tag is tidied: one
+  line, each once whatever its capitals, spelt as `known` spells it, by the alphabet, `TAG_MAX = 24`,
+  `TAGS_MOST = 6`. `offered(carried, listed)` is the tags on offer with how many of the listed numbers
+  carry each; `STANDARD` is the two always offered. A standby reads and does not write (`ReadOnlyError`).
+- Wire (`backend/src/pos/api/guests.py`), all with the token of a session that holds `guests`:
+  `GET /reports/guests` answers `{first, last, days, regular_visits, regular_days, lapsed_days, new_days,
+  note_max, tag_max, tags_most, now_ms, guests, totals, tags}`, each guest `{phone, name, note, tags,
+  visits, spent, per_visit, last, first, since_ms, orders_ever, lately, regular, lapsed, new, favourites}`,
+  the one who spent most first, and `tags` a list of `{tag, guests}`. `GET /reports/guests/{phone}` answers
+  `{guest, note_by, note_ms, tags_by, tags_ms, latest}`, or 404 `no_guest` for a number with no visit in
+  the year. `PUT /reports/guests/{phone}` takes `{note?, tags?}` (what is left out stays as it is) and
+  answers `{phone, note, note_by, note_ms, tags, tags_by, tags_ms}`; it writes only what changed, under
+  the session's name; 422 `bad_value` for a tag too long, too many tags or no phone number (nothing is
+  written then), 503 `read_only` on a standby. It does not go on the change feed.
 - App: `lib/guests_report.dart` (`GuestsReport`, `Guest`, `GuestDetail`, `GuestVisit`, `GuestList`,
-  `guestsOf`, `GuestSort`, `sortedGuests`, `guestsNamed`), `lib/screens/guests_screen.dart`
-  (`GuestsScreen`), `PosApi.guestsReport` (which waits 90 seconds) and `PosApi.guestDetail`. The lists, the
-  order and the search are worked out in the app from the one answer; a guest is read closely when opened.
-- Tests: `backend/tests/orders/test_guests.py`, `apps/pos_app/test/guests_report_test.dart`.
+  `guestsOf`, `GuestSort`, `sortedGuests`, `guestsNamed`; for the tags `GuestTag`, `GuestKept`,
+  `guestsTagged`, `tidyTags`, `GuestsReport.keeps` and `withKept`), `lib/screens/guests_screen.dart`
+  (`GuestsScreen`), `lib/screens/guest_edit_dialog.dart` (`GuestEditDialog`), `PosApi.guestsReport` (which
+  waits 90 seconds), `PosApi.guestDetail` and `PosApi.keepGuest`. The lists, the order and the search are
+  worked out in the app from the one answer; a guest is read closely when opened; what was saved is put
+  into the list on the screen without reading the year again. `keeps` is false with a hub that sends no
+  `tags`, and then nothing offers to write.
+- Tests: `backend/tests/orders/test_guests.py`, `backend/tests/orders/test_guest_tags.py`,
+  `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`.
