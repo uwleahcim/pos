@@ -6,7 +6,9 @@ import 'phone.dart' show formatPhoneNumber;
 /// last here and what they order most, and who is a regular, new, or stopped coming. The hub does every
 /// sum; this is its answer read into names, the lists picked out of it ([guestsOf]), the order the screen
 /// puts them in ([sortedGuests]) and the ones a name or number finds ([guestsNamed]). Amounts stay the
-/// hub's own words ("109.65").
+/// hub's own words ("109.65"). Beside each guest stand the note and the tags the restaurant keeps about
+/// them; a manager writes both from the list ([GuestKept] is what the hub then keeps), and a tag is a list
+/// of its own ([guestsTagged]).
 
 String _s(Object? value, [String or = '']) => value is String ? value : or;
 int _i(Object? value) => value is num ? value.toInt() : 0;
@@ -15,6 +17,11 @@ List<Map<String, dynamic>> _rows(Object? value) => [
   if (value is List)
     for (final row in value)
       if (row is Map) row.cast<String, dynamic>(),
+];
+List<String> _words(Object? value) => [
+  if (value is List)
+    for (final word in value)
+      if (word is String) word,
 ];
 
 /// A dish with how many of it: one of a guest's favourites, or one dish of a visit.
@@ -40,6 +47,7 @@ class Guest {
     required this.phone,
     this.name = '',
     this.note = '',
+    this.tags = const [],
     this.visits = 0,
     this.spent = '0.00',
     this.perVisit,
@@ -58,6 +66,7 @@ class Guest {
     phone: _s(json['phone']),
     name: _s(json['name']),
     note: _s(json['note']),
+    tags: _words(json['tags']),
     visits: _i(json['visits']),
     spent: _s(json['spent'], '0.00'),
     perVisit: json['per_visit'] is String ? json['per_visit'] as String : null,
@@ -78,8 +87,11 @@ class Guest {
   /// The name on their latest order that has one; empty when none has.
   final String name;
 
-  /// The line the restaurant keeps about them, written on the to-go form.
+  /// The line the restaurant keeps about them, written on the to-go form or from the guest list.
   final String note;
+
+  /// The tags a manager put on them ("VIP"), in the order of the alphabet.
+  final List<String> tags;
 
   /// Their orders of the year that had a dish on them.
   final int visits;
@@ -115,6 +127,71 @@ class Guest {
 
   /// What the list calls them: their name, or their number when no order of theirs has a name.
   String get called => name.isEmpty ? number : name;
+
+  /// Whether they carry [tag], whatever its capitals.
+  bool carries(String tag) => tags.any((mine) => mine.toLowerCase() == tag.toLowerCase());
+
+  /// The same guest with the note and the tags as the hub keeps them now.
+  Guest kept({required String note, required List<String> tags}) => Guest(
+    phone: phone,
+    name: name,
+    note: note,
+    tags: tags,
+    visits: visits,
+    spent: spent,
+    perVisit: perVisit,
+    last: last,
+    first: first,
+    sinceMs: sinceMs,
+    ordersEver: ordersEver,
+    lately: lately,
+    regular: regular,
+    lapsed: lapsed,
+    isNew: isNew,
+    favourites: favourites,
+  );
+}
+
+/// A tag there is to offer, with how many guests of the list carry it.
+class GuestTag {
+  const GuestTag(this.tag, [this.guests = 0]);
+
+  factory GuestTag.fromJson(Map<String, dynamic> json) => GuestTag(_s(json['tag']), _i(json['guests']));
+
+  final String tag;
+  final int guests;
+}
+
+/// What the hub keeps about a guest after a manager wrote it from the list (`PUT /reports/guests/<digits>`):
+/// the note and the tags, each with who wrote it last and when.
+class GuestKept {
+  const GuestKept({
+    required this.phone,
+    this.note = '',
+    this.noteBy = '',
+    this.noteMs,
+    this.tags = const [],
+    this.tagsBy = '',
+    this.tagsMs,
+  });
+
+  factory GuestKept.fromJson(Map<String, dynamic> json) => GuestKept(
+    phone: _s(json['phone']),
+    note: _s(json['note']),
+    noteBy: _s(json['note_by']),
+    noteMs: json['note_ms'] is num ? _i(json['note_ms']) : null,
+    tags: _words(json['tags']),
+    tagsBy: _s(json['tags_by']),
+    tagsMs: json['tags_ms'] is num ? _i(json['tags_ms']) : null,
+  );
+
+  final String phone;
+  final String note;
+  final String noteBy;
+  final int? noteMs;
+  final List<String> tags;
+  final String tagsBy;
+  final int? tagsMs;
 }
 
 /// What the whole list comes to.
@@ -162,6 +239,11 @@ class GuestsReport {
     this.nowMs = 0,
     this.guests = const [],
     this.totals = const GuestTotals(),
+    this.tags = const [],
+    this.keeps = false,
+    this.noteMax = 120,
+    this.tagMax = 24,
+    this.tagsMost = 6,
   });
 
   factory GuestsReport.fromJson(Map<String, dynamic> json) => GuestsReport(
@@ -175,6 +257,14 @@ class GuestsReport {
     nowMs: _i(json['now_ms']),
     guests: [for (final row in _rows(json['guests'])) Guest.fromJson(row)],
     totals: GuestTotals.fromJson((json['totals'] as Map?)?.cast<String, dynamic>() ?? const {}),
+    tags: [
+      for (final row in _rows(json['tags']))
+        if (_s(row['tag']).isNotEmpty) GuestTag.fromJson(row),
+    ],
+    keeps: json['tags'] is List,
+    noteMax: json['note_max'] is num ? _i(json['note_max']) : 120,
+    tagMax: json['tag_max'] is num ? _i(json['tag_max']) : 24,
+    tagsMost: json['tags_most'] is num ? _i(json['tags_most']) : 6,
   );
 
   /// The days the list reads, the running one the last of them.
@@ -194,6 +284,61 @@ class GuestsReport {
   /// The one who spent most first.
   final List<Guest> guests;
   final GuestTotals totals;
+
+  /// Every tag there is to offer: the ones some guest carries and the standard ones, the one most guests
+  /// of the list carry first.
+  final List<GuestTag> tags;
+
+  /// Whether this hub keeps tags, and takes a note written from the list. One older than that does not
+  /// say [tags] at all: the list is then only read, as it was.
+  final bool keeps;
+
+  /// What the hub holds a note and the tags to: the letters of a note, the letters of a tag, and how many
+  /// tags a guest carries at most.
+  final int noteMax;
+  final int tagMax;
+  final int tagsMost;
+
+  /// The tags some guest of the list carries: each is a list of its own.
+  List<GuestTag> get carried => [
+    for (final tag in tags)
+      if (tag.guests > 0) tag,
+  ];
+
+  /// The list after the hub kept [now] about one of its guests: that guest with the note and the tags as
+  /// they are kept, and every tag counted again. A tag nobody of the list carries any more is still one to
+  /// offer until the list is read again.
+  GuestsReport withKept(GuestKept now) {
+    final changed = [
+      for (final guest in guests) guest.phone == now.phone ? guest.kept(note: now.note, tags: now.tags) : guest,
+    ];
+    final names = <String>[for (final tag in tags) tag.tag];
+    for (final tag in now.tags) {
+      if (names.every((known) => known.toLowerCase() != tag.toLowerCase())) names.add(tag);
+    }
+    final counted = [for (final name in names) GuestTag(name, changed.where((guest) => guest.carries(name)).length)]
+      ..sort((a, b) {
+        final most = b.guests.compareTo(a.guests);
+        return most != 0 ? most : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
+      });
+    return GuestsReport(
+      first: first,
+      last: last,
+      days: days,
+      regularVisits: regularVisits,
+      regularDays: regularDays,
+      lapsedDays: lapsedDays,
+      newDays: newDays,
+      nowMs: nowMs,
+      guests: changed,
+      totals: totals,
+      tags: counted,
+      keeps: keeps,
+      noteMax: noteMax,
+      tagMax: tagMax,
+      tagsMost: tagsMost,
+    );
+  }
 }
 
 /// One visit of a guest.
@@ -235,12 +380,21 @@ class GuestVisit {
 
 /// One guest read closely (`GET /reports/guests/{phone}`).
 class GuestDetail {
-  const GuestDetail({required this.guest, this.noteBy = '', this.noteMs, this.latest = const []});
+  const GuestDetail({
+    required this.guest,
+    this.noteBy = '',
+    this.noteMs,
+    this.tagsBy = '',
+    this.tagsMs,
+    this.latest = const [],
+  });
 
   factory GuestDetail.fromJson(Map<String, dynamic> json) => GuestDetail(
     guest: Guest.fromJson((json['guest'] as Map?)?.cast<String, dynamic>() ?? const {}),
     noteBy: _s(json['note_by']),
     noteMs: json['note_ms'] is num ? _i(json['note_ms']) : null,
+    tagsBy: _s(json['tags_by']),
+    tagsMs: json['tags_ms'] is num ? _i(json['tags_ms']) : null,
     latest: [for (final row in _rows(json['latest'])) GuestVisit.fromJson(row)],
   );
 
@@ -251,8 +405,22 @@ class GuestDetail {
   final String noteBy;
   final int? noteMs;
 
+  /// Who last put the tags on and when; [tagsMs] is null where there is no tag.
+  final String tagsBy;
+  final int? tagsMs;
+
   /// Their latest visits, the newest first.
   final List<GuestVisit> latest;
+
+  /// The same reading with the note and the tags as the hub keeps them now.
+  GuestDetail withKept(GuestKept now) => GuestDetail(
+    guest: guest.kept(note: now.note, tags: now.tags),
+    noteBy: now.noteBy,
+    noteMs: now.noteMs,
+    tagsBy: now.tagsBy,
+    tagsMs: now.tagsMs,
+    latest: latest,
+  );
 }
 
 /// The lists the screen picks out of all the guests.
@@ -278,6 +446,31 @@ List<Guest> guestsOf(Iterable<Guest> guests, GuestList list) => [
     })
       guest,
 ];
+
+/// The guests who carry [tag]; every guest with none asked for.
+List<Guest> guestsTagged(Iterable<Guest> guests, String? tag) => [
+  for (final guest in guests)
+    if (tag == null || guest.carries(tag)) guest,
+];
+
+/// The tags as a manager picked and typed them, tidied the way the hub keeps them: each on one line, each
+/// once whatever its capitals (one of [known] spelt as it is known), in the order of the alphabet.
+List<String> tidyTags(Iterable<String> tags, [Iterable<String> known = const []]) {
+  final spelt = <String, String>{};
+  for (final tag in known) {
+    spelt.putIfAbsent(tag.toLowerCase(), () => tag);
+  }
+  final kept = <String, String>{};
+  for (final tag in tags) {
+    final words = tag.trim().split(RegExp(r'\s+')).join(' ');
+    if (words.isEmpty) continue;
+    kept.putIfAbsent(words.toLowerCase(), () => spelt[words.toLowerCase()] ?? words);
+  }
+  return kept.values.toList()..sort((a, b) {
+    final order = a.toLowerCase().compareTo(b.toLowerCase());
+    return order != 0 ? order : a.compareTo(b);
+  });
+}
 
 /// The orders the list can stand in.
 enum GuestSort {

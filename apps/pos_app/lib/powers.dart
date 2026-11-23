@@ -69,7 +69,11 @@ const powerGroups = [
   ]),
   PowerGroup('The numbers', [
     Power('reports', 'See the reports', 'The day, sales, dishes sold, and what came off the checks.'),
-    Power('guests', 'See the guest list', 'Phone customers: their numbers, visits and what they spent.'),
+    Power(
+      'guests',
+      'See the guest list',
+      'Phone customers: their numbers, visits and what they spent. They tag a guest and write the note.',
+    ),
     Power('time_clock', 'See and correct the hours', "Everyone's hours, and corrections to a shift."),
     Power('menu', 'Edit the menu', 'Dishes, prices and options, in the menu editor.'),
   ]),

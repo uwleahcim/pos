@@ -5,6 +5,7 @@ import '../day_report.dart' show dollars, kindLabel;
 import '../guests_report.dart';
 import '../sales_report.dart' show Change;
 import 'check_history_screen.dart';
+import 'guest_edit_dialog.dart';
 import 'span_report.dart';
 import 'theme.dart';
 
@@ -13,7 +14,9 @@ import 'theme.dart';
 /// guests who stopped coming and the new ones each a list of their own; by what they spent, how often they
 /// came or who was here last; and a name or a number to find one. A guest opens to their favourite dishes
 /// and their latest visits, each of which opens its check's history. The hub does every sum; this only
-/// picks the lists out and puts them in order. Nothing is written from here.
+/// picks the lists out and puts them in order. Two things are written from here, both about the guest and
+/// neither about their orders: the tags a manager puts on them ("VIP"), each of which is a list of its own,
+/// and the one line of the note.
 class GuestsScreen extends StatefulWidget {
   const GuestsScreen({super.key, required this.api, required this.token});
 
@@ -35,6 +38,9 @@ class _GuestsScreenState extends State<GuestsScreen> {
   /// list, laid out from its top.
   int _laid = 0;
   GuestList _list = GuestList.all;
+
+  /// The tag whose guests the list is narrowed to; null for every guest of [_list].
+  String? _tag;
   GuestSort _sort = GuestSort.spent;
   final _find = TextEditingController();
   final _scroll = ScrollController();
@@ -64,7 +70,11 @@ class _GuestsScreenState extends State<GuestsScreen> {
 
   void _reshow() {
     final report = _report;
-    _shown = report == null ? const [] : sortedGuests(guestsNamed(guestsOf(report.guests, _list), _find.text), _sort);
+    // a tag nobody of the list carries any more is no list to stay on
+    if (report != null && _tag != null && report.carried.every((tag) => tag.tag != _tag)) _tag = null;
+    _shown = report == null
+        ? const []
+        : sortedGuests(guestsNamed(guestsTagged(guestsOf(report.guests, _list), _tag), _find.text), _sort);
   }
 
   Future<void> _load() async {
@@ -112,6 +122,32 @@ class _GuestsScreenState extends State<GuestsScreen> {
     final opening = !_open.contains(guest.phone);
     setState(() => opening ? _open.add(guest.phone) : _open.remove(guest.phone));
     if (opening) _loadDetail(guest.phone);
+  }
+
+  /// The tags and the note of [guest], for a manager to change. What the hub kept stands on the screen at
+  /// once: beside the guest, under them where they are open, and in the count of each tag.
+  Future<void> _edit(Guest guest) async {
+    final report = _report;
+    if (report == null) return;
+    final kept = await showDialog<GuestKept>(
+      context: context,
+      builder: (_) => GuestEditDialog(
+        api: widget.api,
+        token: widget.token,
+        guest: guest,
+        offered: [for (final tag in report.tags) tag.tag],
+        noteMax: report.noteMax,
+        tagMax: report.tagMax,
+        tagsMost: report.tagsMost,
+      ),
+    );
+    if (kept == null || !mounted) return;
+    setState(() {
+      _report = _report?.withKept(kept);
+      final detail = _details[kept.phone];
+      if (detail != null) _details[kept.phone] = detail.withKept(kept);
+      _reshow();
+    });
   }
 
   /// Another list or order: it starts again from its top.
@@ -178,13 +214,43 @@ class _GuestsScreenState extends State<GuestsScreen> {
     );
   }
 
+  /// The tags guests carry, each a list of its own: one line that runs on sideways, so that many tags take
+  /// no more of a phone than one. It stands in the head of the list and scrolls away with it; picking a
+  /// tag starts the list from its top, where the line is, with the tag picked first in it.
+  Widget _tagLists(GuestsReport report) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: SingleChildScrollView(
+      key: const ValueKey('guests-tags'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final tag in [
+            ...report.carried.where((tag) => tag.tag == _tag),
+            ...report.carried.where((tag) => tag.tag != _tag),
+          ])
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                key: ValueKey('guests-tag:${tag.tag}'),
+                avatar: _tag == tag.tag ? null : const Icon(Icons.sell_outlined, size: 16),
+                label: Text('${tag.tag} ${_many(tag.guests)}'),
+                selected: _tag == tag.tag,
+                visualDensity: VisualDensity.compact,
+                onSelected: (on) => _relay(() => _tag = on ? tag.tag : null),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
   /// What stands over the list: the year it reads, what all the guests came to, and how it is ordered.
   Widget _head(BuildContext context, GuestsReport report) {
     final theme = Theme.of(context);
     final small = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final local = MaterialLocalizations.of(context);
     final totals = report.totals;
-    final meaning = _meaning(report);
+    final meaning = [_meaning(report), if (_tag != null) 'tagged $_tag'].where((words) => words.isNotEmpty).join(', ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -239,6 +305,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
           onSelectionChanged: (picked) => _relay(() => _sort = picked.first),
         ),
         const SizedBox(height: 8),
+        if (report.carried.isNotEmpty) _tagLists(report),
         TextField(
           key: const ValueKey('guests-find'),
           controller: _find,
@@ -294,6 +361,11 @@ class _GuestsScreenState extends State<GuestsScreen> {
       if (detail != null && detail.noteBy.isNotEmpty) detail.noteBy,
       if (noteMs != null) _dayWords(DateTime.fromMillisecondsSinceEpoch(noteMs)),
     ].join(', ');
+    final tagsMs = detail?.tagsMs;
+    final tagsBy = [
+      if (detail != null && detail.tagsBy.isNotEmpty && tagsMs != null) detail.tagsBy,
+      if (tagsMs != null) _dayWords(DateTime.fromMillisecondsSinceEpoch(tagsMs)),
+    ].join(', ');
 
     Widget label(String words) => Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -306,12 +378,35 @@ class _GuestsScreenState extends State<GuestsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (guest.tags.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                'Tags: ${guest.tags.join(', ')}${tagsBy.isEmpty ? '' : ' ($tagsBy)'}',
+                key: ValueKey('guest-tags:${listed.phone}'),
+              ),
+            ),
           if (guest.note.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 2),
               child: Text(
                 'Note: ${guest.note}${noteBy.isEmpty ? '' : ' ($noteBy)'}',
                 key: ValueKey('guest-note:${listed.phone}'),
+              ),
+            ),
+          // what the restaurant keeps about them is written here; a hub older than tags only reads
+          if (report.keeps)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: ValueKey('guest-edit:${listed.phone}'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                icon: const Icon(Icons.sell_outlined, size: 18),
+                label: Text(guest.tags.isEmpty && guest.note.isEmpty ? 'Add a tag or a note' : 'Change tags and note'),
+                onPressed: () => _edit(guest),
               ),
             ),
           Text(
@@ -400,17 +495,32 @@ class _GuestsScreenState extends State<GuestsScreen> {
                   ),
                 ),
                 Expanded(
-                  child: ReportLine(
-                    guest.called,
-                    dollars(guest.spent),
-                    count: _count(guest.visits, 'visit', 'visits'),
-                    under: [
-                      if (guest.name.isNotEmpty) guest.number,
-                      'last ${_dayWords(guest.last)}',
-                      if (guest.isNew) 'new',
-                    ].join(' · '),
-                    change: standing,
-                    underWide: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ReportLine(
+                        guest.called,
+                        dollars(guest.spent),
+                        count: _count(guest.visits, 'visit', 'visits'),
+                        under: [
+                          if (guest.name.isNotEmpty) guest.number,
+                          'last ${_dayWords(guest.last)}',
+                          if (guest.isNew) 'new',
+                        ].join(' · '),
+                        change: standing,
+                        underWide: true,
+                      ),
+                      if (guest.tags.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Wrap(
+                            key: ValueKey('guest-marks:${guest.phone}'),
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: [for (final tag in guest.tags) _TagMark(tag)],
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 SizedBox(
@@ -421,7 +531,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
                       open ? Icons.expand_less : Icons.expand_more,
                       size: 22,
                       color: scheme.onSurfaceVariant,
-                      semanticLabel: open ? 'Close' : 'Favourite dishes and visits',
+                      semanticLabel: open ? 'Close' : 'Tags, note, favourite dishes and visits',
                     ),
                   ),
                 ),
@@ -466,7 +576,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 'came ${report.regularVisits} times or more in the last ${report.regularDays} days. A guest '
                 'stopped coming who came ${report.regularVisits} times or more in the year and not for '
                 '${report.lapsedDays} days. A new guest placed their first order ever in the last '
-                '${report.newDays} days.',
+                '${report.newDays} days.'
+                '${report.keeps ? ' Open a guest to put a tag on them or to write their note.' : ''}',
                 key: const ValueKey('guests-note'),
                 style: small,
               ),
@@ -498,6 +609,24 @@ class _GuestsScreenState extends State<GuestsScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A tag a guest carries, as a small mark under their name.
+class _TagMark extends StatelessWidget {
+  const _TagMark(this.tag);
+
+  final String tag;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(color: scheme.secondaryContainer, borderRadius: BorderRadius.circular(4)),
+      child: Text(tag, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSecondaryContainer)),
     );
   }
 }

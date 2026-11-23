@@ -64,7 +64,10 @@ POWERS: tuple[Power, ...] = (
     Power("logbook", "read and write the manager's log"),
     Power("waste", "read the waste totals and strike out anyone's entry of any day"),
     Power("reports", "read the day's report, the sales and the dishes sold, and print the day"),
-    Power("guests", "read the guest list: the phone customers, their visits and what they spent"),
+    Power(
+        "guests",
+        "read the guest list: the phone customers, their visits and what they spent; keep each one's note and tags",
+    ),
     Power("time_clock", "read everyone's hours and correct a shift"),
     Power("menu", "change the menu in the menu editor"),
 )

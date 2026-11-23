@@ -23,6 +23,10 @@ How it is counted:
 - `since_ms` and `orders_ever` are of every order the number ever placed, not only the year's: what the
   to-go form says of a caller ("12 orders since Mar 2025").
 
+Beside each guest stand the two things the restaurant keeps about a number: the note (`pos.customers`) and
+the tags a manager put on it (`pos.guest_tags`), with every tag there is to offer and how many of the
+list's guests carry it.
+
 What one order comes to as a visit (`Visit`, from `visit_of`) is remembered in the hub's memory while its
 log stays as it was (`VisitMemo`), as the sales are: a year of orders with a number is read from the log
 once after the hub starts and from memory after that.
@@ -37,7 +41,8 @@ from sys import intern
 from typing import Any, NamedTuple
 
 from .. import localtime
-from ..customers import SHORTEST
+from ..customers import NOTE_MAX, SHORTEST
+from ..guest_tags import TAG_MAX, TAGS_MOST, offered
 from ..menu.defs import Definitions
 from ..sync.oplog import OrderEntry, OrderState, phone_digits
 from ..tax import TaxProfile
@@ -167,6 +172,7 @@ def _row(
     guest: _Guest,
     ever: tuple[int, int] | None,
     note: str,
+    tags: Sequence[str],
     *,
     defs: Definitions,
     today: date,
@@ -181,6 +187,7 @@ def _row(
         "phone": phone,
         "name": next((visit.name for visit in visits if visit.name), ""),
         "note": note,
+        "tags": list(tags),
         "visits": len(visits),
         "spent": str(guest.spent),
         "per_visit": _each(guest.spent, len(visits)),
@@ -214,6 +221,10 @@ def _about(first: date, today: date, now_ms: int) -> dict[str, Any]:
         "lapsed_days": LAPSED_DAYS,
         "new_days": NEW_DAYS,
         "now_ms": now_ms,
+        # what a screen that writes a guest's note and tags holds them to
+        "note_max": NOTE_MAX,
+        "tag_max": TAG_MAX,
+        "tags_most": TAGS_MOST,
     }
 
 
@@ -224,14 +235,27 @@ def guests_report(
     *,
     defs: Definitions,
     now_ms: int,
+    tags: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """The guest list as it stands at `now_ms`: every number with a visit in the days of `window`, the one
     that spent most first. `visits` are at least the visits of those days, `entries` every order that
-    carries a number (for since when and how many orders ever), `notes` the note kept about each number."""
+    carries a number (for since when and how many orders ever), `notes` the note kept about each number and
+    `tags` the tags on each. `tags` in the answer is every tag there is to offer, with how many of the
+    guests listed carry it."""
     first, today = window(now_ms)
     ever = _ever(entries)
+    carried = tags or {}
     rows = [
-        _row(phone, guest, ever.get(phone), notes.get(phone, ""), defs=defs, today=today, favourites=FAVOURITES)
+        _row(
+            phone,
+            guest,
+            ever.get(phone),
+            notes.get(phone, ""),
+            carried.get(phone, ()),
+            defs=defs,
+            today=today,
+            favourites=FAVOURITES,
+        )
         for phone, guest in _gather(visits, first, today).items()
     ]
     rows.sort(key=lambda row: (-Decimal(row["spent"]), -row["visits"], row["name"].lower(), row["phone"]))
@@ -240,6 +264,7 @@ def guests_report(
     return {
         **_about(first, today, now_ms),
         "guests": rows,
+        "tags": offered(carried, (row["phone"] for row in rows)),
         "totals": {
             "guests": len(rows),
             "visits": count,
@@ -260,10 +285,12 @@ def guest_report(
     *,
     defs: Definitions,
     now_ms: int,
+    tags: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """One guest read closely: the row of the list with more favourite dishes, their latest visits (each
-    with its dishes) and who wrote the note about them and when. None for a number with no visit in the
-    days of `window`. `visits` and `entries` are this number's."""
+    with its dishes), who wrote the note about them and when, and who last put their tags on (`tags` is
+    what is kept for the number: its `tags`, `by` and `at_ms`). None for a number with no visit in the days
+    of `window`. `visits` and `entries` are this number's."""
     first, today = window(now_ms)
     guest = _gather((visit for visit in visits if visit.phone == phone), first, today).get(phone)
     if guest is None:
@@ -273,6 +300,7 @@ def guest_report(
         guest,
         _ever(entries).get(phone),
         str((note or {}).get("note") or ""),
+        list((tags or {}).get("tags") or ()),
         defs=defs,
         today=today,
         favourites=MORE_FAVOURITES,
@@ -283,6 +311,8 @@ def guest_report(
         "guest": row,
         "note_by": str((note or {}).get("by") or ""),
         "note_ms": (note or {}).get("at_ms") if (note or {}).get("note") else None,
+        "tags_by": str((tags or {}).get("by") or ""),
+        "tags_ms": (tags or {}).get("at_ms") if (tags or {}).get("tags") else None,
         "latest": [
             {
                 "order_id": visit.order_id,
