@@ -74,6 +74,7 @@ class CustomerCard {
     this.known = false,
     this.name = '',
     this.note = '',
+    this.tags = const [],
     this.orders = 0,
     this.firstMs,
     this.lastMs,
@@ -87,6 +88,11 @@ class CustomerCard {
     known: json['known'] as bool? ?? false,
     name: json['name'] as String? ?? '',
     note: json['note'] as String? ?? '',
+    tags: [
+      if (json['tags'] case final List tags)
+        for (final tag in tags)
+          if (tag is String && tag.trim().isNotEmpty) tag,
+    ],
     orders: (json['orders'] as num?)?.toInt() ?? 0,
     firstMs: (json['first_ms'] as num?)?.toInt(),
     lastMs: (json['last_ms'] as num?)?.toInt(),
@@ -104,6 +110,10 @@ class CustomerCard {
   /// The name on their latest order that has one.
   final String name;
   final String note;
+
+  /// The tags a manager put on them in the guest list ("VIP"), for whoever takes their call or their order
+  /// (docs/guest-list.md, "Tags and the note"). None from a hub older than tags.
+  final List<String> tags;
 
   /// How many orders the number placed; voided ones do not count.
   final int orders;

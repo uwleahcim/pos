@@ -6,6 +6,7 @@ import '../guests_report.dart';
 import '../sales_report.dart' show Change;
 import 'check_history_screen.dart';
 import 'guest_edit_dialog.dart';
+import 'guest_tag_mark.dart';
 import 'span_report.dart';
 import 'theme.dart';
 
@@ -517,7 +518,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
                             key: ValueKey('guest-marks:${guest.phone}'),
                             spacing: 6,
                             runSpacing: 4,
-                            children: [for (final tag in guest.tags) _TagMark(tag)],
+                            children: [for (final tag in guest.tags) GuestTagMark(tag)],
                           ),
                         ),
                     ],
@@ -609,24 +610,6 @@ class _GuestsScreenState extends State<GuestsScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// A tag a guest carries, as a small mark under their name.
-class _TagMark extends StatelessWidget {
-  const _TagMark(this.tag);
-
-  final String tag;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(color: scheme.secondaryContainer, borderRadius: BorderRadius.circular(4)),
-      child: Text(tag, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSecondaryContainer)),
     );
   }
 }

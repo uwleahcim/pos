@@ -1228,14 +1228,16 @@ def create_app(
     def read_customer(phone: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:
         """The customer at this number, for the screen that takes their call: `name` (from their latest
         order), `orders` (how many, voided ones apart), `first_ms` and `last_ms`, the `note` kept about
-        them, and `recent`, their latest orders with dishes, each with its `total` and `items`. Numbers
-        match by their digits. `known` is false for a number that never ordered and has no note."""
+        them, the `tags` a manager put on them in the guest list, and `recent`, their latest orders with
+        dishes, each with its `total` and `items`. Numbers match by their digits. `known` is false for a
+        number that never ordered and has no note and no tag."""
         store: OpStore | PgOpStore = app.state.store
         return customer_card(
             store,
             app.state.customers,
             phone,
             total=lambda state: check_for(state, app.state.taxes, app.state.pricing)["total"],
+            tags=app.state.guest_tags,
         )
 
     @app.put("/customers/{phone}")

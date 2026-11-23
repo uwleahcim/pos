@@ -7,7 +7,7 @@ import '../guests_report.dart';
 /// note"): their tags, a button each, and the one line of the note. A tag is put on or taken off with a
 /// tap; one that is not among the buttons yet is typed once and is a button from then on. The hub keeps
 /// both by the guest's number with who wrote them, and hands back what it kept ([GuestKept]), which is what
-/// this closes with.
+/// this closes with. Both are shown where that guest's call and order are taken, and the box says so.
 class GuestEditDialog extends StatefulWidget {
   const GuestEditDialog({
     super.key,
@@ -180,7 +180,7 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  'A tag is the same words on every guest who carries it, so the list can show them together.',
+                  'Whoever takes this guest\'s call or order sees their tags, as they see the note.',
                   style: small,
                 ),
               ),
