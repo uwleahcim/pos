@@ -5,7 +5,8 @@ restaurant keeps about them, both from the guest list. The list shows each guest
 is to offer; the hub keeps who wrote what and when, and nothing else moves by it. Whoever takes that guest's
 call or order is shown the tags beside the note (`GET /customers/lookup`); they go on no order and no print.
 The host stand sees them too: on the guest's reservation in the book, on their party on the waitlist, and
-while their call still rings (`GET /customers/tags`)."""
+while their call still rings (`GET /customers/tags`). A manager tags a guest from there as well, one who
+never ordered too: the box is handed what it needs by `GET /reports/guests/tags`."""
 
 from __future__ import annotations
 
@@ -526,6 +527,109 @@ def test_showing_a_guests_tags_at_the_host_stand_changes_no_reservation_no_party
     kept(h, OMAR, tags=["VIP"])
     assert bare(the_book(h)["booked"][0]) == bare(made) and bare(the_list(h)["waiting"][0]) == bare(put)
     assert (guests(h)["totals"], h.report()["sales"]) == before
+
+
+# --- tagging a guest from their reservation or the waitlist -----------------------------------------------
+
+
+def tag_box(h: Hub, phone: str | None = None, headers: dict[str, str] | None = None):
+    """What the box that tags a guest is handed where the guest list was not read: the hub's answer as it
+    came."""
+    asked = {"phone": phone} if phone is not None else None
+    return h.c.get("/reports/guests/tags", params=asked, headers=h.manager() if headers is None else headers)
+
+
+def test_the_tag_box_is_handed_the_tags_on_offer_and_the_ones_the_number_carries():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"])
+    kept(h, OMAR, tags=["VIP"])
+    h.now += 60_000
+    # with no number: the tags there are, each with how many numbers carry it, and what they are held to
+    answer = tag_box(h)
+    assert answer.status_code == 200, answer.text
+    assert answer.json() == {
+        "tags": [
+            {"tag": "VIP", "guests": 2},
+            {"tag": "Catering client", "guests": 1},
+            {"tag": "Friend of the house", "guests": 0},
+        ],
+        "tag_max": TAG_MAX,
+        "tags_most": TAGS_MOST,
+        "phone": "",
+        "carried": [],
+        "tags_by": "",
+        "tags_ms": None,
+    }
+    # with a number, however it is written: what it carries now, who put it on and when
+    hers = tag_box(h, "+1 (781) 555-0101").json()
+    assert (hers["phone"], hers["carried"], hers["tags_by"]) == (LINDA, ["Catering client", "VIP"], "Mike")
+    assert hers["tags_ms"] == h.now - 60_000 and hers["tags"] == answer.json()["tags"]
+    # a number nobody tagged, and one that never ordered, carry none and are no error
+    assert tag_box(h, SAM).json()["carried"] == [] and tag_box(h, NOBODY).json()["tags_ms"] is None
+    # it is no guest of the list called "tags": the list's own calls answer as they did
+    assert h.c.get(f"/reports/guests/{LINDA}", headers=h.manager()).json()["guest"]["tags"] == [
+        "Catering client",
+        "VIP",
+    ]
+    assert h.c.get(f"/reports/guests/{NOBODY}", headers=h.manager()).status_code == 404
+
+
+def test_a_guest_who_only_booked_a_table_is_tagged_from_their_reservation():
+    h = host_stand()
+    book_table(h, "Novak", "781 555 0199")
+    wait(h, "Novak", "781-555-0199")
+    assert tags_of(the_book(h)["booked"]) == {"Novak": []} and tag_box(h, NOBODY).json()["carried"] == []
+    # the box saves with the guest list's own call: the number need not have ordered
+    assert kept(h, NOBODY, tags=["vip", "Wine club"])["tags"] == ["VIP", "Wine club"]
+    assert tags_of(the_book(h)["booked"]) == {"Novak": ["VIP", "Wine club"]}
+    assert tags_of(the_list(h)["waiting"]) == {"Novak": ["VIP", "Wine club"]}
+    assert ringing(h, NOBODY)["tags"] == ["VIP", "Wine club"]
+    # the next box offers the new tag, counted by the numbers that carry it
+    box = tag_box(h, NOBODY).json()
+    assert box["carried"] == ["VIP", "Wine club"] and {"tag": "Wine club", "guests": 1} in box["tags"]
+    # they are no guest of the list for it (no visit), and the note was not touched
+    assert all(row["phone"] != NOBODY for row in guests(h)["guests"])
+    assert card(h, NOBODY)["note"] == ""
+    # taken off again from the same box
+    assert kept(h, NOBODY, tags=[])["tags"] == []
+    assert tags_of(the_book(h)["booked"]) == {"Novak": []} and tag_box(h, NOBODY).json()["carried"] == []
+
+
+def test_only_who_may_read_the_guest_list_is_handed_the_tag_box():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    assert h.c.get("/reports/guests/tags").status_code == 401
+    assert tag_box(h, LINDA, {"authorization": "Bearer nobody"}).status_code == 401
+    # a server handed the reports has a session, and no hand on the guests
+    assert h.c.put("/settings/powers", json={"roles": {"reports": ["server"]}}, headers=h.manager()).status_code == 200
+    opened = h.c.post("/admin/session", json={"device": "t1", "pin": "1111"})
+    amy = {"authorization": f"Bearer {opened.json()['token']}"}
+    refused = tag_box(h, LINDA, amy)
+    assert refused.status_code == 403 and refused.json()["detail"]["power"] == "guests"
+    # the host's own PIN opens no session for it either: tagging stays with whoever may read the guest list
+    assert h.c.post("/admin/session", json={"device": "t1", "pin": "3333", "power": "guests"}).status_code == 403
+    # something that is no phone number is refused, as the write refuses it
+    short = tag_box(h, "555")
+    assert short.status_code == 422 and short.json()["detail"]["error"] == "bad_value"
+
+
+def test_handing_out_the_tag_box_reads_no_order_and_changes_nothing(monkeypatch):
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    made = book_table(h, "Linda Chen", LINDA)["booking"]
+    before = (guests(h)["totals"], h.report()["sales"], the_book(h), ringing(h, LINDA))
+
+    def no_orders(*_args, **_kwargs):
+        raise AssertionError("the tag box read the orders")
+
+    with monkeypatch.context() as patched:
+        store = h.c.app.state.store
+        for reading in ("with_phone", "index", "views"):
+            patched.setattr(store, reading, no_orders)
+        for phone in (None, LINDA, NOBODY):
+            assert tag_box(h, phone).status_code == 200
+    assert (guests(h)["totals"], h.report()["sales"], the_book(h), ringing(h, LINDA)) == before
+    assert the_book(h)["booked"][0] == made
 
 
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")

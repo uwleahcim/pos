@@ -8,23 +8,54 @@ import '../guests_report.dart';
 /// tap; one that is not among the buttons yet is typed once and is a button from then on. The hub keeps
 /// both by the guest's number with who wrote them, and hands back what it kept ([GuestKept]), which is what
 /// this closes with. Both are shown where that guest's call and order are taken, and the box says so.
+///
+/// [GuestEditDialog.tags] is the same box with the tags alone, for a guest tagged from their reservation
+/// or their line of the waitlist (`tag_guest.dart`): the note there is the reservation's own, so the
+/// customer's line is neither shown nor written.
 class GuestEditDialog extends StatefulWidget {
-  const GuestEditDialog({
+  GuestEditDialog({
     super.key,
     required this.api,
     required this.token,
-    required this.guest,
+    required Guest guest,
     required this.offered,
     this.noteMax = 120,
     this.tagMax = 24,
     this.tagsMost = 6,
-  });
+  }) : called = guest.called,
+       phone = guest.phone,
+       tags = guest.tags,
+       note = guest.note,
+       withNote = true;
+
+  const GuestEditDialog.tags({
+    super.key,
+    required this.api,
+    required this.token,
+    required this.called,
+    required this.phone,
+    required this.tags,
+    required this.offered,
+    this.tagMax = 24,
+    this.tagsMost = 6,
+  }) : note = '',
+       noteMax = 120,
+       withNote = false;
 
   final PosApi api;
 
-  /// The session of whoever opened the guest list: the hub writes their name beside what they keep.
+  /// The session of whoever opened the guest list, or gave their PIN to tag a guest: the hub writes their
+  /// name beside what they keep.
   final String token;
-  final Guest guest;
+
+  /// The guest, as the box's title calls them, their number, and what the restaurant keeps about them now.
+  final String called;
+  final String phone;
+  final List<String> tags;
+  final String note;
+
+  /// Whether the note is shown and written with the tags (the guest list), or the tags alone.
+  final bool withNote;
 
   /// Every tag there is to offer, in the order the buttons show: the ones guests carry and the standard
   /// ones.
@@ -41,8 +72,8 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
   /// The buttons, and the ones that are on (by their small letters: a tag is the same whatever its
   /// capitals).
   late final List<String> _offered = tidyOffered();
-  late final Set<String> _on = {for (final tag in widget.guest.tags) tag.toLowerCase()};
-  late final _note = TextEditingController(text: widget.guest.note);
+  late final Set<String> _on = {for (final tag in widget.tags) tag.toLowerCase()};
+  late final _note = TextEditingController(text: widget.note);
   final _another = TextEditingController();
   String? _message;
   bool _busy = false;
@@ -50,7 +81,7 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
   /// The tags offered and the guest's own, each once: one of theirs that is no button yet becomes one.
   List<String> tidyOffered() {
     final known = <String>[];
-    for (final tag in [...widget.offered, ...widget.guest.tags]) {
+    for (final tag in [...widget.offered, ...widget.tags]) {
       if (known.every((one) => one.toLowerCase() != tag.toLowerCase())) known.add(tag);
     }
     return known;
@@ -106,7 +137,12 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
       _message = null;
     });
     try {
-      final kept = await widget.api.keepGuest(widget.token, widget.guest.phone, note: _note.text, tags: _picked);
+      final kept = await widget.api.keepGuest(
+        widget.token,
+        widget.phone,
+        note: widget.withNote ? _note.text : null, // the tags alone: the note stays as it is
+        tags: _picked,
+      );
       if (mounted) Navigator.of(context).pop(kept);
     } on ApiException catch (err) {
       if (!mounted) return;
@@ -114,6 +150,8 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
         _busy = false;
         _message = switch (err.status) {
           null => 'The hub is not answering, so nothing was saved.',
+          401 ||
+          403 when !widget.withNote => "The manager's PIN is no longer good here: close this and tap Tags again.",
           401 || 403 => "The manager's hour here is over: go back and open Location again.",
           404 || 405 => 'This hub is older than tags. Update the hub, then save again.',
           _ => err.detail?['message'] as String? ?? err.message,
@@ -129,7 +167,7 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
     final small = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
     final label = theme.textTheme.labelLarge?.copyWith(color: scheme.primary);
     return AlertDialog(
-      title: Text(widget.guest.called, key: const ValueKey('guest-edit-title')),
+      title: Text(widget.called, key: const ValueKey('guest-edit-title')),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
       contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       content: SizedBox(
@@ -180,31 +218,35 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
               Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  'Whoever takes this guest\'s call or order sees their tags, as they see the note.',
+                  widget.withNote
+                      ? 'Whoever takes this guest\'s call or order sees their tags, as they see the note.'
+                      : 'Whoever takes this guest\'s call, order or table sees their tags.',
                   style: small,
                 ),
               ),
-              const SizedBox(height: 12),
-              Text('Note', style: label),
-              TextField(
-                key: const ValueKey('guest-note-words'),
-                controller: _note,
-                maxLength: widget.noteMax,
-                minLines: 1,
-                maxLines: 3,
-                // one line, however it wraps here: Enter saves and starts no new one
-                keyboardType: TextInputType.text,
-                textInputAction: TextInputAction.done,
-                textCapitalization: TextCapitalization.sentences,
-                // the hint stays one line on a narrow phone, so the empty box is no taller than a full one
-                decoration: const InputDecoration(
-                  isDense: true,
-                  hintText: 'One line: "No MSG, side door"',
-                  hintMaxLines: 1,
+              if (widget.withNote) ...[
+                const SizedBox(height: 12),
+                Text('Note', style: label),
+                TextField(
+                  key: const ValueKey('guest-note-words'),
+                  controller: _note,
+                  maxLength: widget.noteMax,
+                  minLines: 1,
+                  maxLines: 3,
+                  // one line, however it wraps here: Enter saves and starts no new one
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.done,
+                  textCapitalization: TextCapitalization.sentences,
+                  // the hint stays one line on a narrow phone, so the empty box is no taller than a full one
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'One line: "No MSG, side door"',
+                    hintMaxLines: 1,
+                  ),
+                  onSubmitted: (_) => _save(),
                 ),
-                onSubmitted: (_) => _save(),
-              ),
-              Text('The to-go form shows this line to whoever takes their call.', style: small),
+                Text('The to-go form shows this line to whoever takes their call.', style: small),
+              ],
               if (_message != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),

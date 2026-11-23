@@ -7,8 +7,9 @@ orders and changes none of them; the two things written here are a guest's **tag
 
 Since 16 November 2026 (the Toast comparison, row 30). Since 23 November 2026 the tags are put on here
 and shown where that guest's call and order are taken, and the note is written here too; the tags also show
-on the call while it rings, in the reservation book and on the waitlist. It grows out of the customers the
-to-go form already remembers by their number (`customers.md`): nothing is typed in for the list itself.
+on the call while it rings, in the reservation book and on the waitlist, and a guest can be tagged from
+their reservation or their line of the waitlist as well. It grows out of the customers the to-go form
+already remembers by their number (`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
 
@@ -102,8 +103,9 @@ Good to know about tags:
 - **Find** looks at names and numbers, not at tags: use the tag's button.
 
 Who may write them: whoever may see the guest list, so a manager and an owner, and anybody the owner hands
-"See the guest list" to (`roles.md`). The note can still be written on the to-go form by whoever takes
-the call, as before.
+"See the guest list" to (`roles.md`). The same people tag a guest from a reservation or the waitlist, with
+their PIN ([From a reservation or the waitlist](#from-a-reservation-or-the-waitlist)). The note can still
+be written on the to-go form by whoever takes the call, as before.
 
 ### Where the tags show
 
@@ -133,6 +135,31 @@ A screen asks for a customer once, when the form looks the number up or the orde
 while an order is open shows the next time that order is opened. A call asks once, when it starts to ring.
 The book and the waitlist are told when a guest's tags change, and show it at once on every screen that
 has them open.
+
+### From a reservation or the waitlist
+
+This list holds the numbers that **ordered**. Somebody who only ever books a table, or waits for one, is
+not in it. They are tagged where they stand:
+
+1. Open their reservation in the book, or their party on the waitlist, with a tap on the row.
+2. Tap **Tags**, the last of the buttons. It is there when the reservation or the party has a phone
+   number: the tags are kept by the number, so without one there is nothing to keep them by.
+3. Type the **PIN** of somebody who may see the guest list: a manager's or an owner's, and that of anybody
+   the owner handed "See the guest list" to. The host's own PIN is not taken unless hosts were handed it.
+   The PIN is asked every time: the host stand is nobody's back office.
+4. The box of tag buttons opens with the guest's name on it, the same box as here, with the tags they
+   carry already on. Tap tags on or off, or type **Another tag**, and **Save**.
+
+The bar at the bottom says what was kept ("Novak is tagged VIP"), and the tag is on the row at once, on
+every screen. From then on it shows wherever that number turns up: on their next reservation, their next
+wait, their call while it rings and their first order.
+
+- The box has **the tags alone**. The note of a reservation is the reservation's own ("Window table"), and
+  the one line the restaurant keeps about a customer is written here or on the to-go form.
+- It works for a guest who is in this list too: it is the same tags either way.
+- A guest tagged this way who has never ordered is **not in this list** until they do, so their tags are
+  changed from a reservation or a party of theirs, not from here. Their tag still counts as one to offer.
+- The reservation and the party are not touched: no time, table, place in the line or wait changes.
 
 ## Good to know
 
@@ -165,9 +192,11 @@ has them open.
 ## Not built
 
 - Sending the list out of the POS (a file, a print, an e-mail).
-- **Tagging a guest from their reservation or their line of the waitlist.** Tags are put on here, and
-  this list holds the numbers that ordered: somebody who only ever books a table is not in it, so there is
-  no screen to tag them from yet.
+- A guest who was tagged from a reservation and never ordered, in this list: there is no row for a number
+  with no order, so their tags are changed from a reservation or a party of theirs.
+- Tags from a reservation that ended (cancelled, no-show, seated) or a party that left: the button is on
+  the ones still standing. A reservation or a party with no phone number cannot be tagged.
+- Writing the customer's one-line note from a reservation or the waitlist.
 - The tags on the strip of a call once it is answered (the to-go form that opens shows them), on the
   iPhone's own call screen, on a table held on the floor map, on the check of a table once the party is
   seated, on the waitlist's row of booked tables, and in the list of to-go orders.
@@ -230,6 +259,16 @@ has them open.
   (`waiting`, `earlier`, `party`) as the answer is made; nothing is stored with either, and the floor's
   `holds` carry none. App: `Booking.tags` and `WaitParty.tags` (empty from an older hub), shown with
   `GuestTagMark` by `_BookingCard`, `_BookingSheet`, `_PartyCard` and `_PartySheet`.
+- Tagging from the host stand: `GET /reports/guests/tags?phone=` (the same token; declared before
+  `/reports/guests/{phone}`, which would take "tags" for a number) answers `{tags, tag_max, tags_most,
+  phone, carried, tags_by, tags_ms}`: the tags on offer counted over every number that carries one, and
+  what this number carries now. It reads no order, and the number need not have ordered; 422 `bad_value`
+  for a `phone` that is no number. The save is `PUT /reports/guests/{phone}` with `tags` alone, as from the
+  list. App: `TagBox` (`lib/guests_report.dart`), `PosApi.tagBox` (null from an older hub, which answers
+  404); `lib/screens/tag_guest.dart` (`tagGuestHere`: `ManagerPinDialog` with the power `guests`, then
+  `GuestEditDialog.tags`, the box without the note; `canTagGuest`, `tagsSavedWords`); `_Do.tags` in
+  `reservations_screen.dart` and `waitlist_screen.dart`, which take the `device` the PIN is asked with and
+  read again after a save.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
@@ -238,4 +277,5 @@ has them open.
 - Tests: `backend/tests/orders/test_guests.py`, `backend/tests/orders/test_guest_tags.py`,
   `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`,
   `apps/pos_app/test/customers_test.dart` (the form and the strip),
-  `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist).
+  `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist),
+  `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist).

@@ -117,7 +117,8 @@ merges after any disconnect.
   spent, the last visit and favourite dishes; the regulars, the guests who stopped coming and the new ones
   each a list; tags on a guest ("VIP") and their note, written there, and the tags shown to whoever takes
   that guest's call or order, on the call while it rings, on their reservation and on their line of the
-  waitlist; for a manager): `docs/guest-list.md`
+  waitlist; a guest who only booked a table is tagged from the reservation or the waitlist with a
+  manager's PIN; for a manager): `docs/guest-list.md`
 - Contests for the staff (a manager sets one up: the most sales, or the most of a dish or a category, over
   some days, for the roles that take part; the hub adds the board up from the checks; each person sees their
   own place and who is in front, and every number only where the manager says so; it changes no sale and no

@@ -81,6 +81,7 @@ Future<(Terminal, List<Object?>)> pumpBook(
   int Function()? now,
   Size size = const Size(1100, 800),
   bool older = false,
+  String? device, // with it, the opened reservation offers Tags (tag_guest_test.dart)
 }) async {
   final t = await terminal(tester);
   tester.view.physicalSize = size;
@@ -99,7 +100,8 @@ Future<(Terminal, List<Object?>)> pumpBook(
               onPressed: () async => popped.add(
                 await Navigator.of(context).push<Object?>(
                   MaterialPageRoute(
-                    builder: (_) => ReservationsScreen(api: t.api, staffId: who.staffId, nowMs: now ?? () => five),
+                    builder: (_) =>
+                        ReservationsScreen(api: t.api, staffId: who.staffId, nowMs: now ?? () => five, device: device),
                   ),
                 ),
               ),

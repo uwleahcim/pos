@@ -141,6 +141,10 @@ number, the guest's tags under it and the note, over a grid of buttons.
   day, the book follows it there.
 - **Cancel it**: they called to cancel.
 - **No-show**: the time passed and nobody came. Today only.
+- **Tags**: put a tag on this guest, or take one off ("VIP"). It asks for the PIN of somebody who may see
+  the guest list, a manager unless the owner handed it out, then opens the box of tag buttons. The button
+  is there when the reservation has a phone number. The guest need not have ordered
+  (`guest-list.md`, "From a reservation or the waitlist"). It changes nothing about the reservation.
 
 Cancel it and No-show take the reservation out of the standing ones. The bar at the bottom says so with
 **Put back**, for the tap that was a slip.
@@ -272,8 +276,8 @@ and what the guest wrote as the note.
 - **Deposits** and card holds: payments are parked.
 - A suggested table by size, and turn times that say when a table will be free.
 - Standing reservations (every Friday), and a list of regulars from the book.
-- A reservation going onto the guest list, or showing what the guest had last time. Tagging a guest from
-  their reservation: tags are put on in the guest list, which holds the numbers that ordered.
+- A reservation going onto the guest list, or showing what the guest had last time. Tags from a
+  reservation that ended, or from one with no phone number.
 - The guest's tags on a table held on the floor map, and on the waitlist's row of booked tables.
 - A report of reservations, no-shows and covers over many days.
 

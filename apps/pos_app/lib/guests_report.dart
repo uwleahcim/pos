@@ -194,6 +194,44 @@ class GuestKept {
   final int? tagsMs;
 }
 
+/// What the box that tags a guest is handed where the guest list was not read, at a reservation or a party
+/// on the waitlist (`GET /reports/guests/tags`): the [tags] on offer, what a guest's tags are held to, and
+/// the tags the number [carried] when it was asked. The number need not have ordered.
+class TagBox {
+  const TagBox({
+    this.tags = const [],
+    this.tagMax = 24,
+    this.tagsMost = 6,
+    this.phone = '',
+    this.carried = const [],
+    this.tagsBy = '',
+    this.tagsMs,
+  });
+
+  factory TagBox.fromJson(Map<String, dynamic> json) => TagBox(
+    tags: [for (final row in _rows(json['tags'])) GuestTag.fromJson(row)],
+    tagMax: json['tag_max'] is num ? _i(json['tag_max']) : 24,
+    tagsMost: json['tags_most'] is num ? _i(json['tags_most']) : 6,
+    phone: _s(json['phone']),
+    carried: _words(json['carried']),
+    tagsBy: _s(json['tags_by']),
+    tagsMs: json['tags_ms'] is num ? _i(json['tags_ms']) : null,
+  );
+
+  /// Every tag there is to offer, the one most numbers carry first.
+  final List<GuestTag> tags;
+  final int tagMax;
+  final int tagsMost;
+
+  /// The number's digits, as the hub read them.
+  final String phone;
+
+  /// The tags the number carries now, and who put them on last and when.
+  final List<String> carried;
+  final String tagsBy;
+  final int? tagsMs;
+}
+
 /// What the whole list comes to.
 class GuestTotals {
   const GuestTotals({
