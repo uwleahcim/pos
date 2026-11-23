@@ -39,6 +39,7 @@ import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'event_fields.dart';
+import 'guest_tag_mark.dart';
 import 'lot_comp_dialog.dart';
 import 'menu_editor.dart' show ManagerPinDialog;
 import 'menu_panel.dart';
@@ -125,6 +126,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Map<String, String> _allergenNames = const {};
   final _warned = <String>{}; // the dishes whose allergy mark this screen has already said
   String _customerNote = ''; // the line kept about the customer at this order's number
+  List<String> _customerTags = const []; // and the tags a manager put on them in the guest list
   String? _noteFor; // the number's digits it was read for
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
@@ -318,8 +320,9 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
-  /// The line kept about the customer at this order's number ("no MSG, side door"), read once for the
-  /// number: whoever rings the dishes in sees it, on a new order and on the one a caller comes back to.
+  /// The line kept about the customer at this order's number ("no MSG, side door") and the tags a manager
+  /// put on them ("VIP"), read once for the number: whoever rings the dishes in sees them, on a new order
+  /// and on the one a caller comes back to.
   Future<void> _readCustomer(Order order) async {
     final digits = phoneDigits(order.fields['phone']?.toString());
     if (digits == _noteFor) return;
@@ -327,7 +330,12 @@ class _OrderScreenState extends State<OrderScreen> {
     final customer = await widget.api.customer(digits);
     if (!mounted || _noteFor != digits) return;
     final note = customer?.note ?? '';
-    if (note != _customerNote) setState(() => _customerNote = note);
+    final tags = customer?.tags ?? const <String>[];
+    if (note == _customerNote && listEquals(tags, _customerTags)) return;
+    setState(() {
+      _customerNote = note;
+      _customerTags = tags;
+    });
   }
 
   /// The order as it stands on this screen: the last read plus this device's operations not yet in it.
@@ -1703,7 +1711,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 ],
                 onOut: () => unawaited(_wentOut(ready)),
               ),
-            if (order != null && _customerNote.isNotEmpty) _CustomerStrip(note: _customerNote),
+            if (order != null && (_customerNote.isNotEmpty || _customerTags.isNotEmpty))
+              _CustomerStrip(note: _customerNote, tags: _customerTags),
             // an order from the website says so, with how it is paid and what the customer wrote for the
             // whole of it (docs/online-orders.md, "On the screens")
             if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
@@ -2862,12 +2871,16 @@ class _ReadyStrip extends StatelessWidget {
   }
 }
 
-/// The line kept about the customer at the order's number, in a slim strip under the app bar: "no MSG,
-/// side door". It is for whoever takes the order; it does not print in the kitchen.
+/// What the restaurant keeps about the customer at the order's number, in a slim strip under the app bar:
+/// the tags a manager put on them, each a small label ("VIP"), then the line of the note ("no MSG, side
+/// door"). It is for whoever takes the order; none of it prints, in the kitchen or on the bill. One line
+/// where it all fits, as the note alone always was; on a narrow screen the note goes under the labels, so
+/// neither hides the other.
 class _CustomerStrip extends StatelessWidget {
-  const _CustomerStrip({required this.note});
+  const _CustomerStrip({required this.note, this.tags = const []});
 
   final String note;
+  final List<String> tags;
 
   @override
   Widget build(BuildContext context) {
@@ -2880,14 +2893,27 @@ class _CustomerStrip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(
           children: [
-            Icon(Icons.sticky_note_2_outlined, size: 16, color: scheme.onSurfaceVariant),
+            Icon(
+              note.isEmpty ? Icons.sell_outlined : Icons.sticky_note_2_outlined,
+              size: 16,
+              color: scheme.onSurfaceVariant,
+            ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                'Customer note: $note',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (final tag in tags) GuestTagMark(tag, key: ValueKey('customer-tag:$tag')),
+                  if (note.isNotEmpty)
+                    Text(
+                      'Customer note: $note',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+                    ),
+                ],
               ),
             ),
           ],

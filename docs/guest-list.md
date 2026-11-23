@@ -5,9 +5,10 @@ what they spent, when they were last here and what they order most. Three lists 
 **regulars**, the guests who **stopped coming**, and the **new** ones. It is for a manager. It reads the
 orders and changes none of them; the two things written here are a guest's **tags** and their **note**.
 
-Since 16 November 2026 (the Toast comparison, row 30); the tags, and writing the note here, since 23
-November 2026. It grows out of the customers the to-go form already remembers by their number
-(`customers.md`): nothing is typed in for the list itself.
+Since 16 November 2026 (the Toast comparison, row 30). Since 23 November 2026 the tags are put on here
+and shown where that guest's call and order are taken, and the note is written here too. It grows out of
+the customers the to-go form already remembers by their number (`customers.md`): nothing is typed in for
+the list itself.
 
 ## Opening it
 
@@ -104,10 +105,20 @@ Who may write them: whoever may see the guest list, so a manager and an owner, a
 "See the guest list" to (`roles.md`). The note can still be written on the to-go form by whoever takes
 the call, as before.
 
-**Keep a tag to what the staff may read.** Today the tags show in the guest list only. The next piece
-shows them, like the note, to whoever takes that guest's call or order. So "VIP" and "Catering client"
-are good tags, and an opinion of a guest is not. A tag is never printed, on no kitchen ticket and no
-bill, and nothing sends it out of the hub.
+### Where the tags show
+
+- **Here**, under the guest's name and as a list of its own.
+- **On the to-go form**, the moment that guest's call is answered or their number is typed: small labels
+  under the line that says how often they ordered, over the note (`customers.md`, "On the to-go form").
+- **On their order**, in the slim strip under the app bar, before the note, for whoever rings the dishes
+  in (`customers.md`, "On the order").
+
+On the form and on the order they are only read, by anyone who takes the call or the order. So **keep a
+tag to what the staff may read**: "VIP" and "Catering client" are good tags, and an opinion of a guest
+is not. A tag is never printed, on no kitchen ticket and no bill, and nothing sends it out of the hub.
+
+A screen asks for a customer once, when the form looks the number up or the order is opened: a tag put on
+while an order is open shows the next time that order is opened.
 
 ## Good to know
 
@@ -139,8 +150,9 @@ bill, and nothing sends it out of the hub.
 ## Not built
 
 - Sending the list out of the POS (a file, a print, an e-mail).
-- The tags shown where the order is taken (the to-go form, the order screen, a call coming in): that is
-  the next piece.
+- The tags on the strip of a call that is still ringing (it says the number and the phone company's
+  name, as before; the tags come up with the to-go form when the call is answered), in the reservation
+  book, on the waitlist and in the list of to-go orders.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
 - Tagging many guests at once, or a guest who has not ordered in the last 12 months.
 - More notes than the one line.
@@ -187,5 +199,10 @@ bill, and nothing sends it out of the hub.
   worked out in the app from the one answer; a guest is read closely when opened; what was saved is put
   into the list on the screen without reading the year again. `keeps` is false with a hub that sends no
   `tags`, and then nothing offers to write.
+- Where the order is taken: `customer_card` (`backend/src/pos/customers.py`) reads the number's tags from
+  the same store for `GET /customers/lookup`, the words alone; the app's `CustomerCard.tags`
+  (`lib/customers.dart`) shows them with `GuestTagMark` (`lib/screens/guest_tag_mark.dart`) on the to-go
+  form and in the order screen's strip. That call has no token, as it never had, and it writes nothing.
 - Tests: `backend/tests/orders/test_guests.py`, `backend/tests/orders/test_guest_tags.py`,
-  `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`.
+  `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`,
+  `apps/pos_app/test/customers_test.dart` (the form and the strip).

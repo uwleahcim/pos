@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/customers.dart';
 import 'package:pos_app/phone.dart';
+import 'package:pos_app/screens/guest_tag_mark.dart';
 import 'package:pos_app/screens/order_screen.dart';
 
 import 'counter_test.dart';
@@ -9,7 +10,8 @@ import 'phone_test.dart';
 
 /// A customer per phone number (the Toast comparison, 2026-11-15): the to-go form shows who is at the number
 /// the moment a call is answered or a number is typed, with the note kept about them and their past orders;
-/// Same again starts the new order with a past order's dishes; the note shows on the order's screen.
+/// Same again starts the new order with a past order's dishes; the note shows on the order's screen. The
+/// tags a manager put on the customer in the guest list ("VIP") show in both places too (2026-11-23).
 
 const lindaDigits = '7815551234';
 final day = DateTime(2026, 11, 15, 18, 0);
@@ -83,6 +85,14 @@ const againP2 = {
 
 String text(WidgetTester tester, String key) => tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
 
+/// The tags marked inside the widget with this key, as they read, in their order.
+List<String> tagsIn(WidgetTester tester, String key) => [
+  for (final mark in tester.widgetList<GuestTagMark>(
+    find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(GuestTagMark)),
+  ))
+    mark.tag,
+];
+
 /// The form, opened from the To go button, with [phone] typed and the hub asked about it.
 Future<void> typeNumber(WidgetTester tester, String phone) async {
   await tester.enterText(find.byKey(const ValueKey('takeout-phone')), phone);
@@ -124,6 +134,24 @@ void main() {
       final never = CustomerCard.fromJson({'phone': '7815550155', 'known': false});
       expect(never.summary(day), 'No orders from this number yet');
       expect(never.recent, isEmpty);
+    });
+
+    test('the card reads the tags a manager put on them, and none from a hub older than tags', () {
+      expect(CustomerCard.fromJson(linda()).tags, isEmpty); // the hub said no `tags` at all
+      final tagged = CustomerCard.fromJson({
+        ...linda(),
+        'tags': ['Catering client', 'VIP'],
+      });
+      expect(tagged.tags, ['Catering client', 'VIP']); // in the hub's order
+      // what is no word is no tag
+      expect(
+        CustomerCard.fromJson({
+          ...linda(),
+          'tags': ['VIP', 7, null, '  '],
+        }).tags,
+        ['VIP'],
+      );
+      expect(CustomerCard.fromJson({...linda(), 'tags': 'VIP'}).tags, isEmpty);
     });
 
     test('a day is said as people say it', () {
@@ -313,6 +341,54 @@ void main() {
       await stop(tester);
     });
 
+    testWidgets('the tags a manager put on the customer stand over the note on the form, to read', (tester) async {
+      final t = await pumpOrders(
+        tester,
+        const [],
+        before: (hub) async {
+          hub.customers[lindaDigits] = {
+            ...linda(),
+            'tags': ['Catering client', 'VIP'],
+          };
+          // a number that never ordered and has no note, tagged ahead of its first call
+          hub.customers['7815550155'] = {
+            'phone': '7815550155',
+            'known': true,
+            'name': '',
+            'note': '',
+            'tags': ['Friend of the house'],
+            'orders': 0,
+            'first_ms': null,
+            'last_ms': null,
+            'recent': <Object>[],
+          };
+        },
+      );
+      await openForm(tester);
+      expect(find.byKey(const ValueKey('customer-tags')), findsNothing); // nobody yet
+      await typeNumber(tester, '781 555 1234');
+      expect(tagsIn(tester, 'customer-tags'), ['Catering client', 'VIP']);
+      // over the note, under how well the restaurant knows them
+      final summary = tester.getRect(find.byKey(const ValueKey('customer-summary')));
+      final tags = tester.getRect(find.byKey(const ValueKey('customer-tags')));
+      final note = tester.getRect(find.byKey(const ValueKey('customer-note')));
+      expect(summary.bottom <= tags.top && tags.bottom <= note.top, isTrue);
+      // they are read here and written in the guest list: a tap on one does nothing, and nothing is sent
+      await tester.tap(find.text('VIP'));
+      await tester.pumpAndSettle();
+      expect(tagsIn(tester, 'customer-tags'), ['Catering client', 'VIP']);
+      expect(t.hub.notesKept, isEmpty);
+
+      // another number: its own tags, and none of hers
+      await typeNumber(tester, '781 555 0155');
+      expect(find.text('No orders from this number yet'), findsOneWidget);
+      expect(tagsIn(tester, 'customer-tags'), ['Friend of the house']);
+      // and a number nobody tagged shows none
+      await typeNumber(tester, '781 555 0177');
+      expect(find.byKey(const ValueKey('customer-tags')), findsNothing);
+      await stop(tester);
+    });
+
     testWidgets('a note changed on the form is kept when the order starts', (tester) async {
       final t = await pumpOrders(tester, const [], before: (hub) async => hub.customers[lindaDigits] = linda());
       await openForm(tester);
@@ -361,8 +437,9 @@ void main() {
   });
 
   group('on the order', () {
-    Future<Terminal> pumpToGo(WidgetTester tester, {String? phone, Map<String, dynamic>? customer}) async {
+    Future<Terminal> pumpToGo(WidgetTester tester, {String? phone, Map<String, dynamic>? customer, Size? size}) async {
       final t = await terminal(tester);
+      if (size != null) tester.view.physicalSize = size;
       final order = takeout('o5', no: 12, name: 'Linda', channel: 'phone');
       if (phone != null) (order['fields'] as Map<String, dynamic>)['phone'] = phone;
       t.hub.orders.add(order);
@@ -384,6 +461,71 @@ void main() {
       await tester.pump(const Duration(seconds: 5)); // the order is read again and again: the customer once
       await tester.pump();
       expect(t.hub.customersAsked, [lindaDigits]);
+      await stop(tester);
+    });
+
+    testWidgets('the tags a manager put on the customer stand in the strip before the note', (tester) async {
+      await pumpToGo(
+        tester,
+        phone: '781 555 1234',
+        customer: {
+          ...linda(),
+          'tags': ['Catering client', 'VIP'],
+        },
+      );
+      expect(tagsIn(tester, 'customer-note-strip'), ['Catering client', 'VIP']);
+      // the labels first, the note after them on the same line where there is room
+      final vip = tester.getRect(find.byKey(const ValueKey('customer-tag:VIP')));
+      final note = tester.getRect(find.text('Customer note: no MSG, side door'));
+      expect(vip.right <= note.left && vip.center.dy > note.top && vip.center.dy < note.bottom, isTrue);
+      expect(tester.getSize(find.byKey(const ValueKey('customer-note-strip'))).height, lessThan(30)); // one line
+      await stop(tester);
+    });
+
+    testWidgets('tags and no note: the strip says the tags alone', (tester) async {
+      await pumpToGo(
+        tester,
+        phone: '781 555 1234',
+        customer: {
+          ...linda(note: ''),
+          'tags': ['VIP'],
+        },
+      );
+      expect(tagsIn(tester, 'customer-note-strip'), ['VIP']);
+      expect(find.textContaining('Customer note'), findsNothing);
+      await stop(tester);
+    });
+
+    testWidgets('on a small phone six long tags and a long note all stay on the strip', (tester) async {
+      const tags = [
+        'Catering client',
+        'Friend of the house',
+        'Knows the owner well',
+        'Regular at the bar',
+        'Sushi counter regular',
+        'VIP',
+      ];
+      await pumpToGo(
+        tester,
+        size: const Size(320, 568),
+        phone: '781 555 1234',
+        customer: {
+          ...linda(note: 'Allergic to peanuts and shellfish, calls from the car, rings twice at the side door'),
+          'tags': tags,
+        },
+      );
+      expect(tester.takeException(), isNull); // nothing runs off the screen
+      final strip = tester.getRect(find.byKey(const ValueKey('customer-note-strip')));
+      expect(strip.width, 320);
+      // every label is on it, and the note has a line of its own under them: neither hides the other
+      expect(tagsIn(tester, 'customer-note-strip'), tags);
+      final note = tester.getRect(find.textContaining('Customer note: Allergic to peanuts'));
+      for (final tag in tags) {
+        final mark = tester.getRect(find.byKey(ValueKey('customer-tag:$tag')));
+        expect(mark.left >= strip.left && mark.right <= strip.right && mark.bottom <= note.top, isTrue, reason: tag);
+      }
+      expect(note.right <= strip.right && note.bottom <= strip.bottom, isTrue);
+      expect(note.height, lessThan(24)); // the note keeps to one line, as it always did
       await stop(tester);
     });
 

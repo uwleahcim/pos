@@ -7,7 +7,9 @@ same on every hub and in the cloud. The one thing kept here is the note ("no MSG
 person typed about the customer, by the number's digits.
 
 `customer_card` is what a screen shows when the phone rings or a number is typed; `same_again` is a past
-order's dishes as the menu sells them now, for a new order to start from. This is the first slice of the
+order's dishes as the menu sells them now, for a new order to start from. The card carries the tags a
+manager put on the number in the guest list too (`pos.guest_tags`): they are kept there, not here, and only
+read for the card. This is the first slice of the
 customer records the architecture plans for later: no points, no messages to customers. An address is not
 kept either: where a customer's latest delivery went is read off that order, like their name. So is how far
 that address is: what the map said when the fee was picked is on the order, and `saved_trip` hands it to
@@ -21,6 +23,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
+from .guest_tags import GuestTags
 from .maps import may_keep, same_address
 from .orders.delivery_fee import fee_of
 from .sync.oplog import OrderEntry, OrderState, is_delivery, phone_digits
@@ -152,21 +155,30 @@ def _dishes(state: OrderState) -> list[dict[str, Any]]:
 
 
 def customer_card(
-    store: _Store, notes: CustomerNotes, phone: object, *, total: Callable[[OrderState], str]
+    store: _Store,
+    notes: CustomerNotes,
+    phone: object,
+    *,
+    total: Callable[[OrderState], str],
+    tags: GuestTags | None = None,
 ) -> dict[str, Any]:
     """What is known of the customer at this number: the name on their latest order that has one, how many
-    orders they placed (voided ones do not count), when the first and the latest were opened, the note, where
+    orders they placed (voided ones do not count), when the first and the latest were opened, the note, the
+    `tags` a manager put on them in the guest list (read from the `tags` given; none without it), where
     their latest delivery went (`address`, with `address_note`, what was said for the driver that time; a
     catering order's note is about its event and is not handed back), and
     their latest `RECENT` orders that have dishes on them, each with what it came to (`total` works that out)
-    and its dishes. `known` is false for a number with no order and no note, and for one too short to be a
-    customer's. Read from the log's index: only the orders listed are replayed, and the store keeps those."""
+    and its dishes. `known` is false for a number with no order, no note and no tag, and for one too short
+    to be a customer's. Read from the log's index: only the orders listed are replayed, and the store keeps
+    those."""
     digits = phone_digits(phone)
     card: dict[str, Any] = {
         "phone": digits,
         "known": False,
         "name": "",
         "note": "",
+        # the words a manager put on them in the guest list ("VIP"), for whoever takes the call or the order
+        "tags": [],
         "orders": 0,
         "first_ms": None,
         "last_ms": None,
@@ -181,6 +193,9 @@ def customer_card(
     kept = notes.get(digits)
     if kept:
         card["note"] = kept["note"]
+    carried = tags.get(digits) if tags is not None else None
+    if carried:
+        card["tags"] = list(carried["tags"])
     entries = [e for e in store.index(phone=digits) if e.status != "void" and e.first_ms is not None]
     entries.sort(key=lambda e: (e.first_ms, e.order_id), reverse=True)
     if entries:
@@ -209,7 +224,7 @@ def customer_card(
             }
         )
     card["recent"] = recent
-    card["known"] = bool(entries) or bool(card["note"])
+    card["known"] = bool(entries) or bool(card["note"]) or bool(card["tags"])
     return card
 
 

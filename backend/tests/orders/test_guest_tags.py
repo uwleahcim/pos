@@ -2,7 +2,8 @@
 
 A manager puts a few words on a guest ("VIP", "Friend of the house") and writes or corrects the one line the
 restaurant keeps about them, both from the guest list. The list shows each guest's tags and every tag there
-is to offer; the hub keeps who wrote what and when, and nothing else moves by it."""
+is to offer; the hub keeps who wrote what and when, and nothing else moves by it. Whoever takes that guest's
+call or order is shown the tags beside the note (`GET /customers/lookup`); they go on no order and no print."""
 
 from __future__ import annotations
 
@@ -11,8 +12,9 @@ import pytest
 from pos.customers import NOTE_MAX
 from pos.guest_tags import STANDARD, TAG_MAX, TAGS_MOST, GuestTags, clean_tags, offered
 
+from ..printing.fake_printer import decode
 from .test_day import DSN, Hub
-from .test_guests import LINDA, OMAR, PRIYA, SAM, TESS, a_year, guest, guests, one
+from .test_guests import GTC, LINDA, OMAR, PRIYA, SAM, TESS, a_year, guest, guests, one, order
 
 NOBODY = "7815550199"
 """A number that never ordered."""
@@ -279,6 +281,64 @@ def test_writing_about_a_guest_moves_no_figure_of_the_list_and_no_sale():
     kept(h, OMAR, tags=[])
     assert figures() == before
     assert h.check("l5") == h.check("l5") and "tags" not in h.c.get("/orders/l5").text
+
+
+# --- where the order is taken ------------------------------------------------------------------------------
+
+
+def card(h: Hub, phone: str) -> dict:
+    """Who the hub says is at this number, as the to-go form and the order screen ask (no token)."""
+    answer = h.c.get("/customers/lookup", params={"phone": phone})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_whoever_takes_the_call_or_the_order_sees_the_guests_tags():
+    h = a_year()
+    assert card(h, LINDA)["tags"] == [] and card(h, NOBODY)["tags"] == []
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    linda = card(h, "+1 (781) 555-0101")  # a number matches by its digits, however it is typed
+    assert linda["tags"] == ["Catering client", "VIP"] and linda["note"] == "no MSG"
+    assert linda["known"] and linda["orders"] == 5 and linda["name"] == "Linda P."
+    assert card(h, OMAR)["tags"] == []  # a tag is on the number it was put on
+    # the card says the words and no more: who put them on is the guest list's to say
+    assert "tags_by" not in linda and "tags_ms" not in linda
+    # taken off in the guest list, they are gone from the card the next time it is asked
+    kept(h, LINDA, tags=[])
+    assert card(h, LINDA)["tags"] == [] and card(h, LINDA)["note"] == "no MSG"
+
+
+def test_a_tag_alone_makes_a_number_known_before_its_first_order():
+    h = a_year()
+    assert card(h, NOBODY)["known"] is False
+    kept(h, NOBODY, tags=["Friend of the house"])
+    friend = card(h, NOBODY)
+    assert friend["known"] and friend["orders"] == 0 and friend["tags"] == ["Friend of the house"]
+    kept(h, NOBODY, tags=[])
+    assert card(h, NOBODY)["known"] is False
+    assert card(h, "12")["tags"] == []  # a number too short is nobody's
+
+
+def test_the_note_written_where_the_order_is_taken_leaves_the_tags():
+    h = a_year()
+    kept(h, LINDA, tags=["VIP"])
+    # anyone at a terminal still writes the note on the to-go form; the tags are the guest list's
+    assert h.c.put(f"/customers/{LINDA}", json={"note": "side door", "by": "Amy", "tags": []}).status_code == 200
+    assert (card(h, LINDA)["tags"], card(h, LINDA)["note"]) == (["VIP"], "side door")
+    closely = one(h, LINDA)
+    assert (closely["tags_by"], closely["note_by"]) == ("Mike", "Amy")
+
+
+def test_a_tag_goes_on_no_order_and_on_no_bill():
+    h = a_year()
+    kept(h, LINDA, tags=["VIP"], note="no MSG")
+    order(h, "l6", h.now - 60_000, LINDA, "Linda P.", GTC)
+    assert "VIP" not in h.c.get("/orders/l6").text and "VIP" not in str(h.check("l6"))
+    printed = h.c.post("/orders/l6/bill", json={})
+    assert printed.status_code == 202, printed.text
+    words = [line for line in decode(h.printing.store.get(printed.json()["job_id"]).data).text if line.strip()]
+    assert any("Linda P." in line for line in words)  # her bill, by her name
+    assert not any("VIP" in line or "no MSG" in line for line in words)
 
 
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")

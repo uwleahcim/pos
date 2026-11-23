@@ -44,6 +44,7 @@ import 'driver_picker.dart';
 import 'event_fields.dart';
 import 'fee_lookup.dart';
 import 'floor_view.dart';
+import 'guest_tag_mark.dart';
 import 'hand_over.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
@@ -2516,7 +2517,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     ),
   );
 
-  /// What is known of the customer at the number: how often they ordered, the note, their latest orders.
+  /// What is known of the customer at the number: how often they ordered, the tags a manager put on them
+  /// in the guest list, the note, their latest orders.
   Widget _customerCard(ThemeData theme, CustomerCard customer) {
     final scheme = theme.colorScheme;
     final now = DateTime.now();
@@ -2527,6 +2529,17 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       children: [
         const SizedBox(height: 6),
         Text(customer.summary(now), key: const ValueKey('customer-summary'), style: faint),
+        // read here, written in the guest list: who they are to the house, before the first word is said
+        if (customer.tags.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4), // clear of the note's label below
+            child: Wrap(
+              key: const ValueKey('customer-tags'),
+              spacing: 6,
+              runSpacing: 4,
+              children: [for (final tag in customer.tags) GuestTagMark(tag)],
+            ),
+          ),
         const SizedBox(height: 6),
         TextField(
           key: const ValueKey('customer-note'),

@@ -41,7 +41,8 @@ merges after any disconnect.
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
-  note line, their past orders with Same again at today's menu): `docs/customers.md`
+  note line, the tags a manager put on them, their past orders with Same again at today's menu):
+  `docs/customers.md`
 - Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
   by dragging its lines: `docs/location-settings.md`
 - Whose table it is (the server's name on each busy table, a server taking a table by opening it, the host
@@ -114,7 +115,8 @@ merges after any disconnect.
   `docs/kitchen-times.md`
 - The guest list (every customer who ordered with a phone number in the last 12 months: visits, what they
   spent, the last visit and favourite dishes; the regulars, the guests who stopped coming and the new ones
-  each a list; tags on a guest ("VIP") and their note, written there; for a manager): `docs/guest-list.md`
+  each a list; tags on a guest ("VIP") and their note, written there, and the tags shown to whoever takes
+  that guest's call or order; for a manager): `docs/guest-list.md`
 - Contests for the staff (a manager sets one up: the most sales, or the most of a dish or a category, over
   some days, for the roles that take part; the hub adds the board up from the checks; each person sees their
   own place and who is in front, and every number only where the manager says so; it changes no sale and no

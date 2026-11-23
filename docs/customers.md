@@ -20,6 +20,9 @@ typed into it (it waits for the typing to pause). Numbers match by their digits:
   It replaces the phone company's caller-ID name ("WIRELESS CALLER"), which is rarely the person.
 - **One line on how well the restaurant knows them**: `12 orders since Mar 2025, the last on 3 Nov`, or
   `No orders from this number yet`. A voided order does not count; one opened and left empty does.
+- **Their tags**, each a small label ("VIP", "Catering client"), when a manager has put some on them in the
+  guest list (`guest-list.md`, "Tags and the note"). Since 2026-11-23. They are read here and not changed:
+  a tag is put on and taken off in the guest list.
 - **Note about this customer**: one line, 120 characters. It is saved when the order starts, and the tick
   in the box saves it at once, so a note can be written or corrected without starting an order (type the
   number, write the note, tick, Cancel). An empty note takes it off. The hub keeps who wrote it and when.
@@ -60,11 +63,21 @@ side door`, for whoever rings the dishes in, on a new order and on one a caller 
 for the person taking the order. **It does not print in the kitchen**: what the kitchen must know goes on
 the dish, as always.
 
+The customer's tags stand in the same strip, before the note, as small labels: `VIP` `Catering client`
+`Customer note: no MSG, side door`. A customer with tags and no note has a strip with the labels alone.
+Where it all fits it is one line; on a narrow phone the note goes under the labels, so neither hides the
+other. Any order that carries a phone number shows them, as it shows the note. The tags print nowhere
+either, on no kitchen ticket and no bill.
+
 ## Who sees it
 
 Anyone signed in at a terminal sees the customer and may write the note, as anyone may take the order. A
 customer's name and number were already on every order they placed; the note is the one new thing kept
 about them, so keep it to what serves the order.
+
+Anyone who takes the call or the order sees the customer's tags too, and nobody changes them there. The
+tags are put on by a manager in the guest list, so **a tag is something the whole staff may read**: "VIP"
+and "Catering client", not an opinion of a guest.
 
 All the customers on one screen, with their visits, what they spent and their favourite dishes, are for a
 manager: Location › **Guests** (`guest-list.md`). A manager can write the note there too, and put tags on
@@ -85,9 +98,11 @@ time. The customer, the note and Same again need a hub, since the past orders ar
 - **The note** is the one thing stored: `customer_note` (the number's digits, the note, who wrote it and
   when), in the hub's database like location settings, so the second hub has it too. A standby hub answers
   503 `read_only` to a save and the terminal moves on to the hub in charge.
-- `GET /customers/lookup?phone=` answers `known`, `name`, `note`, `orders`, `first_ms`, `last_ms` and
-  `recent` (each with `order_id`, `opened_ms`, `order_no`, `status`, `channel`, `total`, `items`). `known`
-  is false for a number with no order and no note, and for one of fewer than seven digits.
+- `GET /customers/lookup?phone=` answers `known`, `name`, `note`, `tags`, `orders`, `first_ms`, `last_ms`
+  and `recent` (each with `order_id`, `opened_ms`, `order_no`, `status`, `channel`, `total`, `items`).
+  `known` is false for a number with no order, no note and no tag, and for one of fewer than seven digits.
+  `tags` is the words alone, read from the guest list's store (`pos/guest_tags.py`); who put them on is
+  the guest list's to say. Nothing on this call or on `PUT /customers/{phone}` writes a tag.
 - `PUT /customers/{phone}` with `note` and `by` keeps the note (on one line, cut to 120 characters).
 - `GET /orders/{id}/again` answers `lines` (each with `item`, `qty`, `note`, `request`, `unit_price`, `was`)
   and `missing` (each with `item`, `qty`, `why`). It adds nothing: the terminal appends an `add_line` for
@@ -95,6 +110,7 @@ time. The customer, the note and Same again need a hub, since the past orders ar
 
 Code: `backend/src/pos/customers.py`, the phone column in `pos/sync/oplog.py` and `pos/sync/pgstore.py`, the
 three endpoints in `pos/api/app.py`; `apps/pos_app/lib/customers.dart`, the form in
-`screens/orders_screen.dart`, the strip in `screens/order_screen.dart`. Tests:
-`backend/tests/orders/test_customers.py`, `backend/tests/test_orders_index.py`,
+`screens/orders_screen.dart`, the strip in `screens/order_screen.dart`, a tag's label in
+`screens/guest_tag_mark.dart`. Tests: `backend/tests/orders/test_customers.py`,
+`backend/tests/orders/test_guest_tags.py` (the tags on the card), `backend/tests/test_orders_index.py`,
 `apps/pos_app/test/customers_test.dart`.
