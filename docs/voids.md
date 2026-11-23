@@ -106,7 +106,8 @@ in. The older key `removed` of the same report is something else: discounts take
 - A `void_line` on a line that is active and already sent needs `reason`, the id of a reason on the
   location's list, and, with `approval: manager`, an `approval` token from `POST /approvals` with purpose
   `void` for that order. The hub swaps the token for `approved_by` (who it was) and adds `reason_name`;
-  nothing a terminal says about approval itself is kept, and the token never reaches the log.
+  nothing a terminal says about approval itself is kept, and the token never reaches the log. The token is
+  no sign-in: every back-office call turns it away (`roles.md`, "An approval is not a sign-in").
 - It is not a void when the same batch adds a line that `replaces` the voided one and holds at least as
   many: that is a change. Fewer in its place is a void of the difference.
 - A void the rules refuse is left out and reported back with its problems (`unknown_reason`,

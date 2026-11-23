@@ -35,7 +35,7 @@ from ..identity.staff import Directory
 from ..settings import WASTE_REASON_MAX, WASTE_REASONS_MAX, SettingStore, clean_waste
 from ..sync.pgstore import ReadOnlyError as SettingsReadOnly
 from ..waste import MAX_DAYS, NAME_MAX, NOTE_MAX, QTY_MAX, ReadOnlyError, Refused, WasteLog
-from .auth import holder_from, manager_from, powers_of
+from .auth import holder_from, manager_from, powers_of, session_of
 
 DAY = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -144,8 +144,7 @@ def add_waste_log(app: FastAPI) -> None:
     @app.post("/waste/{entry_id}/strike")
     def strike_waste(entry_id: str, body: StrikeIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """Strikes an entry out: the person who wrote it, the same day, or a manager. It stays readable."""
-        token = (authorization or "").removeprefix("Bearer ").strip()
-        grant = app.state.tokens.verify(token) if token else None
+        grant = session_of(app.state.tokens, authorization)
         try:
             if grant is not None and holds(powers_of(app.state), grant.role, "waste"):
                 entry = log().strike(entry_id, by_id=grant.staff_id, by=grant.name, manager=True)

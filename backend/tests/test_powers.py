@@ -331,6 +331,7 @@ DOORS = [
     ("reports", "get", "/reports/today", None),
     ("reports", "get", "/reports/contests/none", None),  # no such contest: 404 for whoever may read one
     ("guests", "get", "/reports/guests", None),
+    ("guests", "get", "/reports/guests/tags", None),
     ("time_clock", "get", f"/timeclock/report?since={T0}&until={T0 + 1000}", None),
     ("menu", "get", "/admin/menu", None),
     ("menu", "get", "/admin/menu/audit", None),
@@ -449,6 +450,73 @@ def test_whoever_holds_the_waste_power_strikes_anyones_entry():
     assert hand(c, waste=["kitchen"]).status_code == 200
     struck = c.post(f"/waste/{entry['id']}/strike", json=as_ken, headers=headers)
     assert (struck.status_code, struck.json()["struck_by"]) == (200, "Ken")
+
+
+# --- an approval is for one thing on one order, and never a sign-in -----------------------------------------
+
+
+def test_every_door_of_the_back_office_asks_for_a_sign_in():
+    c = client()
+    supper(c)
+    for _, method, path, body in DOORS:
+        assert call(c, method, path, body, {}) == 401, path
+    for method, path, body in LOCKED:
+        assert call(c, method, path, body, {}) == 401, path
+
+
+@pytest.mark.parametrize("purpose", ["void", "adjust", "exempt"])
+def test_an_approval_opens_no_door_of_the_back_office(purpose):
+    """A PIN typed at somebody's terminal to approve one thing is not that manager's sign-in: the token it
+    makes is turned away at every door a session opens, the way no token is."""
+    c = client()
+    supper(c)
+    powers, rush = c.get("/settings/powers").json(), c.app.state.settings.get("rush")
+    for who in ("Mike", "Olive"):
+        granted = approval(c, who, purpose)
+        assert granted.status_code == 200
+        headers = {"authorization": f"Bearer {granted.json()['approval']}"}
+        for _, method, path, body in DOORS:
+            assert call(c, method, path, body, headers) == 401, path
+        for method, path, body in LOCKED:
+            assert call(c, method, path, body, headers) == 401, path
+        refused = c.get("/reports/sales", headers=headers)
+        assert refused.json()["detail"]["error"] == "sign_in"
+    # and nothing was written with it: nobody set a rush, wrote a note or changed who may do what
+    assert c.get("/settings/powers").json() == powers
+    assert c.app.state.settings.get("rush") == rush
+    assert c.get("/notes/board", headers=bearer(c, "Mike")).json()["notes"] == []
+
+
+def test_an_approval_turned_away_at_the_back_office_still_approves_its_one_thing():
+    c = client()
+    supper(c)
+    token = approval(c, "Mike", "void").json()["approval"]
+    assert c.get("/reports/day", headers={"authorization": f"Bearer {token}"}).status_code == 401
+    void = payload("e", "void_line", 4, line_id="L2", reason="kitchen-error", by="Amy", by_id="s1", approval=token)
+    answer = send(c, void)
+    assert answer["accepted"] == ["e"] and answer["refused"] == []
+    assert c.get("/orders/o1").json()["lines"]["L2"]["voided"]["approved_by"] == {"staff_id": "s3", "name": "Mike"}
+    # the other way round was always so: a sign-in is no approval
+    session_token = session(c, "Mike").json()["token"]
+    again = payload(
+        "f", "void_line", 5, line_id="L1", reason="kitchen-error", by="Amy", by_id="s1", approval=session_token
+    )
+    assert codes(send(c, again)) == [["needs_approval"]]
+    # and the manager's own sign-in opens what it opened
+    assert c.get("/reports/day", headers=bearer(c, "Mike")).status_code == 200
+
+
+def test_an_approval_strikes_nobody_elses_waste():
+    c = client()
+    supper(c)
+    wings = next(iter(c.app.state.menu.defs.variants))
+    entry = c.post("/waste", json={"staff_id": "s1", "variant_id": wings, "qty": 1, "reason": "Dropped"}).json()
+    token = approval(c, "Mike", "void").json()["approval"]
+    as_ken = {"staff_id": "s6"}
+    with_approval = c.post(f"/waste/{entry['id']}/strike", json=as_ken, headers={"authorization": f"Bearer {token}"})
+    assert (with_approval.status_code, with_approval.json()["detail"]["error"]) == (409, "not_yours")
+    struck = c.post(f"/waste/{entry['id']}/strike", json=as_ken, headers=bearer(c, "Mike"))
+    assert (struck.status_code, struck.json()["struck_by"]) == (200, "Mike")
 
 
 # --- tables ---------------------------------------------------------------------------------------------------

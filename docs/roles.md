@@ -79,6 +79,11 @@ approval, and it is what puts their name on the void.
   others, that bartender would need another role; there is no exception per person yet.
 - **Taking a power back works at once.** A back-office session that is open, and an approval that was given
   and not used yet, are weighed against the table again when they are used.
+- **An approval is not a sign-in.** The PIN typed on a check to approve one void, discount or tax-exempt
+  check is good for that, on that one order, for ten minutes. It opens nothing in the back office: no
+  report, no setting, no guest list, no menu. Those ask for the PIN at their own door, as they always did
+  on the screens. (Since 23 November 2026 the hub itself turns such an approval away there; before, only
+  the app kept the two apart.)
 - **Take tables** is what puts a person in the list a host picks a server from, and gives them "Mine" on the
   floor map. **Give tables out** is what makes the floor map ask whose table it is when they seat a party,
   and lets them say who is in tonight's turn for a table (`table-servers.md`).
@@ -111,7 +116,11 @@ approval, and it is what puts their name on the void.
   `manager` or `owner` in a list, and for `settings`.
 - `pos/api/auth.py`: `holder_from(app.state, authorization, power)` is the check of a back-office call (401
   without a token, 403 `not_allowed` with `role` and `power`); `manager_from` stays the check of everything
-  never handed out. Both read the table on every call.
+  never handed out. Both read the table on every call. Both take a session alone (`session_of`): a token
+  with a `scope` is an approval from `POST /approvals`, signed with the same key and naming the same
+  person, and it is answered 401 `sign_in` like no token. `POST /waste/{id}/strike`, which reads the token
+  itself, takes an approval for nobody special too. The other way round was always so: the operations ask
+  for the scope ("void:o1"), so a session approves nothing.
 - `POST /admin/session` takes `power` (what the session is for; without it, anything a session is for) and
   answers `powers`, what the PIN's owner holds. `POST /approvals` takes a PIN whose role holds the
   `purpose` (`void`, `adjust`, `exempt`). The checks of the operations themselves (`void_ops`, `exempt_ops`,
