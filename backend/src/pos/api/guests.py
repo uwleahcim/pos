@@ -21,7 +21,9 @@
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
 starts takes some seconds for a year of orders, the next ones do not. The write keeps a note and tags and
-nothing else: no order, no sale and no figure of the list moves by it.
+nothing else: no order, no sale and no figure of the list moves by it. When the tags changed, the screens
+with the reservation book or the waitlist open are told to read again (the change feed's `reservations`
+and `waitlist`), since both show a guest's tags; the feed says that something changed, never what.
 """
 
 from __future__ import annotations
@@ -120,6 +122,10 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         try:
             if tags is not None and tags != (kept_tags.get(digits) or {}).get("tags", []):
                 kept_tags.put(digits, tags, by=grant.name, at_ms=now_ms)
+                # The book and the waitlist show a number's tags on its reservation and its party: the
+                # screens that have one open read it again. Only that something changed is told, never what.
+                for topic in ("reservations", "waitlist"):
+                    app.state.feed.changed(topic)
             if note is not None and note != (notes.get(digits) or {}).get("note", ""):
                 notes.put(digits, note, by=grant.name, at_ms=now_ms)
         except (NotesReadOnly, TagsReadOnly) as err:

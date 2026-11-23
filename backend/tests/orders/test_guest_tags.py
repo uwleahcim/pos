@@ -3,14 +3,18 @@
 A manager puts a few words on a guest ("VIP", "Friend of the house") and writes or corrects the one line the
 restaurant keeps about them, both from the guest list. The list shows each guest's tags and every tag there
 is to offer; the hub keeps who wrote what and when, and nothing else moves by it. Whoever takes that guest's
-call or order is shown the tags beside the note (`GET /customers/lookup`); they go on no order and no print."""
+call or order is shown the tags beside the note (`GET /customers/lookup`); they go on no order and no print.
+The host stand sees them too: on the guest's reservation in the book, on their party on the waitlist, and
+while their call still rings (`GET /customers/tags`)."""
 
 from __future__ import annotations
 
 import pytest
 
 from pos.customers import NOTE_MAX
-from pos.guest_tags import STANDARD, TAG_MAX, TAGS_MOST, GuestTags, clean_tags, offered
+from pos.guest_tags import STANDARD, TAG_MAX, TAGS_MOST, GuestTags, clean_tags, offered, with_tags
+from pos.reservations import Reservations
+from pos.waitlist import Waitlist
 
 from ..printing.fake_printer import decode
 from .test_day import DSN, Hub
@@ -339,6 +343,189 @@ def test_a_tag_goes_on_no_order_and_on_no_bill():
     words = [line for line in decode(h.printing.store.get(printed.json()["job_id"]).data).text if line.strip()]
     assert any("Linda P." in line for line in words)  # her bill, by her name
     assert not any("VIP" in line or "no MSG" in line for line in words)
+
+
+# --- at the host stand: the book, the waitlist, the call that rings ------------------------------------------
+
+HOLLY = {"staff_id": "s4"}
+"""The host, who keeps the book and the list: no token, as for every change to them."""
+MONDAY, SATURDAY = "2026-11-16", "2026-11-21"
+
+
+def host_stand() -> Hub:
+    """The year's guests, on a hub whose book and waitlist go by the test's clock (Monday the 16th, nine in
+    the evening)."""
+    h = a_year()
+    state = h.c.app.state
+    state.reservations = Reservations(now_ms=lambda: h.now)
+    state.waitlist = Waitlist(now_ms=lambda: h.now)
+    return h
+
+
+def book_table(h: Hub, name: str, phone: str = "", day: str = MONDAY, time: str = "21:30", **more) -> dict:
+    """A table booked by the host; the hub's whole answer."""
+    body = {**HOLLY, "name": name, "size": 2, "day": day, "time": time, "phone": phone, **more}
+    answer = h.c.post("/reservations", json=body)
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def the_book(h: Hub, day: str | None = None) -> dict:
+    answer = h.c.get("/reservations", params={"day": day} if day else None)
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def wait(h: Hub, name: str, phone: str = "", **more) -> dict:
+    """A party put on the waitlist by the host; the hub's whole answer."""
+    answer = h.c.post("/waitlist", json={**HOLLY, "name": name, "size": 2, "phone": phone, **more})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def the_list(h: Hub) -> dict:
+    answer = h.c.get("/waitlist")
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def tags_of(rows: list[dict]) -> dict[str, list[str]]:
+    return {row["name"]: row["tags"] for row in rows}
+
+
+def ringing(h: Hub, phone: str) -> dict:
+    """What a screen asks while this number's call rings (no token)."""
+    answer = h.c.get("/customers/tags", params={"phone": phone})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_rows_are_answered_with_the_tags_their_number_carries():
+    carried = {LINDA: ["Catering client", "VIP"], OMAR: ["VIP"]}
+    rows = [
+        {"name": "Linda", "phone": "+1 (781) 555-0101"},  # by its digits, however it was typed
+        {"name": "Omar", "phone": OMAR},
+        {"name": "Priya", "phone": PRIYA},  # nobody tagged this number
+        {"name": "Walk-in", "phone": ""},
+        {"name": "No number kept"},
+        {"name": "Short", "phone": "0101"},
+    ]
+    told = with_tags(rows, carried)
+    assert tags_of(told) == {
+        "Linda": ["Catering client", "VIP"],
+        "Omar": ["VIP"],
+        "Priya": [],
+        "Walk-in": [],
+        "No number kept": [],
+        "Short": [],
+    }
+    assert all("tags" not in row for row in rows)  # the rows handed in are left as they were
+    told[0]["tags"].append("mine")
+    assert carried[LINDA] == ["Catering client", "VIP"]  # and so is what the numbers carry
+    assert with_tags([], carried) == [] and with_tags(rows[:1], {}) == [{**rows[0], "tags": []}]
+
+
+def test_a_reservation_shows_the_tags_of_its_number_in_the_book():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"])
+    made = book_table(h, "Linda P.", "781 555 0101", note="window")
+    assert made["booking"]["tags"] == ["Catering client", "VIP"]  # the answer to the booking itself says so
+    book_table(h, "Omar", OMAR, time="21:45")
+    book_table(h, "Walk-in Wu")  # no number: nothing to look up
+    assert tags_of(the_book(h)["booked"]) == {"Linda P.": ["Catering client", "VIP"], "Omar": [], "Walk-in Wu": []}
+    # the tags are the number's, not the booking's: put on later, they are there the next time the book is read
+    kept(h, OMAR, tags=["Friend of the house"])
+    assert tags_of(the_book(h)["booked"])["Omar"] == ["Friend of the house"]
+    # a later day's book says them too, and so does a reservation once it ended
+    ahead = book_table(h, "Linda P.", LINDA, day=SATURDAY, time="18:00")["booking"]
+    assert tags_of(the_book(h, SATURDAY)["booked"]) == {"Linda P.": ["Catering client", "VIP"]}
+    off = h.c.post(f"/reservations/{ahead['id']}/cancel", json={**HOLLY, "why": "cancelled"})
+    assert off.status_code == 200 and off.json()["booking"]["tags"] == ["Catering client", "VIP"]
+    assert tags_of(the_book(h, SATURDAY)["earlier"]) == {"Linda P.": ["Catering client", "VIP"]}
+    # taken off in the guest list, they are gone from the book
+    kept(h, LINDA, tags=[])
+    assert tags_of(the_book(h)["booked"])["Linda P."] == []
+    # nothing was kept with the reservation itself, and the floor map's holds are told no tag
+    assert all("tags" not in vars(b) for b in h.c.app.state.reservations.store.between(0))
+    assert "Friend of the house" not in h.c.get("/floor").text
+
+
+def test_a_caller_with_a_table_booked_is_answered_with_their_tags_too():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    book_table(h, "Linda P.", LINDA)
+    told = h.c.get("/reservations/caller", params={"phone": "(781) 555-0101"}).json()
+    assert [(b["name"], b["tags"]) for b in told["booked"]] == [("Linda P.", ["VIP"])]
+    assert h.c.get("/reservations/caller", params={"phone": OMAR}).json()["booked"] == []
+
+
+def test_a_party_on_the_waitlist_shows_the_tags_of_its_number():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    put = wait(h, "Linda P.", "781-555-0101", quoted_minutes=20)
+    assert put["party"]["tags"] == ["VIP"] and tags_of(put["waiting"]) == {"Linda P.": ["VIP"]}
+    wait(h, "Omar", OMAR)
+    wait(h, "Family Wu")  # most parties leave no number
+    assert tags_of(the_list(h)["waiting"]) == {"Linda P.": ["VIP"], "Omar": [], "Family Wu": []}
+    kept(h, OMAR, tags=["Regular at the bar"])
+    assert tags_of(the_list(h)["waiting"])["Omar"] == ["Regular at the bar"]
+    # a party that went off the list keeps showing them among the earlier ones
+    gone = h.c.post(f"/waitlist/{put['party']['id']}/left", json={**HOLLY, "why": "left"})
+    assert gone.status_code == 200 and gone.json()["party"]["tags"] == ["VIP"]
+    told = the_list(h)
+    assert tags_of(told["earlier"]) == {"Linda P.": ["VIP"]} and "Linda P." not in tags_of(told["waiting"])
+    # the wait to suggest names nobody, tagged or not
+    assert "VIP" not in h.c.get("/waitlist/suggest").text
+
+
+def test_a_call_that_rings_is_told_the_tags_of_its_number_and_nothing_else():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    told = ringing(h, "+1 (781) 555-0101")
+    assert told == {"phone": LINDA, "tags": ["Catering client", "VIP"]}  # no name, no note, no order
+    assert ringing(h, OMAR) == {"phone": OMAR, "tags": []}  # a customer nobody tagged
+    assert ringing(h, NOBODY) == {"phone": NOBODY, "tags": []}  # a number that never ordered
+    assert ringing(h, "anonymous") == {"phone": "", "tags": []}  # a call with no number
+    assert ringing(h, "0101")["tags"] == []  # an extension
+    assert h.c.get("/customers/tags").status_code == 422 and h.c.get("/customers/tags?phone=").status_code == 422
+    kept(h, LINDA, tags=[])
+    assert ringing(h, LINDA)["tags"] == []
+    # asking wrote nothing, and the note is still written the way it was
+    assert h.c.put(f"/customers/{LINDA}", json={"note": "side door", "by": "Amy"}).status_code == 200
+    assert card(h, LINDA)["note"] == "side door"
+
+
+def test_the_book_and_the_waitlist_are_told_to_read_again_when_a_guests_tags_change():
+    h = host_stand()
+    said: list[str] = []
+    h.c.app.state.feed.changed = said.append
+    kept(h, LINDA, tags=["VIP"])
+    assert said == ["reservations", "waitlist"]
+    # the same tags again, a note alone, and what is refused tell nobody
+    kept(h, LINDA, tags=["vip"])
+    kept(h, LINDA, note="no MSG")
+    assert keep(h, LINDA, tags=["x" * (TAG_MAX + 1)]).status_code == 422
+    the_book(h)
+    the_list(h)
+    ringing(h, LINDA)
+    assert said == ["reservations", "waitlist"]
+    kept(h, LINDA, tags=[])
+    assert said == ["reservations", "waitlist"] * 2
+
+
+def test_showing_a_guests_tags_at_the_host_stand_changes_no_reservation_no_party_and_no_sale():
+    h = host_stand()
+    made = book_table(h, "Linda P.", LINDA)["booking"]
+    put = wait(h, "Omar", OMAR)["party"]
+    before = (guests(h)["totals"], h.report()["sales"])
+
+    def bare(row: dict) -> dict:
+        return {key: value for key, value in row.items() if key != "tags"}
+
+    kept(h, LINDA, tags=["VIP"])
+    kept(h, OMAR, tags=["VIP"])
+    assert bare(the_book(h)["booked"][0]) == bare(made) and bare(the_list(h)["waiting"][0]) == bare(put)
+    assert (guests(h)["totals"], h.report()["sales"]) == before
 
 
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")

@@ -91,6 +91,14 @@ class Hub {
   /// list is answered as everything is that this hub has no word for.
   final customers = <String, Map<String, dynamic>>{};
 
+  /// The tags on a number, and nothing else about it (`GET /customers/tags`, what a call that rings asks):
+  /// by the number's digits; null is a hub older than the call, which answers as it does for anything it
+  /// has no word for. [tagAsks] are the numbers asked about, as their digits. [tagsDown] fails the call as
+  /// if no hub answered.
+  Map<String, List<String>>? ringTags;
+  final tagAsks = <String>[];
+  bool tagsDown = false;
+
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
   Map<String, dynamic>? tableTimers = {
@@ -1191,6 +1199,7 @@ class Hub {
     String note = '',
     String by = 'Holly',
     int? calledMs,
+    List<String>? tags, // what its number carries in the guest list; null from a hub older than that
   }) => {
     'id': id,
     'name': name,
@@ -1198,6 +1207,7 @@ class Hub {
     'phone': phone,
     'quoted_minutes': quoted,
     'note': note,
+    'tags': ?tags,
     'at_ms': atMs,
     'by': by,
     'called_ms': calledMs,
@@ -1254,6 +1264,7 @@ class Hub {
     String online = '',
     int? arrivedMs,
     int? atMs,
+    List<String>? tags, // what its number carries in the guest list; null from a hub older than that
   }) {
     // [atMs] is for a test that runs by the real clock: the moment itself, with [time] as its words
     final at = atMs ?? bookedAt(day, time);
@@ -1263,6 +1274,7 @@ class Hub {
       'size': size,
       'phone': phone,
       'note': note,
+      'tags': ?tags,
       'at_ms': at,
       'day': day,
       'time': time,
@@ -2413,6 +2425,12 @@ class Hub {
     if (path == '/customers/lookup') {
       final known = customers[phoneDigits(request.url.queryParameters['phone'])];
       if (known != null) return json(known);
+    }
+    if (path == '/customers/tags' && ringTags != null) {
+      if (tagsDown) throw const SocketException('down');
+      final digits = phoneDigits(request.url.queryParameters['phone']);
+      tagAsks.add(digits);
+      return json({'phone': digits, 'tags': ringTags![digits] ?? const <String>[]});
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
     if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;

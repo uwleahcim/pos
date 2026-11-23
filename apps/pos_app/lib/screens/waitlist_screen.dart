@@ -9,6 +9,7 @@ import '../table_timers.dart' show TimerLevel;
 import '../takeout.dart' show clockTime;
 import '../waitlist.dart';
 import 'booked_mark.dart';
+import 'guest_tag_mark.dart';
 import 'party_dialog.dart';
 import 'theme.dart';
 
@@ -569,6 +570,8 @@ class _PartyCard extends StatelessWidget {
                             key: ValueKey('party-called:${party.id}'),
                             style: small?.copyWith(color: scheme.primary, fontWeight: FontWeight.w600),
                           ),
+                        // who it is, as the guest list has them ("VIP"), before what they asked for
+                        for (final tag in party.tags) GuestTagMark(tag, key: ValueKey('party-tag:${party.id}:$tag')),
                         if (party.note.isNotEmpty) Text(party.note, style: small),
                       ],
                     ),
@@ -655,6 +658,16 @@ class _PartySheet extends StatelessWidget {
                       style: theme.textTheme.titleMedium,
                     ),
                   ],
+                ),
+              ),
+            if (party.tags.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  key: const ValueKey('party-sheet-tags'),
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [for (final tag in party.tags) GuestTagMark(tag)],
                 ),
               ),
             if (party.note.isNotEmpty)

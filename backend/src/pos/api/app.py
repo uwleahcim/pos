@@ -1240,6 +1240,16 @@ def create_app(
             tags=app.state.guest_tags,
         )
 
+    @app.get("/customers/tags")
+    def read_customer_tags(phone: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:
+        """The `tags` a manager put on this number in the guest list, and nothing else about it: what a
+        screen shows while the number's call still rings, before anybody has picked it up. Numbers match
+        by their digits (`phone`); none for a number nobody tagged. It opens no order and names nobody,
+        so every screen that rings can ask it."""
+        digits = phone_digits(phone)
+        carried = app.state.guest_tags.get(digits) if digits else None
+        return {"phone": digits, "tags": list(carried["tags"]) if carried else []}
+
     @app.put("/customers/{phone}")
     def save_customer(phone: str, body: CustomerNoteIn) -> dict[str, Any]:
         """Keeps the one line about the customer at this number (an empty one takes it off). Anyone at a

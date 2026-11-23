@@ -12,6 +12,11 @@ List<Map<String, dynamic>> _rows(Object? value) => [
     for (final row in value)
       if (row is Map) row.cast<String, dynamic>(),
 ];
+List<String> _words(Object? value) => [
+  if (value is List)
+    for (final word in value)
+      if (word is String && word.trim().isNotEmpty) word,
+];
 
 /// A party that is about to sit down: one off the waitlist, or one with a reservation
 /// (docs/reservations.md). The floor map seats either the same way.
@@ -35,6 +40,7 @@ class WaitParty implements ArrivingParty {
     this.phone = '',
     this.quotedMinutes,
     this.note = '',
+    this.tags = const [],
     this.atMs = 0,
     this.by = '',
     this.calledMs,
@@ -56,6 +62,7 @@ class WaitParty implements ArrivingParty {
     phone: _s(json['phone']),
     quotedMinutes: _ms(json['quoted_minutes']),
     note: _s(json['note']),
+    tags: _words(json['tags']),
     atMs: _i(json['at_ms']),
     by: _s(json['by']),
     calledMs: _ms(json['called_ms']),
@@ -83,6 +90,11 @@ class WaitParty implements ArrivingParty {
   /// The wait they were told, counted from when they came; null when no time was given.
   final int? quotedMinutes;
   final String note;
+
+  /// The tags a manager put on [phone] in the guest list ("VIP"; docs/guest-list.md, "Where the tags
+  /// show"): the number's, read by the hub each time, not kept with the party. None for a party that left
+  /// no number, and from a hub older than this.
+  final List<String> tags;
 
   /// When they were put on the list, and who by.
   final int atMs;

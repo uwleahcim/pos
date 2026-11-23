@@ -4,11 +4,12 @@
   still standing, in the order of their times, each with `id`, `name`, `size`, `phone`, `note`, `at_ms`,
   `day`, `time` ("18:30" on the restaurant's clock), `table` and `table_label` (the table held, or empty),
   `by`, `arrived_ms` (the party is here and waits), `soon_ms` and `late_ms` (when its time is near, and
-  when it is past with nobody seated), and `clash` (another reservation holding the same table within
-  `hold_minutes`, or null). `earlier` are the ones that ended, the last first, with `status` (`seated`,
-  `cancelled` or `no_show`), `seated_table`, `seated_label`, `order_id` and `ended_by`. `counts` adds the
-  day up, and `ahead` lists every day from `today` on with a reservation standing (`parties`, `guests`).
-  The answer does not say what time it is, so a book nobody changed reads as unchanged (304).
+  when it is past with nobody seated), `clash` (another reservation holding the same table within
+  `hold_minutes`, or null), and `tags`, the words a manager put on its phone number in the guest list
+  (`pos.guest_tags`; none for no number). `earlier` are the ones that ended, the last first, with `status`
+  (`seated`, `cancelled` or `no_show`), `seated_table`, `seated_label`, `order_id` and `ended_by`. `counts`
+  adds the day up, and `ahead` lists every day from `today` on with a reservation standing (`parties`,
+  `guests`). The answer does not say what time it is, so a book nobody changed reads as unchanged (304).
 - `GET /reservations/caller?phone=781 555 1234`: the reservations still standing, today's and later ones,
   that were made with this number, the soonest first (`booked`, each as above), with `today` and the number
   as it was compared (`phone`: its digits). For the screen that picks up a call: somebody calling about a
@@ -42,6 +43,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ..floor import FloorPlan
+from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..reservations import Booking, ReadOnlyError, Refused, Reservations, day_of
 from ..sync.oplog import phone_digits
@@ -105,6 +107,16 @@ def add_reservations(app: FastAPI) -> None:
             raise HTTPException(404, {"error": "unknown_table", "message": "The floor plan has no such table."})
         return table.id, table.label
 
+    def tagged(told: dict[str, Any]) -> dict[str, Any]:
+        """A day's book with, on each reservation, the tags its number carries in the guest list: the
+        hosts see who is coming. The floor map's holds are told none (`GET /floor`)."""
+        carried = app.state.guest_tags.all()
+        told["booked"] = with_tags(told["booked"], carried)
+        told["earlier"] = with_tags(told["earlier"], carried)
+        if "booking" in told:
+            told["booking"] = with_tags([told["booking"]], carried)[0]
+        return told
+
     def done(change: Any) -> dict[str, Any]:
         """Makes a change, tells the screens, and answers with the book of that day and the reservation
         changed."""
@@ -115,23 +127,24 @@ def add_reservations(app: FastAPI) -> None:
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
         app.state.feed.changed("reservations")
-        return book().book(booking.day, changed=booking)
+        return tagged(book().book(booking.day, changed=booking))
 
     @app.get("/reservations")
     def read_reservations(day: str | None = None) -> dict[str, Any]:
         """A day's reservations (today's without `day`), and the days ahead that have any."""
         try:
-            return book().book(None if day is None else day_of(day))
+            return tagged(book().book(None if day is None else day_of(day)))
         except Refused as err:
             raise refused(err) from err
 
     @app.get("/reservations/caller")
     def caller_reservations(phone: str = "") -> dict[str, Any]:
         """The standing reservations made with a phone number, for whoever picks up its call."""
+        booked = [booking.as_json() for booking in book().of_phone(phone[:200])]
         return {
             "phone": phone_digits(phone[:200]),
             "today": book().today().isoformat(),
-            "booked": [booking.as_json() for booking in book().of_phone(phone[:200])],
+            "booked": with_tags(booked, app.state.guest_tags.all()) if booked else [],
         }
 
     @app.post("/reservations")
