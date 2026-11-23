@@ -480,6 +480,50 @@ class Hub {
   String keepRefusal = 'a guest carries 6 tags at most';
   Completer<void>? keepHeld;
 
+  /// The box that tags a guest from their reservation or the waitlist (`GET /reports/guests/tags`,
+  /// docs/guest-list.md): [tagBox] false is a hub older than it, which takes "tags" for a guest's number
+  /// and knows none. It offers the two standard tags and every tag some number of [ringTags] carries, each
+  /// with how many do, and says what the number asked about carries. [tagBoxAsks] are the numbers asked
+  /// about, each with the token its ask carried; [refuseTagBox] answers with that status instead, and
+  /// [tagBoxDown] fails the call as if no hub answered. A tag kept for a number ([_keepGuest]) is then on
+  /// that number in [ringTags] and on its reservations and its parties, as the real hub answers them.
+  bool tagBox = true;
+  final tagBoxAsks = <(String, String?)>[];
+  int? refuseTagBox;
+  bool tagBoxDown = false;
+
+  http.Response _tagBox(http.Request request) {
+    if (tagBoxDown) throw const SocketException('down');
+    final digits = phoneDigits(request.url.queryParameters['phone']);
+    tagBoxAsks.add((digits, request.headers['authorization']));
+    if (refuseTagBox != null) {
+      return json({
+        'detail': {'error': refuseTagBox == 403 ? 'not_allowed' : 'sign_in', 'message': 'sign in with a manager PIN'},
+      }, refuseTagBox!);
+    }
+    final kept = ringTags ?? const <String, List<String>>{};
+    final counts = <String, int>{'VIP': 0, 'Friend of the house': 0};
+    for (final tags in kept.values) {
+      for (final tag in tags) {
+        counts[tag] = (counts[tag] ?? 0) + 1;
+      }
+    }
+    final offered = counts.entries.toList()
+      ..sort((a, b) => a.value != b.value ? b.value - a.value : a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+    final carried = kept[digits] ?? const <String>[];
+    return json({
+      'tags': [
+        for (final one in offered) {'tag': one.key, 'guests': one.value},
+      ],
+      'tag_max': 24,
+      'tags_most': 6,
+      'phone': digits,
+      'carried': carried,
+      'tags_by': carried.isEmpty ? '' : guestKeeper,
+      'tags_ms': carried.isEmpty ? null : clockNow,
+    });
+  }
+
   Future<http.Response> _keepGuest(http.Request request, String phone) async {
     guestsAuth = request.headers['authorization'];
     final sent = jsonDecode(request.body) as Map<String, dynamic>;
@@ -494,7 +538,10 @@ class Hub {
     final listed = rows.where((row) => row['phone'] == phone).firstOrNull;
     final detail = guestDetails[phone];
     final row = listed ?? (detail?['guest'] as Map<String, dynamic>?) ?? <String, dynamic>{'phone': phone};
-    final was = (note: row['note'] as String? ?? '', tags: [...?(row['tags'] as List?)?.cast<String>()]);
+    final was = (
+      note: row['note'] as String? ?? '',
+      tags: [...?((row['tags'] as List?)?.cast<String>() ?? ringTags?[phone])],
+    );
     final note = sent.containsKey('note') ? (sent['note'] as String).trim().replaceAll(RegExp(r'\s+'), ' ') : was.note;
     final tags = sent.containsKey('tags')
         ? ({for (final tag in (sent['tags'] as List).cast<String>()) tag.toLowerCase(): tag}.values.toList()
@@ -514,6 +561,11 @@ class Hub {
     for (final kept in [?listed, ?(detail?['guest'] as Map<String, dynamic>?)]) {
       kept['note'] = note;
       kept['tags'] = tags;
+    }
+    // the tags are the number's wherever it turns up: on its call, its reservations and its parties
+    ringTags?[phone] = tags;
+    for (final row in [...?bookings, ...?parties]) {
+      if (row.containsKey('tags') && phoneDigits(row['phone'] as String?) == phone) row['tags'] = tags;
     }
     if (detail != null) {
       for (final name in ['note_by', 'note_ms', 'tags_by', 'tags_ms']) {
@@ -2722,6 +2774,9 @@ class Hub {
       guestsAsks++;
       if (guestsHeld != null) await guestsHeld!.future;
       return json(guests!);
+    }
+    if (path == '/reports/guests/tags' && request.method == 'GET' && tagBox && guests != null) {
+      return _tagBox(request);
     }
     if (path.startsWith('/reports/guests/')) {
       if (guests == null) return json({'detail': 'Not Found'}, 404);

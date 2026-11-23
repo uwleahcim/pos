@@ -13,6 +13,12 @@
   favourites), `latest` (their latest visits, each with its day, kind, net and dishes), who wrote the note
   and when (`note_by`, `note_ms`) and who last put the tags on (`tags_by`, `tags_ms`). 404 `no_guest` for a
   number with no visit in the year.
+- `GET /reports/guests/tags` (manager token), with `?phone=` or without: what the box that tags a guest
+  needs and no more, for a screen that has not read the list (a reservation, a party on the waitlist:
+  docs/guest-list.md, "From a reservation or the waitlist"). `tags` is every tag there is to offer, each
+  with how many numbers carry it (`guests`: every number, one that never ordered too), `tag_max` and
+  `tags_most` what the tags are held to, and for a `phone` the tags it `carried` now with who put them on
+  and when (`tags_by`, `tags_ms`). It reads no order. 422 `bad_value` for a `phone` that is no number.
 - `PUT /reports/guests/{phone}` `{note, tags}` (manager token): what the restaurant keeps about the guest
   at this number, either or both; one left out stays as it is, an empty one is taken off. The answer is
   both as they are kept now, each with who wrote it and when. The name behind the token is who wrote it.
@@ -30,13 +36,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..customers import SHORTEST, clean_note
 from ..customers import ReadOnlyError as NotesReadOnly
+from ..guest_tags import TAG_MAX, TAGS_MOST, clean_tags, offered
 from ..guest_tags import ReadOnlyError as TagsReadOnly
-from ..guest_tags import clean_tags, offered
 from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
 from ..sync.oplog import phone_digits
@@ -80,6 +86,29 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             now_ms=now_ms,
             tags=app.state.guest_tags.all(),
         )
+
+    # Before `/reports/guests/{phone}`, which would take "tags" for a number.
+    @app.get("/reports/guests/tags")
+    def read_tags_offered(
+        phone: str | None = Query(None, max_length=40), authorization: str | None = Header(None)
+    ) -> dict[str, Any]:
+        """What the box that tags a guest needs where the list was not read: the tags on offer, what they
+        are held to, and the tags this number carries now. The number need not have ordered."""
+        manager(authorization)
+        digits = phone_digits(phone) if phone is not None else ""
+        if phone is not None and len(digits) < SHORTEST:
+            raise HTTPException(422, {"error": "bad_value", "message": "That is not a phone number."})
+        kept_tags = app.state.guest_tags
+        carried = (kept_tags.get(digits) if digits else None) or {}
+        return {
+            "tags": offered(kept_tags.all()),
+            "tag_max": TAG_MAX,
+            "tags_most": TAGS_MOST,
+            "phone": digits,
+            "carried": list(carried.get("tags") or ()),
+            "tags_by": str(carried.get("by") or ""),
+            "tags_ms": carried.get("at_ms") if carried.get("tags") else None,
+        }
 
     @app.get("/reports/guests/{phone}")
     def read_guest(phone: str, authorization: str | None = Header(None)) -> dict[str, Any]:

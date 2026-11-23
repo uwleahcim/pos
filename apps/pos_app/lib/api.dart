@@ -1836,6 +1836,21 @@ class PosApi {
     await _get('/reports/guests/${phoneDigits(phone)}', headers: _bearer(token), timeout: const Duration(seconds: 30)),
   );
 
+  /// What the box that tags a guest needs where the guest list was not read, at a reservation or a party on
+  /// the waitlist (token of whoever may read the guest list): the tags on offer, what they are held to, and
+  /// the tags this number carries now. The number need not have ordered. Null from a hub older than this.
+  Future<TagBox?> tagBox(String token, String phone) async {
+    try {
+      return TagBox.fromJson(
+        await _get('/reports/guests/tags', query: {'phone': phoneDigits(phone)}, headers: _bearer(token)),
+      );
+    } on ApiException catch (err) {
+      // an older hub takes "tags" for a guest's number and knows none (404)
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
   /// Whoever may read the guest list (token) keeps the [note] and the [tags] of the guest at this number:
   /// either or both; one left out stays as it is, an empty one is taken off. Hands back both as the hub
   /// keeps them now, each with who wrote it and when. 422 with a `message` for tags the hub will not keep;

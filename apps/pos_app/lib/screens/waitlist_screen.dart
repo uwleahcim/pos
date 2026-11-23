@@ -11,6 +11,7 @@ import '../waitlist.dart';
 import 'booked_mark.dart';
 import 'guest_tag_mark.dart';
 import 'party_dialog.dart';
+import 'tag_guest.dart';
 import 'theme.dart';
 
 /// What the waitlist was left with when a party is to sit down: the floor map comes up, and the next table
@@ -38,9 +39,21 @@ class OpenReservations {
 /// The hub keeps the list and tells this screen when another one changed it. Pops a [SeatParty] when a party
 /// is to be seated and an [OpenReservations] for the reservation book; nothing otherwise.
 class WaitlistScreen extends StatefulWidget {
-  const WaitlistScreen({super.key, required this.api, required this.staffId, this.list, this.book, this.nowMs});
+  const WaitlistScreen({
+    super.key,
+    required this.api,
+    required this.staffId,
+    this.list,
+    this.book,
+    this.nowMs,
+    this.device,
+  });
 
   final PosApi api;
+
+  /// This device's name, for the PIN that tags a guest from their line of the list (docs/guest-list.md,
+  /// "From a reservation or the waitlist"). Null offers no Tags button.
+  final String? device;
 
   /// Who is at the screen: the list keeps who put a party on it and who took it off.
   final String staffId;
@@ -58,7 +71,7 @@ class WaitlistScreen extends StatefulWidget {
   State<WaitlistScreen> createState() => _WaitlistScreenState();
 }
 
-enum _Do { seat, called, change, left, noShow }
+enum _Do { seat, called, change, left, noShow, tags }
 
 class _WaitlistScreenState extends State<WaitlistScreen> {
   late Waitlist? _list = widget.list;
@@ -224,7 +237,11 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => _PartySheet(party: party, waited: party.waitedAt(_now())),
+      builder: (_) => _PartySheet(
+        party: party,
+        waited: party.waitedAt(_now()),
+        tags: widget.device != null && canTagGuest(party.phone),
+      ),
     );
     if (picked == null || !mounted) return;
     final api = widget.api, me = widget.staffId;
@@ -241,7 +258,22 @@ class _WaitlistScreenState extends State<WaitlistScreen> {
       case _Do.noShow:
         final list = await _change(party.id, () => api.partyLeft(me, party.id, why: 'no_show'));
         if (list != null && mounted) _undo(party, '${party.name} is off the list as a no-show');
+      case _Do.tags:
+        await _tag(party);
     }
+  }
+
+  /// The guest's tags, put on or taken off from their line of the list by whoever may read the guest list.
+  /// They are the number's and not the party's: the list only shows them, and reads again to do so.
+  Future<void> _tag(WaitParty party) async {
+    final device = widget.device;
+    if (device == null) return;
+    final kept = await tagGuestHere(context, api: widget.api, device: device, name: party.name, phone: party.phone);
+    if (kept == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(key: const ValueKey('guest-tagged'), content: Text(tagsSavedWords(party.name, kept))));
+    await _read();
   }
 
   /// Says a party went off the list, with the way back beside it.
@@ -598,10 +630,13 @@ class _PartyCard extends StatelessWidget {
 
 /// What can be done with a waiting party, as buttons, under what the host knows of it.
 class _PartySheet extends StatelessWidget {
-  const _PartySheet({required this.party, required this.waited});
+  const _PartySheet({required this.party, required this.waited, this.tags = false});
 
   final WaitParty party;
   final int waited;
+
+  /// Whether Tags is among the buttons: the party has a phone number to keep the guest's tags by.
+  final bool tags;
 
   @override
   Widget build(BuildContext context) {
@@ -698,6 +733,7 @@ class _PartySheet extends StatelessWidget {
                 button(_Do.change, 'change', Icons.edit_outlined, 'Change'),
                 button(_Do.left, 'left', Icons.directions_walk, 'Left'),
                 button(_Do.noShow, 'no_show', Icons.person_off_outlined, 'No-show'),
+                if (tags) button(_Do.tags, 'tags', Icons.sell_outlined, 'Tags'),
               ],
             ),
           ],

@@ -486,7 +486,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (staff == null) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
-        builder: (_) => WaitlistScreen(api: widget.api, staffId: staff.staffId, list: _wait, book: _book),
+        builder: (_) => WaitlistScreen(
+          api: widget.api,
+          staffId: staff.staffId,
+          list: _wait,
+          book: _book,
+          device: widget.settings.device,
+        ),
       ),
     );
     if (!mounted) return;
@@ -515,8 +521,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (staff == null) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
-        builder: (_) =>
-            ReservationsScreen(api: widget.api, staffId: staff.staffId, waitlist: _wait != null, day: day, open: open),
+        builder: (_) => ReservationsScreen(
+          api: widget.api,
+          staffId: staff.staffId,
+          waitlist: _wait != null,
+          day: day,
+          open: open,
+          device: widget.settings.device,
+        ),
       ),
     );
     if (!mounted) return;

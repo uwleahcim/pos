@@ -10,6 +10,7 @@ import '../takeout.dart' show clockTime, dayName;
 import 'booking_dialog.dart';
 import 'guest_tag_mark.dart';
 import 'guests_picker.dart';
+import 'tag_guest.dart';
 import 'theme.dart';
 
 /// What the book was left with when a party with a reservation is to sit down: the floor map comes up, and
@@ -43,9 +44,14 @@ class ReservationsScreen extends StatefulWidget {
     this.waitlist = true,
     this.day,
     this.open,
+    this.device,
   });
 
   final PosApi api;
+
+  /// This device's name, for the PIN that tags a guest from their reservation (docs/guest-list.md, "From a
+  /// reservation or the waitlist"). Null offers no Tags button.
+  final String? device;
 
   /// Who is at the screen: the book keeps who booked a table and who ended a reservation.
   final String staffId;
@@ -67,7 +73,7 @@ class ReservationsScreen extends StatefulWidget {
   State<ReservationsScreen> createState() => _ReservationsScreenState();
 }
 
-enum _Do { seat, here, change, cancel, noShow }
+enum _Do { seat, here, change, cancel, noShow, tags }
 
 class _ReservationsScreenState extends State<ReservationsScreen> {
   Book? _book;
@@ -273,7 +279,8 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => _BookingSheet(booking: booking, book: book),
+      builder: (_) =>
+          _BookingSheet(booking: booking, book: book, tags: widget.device != null && canTagGuest(booking.phone)),
     );
     if (picked == null || !mounted) return;
     final api = widget.api, me = widget.staffId;
@@ -290,7 +297,22 @@ class _ReservationsScreenState extends State<ReservationsScreen> {
       case _Do.noShow:
         final after = await _change(booking.id, () => api.cancelBooking(me, booking.id, why: 'no_show'));
         if (after != null && mounted) _undo(booking, '${booking.name} is marked a no-show');
+      case _Do.tags:
+        await _tag(booking);
     }
+  }
+
+  /// The guest's tags, put on or taken off from their reservation by whoever may read the guest list. They
+  /// are the number's and not the reservation's: the book only shows them, and reads again to do so.
+  Future<void> _tag(Booking booking) async {
+    final device = widget.device;
+    if (device == null) return;
+    final kept = await tagGuestHere(context, api: widget.api, device: device, name: booking.name, phone: booking.phone);
+    if (kept == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(key: const ValueKey('guest-tagged'), content: Text(tagsSavedWords(booking.name, kept))));
+    await _read();
   }
 
   /// Says a reservation went out of the book, with the way back beside it.
@@ -727,10 +749,13 @@ class _BookingCard extends StatelessWidget {
 /// What the host knows of a reservation, over what can be done with it, as buttons: everything for one of
 /// today, change and cancel for a later day, nothing for one that ended or whose day is over.
 class _BookingSheet extends StatelessWidget {
-  const _BookingSheet({required this.booking, required this.book});
+  const _BookingSheet({required this.booking, required this.book, this.tags = false});
 
   final Booking booking;
   final Book book;
+
+  /// Whether Tags is among the buttons: the reservation has a phone number to keep the guest's tags by.
+  final bool tags;
 
   @override
   Widget build(BuildContext context) {
@@ -832,6 +857,7 @@ class _BookingSheet extends StatelessWidget {
                   button(_Do.change, 'change', Icons.edit_outlined, 'Change'),
                   button(_Do.cancel, 'cancel', Icons.event_busy_outlined, 'Cancel it'),
                   if (today) button(_Do.noShow, 'no_show', Icons.person_off_outlined, 'No-show'),
+                  if (tags) button(_Do.tags, 'tags', Icons.sell_outlined, 'Tags'),
                 ],
               ),
             ],
