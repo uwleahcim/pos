@@ -1,7 +1,12 @@
-"""Staff sign-in for phase 0: a list of staff with PINs, checked by the backend, never by the app.
+"""Staff sign-in: a list of staff with PINs, checked by the backend, never by the app.
 
 PINs are stored as salted hashes. Five wrong tries on one device lock that device's PIN pad for a minute.
-Tags and face signatures plug into the same `Directory` in the sign-in hardware spike.
+Tags and face signatures plug into the same `Directory`.
+
+Who is on the list: what a manager keeps in the app (Location, Staff and PINs; `pos.identity.staff_list`,
+docs/staff.md) once anything was changed there, and until then the hub's own file (`POS_STAFF`), or the demo
+staff. A hub has one `Directory` for as long as it runs, and a change of the staff is put into it where it
+stands (`Directory.use`).
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,14 +72,30 @@ class Directory:
 
     def __init__(self, staff: list[Staff], *, clock: Callable[[], float] = time.monotonic) -> None:
         self._staff = {s.staff_id: s for s in staff}
+        self._gone: dict[str, str] = {}
         self._clock = clock
         self._failures: dict[str, list[float]] = {}
 
     def __len__(self) -> int:
         return len(self._staff)
 
+    def use(self, staff: Iterable[Staff], gone: Mapping[str, str] | None = None) -> None:
+        """The staff changed (a manager added somebody, a PIN, a role; somebody left): from now on these
+        sign in and nobody else. `gone` are the people who were on the staff once, by id and name, for the
+        history of what they did. The directory stays the one it was, since everything that asks who
+        somebody is holds on to it, and a PIN pad that was locked stays locked."""
+        # each a new dict put in place whole, so a sign-in that is going through the old one finishes on it
+        self._staff = {s.staff_id: s for s in staff}
+        self._gone = dict(gone or {})
+
     def get(self, staff_id: str) -> Staff | None:
         return self._staff.get(staff_id)
+
+    def name_of(self, staff_id: str) -> str | None:
+        """The name to put to an id in what was written down: of somebody on the staff, and of somebody who
+        left it. Never a reason to let them do anything: that is `get`."""
+        person = self._staff.get(staff_id)
+        return person.name if person is not None else self._gone.get(staff_id)
 
     def all(self) -> list[Staff]:
         """Every staff member, as listed: the back office shows them by name."""
@@ -112,9 +133,12 @@ class Directory:
             raise Locked(LOCK_SECONDS - (now - recent[-1]))
 
 
-def demo_directory() -> Directory:
-    """Phase 0 staff. POS_STAFF overrides it: `id:name:role:pin,...` in the environment, never in the repo
-    (on a hub, a line in /opt/pos/.env). The list is the whole staff: whoever is not in it cannot sign in.
+def staff_from_env() -> tuple[list[Staff], str]:
+    """The hub's own staff, and where they are from: `hub` for the list in `POS_STAFF`, `demo` for the demo
+    staff, which signs in when the hub names nobody.
+
+    `POS_STAFF` is `id:name:role:pin,...` in the environment, never in the repo (on a hub, a line in
+    /opt/pos/.env). The list is the whole staff: whoever is not in it cannot sign in.
 
     A hub has to start whatever was typed there. An entry that does not read (not four parts, one of them
     empty, an id already taken) is left out and said in the log; a list in which nothing reads leaves the
@@ -137,17 +161,22 @@ def demo_directory() -> Directory:
     if staff:
         if not any(s.role in ALWAYS for s in staff.values()):
             log.warning("POS_STAFF names no manager and no owner: nobody can approve a void or open Location")
-        return Directory(list(staff.values()))
+        return list(staff.values()), "hub"
     if spec and spec.strip():
         log.warning("POS_STAFF names nobody the hub can read: the demo staff signs in")
-    return Directory(
-        [
-            Staff.with_pin("s1", "Amy", "server", "1111"),
-            Staff.with_pin("s2", "Ben", "bartender", "2222"),
-            Staff.with_pin("s3", "Mike", "manager", "9999"),
-            Staff.with_pin("s4", "Holly", "host", "3333"),
-        ]
-    )
+    # Their PINs are in the guide, so they keep nobody out: the screen says so while one is in use (docs/staff.md).
+    return [
+        Staff.with_pin("s1", "Amy", "server", "1111"),
+        Staff.with_pin("s2", "Ben", "bartender", "2222"),
+        Staff.with_pin("s3", "Mike", "manager", "9999"),
+        Staff.with_pin("s4", "Holly", "host", "3333"),
+    ], "demo"
+
+
+def demo_directory() -> Directory:
+    """The hub's own staff as a directory (`staff_from_env`): what signs in until a manager changes the
+    staff in the app."""
+    return Directory(staff_from_env()[0])
 
 
 def roster(directory: Directory, powers: Mapping[str, Any] | None = None) -> list[dict[str, object]]:

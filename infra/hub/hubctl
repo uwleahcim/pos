@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget | staff [pin <id or name>]
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -692,6 +692,37 @@ case "${1:-status}" in
         ;;
     esac
     ;;
+  staff)
+    # The staff are changed in the app, by a manager (Location, Staff and PINs; docs/staff.md). This is the
+    # way back in when no manager can sign in any more: the list, and a new PIN for one person. The PIN goes
+    # to the API's own program on its standard input, never on a command line, and is in force within the
+    # minute with no restart.
+    case "${2:-list}" in
+      list)
+        compose exec -T api python -m pos.identity.staffctl list
+        ;;
+      pin)
+        who="${3:-}"
+        [[ -n "$who" && $# -eq 3 ]] || { echo "usage: hubctl staff pin <id or name>   (hubctl staff lists everybody)" >&2; exit 2; }
+        read -rsp "New PIN for $who (four digits; it is not shown as you type): " pin
+        echo
+        read -rsp "The same PIN once more: " again
+        echo
+        if [[ "$pin" != "$again" ]]; then
+          unset pin again
+          echo "The two are not the same. Nothing was changed." >&2
+          exit 1
+        fi
+        unset again
+        printf '%s\n' "$pin" | compose exec -T api python -m pos.identity.staffctl pin "$who"
+        unset pin
+        ;;
+      *)
+        echo "usage: hubctl staff | hubctl staff pin <id or name>" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   backup)
     mkdir -p /var/backups/pos
     file="/var/backups/pos/pos-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -699,7 +730,7 @@ case "${1:-status}" in
     echo "$file"
     ;;
   *)
-    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget" >&2
+    echo "usage: hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget | staff [pin <id or name>]" >&2
     exit 2
     ;;
 esac

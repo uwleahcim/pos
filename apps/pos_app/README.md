@@ -21,7 +21,8 @@ line, for example `http://172.19.1.179:8000`. It talks to the first address that
 list when one stops answering, then back up when it returns.
 
 Sign-in is a PIN pad with the front camera beside it; the backend checks the PIN (demo staff: Amy 1111,
-Ben 2222, Mike 9999, the host Holly 3333, or `POS_STAFF` on the backend). A host or manager says whose table
+Ben 2222, Mike 9999, the host Holly 3333, until a manager gives the staff PINs of their own under Location ›
+Staff and PINs, `docs/staff.md`). A host or manager says whose table
 it is when seating a party, every busy table names its server, and **Mine** on the floor map fades the tables
 that are not yours (`docs/table-servers.md`). The camera
 thumbnail in the orders screen is the sign that a small photo is taken when an order is created, fired,

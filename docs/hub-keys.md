@@ -100,7 +100,7 @@ account's key is the exception: it is typed in the app only. `hubctl online key`
 | The first install of a hub, and `sudo hubctl update` after every merge | The app talks to the hub's program; this is what installs and replaces that program (and, with it, Cloudflare's tunnel program) |
 | `sudo hubctl backup`, `hubctl psql`, `hubctl logs` | The database itself, and the hub's own log |
 | Linking the PBX (`hubctl pbx key`, `hubctl pbx link`) | It makes an SSH key on the hub and changes the PBX, which the owner looks at first (`desk-phones.md`) |
-| The staff and their PINs (`POS_STAFF` in `/opt/pos/.env`) | Planned for the app, as its own screen |
+| A new PIN for somebody when no manager can sign in any more (`sudo hubctl staff pin`) | The staff and their PINs are kept in the app now (Location › Staff and PINs, `staff.md`); this is the way back in |
 | The location's name and time zone, the daily caps on map lookups | Rarely changed; in `/opt/pos/.env` |
 
 ## Where a typed key is kept

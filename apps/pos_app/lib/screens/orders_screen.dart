@@ -383,6 +383,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_readClockSetting());
     unawaited(_readContests());
     unawaited(_readPowers());
+    // The staff are a manager's to change in the app (docs/staff.md): somebody added takes tables at once.
+    unawaited(_readRoster());
     try {
       final quotes = await widget.api.quotes();
       if (!mounted || identical(quotes, _quotes)) return;

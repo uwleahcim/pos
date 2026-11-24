@@ -101,6 +101,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, and `pbx` among `COMPOSE_PROFILES`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
 | The keys a manager typed in the app (Location › Keys and connections; `docs/hub-keys.md`): the map service's, Google's, GloriaFood's key for asking and its key for pushes, the Cloudflare Tunnel's token, Apple's push key. Each takes the place of the one in `/opt/pos/.env` below, until `hubctl` is told a key again | Sealed in the database (table `hub_key`); the secret that opens them is `POS_SECRET`, or else the hub's own in the Docker volume `pos_pos-keys` |
+| The staff and their PINs, kept by a manager in the app (Location › Staff and PINs; `docs/staff.md`). Until the first change made there, the staff are `POS_STAFF` in `/opt/pos/.env` (`id:name:role:pin`, comma-separated) or, with no such line, the demo staff; after it that line is not read | The database (table `staff_member`), each PIN as a salted hash |
 | The map service's key for the delivery fee's distance lookup (`POS_MAPS`, `POS_MAPS_KEY`; see `docs/delivery.md`), written by `hubctl maps key` | `/opt/pos/.env`, optional |
 | Google's key for the same lookup when the first service gives no distance (`POS_MAPS_GOOGLE_KEY`; see "A second map service" in `docs/delivery.md`), written by `hubctl maps google` | `/opt/pos/.env`, optional |
 | GloriaFood's key for online orders (`POS_GLORIAFOOD_KEY`; see `docs/online-orders.md`), written by `hubctl online key` | `/opt/pos/.env`, optional |
@@ -122,6 +123,8 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl restart` | Restart the services |
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
+| `hubctl staff` | Everybody on the staff: id, name, role and where their PIN is from, never the PIN; and whether the list is kept in the app or is still the hub's own (`docs/staff.md`) |
+| `hubctl staff pin Mike` | A new PIN for somebody, by name or id, when no manager can sign in any more: asks for it twice without showing it; it works within a minute, with no restart |
 | `hubctl printers kitchen=172.19.1.162/escpos,bar=172.19.1.14/star` | Seed the printers a fired order prints to (writes `POS_PRINTERS` to `.env`, restarts the API); a manager sets them from the app under Location settings › Printers, which wins once saved (`docs/printing.md`) |
 | `hubctl menu import` | List what the bundled menu files would change in the hub's menu after an update: what they would add (a shelf of bottles, say), which categories they would move to another menu (the drinks to their own, `docs/menus.md`) which dishes would take the Chinese names, kitchen labels and stations the original POS had (`docs/original-pos.md`) and which prices they would move (only prices still at the online export's); `--apply` does it and keeps every change made in the menu editor |
 | `hubctl print 172.19.1.162 demo` | Send the demo kitchen ticket to an Ethernet printer (`drawer` kicks the drawer; add `star` for a Star printer in StarPRNT mode) |

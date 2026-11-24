@@ -126,10 +126,8 @@ Location › **Who may do what** (the powers "Take tables" and "Give tables out"
 | kitchen, cashier, driver | no | no |
 
 The demo staff has a host to try it with: **Holly, PIN 3333** (beside Amy 1111, Ben 2222 and Mike 9999).
-A location's own staff is the hub's `POS_STAFF` (`id:name:role:pin`, comma-separated, in `/opt/pos/.env`):
-give the person at the host stand the role `host`. The line is the whole staff and takes `sudo hubctl
-update` to hold; the steps, and what the hub does with a slip in it, are in
-[delivery.md](delivery.md#adding-a-driver).
+A location's own staff is kept in the app, under Location › Staff and PINs ([staff.md](staff.md)): give
+the person at the host stand the role **Host**. It holds at once, and they take tables at once.
 
 ## Without a hub, and on an older hub
 

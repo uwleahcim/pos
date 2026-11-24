@@ -39,6 +39,7 @@ import 'sales_report.dart';
 import 'seated.dart';
 import 'settings.dart';
 import 'shift_notes.dart';
+import 'staff_list.dart';
 import 'suggestions_report.dart';
 import 'takeout.dart';
 import 'timeclock.dart';
@@ -1712,6 +1713,56 @@ class PosApi {
   Future<HubKeys> removeHubKey(String token, String name) async => HubKeys.fromJson(
     await _withFailover(
       (base) => _client.delete(Uri.parse('$base/hub/keys/$name'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  // The staff list (docs/staff.md). ---------------------------------------------------------------------------
+
+  /// Everybody on the staff, as a manager (token from [adminSession]) may see them: name, role, where each
+  /// PIN is from, and what this manager may do to each. Never a PIN. Null from a hub older than the staff
+  /// kept in the app.
+  Future<StaffList?> staffList(String token) async {
+    try {
+      return StaffList.fromJson(await _get('/hub/staff', headers: _bearer(token)));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// Somebody new on the staff, who signs in with [pin] at once. Answers with the list after it
+  /// ([StaffList.added] is the new person's id); an [ApiException] with the hub's words for a name, a role
+  /// or a PIN it does not take.
+  Future<StaffList> addStaff(String token, {required String name, required String role, required String pin}) async =>
+      StaffList.fromJson(
+        await _withFailover(
+          (base) => _client.post(
+            Uri.parse('$base/hub/staff'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode({'name': name, 'role': role, 'pin': pin}),
+          ),
+          timeout: const Duration(seconds: 15),
+        ),
+      );
+
+  /// A person's name, role or PIN changed; what is left out stays as it is. In force at once.
+  Future<StaffList> changeStaff(String token, String staffId, {String? name, String? role, String? pin}) async =>
+      StaffList.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/hub/staff/${Uri.encodeComponent(staffId)}'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode({'name': ?name, 'role': ?role, 'pin': ?pin}),
+          ),
+          timeout: const Duration(seconds: 15),
+        ),
+      );
+
+  /// Somebody is taken off the staff: they sign in no more, and the hub forgets their tag and their face.
+  Future<StaffList> removeStaff(String token, String staffId) async => StaffList.fromJson(
+    await _withFailover(
+      (base) => _client.delete(Uri.parse('$base/hub/staff/${Uri.encodeComponent(staffId)}'), headers: _bearer(token)),
       timeout: const Duration(seconds: 15),
     ),
   );

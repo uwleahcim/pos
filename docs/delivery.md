@@ -470,7 +470,7 @@ A delivery can be handed to anybody who holds the power **Take deliveries out**.
 people whose role is **driver**, and, as with everything, a manager and an owner. Nobody who was on the
 staff before holds anything new.
 
-- **To add a driver**, put them on the hub's staff list with the role `driver` (the steps are under
+- **To add a driver**, add them to the staff with the role **Driver** (the steps are under
   [Adding a driver](#adding-a-driver) below). A driver signs in with their PIN like everybody else.
 - **If your servers or hosts take deliveries out too**, hand them the power under Location › **Who may do
   what** (`roles.md`): the row is "Take deliveries out", in the group Deliveries. They are then offered
@@ -483,30 +483,17 @@ kept in the check's history.
 
 ### Adding a driver
 
-There is no screen for the staff yet: the list is one line on the hub. On the hub:
-
-1. `sudo nano /opt/pos/.env`
-2. Add one line that names **everybody**, a manager among them, each as `id:name:role:pin`, with commas
-   between and no spaces. With the demo staff and two drivers it reads:
-
-   `POS_STAFF=s1:Amy:server:1111,s2:Ben:bartender:2222,s3:Mike:manager:9999,s4:Holly:host:3333,d1:Tom:driver:4444,d2:Wei:driver:5555`
-
-   Keep the ids people already have (`s1` to `s4`): tables, hours and history are kept under them. The
-   drivers' names and PINs here are made up: type your own, a different PIN for each person.
-3. Save (Ctrl+O, Enter, Ctrl+X), then `sudo hubctl update`.
+In the app: Orders screen › the three dots › **Location**, a manager's PIN, **Staff and PINs**, then **Add
+a person**: the driver's name, the role **Driver** and a PIN of four digits that nobody else has. They
+sign in with it at once, and are offered on the next delivery handed out. The whole of it is in
+`staff.md`.
 
 Good to know:
 
-- **The line is the whole staff.** Whoever is not in it can no longer sign in. Without the line the hub
-  uses the demo staff (Amy, Ben, Mike, Holly).
-- **Name a manager or an owner.** A list without one leaves nobody who can approve a void or open
-  Location; the hub says so in its log (`hubctl logs api`) and keeps the list as typed.
-- **A slip does not stop the hub.** An entry that does not have its four parts, or repeats an id, is left
-  out and the log says which one (by its place in the line, never its PIN). If nothing in the line reads,
-  the demo staff signs in.
-- A PIN is a secret: the line lives only in `/opt/pos/.env` on the hub, never in the app or the repository.
-- Before this version the hub did not read `POS_STAFF` from that file at all (the line was never handed to
-  the hub's program), so a staff of your own starts with this update.
+- Before 2026-11-24 the staff were one line in the hub's own file (`POS_STAFF` in `/opt/pos/.env`). A hub
+  that still has the line signs those people in, each with the PIN they have, until the first change made
+  in the app takes the list over as it stands. After that the line is not read, and can be deleted.
+- A PIN is a secret: it is typed in the app once, kept on the hub as a salted hash, and never shown again.
 
 ### Sending one out
 
@@ -764,9 +751,10 @@ Drivers:
 - Who delivers: the power `deliver` (`pos.identity.powers`), standard roles `("driver",)`, and `driver` is
   one of the roles a power can be handed to. `GET /staff` says `delivers` per person. Nothing checks the
   power when an order is handed over: it says who is offered, not who may tap.
-- The staff: `POS_STAFF` reaches the API's container through `infra/hub/docker-compose.yml` (it did not
-  before), and `pos.identity.staff.demo_directory` leaves out what does not read instead of failing at
-  start (`backend/tests/identity/test_identity.py`).
+- The staff: kept in the app since 2026-11-24 (`staff.md`). Until a hub's list is taken over, `POS_STAFF`
+  reaches the API's container through `infra/hub/docker-compose.yml`, and
+  `pos.identity.staff.staff_from_env` leaves out what does not read instead of failing at start
+  (`backend/tests/identity/test_identity.py`).
 - Texts: `out` ("on its way"), once per order (`out_at` already there means it left before). No `delayed`
   text once the stage is `out`.
 - Kitchen screens (`pos.printing.screen`): a to-go order that is `ready`, `out` or `picked_up` is off them.
