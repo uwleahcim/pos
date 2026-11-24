@@ -123,9 +123,9 @@ merges after any disconnect.
   that guest's call or order, on the call while it rings, on their reservation, on their line of the
   waitlist and, once they are seated from either, on the check of their table, with the party's name and
   the note of the reservation or the party, and on the floor map, where the table says the party's name
-  and a star for a tagged guest; a guest who only booked a table is tagged from the
-  reservation or the waitlist with a manager's PIN, and is in the list from then on, before their first
-  order; for a manager):
+  and a star for a tagged guest; a party goes with its dishes when two tables are made one check; a guest
+  who only booked a table is tagged from the reservation or the waitlist with a manager's PIN, and is in
+  the list from then on, before their first order; for a manager):
   `docs/guest-list.md`
 - Contests for the staff (a manager sets one up: the most sales, or the most of a dish or a category, over
   some days, for the roles that take part; the hub adds the board up from the checks; each person sees their

@@ -571,6 +571,19 @@ class Waitlist:
         open after the night is found too; one put back on the list is on no check."""
         return [party for party in self.seated() if party.order_id == order_id] if order_id else []
 
+    def follow(self, emptied: str, kept: str) -> list[Party]:
+        """The check a party was seated on was merged into another, and is closed with nothing on it
+        (docs/moves.md): every party that sat on `emptied` sits on `kept` from now on, so the check that
+        took their dishes says whose it is. The table they first sat down at stays as the list wrote it.
+        Tonight's and last night's are looked at, as `seated` does; the ones that went over are handed
+        back, none when nobody was seated there."""
+        if not emptied or not kept or emptied == kept:
+            return []
+        gone_over = [replace(party, order_id=kept[:80]) for party in self.seated_on(emptied)]
+        for party in gone_over:
+            self.store.put(party)
+        return gone_over
+
     def seated(self) -> list[Party]:
         """Every party that sat down on a check, the first to sit first, among tonight's and last night's:
         who is at the tables now, for the floor map, and whoever of last night is still there."""

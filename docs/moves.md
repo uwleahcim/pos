@@ -39,6 +39,11 @@ it has several):
 - **Seats**: the guests who came sit after the ones already there. With four guests at B5, seat 1 of A7 is
   seat 5 at B5. Dishes rung in for the table stay for the table.
 - **Guests** are added up.
+- **The party the host seated** goes over too: a party seated at A7 from its reservation or from the
+  waitlist is named on B5's check from then on, with its tags and its note, on B5 on the floor map and on
+  B5's row in the list of checks, beside whoever was seated at B5. Nothing is written onto a check for
+  it: the hub notes in the book or on the waitlist which check the party sits on (`guest-list.md`, "When
+  two tables are put together").
 - **Allergies** are told again on the joined check: a seat's on its new seat, the table's together with the
   other table's. The kitchen hears of them as of any allergy told on a check (see
   [allergies.md](allergies.md)).
@@ -144,7 +149,9 @@ it left (`bar-tabs.md`).
   value and approval from the source, once, and only onto the line that came from the discounted dish
   (`_came_along` in `api/app.py`).
 - Merging is those operations for every dish, then `set_field {guests}` and `allergy` on the taking check,
-  and `set_field {merged_into}` and `close` on the emptied one. `merged_into` is an order field.
+  and `set_field {merged_into}` and `close` on the emptied one. `merged_into` is an order field. When the
+  hub takes that `set_field`, the parties seated on the emptied check are put on the check the log says
+  was kept, in the book and on the waitlist (`follow_merges` in `backend/src/pos/api/guests.py`).
 - Moving a table is `set_field {table}` on each of its checks.
 - The MOVED slip: `table_changes(before, after, now_ms)` and `MOVED_SLIP_MS` in `printing/service.py`,
   ticket kind `moved` with `was_at` in `printing/ticket.py`, the setting `tickets.moved`.

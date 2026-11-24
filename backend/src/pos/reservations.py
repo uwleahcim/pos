@@ -617,6 +617,19 @@ class Reservations:
         still open after the night is found too; one put back in the book is on no check."""
         return [booking for booking in self.seated() if booking.order_id == order_id] if order_id else []
 
+    def follow(self, emptied: str, kept: str) -> list[Booking]:
+        """The check a party was seated on was merged into another, and is closed with nothing on it
+        (docs/moves.md): every reservation whose party sat on `emptied` sits on `kept` from now on, so the
+        check that took their dishes says whose it is. Where they first sat down stays as the book wrote
+        it. Today's and yesterday's are looked at, as `seated` does; the ones that went over are handed
+        back, none when nobody was seated there."""
+        if not emptied or not kept or emptied == kept:
+            return []
+        gone_over = [replace(booking, order_id=kept[:80]) for booking in self.seated_on(emptied)]
+        for booking in gone_over:
+            self.store.put(booking)
+        return gone_over
+
     def seated(self) -> list[Booking]:
         """Every reservation whose party sat down on a check, the first to sit first, among today's and
         yesterday's: who is at the tables now, for the floor map, and whoever of last night is still there."""

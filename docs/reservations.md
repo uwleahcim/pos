@@ -180,6 +180,11 @@ the guest carries a tag (`guest-list.md`, "On the floor map"). **The list of che
 after the table ("Table A7 · Chen"), and its search box finds the check by it (`finding-checks.md`,
 "Whose table it is").
 
+**Two tables put together into one check**: the party goes over with its dishes, so the check that is
+kept says whose it is, with whoever was seated there already. The book notes which check the party sits
+on now, and still says the table it first sat down at (`guest-list.md`, "When two tables are put
+together").
+
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The book keeps that table."
 

@@ -50,7 +50,9 @@ November 2026. Nothing to turn on.
 - **A closed check still says it**, for the night and the day after: "the Patels paid an hour ago, which
   check was it?" is answered by typing `patel`. After that the hub no longer looks the party up, and the
   row says the table alone. So does every check of **another day** a manager picks from the calendar.
-- **It follows the check.** **Put back** (the party goes back in the book or on the list) takes the name
+- **It follows the check.** Two tables made one check: the row of the check that is kept says the
+  parties of both, and the emptied check's row says the table alone (`guest-list.md`, "When two tables
+  are put together"). **Put back** (the party goes back in the book or on the list) takes the name
   off the row. A party seated while the list is open is named on it at once; without the hub's live
   updates it takes as long as the list takes to read again.
 - **What the list is told**: for each check, the names of its parties. Never the phone number, never the

@@ -118,7 +118,7 @@ from .contests import add_contests
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
-from .guests import add_guest_list, names_by_check, seated_by_check
+from .guests import add_guest_list, follow_merges, names_by_check, seated_by_check
 from .history import add_history
 from .keys import add_hub_keys, keys_mark, online_setup, sender_for, watch_keys
 from .kitchen import add_kitchen
@@ -1132,6 +1132,8 @@ def create_app(
                 raise HTTPException(503, {"error": "read_only"}) from err
             app.state.menu.take(taken)
         if accepted:
+            # two tables put together: the party seated on the emptied check sits on the one that was kept
+            follow_merges(app.state, accepted)
             app.state.feed.poke()  # the other screens hear of it now, before the tickets print
         printing: PrintService = app.state.printing
         jobs = printing.on_ops(store.for_order, list(accepted))
