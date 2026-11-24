@@ -27,6 +27,12 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei tzdata openssh-client \
   && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --create-home --home-dir /app pos
+# Where a hub keeps the secret that opens the keys a manager typed in the app (pos/keys.py; the `pos-keys`
+# volume in infra/hub/docker-compose.yml). A new volume takes the folder as it is here: the API's own, and
+# nobody else's. The note is there so that it is not an empty folder, which not every Docker copies.
+RUN install -d -m 0700 -o pos -g pos /keys \
+  && echo "The secret this hub seals its keys with is kept here (pos/keys.py). Not part of any backup." > /keys/README \
+  && chown pos:pos /keys/README
 COPY --from=build /install /usr/local
 COPY --from=models /models /app/models
 ENV POS_FACE_MODELS=/app/models

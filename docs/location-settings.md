@@ -38,6 +38,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **Who may do what**: which roles besides the managers and the owners may approve a void, a discount or a
   tax-exempt check, read the reports and the rest: fourteen powers, each with a button per role (see
   `roles.md`).
+- **Keys and connections**, on the same card: the hub's keys for the services outside the restaurant (the
+  map service, Google Maps, GloriaFood, Apple's push key), typed here where they used to be put on the hub
+  in its terminal. A manager's and an owner's only, never handed to another role (see `hub-keys.md`).
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.

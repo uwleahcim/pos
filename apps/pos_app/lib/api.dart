@@ -19,6 +19,7 @@ import 'dish_names.dart';
 import 'faces.dart';
 import 'floor.dart';
 import 'guests_report.dart';
+import 'hub_keys.dart';
 import 'kitchen_notes.dart';
 import 'kitchen_screen.dart';
 import 'kitchen_times.dart';
@@ -1586,6 +1587,55 @@ class PosApi {
   Future<OnlineAsked> onlineFetch() async => OnlineAsked.fromJson(
     await _post('/online/fetch', const <String, dynamic>{}, timeout: const Duration(seconds: 30)),
   );
+
+  // The hub's keys (docs/hub-keys.md). ----------------------------------------------------------------------
+
+  /// The hub's keys for the services outside the restaurant, as a manager (token from [adminSession]) may
+  /// see them: which are in force, where each came from, its last characters. Never a key. Null from a hub
+  /// older than keys typed in the app.
+  Future<HubKeys?> hubKeys(String token) async {
+    try {
+      return HubKeys.fromJson(await _get('/hub/keys', headers: _bearer(token)));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager typed the key [name]: `key`, and for Apple's the text of the .p8 file with `key_id`,
+  /// `team_id` and `bundle_id`. The hub checks it, seals it and uses it at once. Answers how every key
+  /// stands after it. 422 with words for the dialog in its detail when the hub does not take it for a key.
+  Future<HubKeys> saveHubKey(String token, String name, Map<String, String> typed) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/hub/keys/$name'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(typed),
+      ),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// A manager removed the key [name]: none is in force from now on. Answers how every key stands after it.
+  Future<HubKeys> removeHubKey(String token, String name) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.delete(Uri.parse('$base/hub/keys/$name'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// Asks the one map service [via] (`geocodio`, `google`) how far [address] is from the restaurant, to try
+  /// its key out: nothing remembered answers, and nothing is kept. Throws [ApiException] like
+  /// [deliveryDistance].
+  Future<Measured> tryMaps(String address, String via) async {
+    final answer = await _post('/delivery/distance', {
+      'address': address,
+      'via': via,
+    }, timeout: const Duration(seconds: 12));
+    final measured = Measured.of(answer);
+    if (measured == null) throw ApiException('no distance in the answer');
+    return measured;
+  }
 
   // The waitlist (docs/waitlist.md). ------------------------------------------------------------------------
 

@@ -53,7 +53,9 @@ steps. The first is yours alone: the key is made in your GloriaFood account.
    "Third party integrations" as GloriaFood's pages describe it; the labels may read a little differently
    in your admin), add a custom integration, and pick the template **Poll Accepted Order v2**. Saving it
    shows a key. Copy it.
-2. **Put it on the hub.** On the hub, after `sudo hubctl update`:
+2. **Give it to the hub.** In the app: Location › **Keys and connections** › GloriaFood (online orders) ›
+   **Type the key**, paste it, Save. The hub starts asking at once, and **Try it** on the same card asks
+   GloriaFood now (`hub-keys.md`). Or in the hub's terminal, after `sudo hubctl update`:
 
    ```
    sudo hubctl online key

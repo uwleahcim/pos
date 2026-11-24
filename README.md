@@ -75,6 +75,9 @@ merges after any disconnect.
   servers, bartenders, hosts, cashiers or the kitchen, or takes them back: approving a void or a comp, the
   reports, the guest list, the hours, the menu; it starts as the rules always were, and a manager and an
   owner always may do everything): `docs/roles.md`
+- Keys and connections (a manager types the hub's keys for the map service, Google Maps, GloriaFood and
+  Apple's push in the app, under Location, where they used to be put on the hub in its terminal; a typed
+  key is sealed on the hub, in use at once, and never shown again): `docs/hub-keys.md`
 - Tax-exempt checks (a manager marks a check exempt from sales tax with their PIN; the organisation and its
   certificate number stay with the check, print on the bill and are listed in the day's report; every sale
   stays in the sales): `docs/tax-exempt.md`

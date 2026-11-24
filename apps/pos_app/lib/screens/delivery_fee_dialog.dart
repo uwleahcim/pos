@@ -230,7 +230,7 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
                 Text('Looking the distance up', style: theme.textTheme.titleSmall),
                 Text(
                   !maps
-                      ? 'This hub has no map service yet, so the price is picked by hand (hubctl maps key). '
+                      ? 'This hub has no map service yet, so the price is picked by hand (Keys and connections, on this screen). '
                             'The address can be typed now, and is used from the day the hub has one.'
                       : widget.fees.services.length < 2
                       ? 'With the address below, the hub asks its map service how far a delivery is and the '

@@ -6,6 +6,7 @@ talking back. Phase 1 puts the store in PostgreSQL and adds WebSocket pushes; th
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -48,6 +49,7 @@ from ..identity.preferences import PreferenceStore
 from ..identity.staff import Directory, Locked, demo_directory, roster
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Tokens
+from ..keys import HubKeys, keys_from_env
 from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_from_env, may_keep, origin_mark
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
@@ -77,7 +79,7 @@ from ..printing.jobs import PrintJob
 from ..printing.made import kitchen_words, ready_of, with_kitchen
 from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
-from ..push.apns import ApnsSender, sender_from_env
+from ..push.apns import ApnsSender
 from ..push.devices import PushDevices, clean_device, default_push_devices
 from ..push.relay import PushRelay
 from ..reservations import Reservations, default_book_store
@@ -118,6 +120,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list, seated_by_check
 from .history import add_history
+from .keys import add_hub_keys, sender_for, watch_keys
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
@@ -873,6 +876,7 @@ def create_app(
     waitlist: Waitlist | None = None,
     reservations: Reservations | None = None,
     online: OnlineOrders | None = None,
+    keys: HubKeys | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -890,11 +894,16 @@ def create_app(
             # Only where the API is serving, never where this module is merely loaded: an order GloriaFood
             # hands over is put on the POS and printed by the one that asked. Nothing without a key.
             app.state.online.start()
+            app.state.asks_online = True  # and a key typed in the app later starts the asking (`use_keys`)
+        # A key typed on the location's other hub, or taken back with hubctl, is found within the minute.
+        watching = asyncio.create_task(watch_keys(app)) if keys is None else None
         unhook = end_on_stop(app.state.feed)
         try:
             yield
         finally:
             unhook()
+            if watching is not None:
+                watching.cancel()
             if pbx is not None:
                 await pbx.stop()
             await app.state.relay.close()
@@ -928,8 +937,14 @@ def create_app(
         else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0", held=default_held())
     )
     app.state.messenger = messenger if messenger is not None else messenger_from_env()
+    # The keys for the services outside the building: a manager's, typed in the app, over the hub's own file
+    # (`pos.keys`, docs/hub-keys.md). `outside` is the hub's environment as it reads with them in it.
+    app.state.keys = keys if keys is not None else keys_from_env()
+    outside = app.state.keys.environ()
+    app.state.keys_mark = app.state.keys.mark()
+    app.state.asks_online = False
     # how far a delivery goes, asked of a map service when the hub has a key for one (docs/delivery.md)
-    app.state.lookups = lookups if lookups is not None else lookups_from_env()
+    app.state.lookups = lookups if lookups is not None else lookups_from_env(outside)
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
@@ -951,7 +966,7 @@ def create_app(
     app.state.relay = (
         relay
         if relay is not None
-        else PushRelay(app.state.push_devices, pusher if pusher is not None else sender_from_env())
+        else PushRelay(app.state.push_devices, pusher if pusher is not None else sender_for(app.state.keys))
     )
     app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered, app.state.relay)
     app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
@@ -976,7 +991,9 @@ def create_app(
     # Online orders: asked of GloriaFood every minute when the hub has its key, and put on the POS.
     # Sent by GloriaFood itself too, the moment one is accepted, when the hub has the key its pushes carry.
     app.state.online = (
-        online if online is not None else OnlineOrders(source_from_env(), default_inbox(), push_key=push_key_from_env())
+        online
+        if online is not None
+        else OnlineOrders(source_from_env(outside), default_inbox(), push_key=push_key_from_env())
     )
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
@@ -2414,6 +2431,7 @@ def create_app(
     add_history(app)
     add_runs(app)
     add_online_orders(app, number_orders)
+    add_hub_keys(app)
     return app
 
 

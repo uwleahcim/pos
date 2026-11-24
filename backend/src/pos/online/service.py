@@ -132,6 +132,15 @@ class OnlineOrders:
         self._refusal_logged_ms: int | None = None
         self._thread: threading.Thread | None = None
 
+    def use(self, source: Source | None) -> None:
+        """This key for asking from now on, or none: it was typed, replaced or removed while the hub runs
+        (`pos.keys`). Never in the middle of a round. What the last key was answered says nothing about
+        this one, so the status starts over, and whoever asks now is served at once."""
+        with self._asking:
+            self.source = source
+            self._asked_ms = self._answered_ms = None
+            self._failure = self._failing_ms = None
+
     @property
     def configured(self) -> bool:
         """Whether this hub asks GloriaFood: it has the key for that."""

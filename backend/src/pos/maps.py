@@ -360,6 +360,14 @@ class _Asked:
         }
 
 
+def _carried(asked: _Asked, was: Mapping[str, _Asked]) -> _Asked:
+    """`asked` with the day's counts of the same service as it stood before."""
+    before = was.get(asked.maps.name)
+    if before is not None:
+        asked.asked, asked.failed, asked.last_failure = before.asked, before.failed, before.last_failure
+    return asked
+
+
 class Lookups:
     """The hub's lookups: the service when there is one, a second one for when the first gives nothing,
     each answer that may be kept remembered for a day, and neither asked more in a day than the owner
@@ -376,18 +384,35 @@ class Lookups:
         wait: float = TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        asked = [(maps, daily), (fallback, fallback_daily)]
-        self._services = [_Asked(service, most) for service, most in asked if service is not None]
-        # the one that knows the roads as they are right now, when there is one, counted by itself
-        knows = [service.maps for service in self._services if callable(getattr(service.maps, "drive_now", None))]
-        self._traffic = _Asked(knows[0], traffic_daily) if knows else None
         self._daily = daily
+        self._fallback_daily = fallback_daily
+        self._traffic_daily = traffic_daily
         self._wait = wait
         self._clock = clock
         self._lock = threading.Lock()
         self._kept: OrderedDict[tuple[str, str], tuple[float, Trip]] = OrderedDict()
         self._day = 0
         self._spared = 0
+        self._services: list[_Asked] = []
+        self._traffic: _Asked | None = None
+        self.use(maps, fallback)
+
+    def use(self, maps: Maps | None, fallback: Maps | None = None) -> None:
+        """These services from now on: a key was typed, replaced or removed while the hub runs
+        (`pos.keys`). What the day already counted against a service stays counted against it, so typing a
+        key again does not start the day's most over."""
+        with self._lock:
+            was = {asked.maps.name: asked for asked in self._services}
+            roads = self._traffic
+            pairs = [(maps, self._daily), (fallback, self._fallback_daily)]
+            self._services = [_carried(_Asked(service, most), was) for service, most in pairs if service is not None]
+            # the one that knows the roads as they are right now, when there is one, counted by itself
+            knows = [asked.maps for asked in self._services if callable(getattr(asked.maps, "drive_now", None))]
+            self._traffic = (
+                _carried(_Asked(knows[0], self._traffic_daily), {roads.maps.name: roads} if roads is not None else {})
+                if knows
+                else None
+            )
 
     @property
     def ready(self) -> bool:

@@ -56,9 +56,12 @@ jobs:
         run: docker build -t pos-backend:ci backend
       - name: Smoke test the image
         run: |
-          docker run -d --name api -p 8000:8000 pos-backend:ci
+          docker run -d --name api -p 8000:8000 -v pos-keys-ci:/keys pos-backend:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/health
+          # A new volume at /keys, as the hub's compose file mounts one: the API's own user must have been
+          # able to make its sealing secret there (pos/keys.py), readable by nobody else.
+          docker exec api sh -c 'test -s /keys/vault.key && test "$(stat -c %a /keys/vault.key)" = 600'
           # The face models baked into the image load on a thread after the start: the API must say they are ready.
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/faces/status | grep -q '"ready":true' && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/faces/status | tee /dev/stderr | grep -q '"ready":true'

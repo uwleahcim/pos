@@ -325,13 +325,16 @@ Maps, can be added after it ([below](#google-maps-as-the-second-service)).
    500 by itself.
 2. **Make a key** at <https://dash.geocod.io/apikey> and **turn on its Distance permission** there. A new
    key can only find addresses until that is on, and the form would say the map service refused the key.
-3. **Put the key on the hub.** On the hub: `sudo hubctl maps key`, and paste the key when asked. It is not
-   shown as it is pasted and is never part of a command, so it is in no command history. The hub keeps it
-   in `/opt/pos/.env` and restarts its API (a few seconds).
+3. **Give the key to the hub.** In the app: Location › **Keys and connections** › Map service (Geocodio) ›
+   **Type the key**, paste it, Save. The hub uses it at once (`hub-keys.md`). Or in the hub's terminal, as
+   before: `sudo hubctl maps key`, and paste the key when asked. It is not shown as it is pasted and is
+   never part of a command, so it is in no command history. The hub keeps it in `/opt/pos/.env` and
+   restarts its API (a few seconds).
 4. **Type the restaurant's own address** in the app: Back office › Location › **Delivery fee** ›
    **Restaurant address**, in full, with the town and the state. Save. The row under Location then ends
    "· distance looked up".
-5. **Try it**: `sudo hubctl maps test "12 Elm St, Winchester, MA"` answers like "3.2 mi, 9 min: $5.00 (up
+5. **Try it**: **Try it** on the key's card in the app asks the service how far an address is. In the
+   terminal, `sudo hubctl maps test "12 Elm St, Winchester, MA"` answers like "3.2 mi, 9 min: $5.00 (up
    to 4.5 miles)", or says why not in the form's own words. When every address "could not be found", the one
    to check is the restaurant's own.
 
@@ -342,8 +345,8 @@ its own. `sudo hubctl maps forget` takes the key off the hub: nothing is looked 
 by hand again. (The key itself is deleted on the service's own page.)
 
 Until the hub has a key, the dialog under Location says "This hub has no map service yet, so the price is
-picked by hand (hubctl maps key)." The address can be typed all the same, and is used from the day the hub
-has one.
+picked by hand (Keys and connections, on this screen)." The address can be typed all the same, and is used
+from the day the hub has one.
 
 #### Google Maps as the second service
 
@@ -364,9 +367,10 @@ Google's own pages said on 2026-11-18 and 2026-11-19 (<https://developers.google
    **API restrictions** choose to restrict the key and leave only **Routes API** ticked, so the key is good
    for nothing else. Google's page warns that the owner pays for what anybody does with an unrestricted
    key.
-5. **Put the key on the hub**: `sudo hubctl maps google`, and paste the key when asked. Like the first
-   key it is not shown, is never part of a command, and is kept in `/opt/pos/.env`. The hub restarts its
-   API (a few seconds).
+5. **Give the key to the hub**: in the app, Location › **Keys and connections** › Google Maps › **Type the
+   key** (`hub-keys.md`). Or in the terminal: `sudo hubctl maps google`, and paste the key when asked. Like
+   the first key it is not shown, is never part of a command, and is kept in `/opt/pos/.env`. The hub
+   restarts its API (a few seconds).
 6. **Try it**: `sudo hubctl maps test google "12 Elm St, Winchester, MA"` asks Google alone and answers
    like "3.3 mi, 10 min: $5.00 (up to 4.5 miles) [Google Maps]", or says why not. (`sudo hubctl maps test
    "..."` without the word google asks as a form does, the first service and then Google, and ends with the
