@@ -119,7 +119,8 @@ number, the guest's tags under it and the note, over a grid of buttons.
 - **Tags**: put a tag on this guest, or take one off ("VIP"). It asks for the PIN of somebody who may see
   the guest list, a manager unless the owner handed it out, then opens the box of tag buttons. The button
   is there when the party gave a phone number. The guest need not have ordered (`guest-list.md`, "From a
-  reservation or the waitlist"). The party keeps its place and its wait.
+  reservation or the waitlist"). The party keeps its place and its wait. A guest tagged here who has not
+  ordered yet is in the guest list from then on, under the party's name.
 
 Left and No-show take the party off the list. The bar at the bottom says so with **Put back**, for the tap
 that was a slip.
@@ -181,7 +182,8 @@ it as any check opened by mistake.
 - The party's name on the check or on the table.
 - A report of waits over many days.
 - A booked party on this list: reservations have their own book (`reservations.md`), one tap from here.
-- Waitlist guests going onto the guest list. Tags for a party that left or gave no phone number.
+- Waitlist guests going onto the guest list by themselves (a guest who was tagged from the waitlist is
+  listed; one who was not is not). Tags for a party that left or gave no phone number.
 
 ## For developers
 

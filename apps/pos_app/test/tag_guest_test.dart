@@ -155,6 +155,7 @@ void main() {
       expect(phone, omar);
       expect(sent, {
         'tags': ['VIP'],
+        'name': 'Okafor', // what the reservation calls them: the guest list has no order to read a name from
       });
       expect(t.hub.guestsAuth, 'Bearer tok-admin');
       // the book says so and shows the tag on the reservation at once
@@ -178,6 +179,7 @@ void main() {
       await tapKey(tester, 'guest-edit-save');
       expect(t.hub.guestKeeps.single.$2, {
         'tags': ['Catering client'],
+        'name': 'Linda P.',
       });
       expect(find.text('Linda P. is tagged Catering client'), findsOneWidget);
       expect(tagsIn(tester, key('booking:b1')), ['Catering client']);
@@ -189,7 +191,7 @@ void main() {
       expect(onIn(tester), ['Catering client']);
       await tapKey(tester, 'guest-tag:Catering client');
       await tapKey(tester, 'guest-edit-save');
-      expect(t.hub.guestKeeps.last.$2, {'tags': <String>[]});
+      expect(t.hub.guestKeeps.last.$2, {'tags': <String>[], 'name': 'Linda P.'});
       expect(find.text('Linda P. carries no tags now'), findsOneWidget);
       expect(tagsIn(tester, key('booking:b1')), isEmpty);
       await stop(tester);
@@ -205,6 +207,7 @@ void main() {
       await tapKey(tester, 'guest-edit-save'); // typed and not added: it is meant too
       expect(t.hub.guestKeeps.single.$2, {
         'tags': ['wine club'],
+        'name': 'Okafor',
       });
       expect(tagsIn(tester, key('booking:b2')), ['wine club']);
       await stop(tester);
@@ -359,6 +362,7 @@ void main() {
       expect(phone, omar);
       expect(sent, {
         'tags': ['Friend of the house'],
+        'name': 'Garcia', // what the waitlist calls the party
       });
       expect(
         find.descendant(of: key('guest-tagged'), matching: find.text('Garcia is tagged Friend of the house')),

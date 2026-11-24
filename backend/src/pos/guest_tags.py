@@ -15,6 +15,12 @@ whoever takes it. So do the screens of the host stand: a reservation and a party
 with the tags their number carries (`with_tags`), and a call that rings asks for its number's
 (`GET /customers/tags`). It stays on the hub: it is on no kitchen ticket and no bill, and nothing sends it
 out.
+
+A number can be tagged before it ever ordered, from its reservation or its line of the waitlist. The guest
+list shows such a number too, and has no order to read a name from, so the name it was tagged by is kept
+with its tags (`put(..., name=)`, `rename`, `names`): one line of `NAME_MAX` letters at most, for as long as
+the number carries a tag. Taking every tag off drops the name with them. It is shown in the guest list and
+nowhere else; a number that ordered is called what its order calls it.
 """
 
 from __future__ import annotations
@@ -32,6 +38,16 @@ TAGS_MOST = 6
 """How many tags one guest carries at most: more than a line of them says nothing at a glance."""
 STANDARD = ("VIP", "Friend of the house")
 """The tags offered before any guest carries them."""
+NAME_MAX = 40
+"""How long the name kept with a number's tags may be: a line of the guest list."""
+
+
+def clean_name(name: object) -> str:
+    """The name a number was tagged by, as it may be kept: on one line, what cannot be printed taken out,
+    cut to `NAME_MAX`. Nothing that is no words is no name."""
+    if not isinstance(name, str):
+        return ""
+    return " ".join("".join(ch if ch.isprintable() else " " for ch in name).split())[:NAME_MAX].rstrip()
 
 
 def clean_tags(tags: object, known: Iterable[str] = ()) -> list[str]:
@@ -87,6 +103,7 @@ class GuestTags:
 
     def __init__(self) -> None:
         self._tags: dict[str, dict[str, Any]] = {}
+        self._names: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def get(self, phone: str) -> dict[str, Any] | None:
@@ -94,17 +111,37 @@ class GuestTags:
             kept = self._tags.get(phone)
             return {**kept, "tags": list(kept["tags"])} if kept else None
 
-    def put(self, phone: str, tags: Sequence[str], *, by: str, at_ms: int) -> dict[str, Any]:
-        """Keeps these tags for the number (none too: they were taken off) with who said so and when."""
+    def put(self, phone: str, tags: Sequence[str], *, by: str, at_ms: int, name: str | None = None) -> dict[str, Any]:
+        """Keeps these tags for the number (none too: they were taken off) with who said so and when.
+        `name` is what the number was called where it was tagged (its reservation, its party): it is kept
+        with the tags, and with no name said the one it had stays. A number left with no tag keeps no name."""
         kept = {"tags": list(tags), "by": by, "at_ms": at_ms}
+        said = clean_name(name)
         with self._lock:
             self._tags[phone] = kept
+            if not kept["tags"]:
+                self._names.pop(phone, None)
+            elif said:
+                self._names[phone] = said
         return {**kept, "tags": list(tags)}
+
+    def rename(self, phone: str, name: str | None) -> None:
+        """Keeps the name alone, for a number that carries a tag: who put its tags on, and when, stay. An
+        empty name is no name said, and a number with no tag keeps none."""
+        said = clean_name(name)
+        with self._lock:
+            if said and (self._tags.get(phone) or {}).get("tags"):
+                self._names[phone] = said
 
     def all(self) -> dict[str, list[str]]:
         """The tags of every number that carries one."""
         with self._lock:
             return {phone: list(kept["tags"]) for phone, kept in self._tags.items() if kept["tags"]}
+
+    def names(self) -> dict[str, str]:
+        """The name kept with the tags of each number that carries one and was tagged by a name."""
+        with self._lock:
+            return dict(self._names)
 
 
 SCHEMA = """
@@ -114,6 +151,7 @@ CREATE TABLE IF NOT EXISTS guest_tag (
     updated_by TEXT NOT NULL DEFAULT '',
     updated_ms BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE guest_tag ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -154,23 +192,42 @@ class PgGuestTags(GuestTags):
             return None  # a standby whose primary has not been updated yet
         return None if row is None else {"tags": _listed(row[0]), "by": row[1], "at_ms": int(row[2])}
 
-    def put(self, phone: str, tags: Sequence[str], *, by: str, at_ms: int) -> dict[str, Any]:
+    def _write(self, sql: str, args: Sequence[Any]) -> None:
+        """One write. A table that has no `name` yet (this hub took over from one that ran before the name
+        was kept, and has not been restarted since) is given the column, and the write is made again."""
         from psycopg import errors
-        from psycopg.types.json import Jsonb
 
         try:
-            with self._pool.connection() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO guest_tag (phone, tags, updated_by, updated_ms) VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (phone) DO UPDATE
-                        SET tags = EXCLUDED.tags, updated_by = EXCLUDED.updated_by, updated_ms = EXCLUDED.updated_ms
-                    """,
-                    (phone, Jsonb(list(tags)), by, at_ms),
-                )
+            try:
+                with self._pool.connection() as conn:
+                    conn.execute(sql, args)
+            except errors.UndefinedColumn:
+                with self._pool.connection() as conn:
+                    conn.execute(SCHEMA)
+                    conn.execute(sql, args)
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
+
+    def put(self, phone: str, tags: Sequence[str], *, by: str, at_ms: int, name: str | None = None) -> dict[str, Any]:
+        from psycopg.types.json import Jsonb
+
+        said = clean_name(name) if tags else ""
+        self._write(
+            """
+            INSERT INTO guest_tag (phone, tags, updated_by, updated_ms, name) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (phone) DO UPDATE
+                SET tags = EXCLUDED.tags, updated_by = EXCLUDED.updated_by, updated_ms = EXCLUDED.updated_ms,
+                    name = CASE WHEN %s THEN guest_tag.name ELSE EXCLUDED.name END
+            """,
+            # with tags and no name said, the name the number had stays
+            (phone, Jsonb(list(tags)), by, at_ms, said, bool(tags) and not said),
+        )
         return {"tags": list(tags), "by": by, "at_ms": at_ms}
+
+    def rename(self, phone: str, name: str | None) -> None:
+        said = clean_name(name)
+        if said:
+            self._write("UPDATE guest_tag SET name = %s WHERE phone = %s AND tags <> '[]'::jsonb", (said, phone))
 
     def all(self) -> dict[str, list[str]]:
         from psycopg import errors
@@ -181,6 +238,18 @@ class PgGuestTags(GuestTags):
         except errors.UndefinedTable:
             return {}  # a standby whose primary has not been updated yet
         return {str(phone): _listed(tags) for phone, tags in rows}
+
+    def names(self) -> dict[str, str]:
+        from psycopg import errors
+
+        try:
+            with self._pool.connection() as conn:
+                rows = conn.execute(
+                    "SELECT phone, name FROM guest_tag WHERE tags <> '[]'::jsonb AND name <> ''"
+                ).fetchall()
+        except (errors.UndefinedTable, errors.UndefinedColumn):
+            return {}  # a standby whose primary has not been updated yet
+        return {str(phone): str(name) for phone, name in rows}
 
 
 def default_guest_tags() -> GuestTags:

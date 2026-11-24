@@ -476,6 +476,39 @@ class Hub {
   /// [keepHeld] is set no answer goes out until a test completes it.
   final guestKeeps = <(String, Map<String, dynamic>)>[];
   String guestKeeper = 'Mike';
+
+  /// The name each number was tagged by (the `name` sent with its tags), kept while it carries a tag, as
+  /// the real hub does. A hub whose list says `tagged` (the numbers that carry a tag and have no order in
+  /// the year) keeps that list too: a number of no guest that is given a tag gets a row there under its
+  /// name, and one whose last tag is taken off leaves it.
+  final tagNames = <String, String>{};
+
+  /// The row the real hub lists for a number that carries a tag and has no visit in the year.
+  static Map<String, dynamic> taggedRow(
+    String phone,
+    String name,
+    List<String> tags, {
+    String note = '',
+    int? sinceMs,
+    int ordersEver = 0,
+  }) => {
+    'phone': phone,
+    'name': name,
+    'note': note,
+    'tags': tags,
+    'visits': 0,
+    'spent': '0.00',
+    'per_visit': null,
+    'last': null,
+    'first': null,
+    'since_ms': sinceMs,
+    'orders_ever': ordersEver,
+    'lately': 0,
+    'regular': false,
+    'lapsed': false,
+    'new': false,
+    'favourites': <Map<String, dynamic>>[],
+  };
   int? refuseKeep;
   String keepRefusal = 'a guest carries 6 tags at most';
   Completer<void>? keepHeld;
@@ -534,7 +567,9 @@ class Hub {
         'detail': {'error': refuseKeep == 422 ? 'bad_value' : 'sign_in', 'message': keepRefusal},
       }, refuseKeep!);
     }
-    final rows = (guests?['guests'] as List? ?? const []).cast<Map<String, dynamic>>();
+    final ordered = (guests?['guests'] as List? ?? const []).cast<Map<String, dynamic>>();
+    final others = guests?['tagged'] is List ? (guests!['tagged'] as List).cast<Map<String, dynamic>>() : null;
+    final rows = [...ordered, ...?others];
     final listed = rows.where((row) => row['phone'] == phone).firstOrNull;
     final detail = guestDetails[phone];
     final row = listed ?? (detail?['guest'] as Map<String, dynamic>?) ?? <String, dynamic>{'phone': phone};
@@ -561,6 +596,28 @@ class Hub {
     for (final kept in [?listed, ?(detail?['guest'] as Map<String, dynamic>?)]) {
       kept['note'] = note;
       kept['tags'] = tags;
+    }
+    // the name comes with the tags and stays while the number carries one
+    final said = (sent['name'] as String? ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (tags.isEmpty) {
+      tagNames.remove(phone);
+    } else if (said.isNotEmpty) {
+      tagNames[phone] = said;
+    }
+    if (others != null && ordered.every((row) => row['phone'] != phone)) {
+      others.removeWhere((row) => row['phone'] == phone && tags.isEmpty);
+      final mine = others.where((row) => row['phone'] == phone).firstOrNull;
+      if (mine != null) {
+        mine['name'] = tagNames[phone] ?? '';
+      } else if (tags.isNotEmpty) {
+        others.add(taggedRow(phone, tagNames[phone] ?? '', tags, note: note));
+      }
+      others.sort((a, b) {
+        final one = a['name'] as String, other = b['name'] as String;
+        if (one.isEmpty != other.isEmpty) return one.isEmpty ? 1 : -1;
+        final named = one.toLowerCase().compareTo(other.toLowerCase());
+        return named != 0 ? named : (a['phone'] as String).compareTo(b['phone'] as String);
+      });
     }
     // the tags are the number's wherever it turns up: on its call, its reservations and its parties
     ringTags?[phone] = tags;

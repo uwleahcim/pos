@@ -1831,7 +1831,7 @@ class PosApi {
   );
 
   /// One guest of the list read closely (manager token): more of their favourite dishes and their latest
-  /// visits. 404 `no_guest` for a number with no visit in the year.
+  /// visits. 404 `no_guest` for a number with no visit in the year that carries no tag.
   Future<GuestDetail> guestDetail(String token, String phone) async => GuestDetail.fromJson(
     await _get('/reports/guests/${phoneDigits(phone)}', headers: _bearer(token), timeout: const Duration(seconds: 30)),
   );
@@ -1854,14 +1854,16 @@ class PosApi {
   /// Whoever may read the guest list (token) keeps the [note] and the [tags] of the guest at this number:
   /// either or both; one left out stays as it is, an empty one is taken off. Hands back both as the hub
   /// keeps them now, each with who wrote it and when. 422 with a `message` for tags the hub will not keep;
-  /// 404 or 405 from a hub older than tags.
-  Future<GuestKept> keepGuest(String token, String phone, {String? note, List<String>? tags}) async =>
+  /// 404 or 405 from a hub older than tags. [name] is what the guest is called where they are tagged (their
+  /// reservation, their party): the hub keeps it with the tags, so the guest list can call a number that
+  /// never ordered something. A hub older than that takes no notice of it.
+  Future<GuestKept> keepGuest(String token, String phone, {String? note, List<String>? tags, String? name}) async =>
       GuestKept.fromJson(
         await _withFailover(
           (base) => _client.put(
             Uri.parse('$base/reports/guests/${phoneDigits(phone)}'),
             headers: {'content-type': 'application/json', ..._bearer(token)},
-            body: jsonEncode({'note': ?note, 'tags': ?tags}),
+            body: jsonEncode({'note': ?note, 'tags': ?tags, 'name': ?name}),
           ),
         ),
       );

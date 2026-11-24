@@ -8,7 +8,8 @@ orders and changes none of them; the two things written here are a guest's **tag
 Since 16 November 2026 (the Toast comparison, row 30). Since 23 November 2026 the tags are put on here
 and shown where that guest's call and order are taken, and the note is written here too; the tags also show
 on the call while it rings, in the reservation book and on the waitlist, and a guest can be tagged from
-their reservation or their line of the waitlist as well. It grows out of the customers the to-go form
+their reservation or their line of the waitlist as well. Since 24 November 2026 a guest tagged that way
+who has not ordered yet is in the list too, after the others. It grows out of the customers the to-go form
 already remembers by their number (`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
@@ -30,6 +31,10 @@ Then every guest, one line each, numbered from the top:
 - under the name, their number, the day of their last visit, and **regular** in green, **stopped coming**
   in red, or **new**;
 - under that, the **tags** they carry, each a small label ("VIP").
+
+After them come the **tagged guests with no order**: somebody tagged from their reservation or the waitlist
+before their first order. Their line says **no order yet** where the others say their last visit, and has
+no visits and no money ([A tagged guest who has not ordered yet](#a-tagged-guest-who-has-not-ordered-yet)).
 
 What stands above the list changes it:
 
@@ -157,9 +162,36 @@ wait, their call while it rings and their first order.
 - The box has **the tags alone**. The note of a reservation is the reservation's own ("Window table"), and
   the one line the restaurant keeps about a customer is written here or on the to-go form.
 - It works for a guest who is in this list too: it is the same tags either way.
-- A guest tagged this way who has never ordered is **not in this list** until they do, so their tags are
-  changed from a reservation or a party of theirs, not from here. Their tag still counts as one to offer.
+- A guest tagged this way who has never ordered **is in this list from then on**, after the guests who
+  ordered, under the name on the reservation or the party (below). Their tags are changed from here or
+  from a reservation or a party of theirs, whichever is at hand.
 - The reservation and the party are not touched: no time, table, place in the line or wait changes.
+
+### A tagged guest who has not ordered yet
+
+The list reads orders, and somebody who only ever booked a table has none. So that every VIP is in one
+place, a number that **carries a tag** is listed even with no order in the 12 months:
+
+- They stand **after the guests who ordered**, whichever way the list is ranked, by name.
+- Their line has their name, their number and **no order yet**, and their tags. There are no visits and
+  no money on it. A guest whose orders are all older than the 12 months says **no visit in the last 12
+  months** instead.
+- **The name** is the one on the reservation or the party they were tagged from: the hub keeps it with
+  their tags, because there is no order to read a name from. Tagged again from a reservation under another
+  name, they are called by the newer one. A party that gave no name is called by the number.
+- They are counted in **All**, in the line "Guests" (which says how many of them have no order) and on the
+  list of each tag they carry. They are on none of the three lists, and nothing of theirs is in "They
+  spent" or the visits.
+- **Open one** and it says their tags with who put them on, their note, and that there is no order yet.
+  **Change tags and note** works as for anybody.
+- **Take their last tag off and they leave the list**: there is nothing left to list them for. The bar at
+  the bottom says so. The name kept with the tags goes with them; a note stays with the number, and shows
+  on the to-go form if they ever call.
+- **Once they order**, they are a guest like the others, with their tags on, under the name on their
+  order.
+- A guest who was tagged before the hub kept names (before 24 November 2026) is called by their number,
+  until they are tagged again from a reservation or a party: open it, tap **Tags**, type the PIN and tap
+  **Save**. Nothing about their tags changes by it.
 
 ## Good to know
 
@@ -185,6 +217,11 @@ wait, their call while it rings and their first order.
 - A tag or a note changes no order, no sale and no figure: not on this screen and not on any report. It
   changes no reservation and no party on the waitlist either: they only show it.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
+  With a hub older than listing tagged guests with no order, the list holds the guests who ordered, as
+  before. A device that is not rebuilt shows that list too, whatever the hub.
+- The name kept with a guest's tags is on the hub only, behind the manager's PIN like the rest of the
+  list. It is kept for as long as the number carries a tag, shown only here and only while the number has
+  no order in the 12 months, and never printed or sent anywhere.
 - The first reading after the hub starts takes it some seconds, as it reads a year of orders; after that
   it is quick until the hub is restarted. A year of 30,000 orders with a number adds up in a quarter of a
   second.
@@ -192,8 +229,10 @@ wait, their call while it rings and their first order.
 ## Not built
 
 - Sending the list out of the POS (a file, a print, an e-mail).
-- A guest who was tagged from a reservation and never ordered, in this list: there is no row for a number
-  with no order, so their tags are changed from a reservation or a party of theirs.
+- Typing or correcting the name of a tagged guest with no order from this list: it is the name on the
+  reservation or the party they were last tagged from.
+- A number with a note and no tag, and no order in the 12 months, in this list: it is the tag that lists
+  them.
 - Tags from a reservation that ended (cancelled, no-show, seated) or a party that left: the button is on
   the ones still standing. A reservation or a party with no phone number cannot be tagged.
 - Writing the customer's one-line note from a reservation or the waitlist.
@@ -202,7 +241,8 @@ wait, their call while it rings and their first order.
   seated, on the waitlist's row of booked tables, and in the list of to-go orders.
 - The restaurant's own name for a caller on the ringing strip: it still says the phone company's.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
-- Tagging many guests at once, or a guest who has not ordered in the last 12 months.
+- Tagging many guests at once. Putting a first tag, from this list, on a number with no order in the
+  last 12 months: such a guest is tagged from their reservation or their party.
 - More notes than the one line.
 - Messages or offers to guests, points, birthdays.
 - A guest without a phone number, or joining two numbers into one guest.
@@ -214,7 +254,7 @@ wait, their call while it rings and their first order.
 - Figures: `backend/src/pos/orders/guests.py`. `visit_of(state, taxes, rules)` turns one order into a
   `Visit` (phone, day, net, name, kind, dishes) or None; it reads the order's `Sale`
   (`pos/orders/sales.py`), so a visit's day and money are the sales report's. `guests_report(visits,
-  entries, notes, defs=, now_ms=)` is the list and `guest_report(phone, ...)` one guest. The numbers:
+  entries, notes, defs=, now_ms=, tags=, names=)` is the list and `guest_report(phone, ...)` one guest. The numbers:
   `LOOK_BACK_DAYS = 365`, `REGULAR_VISITS = 3`, `REGULAR_DAYS = 90`, `LAPSED_DAYS = 60`, `NEW_DAYS = 30`,
   `FAVOURITES = 3` in the list and `MORE_FAVOURITES = 10` for one guest, `LATEST = 10`.
 - Memory: `VisitMemo` remembers each order's `Visit` while its log stays as it was, as `SaleMemo` does for
@@ -229,13 +269,29 @@ wait, their call while it rings and their first order.
   line, each once whatever its capitals, spelt as `known` spells it, by the alphabet, `TAG_MAX = 24`,
   `TAGS_MOST = 6`. `offered(carried, listed)` is the tags on offer with how many of the listed numbers
   carry each; `STANDARD` is the two always offered. A standby reads and does not write (`ReadOnlyError`).
+- A tagged number with no order: `guests_report` answers `tagged` beside `guests`: every number of
+  `GuestTags.all()` with no visit in the window, as a row of a guest's shape with `visits` 0, `spent`
+  "0.00", `per_visit`, `last` and `first` null, `since_ms` and `orders_ever` of its older orders (null and
+  0 with none), the flags false and no favourites, by name and the nameless by number after them.
+  `guests`, `totals` and each tag's `guests` are as they were (of the numbers with a visit), so an app
+  that does not know `tagged` is not touched. The name is kept with the tags: column `name` of `guest_tag`
+  (added by `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), `clean_name` (one line, `NAME_MAX = 40`),
+  `GuestTags.put(..., name=)` (no name said keeps the one it had; no tags, no name), `rename` (the name
+  alone, for a number that carries a tag) and `names()`. `PUT /reports/guests/{phone}` takes `name?` (at
+  most 200 letters, tidied; with unchanged tags it is `rename`, so who put the tags on stays) and answers
+  as before. `GET /reports/guests/{phone}` answers a tagged number with no visit as 200 with its row and
+  an empty `latest`; 404 `no_guest` is for a number with neither a visit nor a tag. App:
+  `GuestsReport.tagged` and `everyone`, `Guest.ordered`; each `GuestTag.guests` is counted over both
+  lists as the answer is read; `withKept` drops a tagged guest left with no tag; `PosApi.keepGuest(name:)`
+  and `GuestEditDialog.tags(name:)`, which `tagGuestHere` hands the name of the reservation or the party.
 - Wire (`backend/src/pos/api/guests.py`), all with the token of a session that holds `guests`:
   `GET /reports/guests` answers `{first, last, days, regular_visits, regular_days, lapsed_days, new_days,
   note_max, tag_max, tags_most, now_ms, guests, totals, tags}`, each guest `{phone, name, note, tags,
   visits, spent, per_visit, last, first, since_ms, orders_ever, lately, regular, lapsed, new, favourites}`,
-  the one who spent most first, and `tags` a list of `{tag, guests}`. `GET /reports/guests/{phone}` answers
-  `{guest, note_by, note_ms, tags_by, tags_ms, latest}`, or 404 `no_guest` for a number with no visit in
-  the year. `PUT /reports/guests/{phone}` takes `{note?, tags?}` (what is left out stays as it is) and
+  the one who spent most first, and `tags` a list of `{tag, guests}` (and `tagged`, below).
+  `GET /reports/guests/{phone}` answers `{guest, note_by, note_ms, tags_by, tags_ms, latest}`, or 404
+  `no_guest` for a number with no visit in the year and no tag. `PUT /reports/guests/{phone}` takes
+  `{note?, tags?, name?}` (what is left out stays as it is) and
   answers `{phone, note, note_by, note_ms, tags, tags_by, tags_ms}`; it writes only what changed, under
   the session's name; 422 `bad_value` for a tag too long, too many tags or no phone number (nothing is
   written then), 503 `read_only` on a standby. Tags that changed tell the change feed `reservations` and
@@ -278,4 +334,5 @@ wait, their call while it rings and their first order.
   `apps/pos_app/test/guests_report_test.dart`, `apps/pos_app/test/guest_tags_test.dart`,
   `apps/pos_app/test/customers_test.dart` (the form and the strip),
   `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist),
-  `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist).
+  `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist),
+  `apps/pos_app/test/guests_tagged_test.dart` (tagged guests with no order, in the list).

@@ -27,6 +27,11 @@ Beside each guest stand the two things the restaurant keeps about a number: the 
 the tags a manager put on it (`pos.guest_tags`), with every tag there is to offer and how many of the
 list's guests carry it.
 
+A number that carries a tag and has no visit in the year is listed too, apart from the guests who ordered
+(`tagged`): somebody tagged from their reservation or their line of the waitlist before their first order,
+or a guest of long ago. Its row has the shape of a guest's with no visit and nothing spent, under the name
+it was tagged by. It is counted in no total and no tag's `guests`: those are of the guests who ordered.
+
 What one order comes to as a visit (`Visit`, from `visit_of`) is remembered in the hub's memory while its
 log stays as it was (`VisitMemo`), as the sales are: a year of orders with a number is read from the log
 once after the hub starts and from memory after that.
@@ -203,6 +208,29 @@ def _row(
     }
 
 
+def _tagged_row(phone: str, name: str, ever: tuple[int, int] | None, note: str, tags: Sequence[str]) -> dict[str, Any]:
+    """The row of a number that carries a tag and has no visit in the year: a guest's row with no visit.
+    `since_ms` and `orders_ever` are of the orders it placed before the year, if it placed any."""
+    return {
+        "phone": phone,
+        "name": name,
+        "note": note,
+        "tags": list(tags),
+        "visits": 0,
+        "spent": str(ZERO),
+        "per_visit": None,
+        "last": None,
+        "first": None,
+        "since_ms": ever[1] if ever is not None else None,
+        "orders_ever": ever[0] if ever is not None else 0,
+        "lately": 0,
+        "regular": False,
+        "lapsed": False,
+        "new": False,
+        "favourites": [],
+    }
+
+
 def _gather(visits: Iterable[Visit], first: date, today: date) -> dict[str, _Guest]:
     guests: dict[str, _Guest] = {}
     for visit in visits:
@@ -236,15 +264,18 @@ def guests_report(
     defs: Definitions,
     now_ms: int,
     tags: Mapping[str, Sequence[str]] | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The guest list as it stands at `now_ms`: every number with a visit in the days of `window`, the one
     that spent most first. `visits` are at least the visits of those days, `entries` every order that
     carries a number (for since when and how many orders ever), `notes` the note kept about each number and
     `tags` the tags on each. `tags` in the answer is every tag there is to offer, with how many of the
-    guests listed carry it."""
+    guests listed carry it. `tagged` is every number that carries a tag and has no visit in those days,
+    under the name it was tagged by (`names`), by that name and the nameless by their number after them."""
     first, today = window(now_ms)
     ever = _ever(entries)
     carried = tags or {}
+    called = names or {}
     rows = [
         _row(
             phone,
@@ -261,10 +292,18 @@ def guests_report(
     rows.sort(key=lambda row: (-Decimal(row["spent"]), -row["visits"], row["name"].lower(), row["phone"]))
     spent = sum((Decimal(row["spent"]) for row in rows), ZERO)
     count = sum(row["visits"] for row in rows)
+    listed = {row["phone"] for row in rows}
+    others = [
+        _tagged_row(phone, called.get(phone, ""), ever.get(phone), notes.get(phone, ""), words)
+        for phone, words in carried.items()
+        if words and phone not in listed
+    ]
+    others.sort(key=lambda row: (not row["name"], row["name"].casefold(), row["phone"]))
     return {
         **_about(first, today, now_ms),
         "guests": rows,
-        "tags": offered(carried, (row["phone"] for row in rows)),
+        "tagged": others,
+        "tags": offered(carried, listed),
         "totals": {
             "guests": len(rows),
             "visits": count,
@@ -286,26 +325,28 @@ def guest_report(
     defs: Definitions,
     now_ms: int,
     tags: Mapping[str, Any] | None = None,
+    name: str = "",
 ) -> dict[str, Any] | None:
     """One guest read closely: the row of the list with more favourite dishes, their latest visits (each
     with its dishes), who wrote the note about them and when, and who last put their tags on (`tags` is
-    what is kept for the number: its `tags`, `by` and `at_ms`). None for a number with no visit in the days
-    of `window`. `visits` and `entries` are this number's."""
+    what is kept for the number: its `tags`, `by` and `at_ms`). A number with no visit in the days of
+    `window` that carries a tag is read too: the row it has among the `tagged`, under the `name` it was
+    tagged by, with no visit to show. None for a number with neither. `visits` and `entries` are this
+    number's."""
     first, today = window(now_ms)
     guest = _gather((visit for visit in visits if visit.phone == phone), first, today).get(phone)
-    if guest is None:
+    words = list((tags or {}).get("tags") or ())
+    about = str((note or {}).get("note") or "")
+    if guest is None and not words:
         return None
-    row = _row(
-        phone,
-        guest,
-        _ever(entries).get(phone),
-        str((note or {}).get("note") or ""),
-        list((tags or {}).get("tags") or ()),
-        defs=defs,
-        today=today,
-        favourites=MORE_FAVOURITES,
-    )
-    latest = sorted(guest.visits, key=lambda visit: (visit.day, visit.opened_ms, visit.order_id), reverse=True)
+    if guest is None:
+        row = _tagged_row(phone, name, _ever(entries).get(phone), about, words)
+        latest: list[Visit] = []
+    else:
+        row = _row(
+            phone, guest, _ever(entries).get(phone), about, words, defs=defs, today=today, favourites=MORE_FAVOURITES
+        )
+        latest = sorted(guest.visits, key=lambda visit: (visit.day, visit.opened_ms, visit.order_id), reverse=True)
     return {
         **_about(first, today, now_ms),
         "guest": row,

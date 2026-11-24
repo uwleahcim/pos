@@ -63,6 +63,8 @@ Future<List<String>?> tagGuestHere(
       api: api,
       token: token,
       called: name.trim().isEmpty ? formatPhoneNumber(phone) : name.trim(),
+      // the hub keeps the name with the tags: the guest list calls a guest who never ordered by it
+      name: name,
       phone: phone,
       tags: offer.carried,
       offered: [for (final tag in offer.tags) tag.tag],
