@@ -1034,6 +1034,7 @@ def no_visit(phone: str, name: str, tags: list[str], **more) -> dict:
         "visits": 0,
         "spent": "0.00",
         "per_visit": None,
+        "paid": 0,
         "last": None,
         "first": None,
         "since_ms": None,

@@ -987,6 +987,11 @@ class OpStore:
         customers is read from."""
         return [entry for entry in self.index() if entry.phone]
 
+    def entries(self, order_ids: Iterable[str]) -> list[OrderEntry]:
+        """The index's rows for these orders, by order id; one the log has never heard of is left out."""
+        rows = (self.entry(order_id) for order_id in sorted(set(order_ids)))
+        return [entry for entry in rows if entry is not None]
+
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
         last read. Shared: read them, never change them."""
