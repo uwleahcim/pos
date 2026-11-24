@@ -167,10 +167,13 @@ It then goes as for a party off the waitlist (`waitlist.md`):
 The table tapped need not be the one held. The book keeps both: the table that was held and the table they
 sat at, with who seated them.
 
-**The guest's tags go to the table with them.** The check that opens for the party, or the check of the
-table they join, shows the tags their number carries ("VIP") in the strip under the app bar, for whoever
-serves the table. Only the tags: the name, the number and the note stay in the book, and nothing is
-written onto the check (`guest-list.md`, "At the table"). **Put back** takes them off the check again.
+**The name, the note and the guest's tags go to the table with them.** The check that opens for the party,
+or the check of the table they join, says in the strip under the app bar whose reservation it is, the tags
+their number carries ("VIP") and the reservation's note ("Window table, birthday"), for whoever serves the
+table. So a note written here is read by the server: write what the staff may read. The number is not
+shown, everything stays in the book, and nothing is written onto the check (`guest-list.md`, "At the
+table"). A note that names an allergy tells the kitchen nothing: the server marks it with the **Allergy**
+chip on the check (`allergies.md`). **Put back** takes the party off the check again.
 
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The book keeps that table."

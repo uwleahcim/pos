@@ -140,10 +140,13 @@ strip, or going to the list of checks, calls it off: the party is still waiting.
 
 The party goes off the list, and the list keeps the table, who seated them and how long they waited.
 
-**The guest's tags go to the table with them.** The check that opens for the party, or the check of the
-table they join, shows the tags their number carries ("VIP") in the strip under the app bar, for whoever
-serves the table. Only the tags: the name, the number and the note stay on the list, and nothing is
-written onto the check (`guest-list.md`, "At the table"). **Put back** takes them off the check again.
+**The name, the note and the guest's tags go to the table with them.** The check that opens for the party,
+or the check of the table they join, says in the strip under the app bar whose party it is, the tags their
+number carries ("VIP") and the party's note ("High chair"), for whoever serves the table. So a note
+written here is read by the server: write what the staff may read. The number is not shown, everything
+stays on the list, and nothing is written onto the check (`guest-list.md`, "At the table"). A note that
+names an allergy tells the kitchen nothing: the server marks it with the **Allergy** chip on the check
+(`allergies.md`). **Put back** takes the party off the check again.
 
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The list keeps that table."

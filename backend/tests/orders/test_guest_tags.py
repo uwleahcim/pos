@@ -761,6 +761,102 @@ def test_the_tags_at_the_table_go_on_no_order_and_no_bill_and_change_nothing(mon
     assert lines and not any("VIP" in line or "Linda" in line or "no MSG" in line for line in lines)
 
 
+def seated_at(h: Hub, order_id: str) -> dict:
+    """Who the hub says sits on this check, as the screen with a table's check open asks (no token)."""
+    answer = h.c.get(f"/orders/{order_id}/seated")
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_the_check_of_a_seated_party_is_told_whose_table_it_is_and_the_note_of_the_reservation():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    linda = book_table(h, "Linda P.", "+1 (781) 555-0101", note="Window table, birthday")["booking"]
+    assert seated_at(h, "t-1") == {"order_id": "t-1", "parties": [], "tags": []}  # nobody sat down on it yet
+    seat(h, linda, "t-1")
+    told = h.c.get("/orders/t-1/seated")
+    assert told.json() == {
+        "order_id": "t-1",
+        "parties": [
+            {
+                "from": "reservation",
+                "name": "Linda P.",
+                "size": 2,
+                "note": "Window table, birthday",
+                "tags": ["Catering client", "VIP"],
+            }
+        ],
+        "tags": ["Catering client", "VIP"],
+    }
+    # the name and the reservation's own note: not the number, and not the line kept about the customer
+    assert LINDA not in told.text and "555" not in told.text and "no MSG" not in told.text
+    assert seated_at(h, "t-2")["parties"] == []  # another table's check
+    # the call for the tags alone answers as it did, and names nobody
+    assert at_table(h, "t-1") == {"order_id": "t-1", "tags": ["Catering client", "VIP"]}
+
+
+def test_a_party_with_no_number_and_no_tag_is_still_named_at_its_table():
+    h = host_stand()
+    seat(h, book_table(h, "Wu", "", note="High chair")["booking"], "t-1")
+    seat(h, wait(h, "Omar", OMAR)["party"], "t-2", table="A8", book="waitlist")  # no note, and nobody tagged him
+    assert seated_at(h, "t-1")["parties"] == [
+        {"from": "reservation", "name": "Wu", "size": 2, "note": "High chair", "tags": []}
+    ]
+    assert seated_at(h, "t-2") == {
+        "order_id": "t-2",
+        "parties": [{"from": "waitlist", "name": "Omar", "size": 2, "note": "", "tags": []}],
+        "tags": [],
+    }
+
+
+def test_the_parties_at_one_table_are_told_in_the_order_they_sat_down_each_with_its_own_tags():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"])
+    kept(h, OMAR, tags=["vip", "Regular"])
+    omar = wait(h, "Omar", OMAR, note="Booth if there is one")["party"]
+    linda = book_table(h, "Linda P.", LINDA)["booking"]
+    seat(h, omar, "t-1", book="waitlist")
+    h.now += 60_000
+    seat(h, linda, "t-1")  # she joins his table a minute later: the same check
+    told = seated_at(h, "t-1")
+    assert [(party["from"], party["name"], party["note"], party["tags"]) for party in told["parties"]] == [
+        ("waitlist", "Omar", "Booth if there is one", ["Regular", "VIP"]),
+        ("reservation", "Linda P.", "", ["Catering client", "VIP"]),
+    ]
+    assert told["tags"] == ["Catering client", "Regular", "VIP"]
+    # put back on the list, he is at no table; she stays
+    assert h.c.post(f"/waitlist/{omar['id']}/back", json=HOLLY).status_code == 200
+    assert [party["name"] for party in seated_at(h, "t-1")["parties"]] == ["Linda P."]
+    assert seated_at(h, "t-1")["tags"] == ["Catering client", "VIP"]
+
+
+def test_saying_who_sits_at_a_table_reads_no_order_and_goes_on_no_order_and_no_bill(monkeypatch):
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    made = book_table(h, "Linda P.", LINDA, note="Window table")["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.ring("t-1", "L1", GTC, h.now - 30_000)
+    seat(h, made, "t-1")
+    before = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+
+    def no_orders(*_args, **_kwargs):
+        raise AssertionError("the name at the table read the orders")
+
+    with monkeypatch.context() as patched:
+        store = h.c.app.state.store
+        for reading in ("with_phone", "index", "views", "view"):
+            patched.setattr(store, reading, no_orders)
+        assert seated_at(h, "t-1")["parties"][0]["name"] == "Linda P."
+    after = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    assert after == before
+    for words in (h.c.get("/orders/t-1").text, str(h.check("t-1"))):
+        assert "Linda" not in words and "Window" not in words and LINDA not in words
+    printed = h.c.post("/orders/t-1/bill", json={})
+    assert printed.status_code == 202, printed.text
+    lines = [line for line in decode(h.printing.store.get(printed.json()["job_id"]).data).text if line.strip()]
+    assert lines and not any("Linda" in line or "Window" in line or "VIP" in line for line in lines)
+
+
 # --- a tagged guest with no order, in the guest list ---------------------------------------------------------
 
 ZED = "7815550188"
