@@ -1,4 +1,9 @@
-"""Who is calling a back-office endpoint: the session token from `/admin/session`, and what its holder may do."""
+"""Who is calling a back-office endpoint: the session token from `/admin/session`, and what its holder may do.
+
+A session is a token with no `scope`. An approval (`POST /approvals`) is signed with the same key and names
+the same person, but it is for one thing on one order (`scope`, say "void:o1"): it was typed at somebody
+else's terminal, so it is never taken as that person's sign-in.
+"""
 
 from __future__ import annotations
 
@@ -39,9 +44,16 @@ def holder_from(state: Any, authorization: str | None, power: str) -> Grant:
     return grant
 
 
-def _grant(tokens: Tokens, authorization: str | None) -> Grant:
+def session_of(tokens: Tokens, authorization: str | None) -> Grant | None:
+    """Who signed in, from a `Bearer` token: None for no token, a forged or an expired one, and for an
+    approval, which is good for the one thing it names and opens nothing else."""
     token = (authorization or "").removeprefix("Bearer ").strip()
     grant = tokens.verify(token) if token else None
+    return grant if grant is not None and grant.scope is None else None
+
+
+def _grant(tokens: Tokens, authorization: str | None) -> Grant:
+    grant = session_of(tokens, authorization)
     if grant is None:
         raise HTTPException(401, {"error": "sign_in", "message": "sign in with a manager PIN"})
     return grant

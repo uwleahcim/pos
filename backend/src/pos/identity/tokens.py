@@ -4,6 +4,11 @@ A manager signs in once with a PIN and gets a token; each later call carries it 
 PIN is checked once rather than on every save. A token is signed, not stored: every hub and the cloud
 accept it when they share `POS_SECRET`; without one, each process makes its own secret and a restart
 asks for the PIN again.
+
+Two kinds are made. A session (`POST /admin/session`) has no `scope` and lasts an hour. An approval
+(`POST /approvals`) has one, "<purpose>:<order>", and lasts ten minutes. Neither is ever taken for the
+other: a session approves nothing (the ops ask for the scope), and an approval is no sign-in
+(`pos.api.auth.session_of`).
 """
 
 from __future__ import annotations
