@@ -54,6 +54,7 @@ from .day import DayPaper, render_day
 from .escpos import find_font
 from .held import Held, HeldTickets, Part
 from .jobs import JobStore, PrintJob, send_raw
+from .labels import BagLabels, render_labels
 from .pack import PackSheet, render_pack
 from .prep import PrepPaper, render_prep
 from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
@@ -377,9 +378,9 @@ def ticket_for(
     )
 
 
-Paper = Ticket | Bill | DayPaper | PackSheet | PrepPaper
-"""What a printer can be handed: a kitchen ticket, a guest's bill, the day's report, an order's pack sheet
-or a day's prep list."""
+Paper = Ticket | Bill | DayPaper | PackSheet | PrepPaper | BagLabels
+"""What a printer can be handed: a kitchen ticket, a guest's bill, the day's report, an order's pack sheet,
+a day's prep list or the labels of an order's bags."""
 
 
 @dataclass(frozen=True)
@@ -885,6 +886,34 @@ class PrintService:
             return None
         return self.queue(sheet, printer, job_id=job_id), printer
 
+    def bag_labels(self, state: OrderState, bags: int) -> BagLabels | None:
+        """The labels for the bags of a to-go order (`pos.printing.labels`), `bags` of them: the number and
+        the name its ticket is headed with, that it is a delivery, and when it is due. None for a table's
+        order and for an order with no dish on it: there is nothing to bag."""
+        if not is_to_go(state) or not any(line.active for line in state.lines.values()):
+            return None
+        fields = state.fields
+        return BagLabels(
+            order_id=state.order_id,
+            bags=bags,
+            order_no=fields.get("order_no") if isinstance(fields.get("order_no"), int) else None,
+            customer=" ".join(str(fields.get("customer_name") or "").split()),
+            delivery=is_delivery(fields),
+            promised=_when(fields.get("promised_at")),
+            at=datetime.fromtimestamp(self._now() / 1000),
+        )
+
+    def print_labels(
+        self, state: OrderState, bags: int, *, asked: str | None = None, job_id: str | None = None
+    ) -> tuple[PrintJob, Printer] | None:
+        """Prints a label for each of the order's `bags` where to-go orders are packed (`pack_printer`), as
+        one job, and says where. None when there is nothing to label, or nothing to print on."""
+        labels = self.bag_labels(state, bags)
+        printer = self.pack_printer(asked) if labels is not None else None
+        if labels is None or printer is None:
+            return None
+        return self.queue(labels, printer, job_id=job_id), printer
+
     def _pack_with(
         self, state: OrderState, carried: Iterable[str], *, key: str, skip: frozenset[str] = frozenset()
     ) -> list[PrintJob]:
@@ -1080,9 +1109,9 @@ class PrintService:
         delay: float = 0.0,
         printers: list[Printer] | None = None,
     ) -> PrintJob:
-        """Renders the ticket (or a guest's bill, the day's report, a pack sheet, a prep list) for the printer
-        and for each of its fallbacks (headed with whose it is), and queues it; a hub starts writing it at
-        once."""
+        """Renders the ticket (or a guest's bill, the day's report, a pack sheet, a prep list, an order's
+        labels) for the printer and for each of its fallbacks (headed with whose it is), and queues it; a hub
+        starts writing it at once."""
         data, fallbacks = self._rendered(ticket, printer, printers)
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if self.direct and delay <= 0:
@@ -1105,6 +1134,8 @@ class PrintService:
                 return render_pack(paper, dots=self._dots, font=self._font, dialect=on.dialect)
             if isinstance(paper, PrepPaper):
                 return render_prep(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            if isinstance(paper, BagLabels):
+                return render_labels(paper, dots=self._dots, font=self._font, dialect=on.dialect)
             return render(paper, dots=self._dots, font=self._font, dialect=on.dialect)
 
         data = drawn(ticket, printer)

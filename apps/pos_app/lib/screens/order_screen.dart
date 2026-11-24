@@ -33,6 +33,7 @@ import '../takeout.dart';
 import '../to_go_stages.dart';
 import '../voids.dart';
 import 'allergy_dialog.dart';
+import 'bag_labels_dialog.dart';
 import 'bag_sheet.dart';
 import 'check_history_screen.dart';
 import 'check_list.dart';
@@ -139,6 +140,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Future<BagQuestion?>? _bagRead; // the to-go question as the location set it, being read or read
   bool _billing = false; // a bill is on its way to the printer: the button waits
   bool _packing = false; // so is a pack sheet
+  bool _labelling = false; // and so are the labels of a to-go order's bags
   bool _sentHere = false; // dishes were sent to the kitchen from this screen since it opened
   final _changes = _Changes(); // tells the split screen, which stands over this one, of a new read
   int? _extraSaid; // the big-order minutes this screen last told the operator of; null until it knows them
@@ -1075,6 +1077,43 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  /// The Labels button of a to-go order (docs/bag-labels.md): asks how many bags the order went into and
+  /// prints a label for each, where to-go orders are packed. Whatever was just rung in goes to the hub
+  /// first, since the hub heads the labels with the order as it has it. Nothing is written on the order.
+  Future<void> _printLabels() async {
+    final order = _order;
+    if (_labelling || order == null) return;
+    final number = order.orderNo;
+    final whose = '${number == null ? '' : '#$number'} ${oneLine(order.customerName)}'.trim();
+    final bags = await showDialog<int>(
+      context: context,
+      builder: (_) => BagLabelsDialog(whose: whose),
+    );
+    if (bags == null || !mounted) return;
+    setState(() => _labelling = true);
+    try {
+      await widget.outbox.flush();
+      if (widget.outbox.pendingOps.any((op) => op['order_id'] == widget.orderId)) {
+        if (mounted) _say('The labels print once this order has reached the hub');
+        return;
+      }
+      final at = await widget.api.printBagLabels(widget.orderId, bags);
+      if (!mounted) return;
+      _say('${BagLabelsDialog.labelWords(bags)} ${bags == 1 ? 'is' : 'are'} printing${at.isEmpty ? '' : ' at $at'}');
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      final told = err.detail?['message'] as String?;
+      _say(
+        told ??
+            (err.status == 404 || err.status == 405
+                ? 'This hub does not print bag labels yet: update it'
+                : 'The labels did not print: nothing answered'),
+      );
+    } finally {
+      if (mounted) setState(() => _labelling = false);
+    }
+  }
+
   /// The order and its check as this screen shows them, for the split screen standing over it.
   SplitView? _view() {
     final order = _order;
@@ -1628,6 +1667,7 @@ class _OrderScreenState extends State<OrderScreen> {
       onLot: _lot,
       onBill: _billing ? null : _printBill,
       onBillPlace: _billPlace,
+      onLabels: _labelling ? null : _printLabels,
       onSplit: _openSplit,
       // Money alone on a to-go order: a deposit on one for later before it is sent, or what is still due
       // on one the kitchen has. An order for now that was not sent is paid as it is sent ("Pay & send").
@@ -1826,6 +1866,7 @@ class _TicketPanel extends StatefulWidget {
     required this.onLot,
     required this.onBill,
     required this.onBillPlace,
+    required this.onLabels,
     required this.onSplit,
     this.onPay,
   });
@@ -1876,6 +1917,10 @@ class _TicketPanel extends StatefulWidget {
   /// come out of ([onBillPlace]).
   final VoidCallback? onBill;
   final VoidCallback onBillPlace;
+
+  /// Asks how many bags a to-go order went into and prints a label for each; null while they are on their
+  /// way. A table's check has no such button.
+  final VoidCallback? onLabels;
 
   /// Opens the split screen: how the table pays.
   final VoidCallback onSplit;
@@ -2104,6 +2149,9 @@ class _TicketPanelState extends State<_TicketPanel> {
                     onSplit: check.splits && (open || checks > 1) ? widget.onSplit : null,
                     onBill: widget.onBill,
                     onBillPlace: widget.onBillPlace,
+                    // a to-go order leaves in bags, and each bag gets a label
+                    labels: order.isTakeout,
+                    onLabels: widget.onLabels,
                     buttons: check.lines.isNotEmpty,
                   ),
                   for (final p in order.payments)
@@ -3296,6 +3344,36 @@ class _BillButton extends StatelessWidget {
   }
 }
 
+/// The Labels button beside the total of a to-go order (docs/bag-labels.md): a tap asks how many bags the
+/// order went into and prints a label for each. Greyed while they are on their way.
+class _LabelsButton extends StatelessWidget {
+  const _LabelsButton({required this.onTap, this.tight = false});
+
+  final VoidCallback? onTap;
+
+  /// On a narrow check: the word alone, no icon.
+  final bool tight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Print a label for each bag',
+      child: OutlinedButton.icon(
+        key: const ValueKey('bag-labels'),
+        onPressed: onTap,
+        icon: tight ? null : const Icon(Icons.label_outline, size: 18),
+        label: const Text('Labels'),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.standard,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          minimumSize: const Size(0, 38),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+      ),
+    );
+  }
+}
+
 /// The Pay button beside what is due on a to-go order: takes money and nothing else.
 class _PayButton extends StatelessWidget {
   const _PayButton({required this.onTap});
@@ -3351,10 +3429,11 @@ class _SplitButton extends StatelessWidget {
   }
 }
 
-/// The total at the foot of the check, with its buttons: Split (how the table pays) and Bill. The bill is
-/// the total on paper, so the buttons stand beside the total and cost no row. They never run off a narrow
-/// check: where they do not fit with their icons they are words alone (a small tablet shows the check on a
-/// third of its width), and where the words do not fit either they take the row above the total.
+/// The total at the foot of the check, with its buttons: Split (how the table pays), Labels on a to-go
+/// order (a label for each of its bags) and Bill. The bill is the total on paper, so the buttons stand
+/// beside the total and cost no row. They never run off a narrow check: where they do not fit with their
+/// icons they are words alone (a small tablet shows the check on a third of its width), and where the words
+/// do not fit either they take the row above the total.
 class _TotalFoot extends StatelessWidget {
   const _TotalFoot({
     required this.label,
@@ -3364,6 +3443,8 @@ class _TotalFoot extends StatelessWidget {
     required this.onBill,
     required this.onBillPlace,
     required this.buttons,
+    this.labels = false,
+    this.onLabels,
   });
 
   final String label;
@@ -3375,7 +3456,11 @@ class _TotalFoot extends StatelessWidget {
   final VoidCallback? onBill;
   final VoidCallback onBillPlace;
 
-  /// False for a check with no dish: nothing to bill or split.
+  /// A to-go order: it has the Labels button, which [onLabels] answers (null while labels are printing).
+  final bool labels;
+  final VoidCallback? onLabels;
+
+  /// False for a check with no dish: nothing to bill, split or label.
   final bool buttons;
 
   static const _gap = 6.0;
@@ -3394,16 +3479,21 @@ class _TotalFoot extends StatelessWidget {
       maxLines: 1,
     )..layout()).width;
     final split = onSplit;
-    final words = [if (split != null) _SplitButton.words(checks), 'Bill'];
+    final words = [if (split != null) _SplitButton.words(checks), if (labels) 'Labels', 'Bill'];
     final written = words.fold(0.0, (sum, word) => sum + wide(word, theme.textTheme.labelLarge));
     // each button: its word, its padding and, with an icon, the icon and the space after it
     final plain = written + words.length * 2 * 12 + (words.length - 1) * _gap;
     final iconed = plain + words.length * (18 + 8);
     final total = wide(amount, theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800));
-    Widget row({required bool tight}) => Row(
-      mainAxisSize: MainAxisSize.min,
+    // a Wrap, so that three buttons too wide for the check in large type take two rows and never run off it
+    Widget row({required bool tight}) => Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: _gap,
+      runSpacing: _gap,
       children: [
-        if (split != null) ...[_SplitButton(checks: checks, onTap: split, tight: tight), const SizedBox(width: _gap)],
+        if (split != null) _SplitButton(checks: checks, onTap: split, tight: tight),
+        if (labels) _LabelsButton(onTap: onLabels, tight: tight),
         _BillButton(onTap: onBill, onHold: onBillPlace, bills: checks, tight: tight),
       ],
     );

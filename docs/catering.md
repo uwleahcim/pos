@@ -156,6 +156,9 @@ to start. Off, none prints by itself; the button still prints one.
 A voided order prints none. A screen set to skip the takeout station (`ticket-skips.md`) gets no sheet by
 itself either.
 
+**A label for each box or bag.** **Labels** beside the order's total prints a slip for each one, "BAG 2 OF
+9", at the same printer: see `bag-labels.md`.
+
 ## The prep list
 
 What one day's orders ahead need made, added up. Chen's six quarts of General Tso's and Park's four are

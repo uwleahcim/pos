@@ -436,6 +436,8 @@ against Google itself. The first `sudo hubctl maps test "..."` with live traffic
   asks before leaving.
 - The **pack sheet** (`catering.md`) says DELIVERY and the address too, as it did for a catering order. Its
   button is at the end of the delivery's line under the bar.
+- The **labels of the bags** (`bag-labels.md`, **Labels** beside the total) say DELIVERY and "BAG 1 OF 2",
+  and not the address: the driver counts the bags by them and reads where they go off the bill.
 
 ## The list of checks
 

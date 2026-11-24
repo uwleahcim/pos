@@ -157,6 +157,11 @@ button on the order's screen prints one again. The fifth switch on the Printers 
 with a catering order**, turns the one that comes by itself off. **The prep list** of a day (what its
 orders ahead need made, by station) prints from its own screen where the bills print. See `catering.md`.
 
+**Labels for the bags.** **Labels** beside the total of a to-go order asks how many bags the order went
+into and prints a short slip for each at the takeout station's printer (else where the bills print): the
+order's number and name, `BAG 2 OF 3`, DELIVERY when it is one, and when it is due. None prints by itself.
+See `bag-labels.md`.
+
 **A table that moves.** Moving a table, merging two, or moving dishes to another table's check prints no
 order ticket and no void. Each station with dishes sent in the last 45 minutes gets a MOVED slip instead:
 the table the dishes were sent for, the table they go to now, and the dishes. The fourth switch on the
@@ -287,6 +292,7 @@ still known as a Star by step 3, without its model.
   `POST /print/bill-sample` are in `docs/bill.md`.
 - The pack sheet and the prep list: `POST /orders/{id}/pack-sheet`, `GET /orders/ahead/prep` and
   `POST /orders/ahead/prep/print` are in `docs/catering.md`.
+- The labels of a to-go order's bags: `POST /orders/{id}/bag-labels` is in `docs/bag-labels.md`.
 
 Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above; `_hold`
 and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`

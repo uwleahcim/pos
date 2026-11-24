@@ -133,6 +133,10 @@ merges after any disconnect.
 - The to-go question (before a to-go order is sent the screen asks once what goes in the bag: chopsticks,
   forks, napkins or nothing; the answer prints on the takeout station's ticket; a manager words it, lists
   what it offers or turns it off): `docs/to-go-question.md`
+- Labels for the bags of a to-go order (Labels beside the total asks how many bags the order went into and
+  prints a slip for each at the takeout station's printer: the number and the name, BAG 2 OF 3, DELIVERY,
+  when it is due; no phone number, no address, no dish; nothing prints by itself and nothing is written on
+  the order): `docs/bag-labels.md`
 - One-tap notes to the kitchen (the words typed on a dish again and again, as buttons over the dish's note:
   Rush, Split for 2; a manager keeps the list; the ticket prints them as it prints a typed note):
   `docs/kitchen-notes.md`
