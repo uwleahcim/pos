@@ -13,6 +13,7 @@ import '../faces.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
 import '../online_orders.dart';
+import '../hub_keys.dart';
 import '../powers.dart';
 import '../printers.dart';
 import '../kitchen_screen.dart';
@@ -38,6 +39,7 @@ import 'kitchen_times_screen.dart';
 import 'live_drive_dialog.dart';
 import 'logbook_screen.dart';
 import 'online_orders_screen.dart';
+import 'hub_keys_screen.dart';
 import 'powers_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
@@ -182,6 +184,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   String? _ticketWordsMessage;
   ClockSetting? _clock; // the time clock as the hub has it; null from an older hub, which has none
   Powers? _powers; // who may do what as the hub has it; null until it answers (an older hub has no table)
+  HubKeys? _hubKeys; // the hub's keys as a manager may see them; null until it answers, and from an older hub
+  bool _hubKeysOlder = false; // the hub answered that it knows no keys typed in the app
   bool _clockBusy = false;
   String? _clockMessage;
 
@@ -306,6 +310,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         if (mounted) setState(() => _powers = powers);
       } on ApiException {
         // nothing answered about who may do what: the row says so
+      }
+      try {
+        final keys = await widget.api.hubKeys(widget.token);
+        if (mounted) {
+          setState(() {
+            _hubKeys = keys;
+            _hubKeysOlder = keys == null;
+          });
+        }
+      } on ApiException {
+        // nothing answered about the hub's keys: the row says so
       }
     }
     await _loadFaces();
@@ -887,6 +902,33 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Who may do what saved')));
   }
 
+  /// One line on the hub's keys: which are set and which are not.
+  String get _hubKeysLine =>
+      _hubKeys?.summary ??
+      (_hubKeysOlder
+          ? 'This hub is older than keys typed in the app: update it (sudo hubctl update)'
+          : 'The hub has not answered about its keys');
+
+  /// The hub's keys on their own page; the row here follows every change made there.
+  Future<void> _keysAndConnections() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HubKeysScreen(
+          api: widget.api,
+          token: widget.token,
+          keys: _hubKeys!,
+          onChanged: (keys) {
+            if (mounted) setState(() => _hubKeys = keys);
+          },
+        ),
+      ),
+    );
+    // a key changes what the hub can do: the cards that say so (online orders, live traffic) read again
+    if (!mounted) return;
+    unawaited(_readOnline());
+    unawaited(_readLive());
+  }
+
   Future<void> _readOnline() async {
     try {
       final online = await widget.api.onlineStatus();
@@ -1215,15 +1257,27 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           ],
           if (_may(settingsPower)) ...[
             const SizedBox(height: 12),
-            // who may do what: the one thing here only a manager or an owner ever opens
+            // who may do what and the hub's keys: the two things here only a manager or an owner ever opens
             Card(
-              child: ListTile(
-                key: const ValueKey('powers'),
-                leading: const Icon(Icons.admin_panel_settings_outlined),
-                title: const Text('Who may do what'),
-                subtitle: Text(_powersLine, maxLines: 3, overflow: TextOverflow.ellipsis),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: _powers == null ? null : _whoMayDoWhat,
+              child: Column(
+                children: _divided([
+                  ListTile(
+                    key: const ValueKey('powers'),
+                    leading: const Icon(Icons.admin_panel_settings_outlined),
+                    title: const Text('Who may do what'),
+                    subtitle: Text(_powersLine, maxLines: 3, overflow: TextOverflow.ellipsis),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _powers == null ? null : _whoMayDoWhat,
+                  ),
+                  ListTile(
+                    key: const ValueKey('hub-keys'),
+                    leading: const Icon(Icons.key_outlined),
+                    title: const Text('Keys and connections'),
+                    subtitle: Text(_hubKeysLine, maxLines: 3, overflow: TextOverflow.ellipsis),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _hubKeys == null ? null : _keysAndConnections,
+                  ),
+                ]),
               ),
             ),
             const SizedBox(height: 12),

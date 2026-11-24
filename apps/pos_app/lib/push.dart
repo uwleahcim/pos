@@ -66,7 +66,7 @@ class PushRegistrar extends ChangeNotifier {
     if (_registered.isEmpty) return 'Registering the push token with the hub…';
     final key = switch (_configured) {
       true => '',
-      false => ' · the hub has no Apple key yet (hubctl push apple)',
+      false => ' · the hub has no Apple key yet (Location, Keys and connections)',
       null => '',
     };
     final what = [

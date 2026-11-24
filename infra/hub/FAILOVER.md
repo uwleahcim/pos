@@ -42,6 +42,10 @@ API (role=primary)  API (role=replica)
 4. Firewall: ufw on each hub allows 5432 and 8008 (Patroni API) from the other hub, and 2379/2380 (etcd)
    between all three.
 5. `hubctl status` gains the role and the replication lag from `http://127.0.0.1:8008/patroni`.
+6. The same `POS_SECRET` in `/opt/pos/.env` on both hubs (`openssl rand -hex 32`, once), then
+   `sudo hubctl restart` on each: a manager's session then holds on either hub, and the keys typed in the
+   app (`docs/hub-keys.md`) open on both. Keys typed before hub 1 had a `POS_SECRET` still open on hub 1 and
+   are typed once more for hub 2 to have them.
 
 ## The test script (pass criteria in `spikes/hub-failover/README.md`)
 

@@ -668,6 +668,120 @@ class Hub {
   int? refuseNotesSeen;
   (int, String, String)? refuseNote;
 
+  /// The hub's keys (docs/hub-keys.md). [hubKeys] is how each stands, by name, as `GET /hub/keys` says it;
+  /// null is a hub older than keys typed in the app. Only Mike's token reads or changes them
+  /// ([hubKeysAuth] keeps the last one sent). `PUT /hub/keys/<name>` puts the typed key in force as one typed
+  /// in the app by Mike at [keysAtMs], keeping its last four characters (and for Apple's its ids) and never
+  /// the key: what was typed is in [keysTyped]. [refuseHubKey] answers 422 with these words instead.
+  /// `DELETE` removes it ([keysRemoved]). [hubKeysKept] false is a hub with nowhere to keep one.
+  Map<String, Map<String, dynamic>>? hubKeys = {
+    for (final name in ['maps', 'maps_google', 'online', 'push_apple']) name: noKey(name),
+  };
+  bool hubKeysKept = true;
+  String? hubKeysAuth;
+  String? refuseHubKey;
+  int keysAtMs = 1795000000000;
+  final keysTyped = <(String, Map<String, dynamic>)>[];
+  final keysRemoved = <String>[];
+
+  /// A key nobody set, and one put on the hub in its terminal.
+  static Map<String, dynamic> noKey(String name) => {
+    'name': name,
+    'set': false,
+    'source': null,
+    'ending': '',
+    'shown': <String, dynamic>{},
+    'by': '',
+    'at_ms': null,
+    'removed': false,
+    'unreadable': false,
+  };
+  static Map<String, dynamic> hubKey(String name, {String ending = ''}) => {
+    ...noKey(name),
+    'set': true,
+    'source': 'hub',
+    'ending': ending,
+  };
+
+  Future<http.Response> _keys(http.Request request) async {
+    if (hubKeys == null) return json({'detail': 'Not Found'}, 404);
+    hubKeysAuth = request.headers['authorization'];
+    if (hubKeysAuth != 'Bearer tok-admin') {
+      return json({
+        'detail': {'error': 'not_allowed', 'power': 'settings'},
+      }, hubKeysAuth == null ? 401 : 403);
+    }
+    final name = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
+    if (name != null && !hubKeys!.containsKey(name)) {
+      return json({
+        'detail': {'error': 'unknown_key', 'message': 'this hub holds no key of that name'},
+      }, 404);
+    }
+    if (request.method == 'PUT' && name != null) {
+      final typed = jsonDecode(request.body) as Map<String, dynamic>;
+      keysTyped.add((name, typed));
+      if (refuseHubKey != null) {
+        return json({
+          'detail': {'error': 'bad_value', 'message': refuseHubKey},
+        }, 422);
+      }
+      final key = typed['key'] as String;
+      hubKeys![name] = {
+        ...noKey(name),
+        'set': true,
+        'source': 'app',
+        'ending': name == 'push_apple' || key.length < 16 ? '' : key.substring(key.length - 4),
+        'shown': name == 'push_apple'
+            ? {
+                'key_id': typed['key_id'],
+                'team_id': typed['team_id'],
+                'bundle_id': '${typed['bundle_id'] ?? ''}'.isEmpty ? 'org.chinasky.posApp' : typed['bundle_id'],
+              }
+            : <String, dynamic>{},
+        'by': 'Mike',
+        'at_ms': keysAtMs,
+      };
+    }
+    if (request.method == 'DELETE' && name != null) {
+      keysRemoved.add(name);
+      hubKeys![name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
+    }
+    return json({'keys': hubKeys!.values.toList(), 'kept': hubKeysKept});
+  }
+
+  /// The push relay as the keys page tries it: [pushDevices] are the screens that registered for
+  /// notifications (`GET /push/status`), [pushTests] the ones a test went to (`POST /push/test`), and
+  /// [pushRefused] is what Apple said instead of taking it ("BadDeviceToken").
+  List<String> pushDevices = [];
+  final pushTests = <String>[];
+  String? pushRefused;
+
+  http.Response _push(http.Request request) {
+    if (request.url.path == '/push/test') {
+      final device = (jsonDecode(request.body) as Map)['device'] as String;
+      pushTests.add(device);
+      final ok = pushRefused == null;
+      return json({
+        'device': device,
+        'kind': 'alert',
+        'configured': true,
+        'tokens': 1,
+        'sent': ok ? 1 : 0,
+        'results': [
+          {'ok': ok, 'status': ok ? 200 : 400, 'reason': pushRefused},
+        ],
+      });
+    }
+    return json({
+      'configured': hubKeys?['push_apple']?['set'] == true,
+      'list': [
+        for (final device in pushDevices)
+          for (final kind in ['alert', 'voip'])
+            {'device': device, 'platform': 'ios', 'kind': kind, 'extension': '', 'token': 'abcd1234…'},
+      ],
+    });
+  }
+
   /// Who may do what (docs/roles.md). [powers] is the table `GET /settings/powers` answers, for each power
   /// the roles it is handed to; null is a hub older than the table, where only Mike's PIN opens or approves
   /// anything. `PUT` lays the powers it names over it ([powersAuth] keeps its token; only Mike's is taken;
@@ -2640,6 +2754,8 @@ class Hub {
       });
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path == '/hub/keys' || path.startsWith('/hub/keys/')) return _keys(request);
+    if (path == '/push/status' || path == '/push/test') return _push(request);
     if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;
     if (path.startsWith('/online/')) return _online(request);
     if (path == '/waitlist' || path.startsWith('/waitlist/')) return _waitlist(request);

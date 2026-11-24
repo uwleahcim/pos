@@ -108,7 +108,10 @@ void main() {
     push.start();
     push.token('alert', alert);
     await push.sync();
-    expect(push.line, 'Woken when locked for desk-phone pick-ups · the hub has no Apple key yet (hubctl push apple)');
+    expect(
+      push.line,
+      'Woken when locked for desk-phone pick-ups · the hub has no Apple key yet (Location, Keys and connections)',
+    );
     hub.down = true;
     await push.sync();
     expect(push.lastError, isNotNull);

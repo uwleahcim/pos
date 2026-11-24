@@ -59,6 +59,9 @@ services:
       POS_APNS_KEY_ID: ${POS_APNS_KEY_ID:-}
       POS_APNS_TEAM_ID: ${POS_APNS_TEAM_ID:-}
       POS_APNS_BUNDLE_ID: ${POS_APNS_BUNDLE_ID:-org.chinasky.posApp}
+      # The keys below (the map services', GloriaFood's for asking, Apple's) can be typed in the app instead,
+      # by a manager: Location, Keys and connections (docs/hub-keys.md). What is typed there is in force over
+      # what is here, until hubctl is told a key again.
       # The map service a delivery's distance is asked of (docs/delivery.md, "Looking the distance up"):
       # `hubctl maps key` writes the first two. Empty: nothing is looked up and the delivery fee is picked by
       # hand. POS_MAPS_DAILY is the most the hub asks in a day (500 unless set).
@@ -81,6 +84,10 @@ services:
       POS_GLORIAFOOD_PUSH_KEY: ${POS_GLORIAFOOD_PUSH_KEY:-}
     volumes:
       - ./apns:/apns:ro
+      # The secret that opens the keys a manager typed in the app (Location, Keys and connections;
+      # docs/hub-keys.md). The keys themselves are in the database, sealed; this is kept apart from it, so a
+      # backup of the database opens nothing. A hub with POS_SECRET seals with that instead.
+      - pos-keys:/keys
     ports:
       - "8000:8000"
     depends_on:
@@ -168,3 +175,4 @@ networks:
 
 volumes:
   pos-db:
+  pos-keys:

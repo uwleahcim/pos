@@ -35,6 +35,13 @@ profile_off() {
   [[ -z "$left" ]] || printf 'COMPOSE_PROFILES=%s\n' "$left" >> "$POS_HOME/.env"
 }
 
+# A key told to the hub here, from its terminal, is the one in force from then on: what a manager typed for
+# it in the app (Location, Keys and connections; docs/hub-keys.md) is taken off the hub. Of the two ways
+# the one used last wins. Nothing happens on a hub from before the app held keys.
+app_key_off() {
+  compose exec -T db psql -U pos -d pos -qc "DELETE FROM hub_key WHERE name = '$1'" > /dev/null 2>&1 || true
+}
+
 case "${1:-status}" in
   status)
     echo "hub: $(hostname)   ip: $(hostname -I | awk '{print $1}')   up: $(uptime -p)"
@@ -243,6 +250,7 @@ case "${1:-status}" in
         unset_env POS_APNS_KEY POS_APNS_KEY_ID POS_APNS_TEAM_ID POS_APNS_BUNDLE_ID
         printf 'POS_APNS_KEY=/apns/AuthKey_%s.p8\nPOS_APNS_KEY_ID=%s\nPOS_APNS_TEAM_ID=%s\n' "$4" "$4" "$5" >> "$POS_HOME/.env"
         if [[ -n "${6:-}" ]]; then printf 'POS_APNS_BUNDLE_ID=%s\n' "$6" >> "$POS_HOME/.env"; fi
+        app_key_off push_apple
         compose up -d api
         echo "The key is on the hub. Waiting for the API to pick it up..."
         for _ in $(seq 1 30); do
@@ -266,7 +274,8 @@ case "${1:-status}" in
       forget)
         unset_env POS_APNS_KEY POS_APNS_KEY_ID POS_APNS_TEAM_ID POS_APNS_BUNDLE_ID
         rm -rf "$apns_dir"
-        compose up -d api
+        app_key_off push_apple
+        compose up -d --force-recreate api
         echo "The key is gone; the hub sends no pushes until hubctl push apple puts one back."
         ;;
       *)
@@ -319,6 +328,7 @@ case "${1:-status}" in
         unset_env POS_MAPS POS_MAPS_KEY
         printf 'POS_MAPS=geocodio\nPOS_MAPS_KEY=%s\n' "$key" >> "$POS_HOME/.env"
         unset key
+        app_key_off maps
         compose up -d api
         echo "The key is on the hub. Waiting for the API to pick it up..."
         if has_service geocodio; then
@@ -334,6 +344,7 @@ case "${1:-status}" in
         unset_env POS_MAPS_GOOGLE_KEY
         printf 'POS_MAPS_GOOGLE_KEY=%s\n' "$key" >> "$POS_HOME/.env"
         unset key
+        app_key_off maps_google
         compose up -d api
         echo "The key is on the hub. Waiting for the API to pick it up..."
         if has_service google; then
@@ -361,15 +372,17 @@ case "${1:-status}" in
       forget)
         if [[ "${3:-}" == google ]]; then
           unset_env POS_MAPS_GOOGLE_KEY
-          compose up -d api
+          app_key_off maps_google
+          compose up -d --force-recreate api
           echo "Google's key is gone from the hub. (The key itself is deleted in the Google Cloud console.)"
         elif [[ -n "${3:-}" ]]; then
           echo 'usage: hubctl maps forget [google]' >&2
           exit 2
         else
           unset_env POS_MAPS POS_MAPS_KEY
-          compose up -d api
-          if grep -q '^POS_MAPS_GOOGLE_KEY=.' "$POS_HOME/.env" 2> /dev/null; then
+          app_key_off maps
+          compose up -d --force-recreate api
+          if [[ "$(curl -fsS --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '.configured' 2> /dev/null || true)" == true ]]; then
             echo "The key is gone. Google's key is still on the hub, and Google is now asked about every address (hubctl maps forget google takes it off too)."
           else
             echo "The key is gone; no distance is looked up, and the delivery fee is picked by hand."
@@ -497,6 +510,7 @@ case "${1:-status}" in
         unset_env POS_GLORIAFOOD_KEY
         printf 'POS_GLORIAFOOD_KEY=%s\n' "$key" >> "$POS_HOME/.env"
         unset key
+        app_key_off online
         compose up -d api
         echo "The key is on the hub. Waiting for the API to pick it up..."
         for _ in $(seq 1 30); do
@@ -524,7 +538,8 @@ case "${1:-status}" in
         ;;
       forget)
         unset_env POS_GLORIAFOOD_KEY
-        compose up -d api
+        app_key_off online
+        compose up -d --force-recreate api
         echo "The key is gone from the hub: it asks GloriaFood for nothing. The orders already on the POS stay as they are. (The key itself is removed in GloriaFood's admin.)"
         [[ -z "$(env_of POS_GLORIAFOOD_PUSH_KEY)" ]] || echo "Pushes are still taken (hubctl online push forget stops them), and nothing brings an order whose push is lost."
         ;;

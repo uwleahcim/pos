@@ -123,7 +123,9 @@ same image, will send them the same way once it exists.
   notification, the token, the extension), stored in the hub's database like the location settings, so the
   second hub reads the same list. A token Apple reports as gone is dropped; the phone switched off takes its
   VoIP token back.
-- **The Apple sender.** The APNs key lives on the hub in `/opt/pos/apns`, readable by the API alone;
+- **The Apple sender.** A manager pastes the APNs key and its two ids in the app (Location › Keys and
+  connections › Apple push key; `hub-keys.md`): the hub keeps it sealed in its database and uses it at
+  once. Or, as before, the key lives on the hub in `/opt/pos/apns`, readable by the API alone:
   `hubctl push apple AuthKey_XXXX.p8 <key id> <team id>` puts it there, writes the ids to `/opt/pos/.env`
   and restarts the API. The hub talks to Apple over HTTP/2 with a signed token it renews every 50 minutes.
 - **What triggers a push.** A `DialBegin` to a marked extension (the ring group's dial of it, or the hook's
@@ -165,10 +167,14 @@ code on the hub (`hubctl update`) and in the app build.
    team, and Push Notifications plus Background Modes (Voice over IP, Audio) already listed. Then
    `flutter run -d <iphone> --release` as before. The Mac and the Galaxy need no Xcode step:
    `flutter run -d macos --release` and the CI APK as before.
-5. **The hub.** Copy the key to the hub, `scp AuthKey_XXXX.p8 <user>@172.19.1.179:`, then on the hub
-   `hubctl update` and `hubctl push apple ~/AuthKey_XXXX.p8 XXXX N46M58VZD4`. It moves the key to
-   `/opt/pos/apns`, restarts the API and prints the push status, `key: XXXX, team N46M58VZD4, ...`. The
-   second hub gets the same two commands when it exists.
+5. **The hub.** `hubctl update` on the hub. Then, in the app on the Mac that holds the key file: Location ›
+   **Keys and connections** › Apple push key › **Type the key**. Open `AuthKey_XXXX.p8` in TextEdit, copy
+   all of it, paste it, and type the Key ID (`XXXX`) and the Team ID (`N46M58VZD4`). Save, and the card
+   says "Set · key XXXX, team N46M58VZD4". The second hub has it too, once both carry the same
+   `POS_SECRET` (`hub-keys.md`, "Two hubs").
+   Or in the terminal, as before: copy the key to the hub, `scp AuthKey_XXXX.p8 <user>@172.19.1.179:`,
+   then `hubctl push apple ~/AuthKey_XXXX.p8 XXXX N46M58VZD4`. It moves the key to `/opt/pos/apns`,
+   restarts the API and prints the push status, `key: XXXX, team N46M58VZD4, ...`.
 6. **FreePBX, the manager user.** Settings, Asterisk Manager Users, `pos`: under Read add **user** (keep
    call and reporting), under Write add **system**. Submit, Apply Config. The hub needs them to see the
    hook's event and to mark the extensions it can wake; until then `hubctl push status` reports

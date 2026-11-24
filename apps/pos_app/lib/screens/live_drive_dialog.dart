@@ -36,7 +36,7 @@ class LiveDriveDialog extends StatefulWidget {
 
   /// What is still missing before a delivery is promised by the roads, in words; null when nothing is.
   static String? missing(LiveDrive setting, {required bool priced}) => !setting.traffic
-      ? 'This hub has no Google Maps key yet, and only Google Maps knows the roads right now (hubctl maps google).'
+      ? 'This hub has no Google Maps key yet, and only Google Maps knows the roads right now (Keys and connections, on this screen).'
       : !setting.origin
       ? 'The restaurant\'s address is not set yet (Delivery fee, on this screen).'
       : !priced
