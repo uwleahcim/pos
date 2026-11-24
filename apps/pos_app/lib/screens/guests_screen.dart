@@ -466,6 +466,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
             Text(
               [
                 if (guest.perVisit != null) '${dollars(guest.perVisit!)} a visit',
+                ?guest.paidWords, // some of their visits were tables another guest paid
                 '${_count(guest.lately, 'visit', 'visits')} in the last ${report.regularDays} days',
               ].join(' · '),
               key: ValueKey('guest-rate:${listed.phone}'),
@@ -508,7 +509,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 ),
                 child: ReportLine(
                   [_dayWords(visit.day, weekday: true), kindLabel(visit.kind)].join(' · '),
-                  dollars(visit.net),
+                  // a visit at a table somebody else paid says so where its money would stand
+                  visit.unpaidWords ?? dollars(visit.net),
                   under: visit.dishWords,
                   underWide: true,
                 ),

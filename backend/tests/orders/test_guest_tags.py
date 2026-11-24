@@ -762,10 +762,17 @@ def test_the_tags_at_the_table_go_on_no_order_and_no_bill_and_change_nothing(mon
 
 
 def seated_at(h: Hub, order_id: str) -> dict:
-    """Who the hub says sits on this check, as the screen with a table's check open asks (no token)."""
+    """Who the hub says sits on this check, as the screen with a table's check open asks (no token). What
+    the answer says about who pays the check is left out here: it has tests of its own (test_who_pays.py)."""
     answer = h.c.get(f"/orders/{order_id}/seated")
     assert answer.status_code == 200, answer.text
-    return answer.json()
+    told = answer.json()
+    assert told.pop("payer") is True
+    told["parties"] = [
+        {key: value for key, value in party.items() if key not in ("key", "listed", "pays")}
+        for party in told["parties"]
+    ]
+    return told
 
 
 def test_the_check_of_a_seated_party_is_told_whose_table_it_is_and_the_note_of_the_reservation():
@@ -775,7 +782,7 @@ def test_the_check_of_a_seated_party_is_told_whose_table_it_is_and_the_note_of_t
     assert seated_at(h, "t-1") == {"order_id": "t-1", "parties": [], "tags": []}  # nobody sat down on it yet
     seat(h, linda, "t-1")
     told = h.c.get("/orders/t-1/seated")
-    assert told.json() == {
+    assert seated_at(h, "t-1") == {
         "order_id": "t-1",
         "parties": [
             {

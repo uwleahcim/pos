@@ -52,6 +52,7 @@ class Guest {
     this.note = '',
     this.tags = const [],
     this.visits = 0,
+    this.paid,
     this.spent = '0.00',
     this.perVisit,
     required this.last,
@@ -71,6 +72,7 @@ class Guest {
     note: _s(json['note']),
     tags: _words(json['tags']),
     visits: _i(json['visits']),
+    paid: json['paid'] is num ? _i(json['paid']) : null,
     spent: _s(json['spent'], '0.00'),
     perVisit: json['per_visit'] is String ? json['per_visit'] as String : null,
     last: _day(json['last']),
@@ -97,10 +99,17 @@ class Guest {
   /// The tags a manager put on them ("VIP"), in the order of the alphabet.
   final List<String> tags;
 
-  /// Their orders of the year that had a dish on them.
+  /// Their visits of the year: their orders that had a dish on them, and the tables they were seated at
+  /// that did.
   final int visits;
 
-  /// What those came to before tax, charges and tips, less comps and discounts.
+  /// How many of those they paid: a table's check counts its money for one of its guests, the one who
+  /// pays (docs/guest-list.md, "Who pays"). Null from a hub that does not say, where every visit was the
+  /// guest's own check.
+  final int? paid;
+
+  /// What the visits they paid came to before tax, charges and tips, less comps and discounts, and what
+  /// that is a visit they paid.
   final String spent;
   final String? perVisit;
 
@@ -127,6 +136,12 @@ class Guest {
 
   num get money => double.tryParse(spent) ?? 0;
 
+  /// "paid 3 of 5": said only of a guest who was at a table somebody else paid, or nobody was said to.
+  String? get paidWords => switch (paid) {
+    final paid? when paid < visits => 'paid $paid of $visits',
+    _ => null,
+  };
+
   /// Whether they ordered in the year the list reads. A guest who did not is in the list for the tags
   /// they carry.
   bool get ordered => visits > 0;
@@ -147,6 +162,7 @@ class Guest {
     note: note,
     tags: tags,
     visits: visits,
+    paid: paid,
     spent: spent,
     perVisit: perVisit,
     last: last,
@@ -430,6 +446,8 @@ class GuestVisit {
     this.kind = '',
     this.net = '0.00',
     this.dishes = const [],
+    this.paid = true,
+    this.waits = false,
   });
 
   factory GuestVisit.fromJson(Map<String, dynamic> json) => GuestVisit(
@@ -440,6 +458,8 @@ class GuestVisit {
     kind: _s(json['kind']),
     net: _s(json['net'], '0.00'),
     dishes: [for (final row in _rows(json['dishes'])) GuestDish.fromJson(row)],
+    paid: json['paid'] != false,
+    waits: json['waits'] == true,
   );
 
   final String orderId;
@@ -451,6 +471,22 @@ class GuestVisit {
   final String kind;
   final String net;
   final List<GuestDish> dishes;
+
+  /// The check's money counts for this guest: they paid it. False for a visit at a table whose check
+  /// another guest paid, or whose payer nobody has said; [net] is then nothing. True from a hub that does
+  /// not say, where every visit was the guest's own check.
+  final bool paid;
+
+  /// The check had several guests and nobody has said which of them pays: its money counts for none of
+  /// them yet (docs/guest-list.md, "Who pays").
+  final bool waits;
+
+  /// What stands where the money of a visit stands when the guest did not pay it.
+  String? get unpaidWords => paid
+      ? null
+      : waits
+      ? 'nobody said who paid'
+      : 'another guest paid';
 
   /// "2 Egg roll, General Tso's Chicken".
   String get dishWords =>

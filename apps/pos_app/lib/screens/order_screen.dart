@@ -364,6 +364,31 @@ class _OrderScreenState extends State<OrderScreen> {
     setState(() => _table = table);
   }
 
+  /// Whether who pays this check can be said here: the hub takes the word, two or more of the check's
+  /// guests could be the one, and somebody is signed in to say it.
+  bool get _asksPayer => _table.asksPayer && _staffId != null;
+
+  /// Says which guest of this check pays it, or takes the word back: the check's money counts for that
+  /// guest in the guest list and for no other (docs/guest-list.md, "Who pays"). It is a word about the
+  /// guest list alone: no money is taken, and nothing is written on the check, the bill or a ticket. The
+  /// hub keeps it, so it needs one that answers.
+  Future<void> _sayPayer(SeatedParty party, bool pays) async {
+    final staffId = _staffId;
+    if (staffId == null) return;
+    try {
+      final table = await widget.api.sayPayer(staffId, widget.orderId, party.key, pays: pays);
+      if (!mounted) return;
+      setState(() => _table = table);
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      _say(
+        err.status == null
+            ? 'The hub is not answering: who pays stays as it is.'
+            : err.detail?['message'] as String? ?? err.message,
+      );
+    }
+  }
+
   /// The tags this check shows by themselves: the ones of the customer at its number, and from a hub that
   /// says the table's tags without saying whose, those after them, each once whatever its capitals. The
   /// tags of a party the hub names stand beside its name.
@@ -1789,7 +1814,15 @@ class _OrderScreenState extends State<OrderScreen> {
                 onOut: () => unawaited(_wentOut(ready)),
               ),
             if (order != null && (_customerNote.isNotEmpty || _guestTags.isNotEmpty || _table.parties.isNotEmpty))
-              _CustomerStrip(note: _customerNote, tags: _guestTags, parties: _table.parties),
+              _CustomerStrip(
+                note: _customerNote,
+                tags: _guestTags,
+                parties: _table.parties,
+                // two or more guests of the check left a number: a tap on a name says which of them pays
+                onPays: _asksPayer ? _sayPayer : null,
+                // nobody was said to pay and no number is typed on the check: its money waits for the word
+                asksWho: _asksPayer && !_table.parties.any((party) => party.pays) && order.phone.isEmpty,
+              ),
             // an order from the website says so, with how it is paid and what the customer wrote for the
             // whole of it (docs/online-orders.md, "On the screens")
             if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
@@ -2966,13 +2999,27 @@ class _ReadyStrip extends StatelessWidget {
 /// never more than a quarter of the screen's height, so the check and the menu keep their room: many
 /// labels and a long note on a small phone are a scroll away inside it, and a bar at its side says so.
 class _CustomerStrip extends StatefulWidget {
-  const _CustomerStrip({required this.note, this.tags = const [], this.parties = const []});
+  const _CustomerStrip({
+    required this.note,
+    this.tags = const [],
+    this.parties = const [],
+    this.onPays,
+    this.asksWho = false,
+  });
 
   final String note;
   final List<String> tags;
 
   /// The parties seated on a table's check, the first to sit first.
   final List<SeatedParty> parties;
+
+  /// Says that this party pays the check (true) or takes the word back (false). With it, the name of every
+  /// party that left a number opens a small menu, and the one who pays carries a "Pays" label. Null where
+  /// there is nothing to say: a check with one guest, a hub that takes no such word, nobody signed in.
+  final void Function(SeatedParty party, bool pays)? onPays;
+
+  /// The check's money counts for nobody yet: the strip asks who pays, in one short line.
+  final bool asksWho;
 
   @override
   State<_CustomerStrip> createState() => _CustomerStripState();
@@ -3054,6 +3101,12 @@ class _CustomerStripState extends State<_CustomerStrip> {
                 ),
             ],
           ),
+        if (widget.asksWho)
+          Text(
+            'Who pays? Tap a name.',
+            key: const ValueKey('seated-who-pays'),
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
         // who sits here: the name, the tags of that party's number, and the note it was booked
         // or listed with, whole (it is what the host wrote for the table)
         for (final (at, party) in parties.indexed)
@@ -3063,7 +3116,9 @@ class _CustomerStripState extends State<_CustomerStrip> {
             runSpacing: 2,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              if (party.name.isNotEmpty)
+              if (widget.onPays != null && party.listed && party.key.isNotEmpty)
+                _payer(theme, at, party)
+              else if (party.name.isNotEmpty)
                 Text(
                   party.name,
                   key: ValueKey('seated-name:$at'),
@@ -3081,6 +3136,54 @@ class _CustomerStripState extends State<_CustomerStrip> {
             ],
           ),
       ],
+    );
+  }
+
+  /// The name of a party that can be the one who pays: a tap opens a menu of one line, "Linda Chen pays",
+  /// ticked when they do. The one who pays carries a "Pays" label beside the name. The little arrow says
+  /// the name can be tapped; the room above and under it is for a finger.
+  Widget _payer(ThemeData theme, int at, SeatedParty party) {
+    final scheme = theme.colorScheme;
+    final name = party.name.isEmpty ? 'This guest' : party.name;
+    return PopupMenuButton<bool>(
+      key: ValueKey('seated-payer:$at'),
+      tooltip: party.pays ? '$name pays this check' : 'Say who pays this check',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      onSelected: (pays) => widget.onPays?.call(party, pays),
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem<bool>(
+          key: ValueKey('seated-pays-pick:$at'),
+          value: !party.pays,
+          checked: party.pays,
+          child: Text('$name pays'),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                name,
+                key: ValueKey('seated-name:$at'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w700),
+              ),
+            ),
+            Icon(Icons.arrow_drop_down, size: 16, color: scheme.onSurfaceVariant),
+            if (party.pays)
+              Container(
+                key: ValueKey('seated-pays:$at'),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(4)),
+                child: Text('Pays', style: theme.textTheme.labelSmall?.copyWith(color: scheme.onPrimary)),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

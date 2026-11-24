@@ -125,7 +125,7 @@ merges after any disconnect.
   the note of the reservation or the party, and on the floor map, where the table says the party's name
   and a star for a tagged guest; a party goes with its dishes when two tables are made one check; every
   guest of a check has the visit, a seated party that left a number too, and the check's money counts for
-  the one who pays; a guest who only booked a table is tagged from the reservation or the waitlist with a
+  the one who pays, said with a tap on a name on the check; a guest who only booked a table is tagged from the reservation or the waitlist with a
   manager's PIN, and is in the list from then on, before their first order; for a manager):
   `docs/guest-list.md`
 - Contests for the staff (a manager sets one up: the most sales, or the most of a dish or a category, over

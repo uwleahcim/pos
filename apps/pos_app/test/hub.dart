@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/camera.dart';
-import 'package:pos_app/customers.dart' show phoneDigits;
+import 'package:pos_app/customers.dart' show customerDigits, phoneDigits;
 import 'package:pos_app/outbox.dart';
 import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
@@ -113,6 +113,16 @@ class Hub {
   /// not yet who. [seatedAsks] are the checks asked about; [tableTagsDown] fails this call too.
   bool seatedCall = true;
   final seatedAsks = <String>[];
+
+  /// Who pays a check (`POST /orders/{id}/payer`): with [payerCall] on, the hub takes the word, and its
+  /// answer about who sits says for each party the `key` it is known by, whether it left a number
+  /// (`listed`) and whether it `pays`, as the real hub does. Off, as every hub before it: none of that, and
+  /// no such call. [payers] is the party that pays each check, by its key; [payerSaid] every word taken, as
+  /// (check, party, pays, by whom); [payerDown] fails the call as if no hub answered.
+  bool payerCall = false;
+  bool payerDown = false;
+  final payers = <String, String>{};
+  final payerSaid = <(String, String, bool, String)>[];
 
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
@@ -2248,6 +2258,44 @@ class Hub {
   static final _order = RegExp(r'^/orders/([^/]+)$');
   static final _tableTags = RegExp(r'^/orders/([^/]+)/tags$');
   static final _seatedOn = RegExp(r'^/orders/([^/]+)/seated$');
+  static final _payerOf = RegExp(r'^/orders/([^/]+)/payer$');
+
+  /// Who sits on the check [id], as the hub answers it.
+  Map<String, dynamic> _whoSits(String id) {
+    List<String> carried(Map<String, dynamic> row) => [...?ringTags?[phoneDigits(row['phone'] as String?)]];
+    String from(Map<String, dynamic> row) => row.containsKey('seated_table') ? 'reservation' : 'waitlist';
+    final sat = [
+      for (final row in [...?bookings, ...?parties])
+        if (row['seated_ms'] != null && row['order_id'] == id) row,
+    ]..sort((a, b) => (a['seated_ms'] as int).compareTo(b['seated_ms'] as int));
+    final all = <String, String>{};
+    for (final row in sat) {
+      for (final tag in carried(row)) {
+        all.putIfAbsent(tag.toLowerCase(), () => tag);
+      }
+    }
+    return {
+      'order_id': id,
+      'parties': [
+        for (final row in sat)
+          {
+            'from': from(row),
+            'name': row['name'],
+            'size': row['size'],
+            'note': row['note'],
+            'tags': carried(row),
+            if (payerCall) ...{
+              'key': '${from(row)}:${row['id']}',
+              'listed': phoneDigits(row['phone'] as String?).length >= customerDigits,
+              'pays': payers[id] == '${from(row)}:${row['id']}',
+            },
+          },
+      ],
+      'tags': all.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+      if (payerCall) 'payer': true,
+    };
+  }
+
   static final _history = RegExp(r'^/orders/([^/]+)/history$');
   static final _photo = RegExp(r'^/events/photos/([^/]+)$');
   static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
@@ -3034,31 +3082,34 @@ class Hub {
       if (tableTagsDown) throw const SocketException('down');
       final id = whoSits.group(1)!;
       seatedAsks.add(id);
-      List<String> carried(Map<String, dynamic> row) => [...?ringTags?[phoneDigits(row['phone'] as String?)]];
-      final sat = [
-        for (final row in [...?bookings, ...?parties])
-          if (row['seated_ms'] != null && row['order_id'] == id) row,
-      ]..sort((a, b) => (a['seated_ms'] as int).compareTo(b['seated_ms'] as int));
-      final all = <String, String>{};
-      for (final row in sat) {
-        for (final tag in carried(row)) {
-          all.putIfAbsent(tag.toLowerCase(), () => tag);
-        }
+      return json(_whoSits(id));
+    }
+    final whoPays = _payerOf.firstMatch(path);
+    if (whoPays != null && request.method == 'POST') {
+      if (!payerCall) return json({'detail': 'Not Found'}, 404);
+      if (payerDown) throw const SocketException('down');
+      final id = whoPays.group(1)!;
+      final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
+      final party = body['party'] as String? ?? '';
+      final sits = (_whoSits(id)['parties'] as List).cast<Map<String, dynamic>>();
+      final found = sits.where((row) => row['key'] == party).firstOrNull;
+      if (found == null) {
+        return json({
+          'detail': {'error': 'unknown_party', 'message': 'This party does not sit on this check any more.'},
+        }, 404);
       }
-      return json({
-        'order_id': id,
-        'parties': [
-          for (final row in sat)
-            {
-              'from': row.containsKey('seated_table') ? 'reservation' : 'waitlist',
-              'name': row['name'],
-              'size': row['size'],
-              'note': row['note'],
-              'tags': carried(row),
-            },
-        ],
-        'tags': all.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
-      });
+      if (found['listed'] != true) {
+        return json({
+          'detail': {'error': 'no_number', 'message': '${found['name']} left no phone number.'},
+        }, 409);
+      }
+      payerSaid.add((id, party, body['pays'] != false, body['staff_id'] as String? ?? ''));
+      if (body['pays'] != false) {
+        payers[id] = party;
+      } else if (payers[id] == party) {
+        payers.remove(id);
+      }
+      return json(_whoSits(id));
     }
     final seatedOn = _tableTags.firstMatch(path);
     if (seatedOn != null) {

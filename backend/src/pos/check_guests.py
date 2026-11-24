@@ -12,6 +12,12 @@ number of its own. Each of those is a guest of the check they sit on, and is not
 - `check`: the number typed on a check that was merged into this one, by that check's id, so the guest of
   the emptied table is still a guest of the joined one.
 
+Whoever serves the table can say which of a check's guests pays it (`pay`): the check's money then counts
+for that guest in the guest list, and for no other. The word is kept here, with who said it, beside the
+party it is about: one guest pays a check, so saying it of one takes it from the others of that check. It
+stays while the party sits on that check, and goes when the party is put back, is seated on another check,
+or its check is merged into another (the check that is kept has its own word, or waits for one).
+
 The book keeps a reservation's name and number for thirty days and the waitlist a party's for a night; the
 guest list reads a year. So what is noted here is kept longer than either, `KEEP_DAYS`, and no longer: it is
 what the guest list counts a visit from, and nothing else reads it. It is on the hub only, it is on no
@@ -46,6 +52,8 @@ class CheckGuest:
     phone: str  # digits
     name: str
     at_ms: int  # when they sat down, or when their check was merged in
+    pays: bool = False  # somebody said this guest pays the check
+    pays_by: str = ""  # who said so
 
 
 def guest_of(source: str, source_id: str, order_id: str, phone: str, name: object, at_ms: int) -> CheckGuest:
@@ -62,9 +70,14 @@ class CheckGuests:
 
     def put(self, guest: CheckGuest) -> None:
         """This party, or this merged check's number, sits on this check: noted, or noted afresh when it
-        was noted before (a party sits on one check). What is older than `KEEP_DAYS` is let go."""
+        was noted before (a party sits on one check). Noted afresh on the check it sat on, it pays as it
+        did; on another check, nobody said so yet. What is older than `KEEP_DAYS` is let go."""
         with self._lock:
-            self._guests[(guest.source, guest.source_id)] = guest
+            was = self._guests.get((guest.source, guest.source_id))
+            same = was is not None and was.order_id == guest.order_id
+            self._guests[(guest.source, guest.source_id)] = replace(
+                guest, pays=was.pays if same else False, pays_by=was.pays_by if same else ""
+            )
             before = guest.at_ms - KEEP_DAYS * _DAY_MS
             for key in [key for key, kept in self._guests.items() if kept.at_ms < before]:
                 del self._guests[key]
@@ -74,14 +87,33 @@ class CheckGuests:
         with self._lock:
             return self._guests.pop((source, source_id), None) is not None
 
+    def pay(self, source: str, source_id: str, pays: bool, *, by: str = "") -> CheckGuest | None:
+        """Somebody said that this guest pays the check it sits on (`pays` false: took it back). One guest
+        pays a check, so the word is taken from every other guest of that check. The guest as it is kept
+        now; None for one that sits on no check."""
+        with self._lock:
+            guest = self._guests.get((source, source_id))
+            if guest is None:
+                return None
+            if pays:
+                for key, other in list(self._guests.items()):
+                    if other.order_id == guest.order_id and other.pays:
+                        self._guests[key] = replace(other, pays=False, pays_by="")
+            said = replace(guest, pays=pays, pays_by=clean_name(by)[:NAME_MAX] if pays else "")
+            self._guests[(source, source_id)] = said
+            return said
+
     def follow(self, emptied: str, kept: str) -> int:
-        """The check `emptied` was merged into `kept`: its guests sit on that one from now on. How many."""
+        """The check `emptied` was merged into `kept`: its guests sit on that one from now on. How many.
+        Who pays was said of the emptied check; the kept one has its own word, or waits for one."""
         if not emptied or not kept or emptied == kept:
             return 0
         with self._lock:
             moved = [guest for guest in self._guests.values() if guest.order_id == emptied]
             for guest in moved:
-                self._guests[(guest.source, guest.source_id)] = replace(guest, order_id=kept[:80])
+                self._guests[(guest.source, guest.source_id)] = replace(
+                    guest, order_id=kept[:80], pays=False, pays_by=""
+                )
             return len(moved)
 
     def on(self, order_ids: Iterable[str]) -> list[CheckGuest]:
@@ -118,9 +150,12 @@ CREATE TABLE IF NOT EXISTS check_guest (
 CREATE INDEX IF NOT EXISTS check_guest_order ON check_guest (order_id);
 CREATE INDEX IF NOT EXISTS check_guest_phone ON check_guest (phone);
 CREATE INDEX IF NOT EXISTS check_guest_at ON check_guest (at_ms);
+ALTER TABLE check_guest ADD COLUMN IF NOT EXISTS pays BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE check_guest ADD COLUMN IF NOT EXISTS pays_by TEXT NOT NULL DEFAULT '';
 """
 
 _COLUMNS = "source, source_id, order_id, phone, name, at_ms"
+_ALL = f"{_COLUMNS}, pays, pays_by"
 
 
 class ReadOnlyError(RuntimeError):
@@ -144,40 +179,53 @@ class PgCheckGuests(CheckGuests):
     def close(self) -> None:
         self._pool.close()
 
-    def _write(self, sql: str, args: Sequence[Any]) -> int:
-        """One write, and how many rows it touched. On a hub that took over from one that ran before the
-        guests were kept, the table is made first."""
+    def _write(self, sql: str, args: Sequence[Any]) -> list[tuple[Any, ...]]:
+        """One write, and the rows it hands back (`RETURNING`). On a hub that took over from one that ran
+        before the guests were kept, or before who pays was, the table is made or brought up first."""
         from psycopg import errors
+
+        def run() -> list[tuple[Any, ...]]:
+            with self._pool.connection() as conn:
+                done = conn.execute(sql, args)
+                return done.fetchall() if done.description is not None else [()] * max(done.rowcount, 0)
 
         try:
             try:
-                with self._pool.connection() as conn:
-                    return conn.execute(sql, args).rowcount
-            except errors.UndefinedTable:
+                return run()
+            except (errors.UndefinedTable, errors.UndefinedColumn):
                 with self._pool.connection() as conn:
                     conn.execute(SCHEMA)
-                    return conn.execute(sql, args).rowcount
+                return run()
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
 
     def _read(self, where: str, args: Sequence[Any]) -> list[CheckGuest]:
         from psycopg import errors
 
+        order = "ORDER BY at_ms, source, source_id"
         try:
             with self._pool.connection() as conn:
-                rows = conn.execute(
-                    f"SELECT {_COLUMNS} FROM check_guest WHERE {where} ORDER BY at_ms, source, source_id", args
-                ).fetchall()
+                rows = conn.execute(f"SELECT {_ALL} FROM check_guest WHERE {where} {order}", args).fetchall()
         except errors.UndefinedTable:
             return []  # a standby whose primary has not been updated yet
-        return [CheckGuest(str(a), str(b), str(c), str(d), str(e), int(f)) for a, b, c, d, e, f in rows]
+        except errors.UndefinedColumn:
+            # a standby whose primary keeps the guests and not yet who pays: nobody was said to
+            with self._pool.connection() as conn:
+                rows = [
+                    (*row, False, "")
+                    for row in conn.execute(f"SELECT {_COLUMNS} FROM check_guest WHERE {where} {order}", args)
+                ]
+        return [_kept(row) for row in rows]
 
     def put(self, guest: CheckGuest) -> None:
+        # on the check it sat on, the party pays as it did; on another one, nobody said so yet
         self._write(
             f"""
             INSERT INTO check_guest ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (source, source_id) DO UPDATE
-                SET order_id = EXCLUDED.order_id, phone = EXCLUDED.phone, name = EXCLUDED.name,
+                SET pays = check_guest.pays AND check_guest.order_id = EXCLUDED.order_id,
+                    pays_by = CASE WHEN check_guest.order_id = EXCLUDED.order_id THEN check_guest.pays_by ELSE '' END,
+                    order_id = EXCLUDED.order_id, phone = EXCLUDED.phone, name = EXCLUDED.name,
                     at_ms = EXCLUDED.at_ms
             """,
             (guest.source, guest.source_id, guest.order_id, guest.phone, guest.name, guest.at_ms),
@@ -185,12 +233,36 @@ class PgCheckGuests(CheckGuests):
         self._write("DELETE FROM check_guest WHERE at_ms < %s", (guest.at_ms - KEEP_DAYS * _DAY_MS,))
 
     def drop(self, source: str, source_id: str) -> bool:
-        return self._write("DELETE FROM check_guest WHERE source = %s AND source_id = %s", (source, source_id)) > 0
+        gone = self._write("DELETE FROM check_guest WHERE source = %s AND source_id = %s", (source, source_id))
+        return len(gone) > 0
+
+    def pay(self, source: str, source_id: str, pays: bool, *, by: str = "") -> CheckGuest | None:
+        # one statement: the word is put on the one and taken from the others of the check together
+        said = self._write(
+            f"""
+            WITH one AS (SELECT order_id FROM check_guest WHERE source = %(source)s AND source_id = %(id)s)
+            UPDATE check_guest AS guest
+               SET pays = %(pays)s AND guest.source = %(source)s AND guest.source_id = %(id)s,
+                   pays_by = CASE WHEN %(pays)s AND guest.source = %(source)s AND guest.source_id = %(id)s
+                                  THEN %(by)s ELSE '' END
+              FROM one
+             WHERE (guest.source = %(source)s AND guest.source_id = %(id)s)
+                OR (%(pays)s AND guest.order_id = one.order_id AND guest.pays)
+            RETURNING {", ".join(f"guest.{column.strip()}" for column in _ALL.split(","))}
+            """,
+            {"source": source, "id": source_id, "pays": pays, "by": clean_name(by)[:NAME_MAX]},
+        )
+        return next(
+            (guest for guest in map(_kept, said) if (guest.source, guest.source_id) == (source, source_id)), None
+        )
 
     def follow(self, emptied: str, kept: str) -> int:
         if not emptied or not kept or emptied == kept:
             return 0
-        return self._write("UPDATE check_guest SET order_id = %s WHERE order_id = %s", (kept[:80], emptied))
+        moved = self._write(
+            "UPDATE check_guest SET order_id = %s, pays = FALSE, pays_by = '' WHERE order_id = %s", (kept[:80], emptied)
+        )
+        return len(moved)
 
     def on(self, order_ids: Iterable[str]) -> list[CheckGuest]:
         wanted = list(dict.fromkeys(order_ids))
@@ -201,6 +273,13 @@ class PgCheckGuests(CheckGuests):
 
     def since(self, at_ms: int) -> list[CheckGuest]:
         return self._read("at_ms >= %s", (at_ms,))
+
+
+def _kept(row: Sequence[Any]) -> CheckGuest:
+    source, source_id, order_id, phone, name, at_ms, pays, pays_by = row
+    return CheckGuest(
+        str(source), str(source_id), str(order_id), str(phone), str(name), int(at_ms), bool(pays), str(pays_by)
+    )
 
 
 def default_check_guests() -> CheckGuests:
