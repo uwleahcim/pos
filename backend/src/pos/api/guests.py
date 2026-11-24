@@ -31,6 +31,12 @@
   with the tags of a number that carries one, tidied to one line of `NAME_MAX` letters, so the list can
   call a number that never ordered something; left out, the name the number had stays, and a number with
   no tag keeps none. 422 `bad_value` for a number that is none, a tag too long or too many of them.
+- `GET /orders/{order_id}/tags` (no token): the `tags` of the guests who were seated on this check, and
+  nothing else about them: what the screen with a table's check open shows the server (docs/guest-list.md,
+  "At the table"). They are found through the reservation or the waitlist party the host sat down on the
+  check (`POST /reservations/{id}/seat`, `POST /waitlist/{id}/seat` keep its id), and through any party
+  that joined the table after; the number is read there and never written onto the check. Each tag once,
+  in the order of the alphabet; none for a check nobody was seated on. It reads no order and names nobody.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -49,7 +55,7 @@ from pydantic import BaseModel, Field
 
 from ..customers import SHORTEST, clean_note
 from ..customers import ReadOnlyError as NotesReadOnly
-from ..guest_tags import TAG_MAX, TAGS_MOST, clean_name, clean_tags, offered
+from ..guest_tags import TAG_MAX, TAGS_MOST, clean_name, clean_tags, offered, tags_together
 from ..guest_tags import ReadOnlyError as TagsReadOnly
 from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
@@ -187,3 +193,18 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             "tags_by": str(carried.get("by") or ""),
             "tags_ms": carried.get("at_ms") if carried.get("tags") else None,
         }
+
+    @app.get("/orders/{order_id}/tags")
+    def read_table_tags(order_id: str) -> dict[str, Any]:
+        """The `tags` of the guests who were seated on this check, and nothing else about them: what the
+        screen with a table's check open shows the server. The guests are the reservation's or the waitlist
+        party's the host sat down on it, and any that joined the table after; their number stays in the
+        book and on the list and is not put on the check. It opens no order and names nobody, as the call
+        for a number that rings does (`GET /customers/tags`)."""
+        seated = [
+            *app.state.reservations.seated_on(order_id),
+            *app.state.waitlist.seated_on(order_id),
+        ]
+        phones = [row.phone for row in seated if row.phone]
+        tags = tags_together(phones, app.state.guest_tags.all()) if phones else []
+        return {"order_id": order_id, "tags": tags}

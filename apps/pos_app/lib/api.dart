@@ -680,6 +680,25 @@ class PosApi {
     }
   }
 
+  /// The tags of the guests who were seated on this check, and nothing else about them: what the check of
+  /// a table shows whoever serves it (docs/guest-list.md, "At the table"). The hub finds them through the
+  /// reservation or the waitlist party the host sat down on the check; nothing of the guest is put on the
+  /// check. None for a check nobody was seated on and from a hub older than this; null when nothing
+  /// answers, so a screen keeps the ones it has.
+  Future<List<String>?> tableTags(String orderId) async {
+    try {
+      final json = await _get('/orders/$orderId/tags');
+      return [
+        if (json['tags'] case final List tags)
+          for (final tag in tags)
+            if (tag is String && tag.trim().isNotEmpty) tag,
+      ];
+    } on ApiException catch (err) {
+      final status = err.status;
+      return status == null || status >= 500 ? null : const [];
+    }
+  }
+
   /// Keeps the one line about the customer at this number (an empty one takes it off), with who wrote it.
   /// Hands back the note as the hub keeps it: on one line, cut to its length.
   Future<String> saveCustomerNote(String phone, String note, {String? by}) async {

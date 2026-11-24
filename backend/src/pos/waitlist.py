@@ -29,6 +29,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 
 from . import localtime
@@ -563,6 +564,17 @@ class Waitlist:
         )
         self.store.put(waiting)
         return waiting
+
+    def seated_on(self, order_id: str) -> list[Party]:
+        """The parties that sat down on this check, the first to sit first: the one the check was opened for
+        and any that joined its table after. Tonight's and last night's are looked at, so a check still
+        open after the night is found too; one put back on the list is on no check."""
+        if not order_id:
+            return []
+        last_night = localtime.service_day_of(self.now_ms()) - timedelta(days=1)
+        came = self.store.since(localtime.service_day(last_night)[0])
+        sat = [p for p in came if p.seated_ms is not None and p.order_id == order_id]
+        return sorted(sat, key=lambda p: p.seated_ms or 0)
 
     def suggest(self) -> dict[str, Any]:
         """The wait to tell a party that comes now, by how many they are (`suggestions`), with the waits the

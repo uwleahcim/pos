@@ -611,6 +611,17 @@ class Reservations:
         self.store.put(standing)
         return standing
 
+    def seated_on(self, order_id: str) -> list[Booking]:
+        """The reservations whose party sat down on this check, the first to sit first: the one the check was
+        opened for and any that joined its table after. Today's and yesterday's are looked at, so a check
+        still open after the night is found too; one put back in the book is on no check."""
+        if not order_id:
+            return []
+        today = self.today()
+        since, until = localtime.service_day(today - timedelta(days=1))[0], localtime.service_day(today)[1]
+        sat = [b for b in self.store.between(since, until) if b.seated_ms is not None and b.order_id == order_id]
+        return sorted(sat, key=lambda b: b.seated_ms or 0)
+
     def of_phone(self, phone: object) -> list[Booking]:
         """The reservations still standing, today's and later ones, that were made with this phone number,
         the soonest first: for somebody who calls about theirs. Numbers are compared by their digits, the way
