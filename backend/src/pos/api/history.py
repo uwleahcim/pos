@@ -38,8 +38,7 @@ def add_history(app: FastAPI) -> None:
             return None if photo is None else (photo.photo_id, photo.staff_id)
 
         def name_of(staff_id: str) -> str | None:
-            person = staff.get(staff_id)
-            return None if person is None else person.name
+            return staff.name_of(staff_id)  # of somebody who left the staff since, too
 
         def table_of(other: str) -> Any:
             there = store.view(other)

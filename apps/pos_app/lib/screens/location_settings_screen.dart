@@ -16,6 +16,7 @@ import '../online_orders.dart';
 import '../hub_keys.dart';
 import '../powers.dart';
 import '../printers.dart';
+import '../staff_list.dart';
 import '../kitchen_screen.dart';
 import '../table_timers.dart';
 import '../tags.dart';
@@ -45,6 +46,7 @@ import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
 import 'shift_notes_screen.dart';
+import 'staff_screen.dart';
 import 'suggestions_screen.dart';
 import 'table_timers_dialog.dart';
 import 'tag_enroll_dialog.dart';
@@ -186,6 +188,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   Powers? _powers; // who may do what as the hub has it; null until it answers (an older hub has no table)
   HubKeys? _hubKeys; // the hub's keys as a manager may see them; null until it answers, and from an older hub
   bool _hubKeysOlder = false; // the hub answered that it knows no keys typed in the app
+  StaffList? _staffList; // the staff as a manager may change them; null until the hub answers, and from an older hub
+  bool _staffOlder = false; // the hub answered that it keeps no staff a manager can change in the app
   bool _clockBusy = false;
   String? _clockMessage;
 
@@ -321,6 +325,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         }
       } on ApiException {
         // nothing answered about the hub's keys: the row says so
+      }
+      try {
+        final staff = await widget.api.staffList(widget.token);
+        if (mounted) {
+          setState(() {
+            _staffList = staff;
+            _staffOlder = staff == null;
+          });
+        }
+      } on ApiException {
+        // nothing answered about the staff: the row says so
       }
     }
     await _loadFaces();
@@ -929,6 +944,31 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     unawaited(_readLive());
   }
 
+  /// One line on the staff: how many, and whether anybody still signs in with a PIN from the guide.
+  String get _staffListLine =>
+      _staffList?.summary ??
+      (_staffOlder
+          ? 'This hub is older than the staff kept in the app: update it (sudo hubctl update)'
+          : 'The hub has not answered about its staff');
+
+  /// The staff and their PINs on their own page; the row here follows every change made there, and so does
+  /// the list of faces and tags below.
+  Future<void> _staffAndPins() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => StaffScreen(
+          api: widget.api,
+          token: widget.token,
+          staff: _staffList!,
+          onChanged: (staff) {
+            if (mounted) setState(() => _staffList = staff);
+          },
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadFaces());
+  }
+
   Future<void> _readOnline() async {
     try {
       final online = await widget.api.onlineStatus();
@@ -1257,10 +1297,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           ],
           if (_may(settingsPower)) ...[
             const SizedBox(height: 12),
-            // who may do what and the hub's keys: the two things here only a manager or an owner ever opens
+            // the staff, who may do what and the hub's keys: what only a manager or an owner ever opens here
             Card(
               child: Column(
                 children: _divided([
+                  ListTile(
+                    key: const ValueKey('staff-list'),
+                    leading: const Icon(Icons.badge_outlined),
+                    title: const Text('Staff and PINs'),
+                    subtitle: Text(_staffListLine, maxLines: 3, overflow: TextOverflow.ellipsis),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _staffList == null ? null : _staffAndPins,
+                  ),
                   ListTile(
                     key: const ValueKey('powers'),
                     leading: const Icon(Icons.admin_panel_settings_outlined),

@@ -46,11 +46,12 @@ from ..floor import FloorPlan, in_turn, last_sat, load_floor, punched, said, say
 from ..guest_tags import GuestTags, default_guest_tags
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
-from ..identity.powers import May, clean_powers, holds, standard, table
+from ..identity.powers import ALWAYS, May, clean_powers, holds, standard, table
 from ..identity.preferences import PreferenceStore
-from ..identity.staff import Directory, Locked, demo_directory, roster
+from ..identity.staff import Directory, Locked, roster, staff_from_env
+from ..identity.staff_list import StaffList, default_staff_store
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
-from ..identity.tokens import Tokens
+from ..identity.tokens import Grant, Tokens
 from ..keys import HubKeys, keys_from_env
 from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_from_env, may_keep, origin_mark
 from ..menu.service import MenuService
@@ -132,6 +133,7 @@ from .prep import add_prep
 from .reservations import add_reservations
 from .runs import add_runs
 from .sales import add_sales_report
+from .staff import add_staff_list, use_staff, watch_staff
 from .timeclock import add_time_clock
 from .today import add_today
 from .waitlist import add_waitlist
@@ -884,6 +886,7 @@ def create_app(
     online: OnlineOrders | None = None,
     keys: HubKeys | None = None,
     wayin: WayIn | None = None,
+    staff_list: StaffList | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -913,6 +916,8 @@ def create_app(
                 app.state.keys_mark = ""  # so that the next look at the keys puts them all to work (`watch_keys`)
         # A key typed on the location's other hub, or taken back with hubctl, is found within the minute.
         watching = asyncio.create_task(watch_keys(app)) if keys is None else None
+        # So is a change of the staff: made on the other hub, or a PIN set with `hubctl staff pin`.
+        watching_staff = asyncio.create_task(watch_staff(app)) if staff is None and staff_list is None else None
         unhook = end_on_stop(app.state.feed)
         try:
             yield
@@ -920,6 +925,8 @@ def create_app(
             unhook()
             if watching is not None:
                 watching.cancel()
+            if watching_staff is not None:
+                watching_staff.cancel()
             if pbx is not None:
                 await pbx.stop()
             await app.state.relay.close()
@@ -931,10 +938,38 @@ def create_app(
     app.state.pricing = pricing if pricing is not None else load_rules()
     app.state.floor = floor if floor is not None else load_floor()
     app.state.store = store if store is not None else default_store()
-    app.state.staff = staff if staff is not None else demo_directory()
+    # The staff: the list a manager keeps in the app once anything was changed there, and until then the
+    # hub's own (`POS_STAFF`, or the demo staff). One directory for as long as the hub runs: a change of the
+    # staff is put into it where it stands (`pos.identity.staff_list`, `use_staff`; docs/staff.md).
+    if staff_list is not None:
+        app.state.staff_list = staff_list
+        app.state.staff = staff if staff is not None else Directory([])
+    elif staff is not None:  # a directory handed in is the staff, and what is changed is kept in memory
+        app.state.staff_list = StaffList(own=staff.all())
+        app.state.staff = staff
+    else:
+        own, source = staff_from_env()
+        app.state.staff_list = StaffList(default_staff_store(), own=own, source=source)
+        app.state.staff = Directory(own)
+    try:
+        use_staff(app, sweep=False)
+        if staff is None and app.state.staff_list.source() == "app" and (os.environ.get("POS_STAFF") or "").strip():
+            log.warning("staff: the list is kept in the app; POS_STAFF in the hub's file is not read any more")
+    except Exception as err:  # noqa: BLE001 - the hub starts with its own list, and looks again within the minute
+        log.warning("staff: the list could not be read at the start (%s)", type(err).__name__)
+        app.state.staff_mark = ""
     app.state.photos = photos if photos is not None else PhotoStore()
     app.state.preferences = preferences if preferences is not None else default_preferences()
     app.state.tokens = tokens if tokens is not None else Tokens()
+
+    def on_staff(grant: Grant) -> bool:
+        person = app.state.staff.get(grant.staff_id)
+        if person is None:
+            return False
+        # a manager made an owner (or an owner a manager) may do everything either way: their session goes on
+        return person.role == grant.role or {person.role, grant.role} <= ALWAYS
+
+    app.state.tokens.still = on_staff
     app.state.dues = Dues()  # what is still to pay on the to-go orders a list names
     app.state.settings = settings if settings is not None else default_settings()
     # The change feed: what the screens hold open instead of polling (see `feed`). It tells what arrives in
@@ -2465,6 +2500,7 @@ def create_app(
     add_runs(app)
     add_online_orders(app, number_orders)
     add_hub_keys(app)
+    add_staff_list(app)
     return app
 
 

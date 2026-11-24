@@ -106,8 +106,8 @@ Open the shift › **Correct**. Change the day, the clock-in, the clock-out or a
 
 ## Good to know
 
-- **The staff are the hub's own list** (`POS_STAFF` on the hub), as for sign-in. There is no screen to add
-  a person yet.
+- **The staff are the same people who sign in**: a manager adds a person under Location › Staff and PINs
+  (`staff.md`).
 - **One job per person**: a shift is worked as the person's role. Choosing between two jobs (and two pay
   rates) at clock-in is not built.
 - **One rule for every break.** The clock cannot tell a 30-minute meal break from a 10-minute rest. Where

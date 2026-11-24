@@ -96,7 +96,8 @@ the reader types.
   screen. The away sign-out applies to it only once the camera has recognised the person.
 - **What is kept.** Only the tag's id as the reader types it (upper-cased, separators dropped), in the hub's
   PostgreSQL (`staff_tag`: one tag per person, each tag one person's), never what is printed on the badge.
-  The static staff list's `tag_uid` (`POS_STAFF`) still signs in on a laptop without a database.
+  The static staff list's `tag_uid` (`POS_STAFF`) still signs in on a laptop without a database. Somebody
+  taken off the staff (`staff.md`) has their tag and their face forgotten with them.
 
 ## What is kept, and where
 

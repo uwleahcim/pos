@@ -78,6 +78,14 @@ jobs:
           compose up -d
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/health
+          # The staff from the hub's terminal, as `hubctl staff` runs it (pos/identity/staffctl.py). This hub's
+          # file names nobody, so the demo staff sign in. A PIN set in the terminal is the manager's from then on
+          # (looked at again at the end of this step: the API finds it within the minute, with no restart).
+          signin() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "{\"device\": \"$2\", \"pin\": \"$1\"}" http://127.0.0.1:8000/signin; }
+          compose exec -T api python -m pos.identity.staffctl list > staff.txt; cat staff.txt
+          grep 'DEMO staff' staff.txt
+          test "$(signin 9999 ci)" = 200
+          printf '4827\n' | compose exec -T api python -m pos.identity.staffctl pin s3
           # The door runs beside the API and was told the key by it (pos/online/wayin.py), in a folder the door
           # may only read: it opens for that key and for nothing else, and an empty push puts nothing on the POS.
           push() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "$@" --data '{"count": 0, "orders": []}' http://127.0.0.1:8090/online/push; }
@@ -91,6 +99,13 @@ jobs:
           compose exec -T tunnel cloudflared --version
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/online/status | jq -e '.push.tunnel.there' > /dev/null && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/online/status | jq -e '.push.configured and .push.tunnel.there and .push.tunnel.state == "off"'
+          # The PIN set in the terminal signs the manager in, and the one from the guide no more. Each try is from
+          # another screen, since five misses lock one screen's pad for a minute.
+          for i in $(seq 1 80); do [ "$(signin 4827 "ci-$i")" = 200 ] && break; sleep 1; done
+          test "$(signin 4827 ci-new)" = 200
+          test "$(signin 9999 ci-old)" = 401
+          compose exec -T api python -m pos.identity.staffctl list > staff.txt; cat staff.txt
+          grep 'kept in the app' staff.txt
           compose ps
           compose logs --tail 30 door tunnel
           compose down -v

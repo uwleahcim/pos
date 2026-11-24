@@ -9,6 +9,11 @@ Two kinds are made. A session (`POST /admin/session`) has no `scope` and lasts a
 (`POST /approvals`) has one, "<purpose>:<order>", and lasts ten minutes. Neither is ever taken for the
 other: a session approves nothing (the ops ask for the scope), and an approval is no sign-in
 (`pos.api.auth.session_of`).
+
+A token names its holder's role as it was when the PIN was typed. `still` is the hub's word on whether
+that holds now: a hub hands it the check against its staff, so the token of somebody who was taken off the
+staff, or given another role, is good for nothing from that moment and not for the rest of its hour. (A hub
+counts a manager's role and an owner's as one there: the two may do the same.)
 """
 
 from __future__ import annotations
@@ -36,10 +41,18 @@ class Grant:
 
 
 class Tokens:
-    def __init__(self, secret: str | None = None, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        secret: str | None = None,
+        *,
+        clock: Callable[[], float] = time.time,
+        still: Callable[[Grant], bool] | None = None,
+    ) -> None:
         secret = secret or os.environ.get("POS_SECRET") or secrets.token_hex(32)
         self._key = secret.encode()
         self._clock = clock
+        self.still = still
+        """Whether a grant's holder is still who the grant says: None where nobody was asked (the tests)."""
 
     def issue(
         self, staff_id: str, name: str, role: str, ttl: float = TTL_SECONDS, *, scope: str | None = None
@@ -49,7 +62,8 @@ class Tokens:
         return f"{body}.{self._sign(body)}", grant
 
     def verify(self, token: str) -> Grant | None:
-        """The grant a token carries, or None if it is forged, malformed or expired."""
+        """The grant a token carries, or None if it is forged, malformed or expired, or its holder is no
+        longer on the staff in that role (`still`)."""
         body, _, signature = token.partition(".")
         if not signature or not hmac.compare_digest(signature, self._sign(body)):
             return None
@@ -57,7 +71,11 @@ class Tokens:
             grant = Grant(**json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))))
         except (ValueError, TypeError):
             return None
-        return grant if grant.expires > self._clock() else None
+        if grant.expires <= self._clock():
+            return None
+        if self.still is not None and not self.still(grant):
+            return None
+        return grant
 
     def _sign(self, body: str) -> str:
         return _b64(hmac.new(self._key, body.encode(), hashlib.sha256).digest())

@@ -101,7 +101,7 @@ approval, and it is what puts their name on the void.
 - New limits where everybody may do something today: splitting a check, moving a table, reprinting a
   ticket, marking a dish sold out, opening a bar tab.
 - A power for one person rather than for a role, and roles of your own beyond the eight.
-- Adding staff and changing somebody's role from the app: the staff list is still set on the hub.
+- (Adding staff and changing somebody's role is built since: Location › Staff and PINs, `staff.md`.)
 - A record of who changed the table and when.
 
 ## For developers

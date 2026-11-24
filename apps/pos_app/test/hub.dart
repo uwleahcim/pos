@@ -754,6 +754,134 @@ class Hub {
     'ending': ending,
   };
 
+  /// The staff a manager changes in the app (docs/staff.md). [staffKept] is everybody on the list as
+  /// `GET /hub/staff` says them; null is a hub older than the staff kept in the app. [staffSource] says
+  /// whose list signs in (`hub`, `demo`, `app`) and [staffRoles] the roles the manager asking can give. Only
+  /// Mike's token reads or changes it ([staffAuth] keeps the last one sent). `POST /hub/staff` adds
+  /// somebody ([staffAdded] keeps what was typed, the PIN too, which no answer has), `PUT` changes a name, a
+  /// role or a PIN ([staffChanged]) and `DELETE` takes somebody off ([staffRemoved]); each makes the list
+  /// the app's, with a PIN set by Mike at [staffAtMs]. [refuseStaff] answers with this status, error and
+  /// words instead.
+  List<Map<String, dynamic>>? staffKept = [
+    onStaff('s1', 'Amy', 'server'),
+    onStaff('s2', 'Ben', 'bartender'),
+    onStaff('s3', 'Mike', 'manager', you: true),
+    onStaff('s4', 'Holly', 'host'),
+  ];
+  String staffSource = 'hub';
+  List<String> staffRoles = ['server', 'bartender', 'host', 'cashier', 'kitchen', 'driver', 'manager', 'owner'];
+  final staffAdded = <Map<String, dynamic>>[];
+  final staffChanged = <(String, Map<String, dynamic>)>[];
+  final staffRemoved = <String>[];
+  (int, String, String)? refuseStaff;
+  String? staffAuth;
+  int staffAsks = 0;
+  static const staffAtMs = 1795000000000;
+
+  /// One person as `GET /hub/staff` lists them: where their PIN is [from], and what the manager asking may
+  /// do to them ([you]: not their own role, not take themselves off; [ownerOnly]: nothing at all;
+  /// [firstOwner]: nobody is an owner yet, so [you] may make themselves one).
+  static Map<String, dynamic> onStaff(
+    String id,
+    String name,
+    String role, {
+    bool you = false,
+    bool ownerOnly = false,
+    bool firstOwner = false,
+    String from = 'hub',
+    String by = '',
+    int? atMs,
+  }) => {
+    'staff_id': id,
+    'name': name,
+    'role': role,
+    'you': you,
+    'pin': {'from': from, 'by': by, 'at_ms': atMs},
+    'can': {
+      'change': !ownerOnly,
+      'role': !ownerOnly && (!you || firstOwner),
+      'remove': !ownerOnly && !you,
+      'why': ownerOnly
+          ? 'owner_only'
+          : you
+          ? 'yourself'
+          : null,
+    },
+  };
+
+  /// Makes its staff the demo staff, whose PINs are in the guide.
+  void demoStaff() {
+    staffSource = 'demo';
+    staffKept = [
+      for (final person in staffKept!)
+        {
+          ...person,
+          'pin': {'from': 'demo', 'by': '', 'at_ms': null},
+        },
+    ];
+  }
+
+  /// What `GET /hub/staff` answers, and every call that changes the staff after it.
+  Map<String, dynamic> staffSaid() => {
+    'staff': staffKept,
+    'source': staffSource,
+    'roles': staffRoles,
+    'demo_pins': staffKept!.where((person) => (person['pin'] as Map)['from'] == 'demo').length,
+  };
+
+  http.Response _staff(http.Request request) {
+    if (staffKept == null) return json({'detail': 'Not Found'}, 404);
+    staffAuth = request.headers['authorization'];
+    if (staffAuth != 'Bearer tok-admin') {
+      return json({
+        'detail': {'error': 'not_allowed', 'power': 'settings'},
+      }, staffAuth == null ? 401 : 403);
+    }
+    final id = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
+    if (request.method == 'GET') {
+      staffAsks++;
+      return json(staffSaid());
+    }
+    final typed = request.method == 'DELETE'
+        ? const <String, dynamic>{}
+        : jsonDecode(request.body) as Map<String, dynamic>;
+    if (request.method == 'POST') staffAdded.add(typed);
+    if (request.method == 'PUT') staffChanged.add((id!, typed));
+    if (request.method == 'DELETE') staffRemoved.add(id!);
+    final refused = refuseStaff;
+    if (refused != null) {
+      return json({
+        'detail': {'error': refused.$2, 'message': refused.$3},
+      }, refused.$1);
+    }
+    const byMike = {'from': 'app', 'by': 'Mike', 'at_ms': staffAtMs};
+    final kept = staffKept!;
+    if (request.method == 'POST') {
+      final made = 's${kept.length + staffRemoved.length + 1}';
+      kept.add({...onStaff(made, typed['name'] as String, typed['role'] as String), 'pin': byMike});
+      staffSource = 'app';
+      return json({...staffSaid(), 'added': made});
+    }
+    final at = kept.indexWhere((person) => person['staff_id'] == id);
+    if (at < 0) {
+      return json({
+        'detail': {'error': 'unknown_staff', 'message': 'Nobody on the staff has this id.'},
+      }, 404);
+    }
+    if (request.method == 'DELETE') {
+      kept.removeAt(at);
+    } else {
+      kept[at] = {
+        ...kept[at],
+        if (typed['name'] != null) 'name': typed['name'],
+        if (typed['role'] != null) 'role': typed['role'],
+        if (typed['pin'] != null) 'pin': byMike,
+      };
+    }
+    staffSource = 'app';
+    return json(staffSaid());
+  }
+
   Future<http.Response> _keys(http.Request request) async {
     if (hubKeys == null) return json({'detail': 'Not Found'}, 404);
     hubKeysAuth = request.headers['authorization'];
@@ -2951,6 +3079,7 @@ class Hub {
       });
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
+    if (path == '/hub/staff' || path.startsWith('/hub/staff/')) return _staff(request);
     if (path == '/hub/keys' ||
         path.startsWith('/hub/keys/') ||
         path.startsWith('/hub/online/accounts') ||
