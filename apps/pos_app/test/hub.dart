@@ -1700,6 +1700,12 @@ class Hub {
   List<String>? packSheets = [];
   String? refusePack;
 
+  /// The labels that were printed for the bags of a to-go order (`POST /orders/{id}/bag-labels`): the order
+  /// and how many bags; null is a hub older than labels (404), and [refuseLabels] a reason to refuse the
+  /// next with.
+  List<(String, Object?)>? bagLabels = [];
+  String? refuseLabels;
+
   /// Every audit photo a terminal sent (`POST /events/photos`).
   final photosPut = <Map<String, dynamic>>[];
   Map<String, dynamic>? rules;
@@ -1799,6 +1805,7 @@ class Hub {
   static final _check = RegExp(r'^/orders/([^/]+)/check$');
   static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
   static final _pack = RegExp(r'^/orders/([^/]+)/pack-sheet$');
+  static final _labels = RegExp(r'^/orders/([^/]+)/bag-labels$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
   static final _tableTags = RegExp(r'^/orders/([^/]+)/tags$');
   static final _seatedOn = RegExp(r'^/orders/([^/]+)/seated$');
@@ -2856,6 +2863,21 @@ class Hub {
       packSheets!.add(_pack.firstMatch(path)!.group(1)!);
       return json({
         'job_id': 'pack-${packSheets!.length}',
+        'printed_at': {'id': 'front', 'name': 'Takeout'},
+      }, 202);
+    }
+    if (_labels.hasMatch(path)) {
+      if (bagLabels == null) return json({'detail': 'Not Found'}, 404);
+      if (refuseLabels != null) {
+        return json({
+          'detail': {'error': 'no_printer', 'message': refuseLabels},
+        }, 409);
+      }
+      final bags = (jsonDecode(request.body) as Map)['bags'];
+      bagLabels!.add((_labels.firstMatch(path)!.group(1)!, bags));
+      return json({
+        'job_id': 'labels-${bagLabels!.length}',
+        'bags': bags,
         'printed_at': {'id': 'front', 'name': 'Takeout'},
       }, 202);
     }

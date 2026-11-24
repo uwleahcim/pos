@@ -1,5 +1,5 @@
-"""The prep list and the pack sheet on the wire. The figures and the paper live in `pos.printing.prep` and
-`pos.printing.pack`; this is the shape of the calls.
+"""The prep list, the pack sheet and the labels for the bags on the wire. The figures and the paper live in
+`pos.printing.prep`, `pos.printing.pack` and `pos.printing.labels`; this is the shape of the calls.
 
 - `GET /orders/ahead/prep?day=YYYY-MM-DD`: what the orders ahead for that day of service need made, station
   by station (`prep_list`); without `day`, the day that is running. Anyone at a terminal may read it, like
@@ -10,6 +10,9 @@
 - `POST /orders/{order_id}/pack-sheet` `{printer}`: the order's pack sheet as the order stands now, at the
   printer asked for, else the takeout station's, else where the location's bills print. 409 `not_to_go` for
   a table's order, `nothing_on_order` for one with no dish, `no_printer` when the location has none.
+- `POST /orders/{order_id}/bag-labels` `{bags, printer}`: a label for each of the order's `bags` (1 to
+  `BAGS_MOST`), in one job, where pack sheets print. The same refusals; 422 when `bags` is no such number.
+  How many bags there were is not kept: asked again, it prints what it is asked for.
 
 Reading or printing changes nothing on an order.
 """
@@ -19,9 +22,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from .. import localtime
+from ..printing.labels import BAGS_MOST
 from ..printing.prep import prep_list, prep_paper
 from ..printing.service import PrintService, is_to_go
 from .day import DAY, the_day
@@ -37,6 +41,14 @@ class PrintPrepIn(BaseModel):
 class PrintPackIn(BaseModel):
     """The printer to print at (by id), when it is not where pack sheets usually print."""
 
+    printer: str | None = Field(None, max_length=64)
+
+
+class PrintLabelsIn(BaseModel):
+    """How many bags the order went into, as whoever packed it counted them; and the printer to print at (by
+    id), when it is not where to-go orders are packed."""
+
+    bags: StrictInt = Field(ge=1, le=BAGS_MOST)
     printer: str | None = Field(None, max_length=64)
 
 
@@ -109,3 +121,24 @@ def add_prep(app: FastAPI) -> None:
             raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
         job, printer = made
         return {"job_id": job.job_id, "printed_at": printed_at(printing, printer)}
+
+    @app.post("/orders/{order_id}/bag-labels", status_code=202)
+    def print_bag_labels(order_id: str, body: PrintLabelsIn) -> dict[str, Any]:
+        """Prints a label for each bag of a to-go order, `bags` of them in one job: the order's number and
+        name, "BAG 2 OF 3", DELIVERY when it is one, and when it is due. No phone number, no address, no
+        money and no dish. An order of any status prints, so a label that tore is printed again. Nothing is
+        written: the order is as it was, and how many bags it had is not kept. `printed_at` says which
+        printer took them."""
+        state = app.state.store.view(order_id)
+        if state is None:
+            raise HTTPException(404, "no such order")
+        if not is_to_go(state):
+            raise HTTPException(409, {"error": "not_to_go", "message": "Labels are for the bags of a to-go order."})
+        printing: PrintService = app.state.printing
+        if printing.bag_labels(state, body.bags) is None:
+            raise HTTPException(409, {"error": "nothing_on_order", "message": "There is no dish on this order yet."})
+        made = printing.print_labels(state, body.bags, asked=body.printer)
+        if made is None:
+            raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
+        job, printer = made
+        return {"job_id": job.job_id, "bags": body.bags, "printed_at": printed_at(printing, printer)}

@@ -100,7 +100,8 @@ names no check counts for the table and fills the checks in order.
 - The app: `lib/split.dart` (`placedOn`, the hub's rule again so a tap shows at once; `putOps`, `bySeatOps`,
   `evenOps`, `oneCheckOps`), `lib/screens/split_screen.dart`, `SplitMode`, `CheckPart` and `Check.parts` in
   `lib/menu.dart`, `Line.checks` in `lib/api.dart`, the `_TotalFoot` on the order screen (its buttons reflow
-  by measured width: icons and words, words alone, or the row above the total). The Split button shows only
+  by measured width: icons and words, words alone, or the row above the total, where they wrap; a to-go
+  order has Labels between Split and Bill, `bag-labels.md`). The Split button shows only
   when the hub's check carries `checks`, so an app ahead of its hub offers nothing that would not work.
 - Tests: `backend/tests/orders/test_split.py`, `backend/tests/printing/test_split_bill.py`,
   `apps/pos_app/test/split_test.dart`. The sync simulation also splits and moves dishes between checks.

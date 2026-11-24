@@ -640,6 +640,17 @@ class PosApi {
     await _post('/orders/$orderId/pack-sheet', const <String, dynamic>{}, timeout: const Duration(seconds: 6)),
   );
 
+  /// The most bags one asking prints labels for: the hub's own most (`BAGS_MOST`).
+  static const bagsMost = 24;
+
+  /// Prints a label for each of the [bags] the to-go order [orderId] went into (docs/bag-labels.md), in one
+  /// job, where pack sheets print: the takeout station's printer, else where the location's bills print.
+  /// Returns the name of the printer it was sent to. 409 with a `message` when the order is a table's, has
+  /// no dish or the location has no printer. The hub keeps nothing of it: asked again, it prints what it is
+  /// asked for.
+  Future<String> printBagLabels(String orderId, int bags) async =>
+      _printedAt(await _post('/orders/$orderId/bag-labels', {'bags': bags}, timeout: const Duration(seconds: 6)));
+
   /// The order this number opened last today, as the hub finds it (the digits match, the location's day,
   /// a voided order does not count), or null when the number opened none today.
   Future<Order?> lastOrder({required String phone}) async {
