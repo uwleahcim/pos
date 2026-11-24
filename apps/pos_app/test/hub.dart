@@ -99,6 +99,13 @@ class Hub {
   final tagAsks = <String>[];
   bool tagsDown = false;
 
+  /// The tags of the guests seated on a check (`GET /orders/{id}/tags`, what a table's check asks): the
+  /// tags [ringTags] has for the number of every reservation and every party seated with that check's id,
+  /// each once, as the real hub answers. A hub with no [ringTags] is older than the call too.
+  /// [tableTagAsks] are the checks asked about; [tableTagsDown] fails the call as if no hub answered.
+  final tableTagAsks = <String>[];
+  bool tableTagsDown = false;
+
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
   Map<String, dynamic>? tableTimers = {
@@ -1761,6 +1768,7 @@ class Hub {
   static final _bill = RegExp(r'^/orders/([^/]+)/bill$');
   static final _pack = RegExp(r'^/orders/([^/]+)/pack-sheet$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
+  static final _tableTags = RegExp(r'^/orders/([^/]+)/tags$');
   static final _history = RegExp(r'^/orders/([^/]+)/history$');
   static final _photo = RegExp(r'^/events/photos/([^/]+)$');
   static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
@@ -2540,6 +2548,24 @@ class Hub {
       final digits = phoneDigits(request.url.queryParameters['phone']);
       tagAsks.add(digits);
       return json({'phone': digits, 'tags': ringTags![digits] ?? const <String>[]});
+    }
+    final seatedOn = _tableTags.firstMatch(path);
+    if (seatedOn != null) {
+      if (ringTags == null) return json({'detail': 'Not Found'}, 404);
+      if (tableTagsDown) throw const SocketException('down');
+      final id = seatedOn.group(1)!;
+      tableTagAsks.add(id);
+      final tags = <String, String>{};
+      for (final row in [...?bookings, ...?parties]) {
+        if (row['seated_ms'] == null || row['order_id'] != id) continue;
+        for (final tag in ringTags![phoneDigits(row['phone'] as String?)] ?? const <String>[]) {
+          tags.putIfAbsent(tag.toLowerCase(), () => tag);
+        }
+      }
+      return json({
+        'order_id': id,
+        'tags': tags.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+      });
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
     if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;

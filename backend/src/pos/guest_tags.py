@@ -97,6 +97,18 @@ def with_tags(rows: Iterable[Mapping[str, Any]], carried: Mapping[str, Sequence[
     return [{**row, "tags": list(carried.get(phone_digits(row.get("phone")), ()))} for row in rows]
 
 
+def tags_together(phones: Iterable[object], carried: Mapping[str, Sequence[str]]) -> list[str]:
+    """The tags these numbers carry between them, each once whatever its capitals, in the order of the
+    alphabet: what the check of a table says of the guests who were seated at it. The numbers are compared
+    by their digits; one that is no number, or that nobody tagged, adds none. `carried` is every tagged
+    number (`GuestTags.all`)."""
+    kept: dict[str, str] = {}
+    for phone in phones:
+        for tag in carried.get(phone_digits(phone), ()):
+            kept.setdefault(tag.casefold(), tag)
+    return sorted(kept.values(), key=lambda tag: (tag.casefold(), tag))
+
+
 class GuestTags:
     """The tags on each number, by its digits. In memory: tests and a laptop. Every hub and the cloud use
     `PgGuestTags`."""

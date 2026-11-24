@@ -167,6 +167,11 @@ It then goes as for a party off the waitlist (`waitlist.md`):
 The table tapped need not be the one held. The book keeps both: the table that was held and the table they
 sat at, with who seated them.
 
+**The guest's tags go to the table with them.** The check that opens for the party, or the check of the
+table they join, shows the tags their number carries ("VIP") in the strip under the app bar, for whoever
+serves the table. Only the tags: the name, the number and the note stay in the book, and nothing is
+written onto the check (`guest-list.md`, "At the table"). **Put back** takes them off the check again.
+
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The book keeps that table."
 
@@ -281,7 +286,8 @@ and what the guest wrote as the note.
 - A reservation going onto the guest list by itself (a guest who was tagged from one is listed; one who
   was not is not), or showing what the guest had last time. Tags from a reservation that ended, or from
   one with no phone number.
-- The guest's tags on a table held on the floor map, and on the waitlist's row of booked tables.
+- The guest's tags on a table held on the floor map, and on the waitlist's row of booked tables. The
+  reservation's name or note on the check of the table (the guest's tags are on it).
 - A report of reservations, no-shows and covers over many days.
 
 ## For developers

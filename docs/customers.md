@@ -70,6 +70,10 @@ Where it all fits it is one line; on a narrow phone the note goes under the labe
 other. Any order that carries a phone number shows them, as it shows the note. The tags print nowhere
 either, on no kitchen ticket and no bill.
 
+The check of a table has the strip too when the host seated its party from a reservation or the waitlist
+and that guest carries tags: the labels alone, with no name and no number, and nothing is written onto the
+check for it (`guest-list.md`, "At the table").
+
 ## Who sees it
 
 Anyone signed in at a terminal sees the customer and may write the note, as anyone may take the order. A

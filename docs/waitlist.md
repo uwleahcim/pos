@@ -140,6 +140,11 @@ strip, or going to the list of checks, calls it off: the party is still waiting.
 
 The party goes off the list, and the list keeps the table, who seated them and how long they waited.
 
+**The guest's tags go to the table with them.** The check that opens for the party, or the check of the
+table they join, shows the tags their number carries ("VIP") in the strip under the app bar, for whoever
+serves the table. Only the tags: the name, the number and the note stay on the list, and nothing is
+written onto the check (`guest-list.md`, "At the table"). **Put back** takes them off the check again.
+
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The list keeps that table."
 
@@ -179,7 +184,7 @@ it as any check opened by mistake.
 - A suggested wait that knows the tables: which are about to pay, which are booked. The suggestion goes by
   how tonight's parties waited.
 - A report of how the waits told compared with the waits that came.
-- The party's name on the check or on the table.
+- The party's name on the check or on the table (the guest's tags are on the check).
 - A report of waits over many days.
 - A booked party on this list: reservations have their own book (`reservations.md`), one tap from here.
 - Waitlist guests going onto the guest list by themselves (a guest who was tagged from the waitlist is

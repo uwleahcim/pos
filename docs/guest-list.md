@@ -126,6 +126,8 @@ be written on the to-go form by whoever takes the call, as before.
   the note, and under the number when the reservation is opened (`reservations.md`, "Reading the book").
 - **On their line of the waitlist**, the same way: on the row before the note, and under the number when
   the party is opened (`waitlist.md`, "Reading the list").
+- **On the check of their table**, once the host seated them from their reservation or the waitlist, in
+  the same slim strip under the app bar: [At the table](#at-the-table).
 
 The book and the waitlist know a guest by the **phone number** written on the reservation or the party: a
 table booked or a party added without a number shows no tag, whoever they are. The tags are the number's,
@@ -139,7 +141,35 @@ is not. A tag is never printed, on no kitchen ticket and no bill, and nothing se
 A screen asks for a customer once, when the form looks the number up or the order is opened: a tag put on
 while an order is open shows the next time that order is opened. A call asks once, when it starts to ring.
 The book and the waitlist are told when a guest's tags change, and show it at once on every screen that
-has them open.
+has them open. So is the check of a table whose party was seated from one of them.
+
+### At the table
+
+A tag helps most where the guest sits. So when a tagged guest is **seated from their reservation or from
+the waitlist**, their tags are on the check of that table: small labels in the slim strip under the app
+bar, the same strip a to-go order has. Whoever opens the check to ring the dishes in sees `VIP` before
+they walk over.
+
+- Nothing is done for it. The host seats the party as always (**Seat**, then the table), and the check
+  that opens knows whose it is.
+- **The check shows the tags and nothing else**: no name, no phone number and no note of the guest. The
+  guest's number stays in the book or on the waitlist; it is not written onto the check. So the check is
+  what it always was: the same on the bill, in Sales and in this list, where a table still counts as a
+  visit only when somebody types a number on it.
+- **A party that joins a table** (the host taps a seated table and **Join**) adds its tags to that table's
+  check. Each tag shows once, whoever of them carries it.
+- A check that has a number of its own (typed on it) shows that customer's tags and note first, then the
+  tags of the guests seated on it.
+- The tags follow the check: move the table to another one and they are still on it, and a check that is
+  split is still that check.
+- **They are read each time, not copied.** A tag a manager puts on or takes off while the party eats shows
+  on the open check at once, and a party that sits down on a check somebody already has open shows its
+  tags there at once. Without the hub's live updates it takes up to half a minute.
+- Put the party back in the book or on the list (**Put back**) and its tags leave the check.
+- The party needs a **phone number** on its reservation or its line of the waitlist: that is what the
+  tags are kept by. A walk-in seated straight from the floor map has neither, and its check shows no tag.
+- As everywhere, the tags are only read here, they print on no kitchen ticket and no bill, and nothing
+  sends them out of the hub.
 
 ### From a reservation or the waitlist
 
@@ -216,6 +246,9 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   reports. The to-go form shows a caller to whoever takes the order, as before.
 - A tag or a note changes no order, no sale and no figure: not on this screen and not on any report. It
   changes no reservation and no party on the waitlist either: they only show it.
+- Seeing a guest's tags on the check of their table changes nothing either: no dish, no price, no
+  payment, no reservation and no party. With a hub that is not updated, or a device that is not rebuilt,
+  a table's check shows no tags, as before.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
   With a hub older than listing tagged guests with no order, the list holds the guests who ordered, as
   before. A device that is not rebuilt shows that list too, whatever the hub.
@@ -237,8 +270,13 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   the ones still standing. A reservation or a party with no phone number cannot be tagged.
 - Writing the customer's one-line note from a reservation or the waitlist.
 - The tags on the strip of a call once it is answered (the to-go form that opens shows them), on the
-  iPhone's own call screen, on a table held on the floor map, on the check of a table once the party is
-  seated, on the waitlist's row of booked tables, and in the list of to-go orders.
+  iPhone's own call screen, on a table held on the floor map, on the waitlist's row of booked tables, and
+  in the list of to-go orders.
+- At the table: the guest's name or the reservation's note on the check; the tags on the table itself on
+  the floor map or in the list of checks; saying which of two parties at one table carries which tag;
+  the tags of a walk-in (type their number on the check and it shows what that number carries); the tags
+  on a check that the party's check was merged into. Putting the party's number on the check by itself,
+  so that the table counts as their visit in this list, is not done: say so if you want it.
 - The restaurant's own name for a caller on the ringing strip: it still says the phone company's.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
 - Tagging many guests at once. Putting a first tag, from this list, on a number with no order in the
@@ -325,6 +363,18 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `GuestEditDialog.tags`, the box without the note; `canTagGuest`, `tagsSavedWords`); `_Do.tags` in
   `reservations_screen.dart` and `waitlist_screen.dart`, which take the `device` the PIN is asked with and
   read again after a save.
+- At the table: `GET /orders/{order_id}/tags` (`backend/src/pos/api/guests.py`, no token, like the call
+  below) answers `{order_id, tags}`: the tags of the numbers of every reservation and every waitlist
+  party that was seated with this check's id, each once, by the alphabet (`tags_together` in
+  `guest_tags.py`). Seating already keeps the id (`POST /reservations/{id}/seat` and
+  `POST /waitlist/{id}/seat` take `order_id`; a party that joins a table is seated with that table's
+  check); `Reservations.seated_on(order_id)` and `Waitlist.seated_on(order_id)` find them among today's
+  and yesterday's, so a check still open after the night is found. It reads no order, writes nothing and
+  answers no tags for an id it does not know. App: `PosApi.tableTags` (empty from an older hub, which
+  answers 404; null when nothing answers, so the screen keeps what it has); `_OrderScreenState
+  ._readTableTags` asks for a check with a table when it opens or is first read, when the change feed
+  says `reservations` or `waitlist` (seating and a tag change both tell them), and every 30 seconds;
+  `_guestTags` puts them after the tags of the check's own number in `_CustomerStrip`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
@@ -335,4 +385,5 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `apps/pos_app/test/customers_test.dart` (the form and the strip),
   `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist),
   `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist),
-  `apps/pos_app/test/guests_tagged_test.dart` (tagged guests with no order, in the list).
+  `apps/pos_app/test/guests_tagged_test.dart` (tagged guests with no order, in the list),
+  `apps/pos_app/test/table_tags_test.dart` (the tags on the check of a table).

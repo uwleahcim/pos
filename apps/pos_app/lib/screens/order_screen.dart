@@ -128,6 +128,9 @@ class _OrderScreenState extends State<OrderScreen> {
   String _customerNote = ''; // the line kept about the customer at this order's number
   List<String> _customerTags = const []; // and the tags a manager put on them in the guest list
   String? _noteFor; // the number's digits it was read for
+  List<String> _tableTags = const []; // the tags of the guests the host seated on this check
+  bool _tableAsked = false; // they were asked for, once it was known that this is a table's check
+  int _ticks = 0; // of the timer: the guests' tags are asked again every fifteenth
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
   DeliveryFees? _fees; // what a delivery costs here, read once for a to-go order; null where none is charged
@@ -146,11 +149,15 @@ class _OrderScreenState extends State<OrderScreen> {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_poll.due()) _refresh();
+      // a party sat down on this check, or a guest's tags changed, where the hub cannot tell: asked now and then
+      if (++_ticks % 15 == 0) unawaited(_readTableTags());
       // a dish that has waited too long to still be at the pass leaves the Ready strip by itself
       if (_readyShown != _readyLines(_order).length) setState(() {});
     });
     _live = widget.api.live.changes.listen((change) {
       if (change.touches(widget.orderId)) _reader();
+      // a party sat down or was put back, or a guest's tags changed: this check may say other tags now
+      if (change.everything || change.reservations || change.waitlist) unawaited(_readTableTags());
     });
     widget.outbox.addListener(_onOutbox);
     _refresh();
@@ -158,6 +165,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final fresh = _order; // a to-go order opened here a moment ago: no hub has it yet
     if (fresh != null) unawaited(_readQuotes(fresh));
     if (fresh != null) unawaited(_readFees(fresh));
+    if (fresh != null) unawaited(_readTableTags()); // a party seated a moment ago: its check is open at once
   }
 
   /// What a delivery costs here, once, for a to-go order: the buttons of "Pickup or delivery". Nothing
@@ -311,6 +319,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayAllergic(order, quiet: first);
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
+        if (!_tableAsked) unawaited(_readTableTags());
         unawaited(_readQuotes(order));
         unawaited(_readFees(order));
         if (order.isTakeout && order.isOpen) unawaited(_bagQuestion()); // read by the time Send is tapped
@@ -336,6 +345,31 @@ class _OrderScreenState extends State<OrderScreen> {
       _customerNote = note;
       _customerTags = tags;
     });
+  }
+
+  /// The tags of the guests the host seated on this check ("VIP"), for a table's check: a party seated from
+  /// its reservation or the waitlist brings them, and no number is on the check for it (docs/guest-list.md,
+  /// "At the table"). Asked when the check is opened or first read, when the hub says the book or the
+  /// waitlist changed (a party sat down or joined the table, a tag was put on or taken off), and now and
+  /// then. A to-go order and a bar tab have nobody seated: they do not ask.
+  Future<void> _readTableTags() async {
+    if (!(_order?.hasTable ?? false)) return;
+    _tableAsked = true;
+    final tags = await widget.api.tableTags(widget.orderId);
+    if (!mounted || tags == null || listEquals(tags, _tableTags)) return;
+    setState(() => _tableTags = tags);
+  }
+
+  /// The tags this check shows: the ones of the customer at its number, then the ones of the guests seated
+  /// on it, each once whatever its capitals.
+  List<String> get _guestTags {
+    if (_tableTags.isEmpty) return _customerTags;
+    final said = {for (final tag in _customerTags) tag.toLowerCase()};
+    return [
+      ..._customerTags,
+      for (final tag in _tableTags)
+        if (said.add(tag.toLowerCase())) tag,
+    ];
   }
 
   /// The order as it stands on this screen: the last read plus this device's operations not yet in it.
@@ -1711,8 +1745,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 ],
                 onOut: () => unawaited(_wentOut(ready)),
               ),
-            if (order != null && (_customerNote.isNotEmpty || _customerTags.isNotEmpty))
-              _CustomerStrip(note: _customerNote, tags: _customerTags),
+            if (order != null && (_customerNote.isNotEmpty || _guestTags.isNotEmpty))
+              _CustomerStrip(note: _customerNote, tags: _guestTags),
             // an order from the website says so, with how it is paid and what the customer wrote for the
             // whole of it (docs/online-orders.md, "On the screens")
             if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
@@ -2873,9 +2907,10 @@ class _ReadyStrip extends StatelessWidget {
 
 /// What the restaurant keeps about the customer at the order's number, in a slim strip under the app bar:
 /// the tags a manager put on them, each a small label ("VIP"), then the line of the note ("no MSG, side
-/// door"). It is for whoever takes the order; none of it prints, in the kitchen or on the bill. One line
-/// where it all fits, as the note alone always was; on a narrow screen the note goes under the labels, so
-/// neither hides the other.
+/// door"). A table's check has no number: its strip says the tags of the guests the host seated on it, from
+/// their reservation or the waitlist. It is for whoever takes the order; none of it prints, in the kitchen
+/// or on the bill. One line where it all fits, as the note alone always was; on a narrow screen the note
+/// goes under the labels, so neither hides the other.
 class _CustomerStrip extends StatelessWidget {
   const _CustomerStrip({required this.note, this.tags = const []});
 

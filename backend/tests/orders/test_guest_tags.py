@@ -645,6 +645,122 @@ def test_handing_out_the_tag_box_reads_no_order_and_changes_nothing(monkeypatch)
     assert the_book(h)["booked"][0] == made
 
 
+# --- at the table: the check of a party that was seated ------------------------------------------------------
+
+
+def seat(h: Hub, row: dict, order_id: str, table: str = "A7", book: str = "reservations") -> dict:
+    """The host sits a reservation's party (or one of the `waitlist`) down at a table, on this check."""
+    answer = h.c.post(f"/{book}/{row['id']}/seat", json={**HOLLY, "table": table, "order_id": order_id})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def at_table(h: Hub, order_id: str) -> dict:
+    """What the screen with a table's check open asks (no token)."""
+    answer = h.c.get(f"/orders/{order_id}/tags")
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_the_check_of_a_party_seated_from_its_reservation_is_told_the_guests_tags_and_nothing_else():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    linda = book_table(h, "Linda P.", "+1 (781) 555-0101")["booking"]
+    assert at_table(h, "t-1") == {"order_id": "t-1", "tags": []}  # nobody sat down on it yet
+    seat(h, linda, "t-1")
+    # the words alone: no name, no number, no note, and not who put them on
+    assert at_table(h, "t-1") == {"order_id": "t-1", "tags": ["Catering client", "VIP"]}
+    assert at_table(h, "t-2")["tags"] == []  # another table's check
+    # changed in the guest list while they eat, the check says the new ones the next time it asks
+    kept(h, LINDA, tags=["VIP"])
+    assert at_table(h, "t-1")["tags"] == ["VIP"]
+    kept(h, LINDA, tags=[])
+    assert at_table(h, "t-1")["tags"] == []
+
+
+def test_a_party_with_no_number_or_one_nobody_tagged_brings_no_tag_to_its_check():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    seat(h, book_table(h, "Walk", "")["booking"], "t-1")  # booked without a number
+    seat(h, book_table(h, "Omar", OMAR, time="21:45")["booking"], "t-2", table="A8")  # a number nobody tagged
+    seat(h, book_table(h, "Linda P.", LINDA, time="22:00")["booking"], "", table="A1")  # sat down with no check
+    assert [at_table(h, check)["tags"] for check in ("t-1", "t-2")] == [[], []]
+    assert h.c.get("/orders//tags").status_code == 404  # a check has an id
+
+
+def test_a_party_seated_from_the_waitlist_brings_its_tags_to_the_check():
+    h = host_stand()
+    kept(h, OMAR, tags=["Regular"])
+    omar = wait(h, "Omar", "781-555-0102")["party"]
+    assert at_table(h, "t-1")["tags"] == []
+    seat(h, omar, "t-1", book="waitlist")
+    assert at_table(h, "t-1") == {"order_id": "t-1", "tags": ["Regular"]}
+
+
+def test_a_party_that_joins_a_table_adds_its_tags_to_that_check_each_once():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"])
+    kept(h, OMAR, tags=["vip", "Regular"])
+    seat(h, book_table(h, "Linda P.", LINDA)["booking"], "t-1")
+    seat(h, wait(h, "Omar", OMAR)["party"], "t-1", book="waitlist")  # they join the table: the same check
+    assert at_table(h, "t-1")["tags"] == ["Catering client", "Regular", "VIP"]
+
+
+def test_a_party_put_back_in_the_book_or_on_the_list_takes_its_tags_off_the_check():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    kept(h, OMAR, tags=["Regular"])
+    linda = book_table(h, "Linda P.", LINDA)["booking"]
+    omar = wait(h, "Omar", OMAR)["party"]
+    seat(h, linda, "t-1")
+    seat(h, omar, "t-1", book="waitlist")
+    assert at_table(h, "t-1")["tags"] == ["Regular", "VIP"]
+    assert h.c.post(f"/reservations/{linda['id']}/back", json=HOLLY).status_code == 200
+    assert at_table(h, "t-1")["tags"] == ["Regular"]
+    assert h.c.post(f"/waitlist/{omar['id']}/back", json=HOLLY).status_code == 200
+    assert at_table(h, "t-1")["tags"] == []
+
+
+def test_a_check_still_open_after_the_night_keeps_its_guests_tags_for_a_day():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    kept(h, OMAR, tags=["Regular"])
+    seat(h, book_table(h, "Linda P.", LINDA)["booking"], "t-1")
+    seat(h, wait(h, "Omar", OMAR)["party"], "t-2", table="A8", book="waitlist")
+    h.now += 14 * 3_600_000  # eleven the next morning: a new day of service
+    assert (at_table(h, "t-1")["tags"], at_table(h, "t-2")["tags"]) == (["VIP"], ["Regular"])
+    h.now += 2 * 24 * 3_600_000  # days later nobody looks them up for it any more
+    assert (at_table(h, "t-1")["tags"], at_table(h, "t-2")["tags"]) == ([], [])
+
+
+def test_the_tags_at_the_table_go_on_no_order_and_no_bill_and_change_nothing(monkeypatch):
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"], note="no MSG")
+    made = book_table(h, "Linda P.", LINDA)["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.ring("t-1", "L1", GTC, h.now - 30_000)
+    sat = seat(h, made, "t-1")["booking"]
+    before = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+
+    def no_orders(*_args, **_kwargs):
+        raise AssertionError("the tags at the table read the orders")
+
+    with monkeypatch.context() as patched:
+        store = h.c.app.state.store
+        for reading in ("with_phone", "index", "views", "view"):
+            patched.setattr(store, reading, no_orders)
+        assert at_table(h, "t-1")["tags"] == ["VIP"]
+    after = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    assert after == before and the_book(h)["earlier"][0] == {**sat, "tags": ["VIP"]}
+    # the check carries neither the tag nor the guest's number or name, and its bill prints none of them
+    for words in (h.c.get("/orders/t-1").text, str(h.check("t-1"))):
+        assert "VIP" not in words and LINDA not in words and "Linda" not in words
+    printed = h.c.post("/orders/t-1/bill", json={})
+    assert printed.status_code == 202, printed.text
+    lines = [line for line in decode(h.printing.store.get(printed.json()["job_id"]).data).text if line.strip()]
+    assert lines and not any("VIP" in line or "Linda" in line or "no MSG" in line for line in lines)
+
+
 # --- a tagged guest with no order, in the guest list ---------------------------------------------------------
 
 ZED = "7815550188"
