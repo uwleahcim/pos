@@ -48,6 +48,9 @@
   `seated_by_check` below), so a table says whose it is and whether that guest carries a tag.
 - The list of checks is told their names and no more (`GET /orders?brief=true`, `seated` on a check:
   `names_by_check` below), so a table's check says whose it is and is found by that name.
+- Two tables put together: the parties seated on the check that was emptied sit on the check that was
+  kept from then on (`follow_merges` below, called when the hub takes the merge's operations), so all of
+  the above say them on that check.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -59,6 +62,7 @@ and `waitlist`), since both show a guest's tags; the feed says that something ch
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
@@ -73,6 +77,59 @@ from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
 from ..sync.oplog import phone_digits
 from .auth import holder_from
+
+MERGES_FOLLOWED = 20
+"""How many merges in a row a party is followed through: far more than a night puts tables together."""
+
+_log = logging.getLogger(__name__)
+
+
+def kept_check(store: Any, emptied: str) -> str | None:
+    """The check that holds the dishes of `emptied` now, as the log says it: the one it was merged into
+    (its `merged_into`), and the one that was merged into in its turn, to the end. None when `emptied` was
+    merged into nothing, into a check this hub never heard of, or round in a ring."""
+    seen = {emptied}
+    at = emptied
+    for _ in range(MERGES_FOLLOWED):
+        view = store.view(at)
+        if view is None:
+            return None
+        onto = view.fields.get("merged_into")
+        if not isinstance(onto, str) or not onto:
+            return at if at != emptied else None
+        if onto in seen:
+            return None
+        seen.add(onto)
+        at = onto
+    return None
+
+
+def follow_merges(state: Any, ops: Iterable[Any]) -> list[str]:
+    """Two tables were put together: one check took the other's dishes, and the emptied one was closed
+    saying where they went (`set_field {merged_into}`, docs/moves.md). A party the host seated on the
+    emptied check, from its reservation or the waitlist, sits on the check that was kept from now on, so
+    that check, its table on the floor map and its row in the list of checks say whose it is. Called with
+    the operations the log just took; it reads where the log says the emptied check went, so a merge
+    told twice, or two merges that arrive the wrong way round, end at the same check.
+
+    It writes which check the party sits on, in the book or on the waitlist, as seating it did: nothing
+    on any check. The screens with the book or the waitlist open are told to read again (the feed's
+    `reservations`, `waitlist`), and the topics told are handed back. Taking the operations must not fail
+    because the book could not be written: that is logged, without a guest's name, and left."""
+    told: list[str] = []
+    for emptied in dict.fromkeys(op.order_id for op in ops if op.kind == "set_field" and op.data.get("merged_into")):
+        try:
+            kept = kept_check(state.store, emptied)
+            if kept is None:
+                continue
+            for topic, book in (("reservations", state.reservations), ("waitlist", state.waitlist)):
+                if book.follow(emptied, kept) and topic not in told:
+                    told.append(topic)
+        except Exception:  # noqa: BLE001 - the operations were taken: a book that cannot be written is left
+            _log.exception("the parties of a merged check were not moved to the check that was kept")
+    for topic in told:
+        state.feed.changed(topic)
+    return told
 
 
 def seated_by_check(state: Any, order_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:

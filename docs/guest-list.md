@@ -181,7 +181,8 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
   and tells the kitchen nothing. The kitchen is told by the **Allergy** chip on the check, as always
   (`allergies.md`).
 - It follows the check: move the table to another one and the strip is still on it, and a check that is
-  split is still that check.
+  split is still that check. Two tables made one check: the parties of both are on the check that is kept
+  ([When two tables are put together](#when-two-tables-are-put-together)).
 - **It is read each time, not copied.** A tag a manager puts on or takes off while the party eats shows
   on the open check at once, and a party that sits down on a check somebody already has open is named
   there at once. Without the hub's live updates it takes up to half a minute.
@@ -236,6 +237,35 @@ carries a tag in this list.
 - **The list of checks** (the other half of the Orders screen) says the party's name after the table
   too, "Table A7 · Chen", and its search box finds the check by it. It says no star and no tag
   (`finding-checks.md`, "Whose table it is").
+
+### When two tables are put together
+
+Two tables are pushed together and their checks made one (**One check**; `moves.md`, "Merging two checks
+into one"): the dishes go over to the check of the table the other landed on, and the emptied check is
+closed. **The party goes over with its dishes.** From then on the check that is kept says whose it is:
+the name, the tags and the note in its strip, the name and the star on its table on the floor map, and
+the name on its row in the list of checks. Before, the party stayed behind on the emptied check, and the
+joined table said nobody. Nothing to turn on, and no app to rebuild: the hub does it.
+
+- Nothing is done for it. Put the tables together as always.
+- **The parties of both tables** are on the check that is kept, the first to sit first, each on a line of
+  its own in the strip: the Chens of A7 and the Wus of B5 are both named on B5's check.
+- **The emptied check says nobody.** It is closed with nothing on it, and its row among the closed checks
+  says the table alone.
+- **Put together again**, with a third table: the parties go on to that check.
+- **Put back** takes a party off the check that was kept, as off any check.
+- **The hub writes one thing for it**: which check the party sits on, in the book or on the waitlist. It
+  is what **Seat** wrote there, changed to the check that was kept. The table the party first sat down at
+  stays as the book or the list has it ("seated at A7"), as it does when a check is moved to another
+  table. **Nothing is written onto any check**: no name, no number, no note and no tag. So no bill, no
+  kitchen ticket, no report and no figure changes, and a table still counts as a visit in this list only
+  when somebody types a number on its check.
+- **Tables put together before the hub was updated** are not looked at again: a party whose check was
+  merged earlier stays on the emptied check. Put it back and seat it again at the joined table if the
+  check should say it. Every merge after the update is followed.
+- **Dishes moved one by one** to another table's check (hold a dish, **Move**) take nobody along: the
+  party stays on its own check, which is still open.
+- Tables put together **while no hub answers** are followed when the hub hears of it.
 
 ### From a reservation or the waitlist
 
@@ -351,9 +381,12 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   check of another day than today's and yesterday's.
 - At the table: how many the party was booked as and whether it came from the book or the waitlist (the
   check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
-  number on the check and it shows what that number carries); a party on a check that its own check was
-  merged into; writing or changing the note from the check. Putting the party's number on the check by
-  itself, so that the table counts as their visit in this list, is not done: say so if you want it.
+  number on the check and it shows what that number carries); writing or changing the note from the
+  check. Putting the party's number on the check by itself, so that the table counts as their visit in
+  this list, is not done: say so if you want it.
+- When two tables are put together: going back over the tables put together before the hub was updated;
+  changing the table the book says the party was seated at; taking a party along with dishes that are
+  moved one by one.
 - The restaurant's own name for a caller on the ringing strip: it still says the phone company's.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
 - Tagging many guests at once. Putting a first tag, from this list, on a number with no order in the
@@ -473,6 +506,21 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   (`floorSeated`; `seatedOnFloor = false` makes it an older hub).
 - In the list of checks: `seated` on a check of `GET /orders?brief=true`, the names alone
   (`names_by_check`, beside `seated_by_check`); `finding-checks.md`, "On the wire", has the rest.
+- Two tables put together: a merge is `set_field {merged_into}` and `close` on the emptied check
+  (`moves.md`). When `POST /orders/{id}/ops` has taken operations, `follow_merges(state, accepted)`
+  (`backend/src/pos/api/guests.py`, called in `append_ops` before the feed is poked) looks for a
+  `set_field` that says `merged_into`, asks `kept_check(store, emptied)` where the log says that check
+  went (its `merged_into`, and that check's in its turn, at most `MERGES_FOLLOWED = 20` times; None for
+  no merge, a check the hub never heard of, or a ring), and calls `Reservations.follow(emptied, kept)` and
+  `Waitlist.follow(emptied, kept)`: every party seated on the emptied check (among today's and
+  yesterday's, as `seated_on` finds them) is put again with `order_id` the kept check. `seated_table` and
+  `seated_label` stay. The feed is told `reservations` or `waitlist` when a party of that kind went over,
+  and nothing otherwise. So every lookup above answers for the kept check with no change of its own, and
+  still reads no order. The same merge taken twice moves nobody the second time; a merge of merges that
+  arrives the later one first ends at the same check, since the end is read from the log each time. A
+  book that cannot be written is logged (no guest is named) and left: the operations were taken. It is
+  hub only: the screens read again on the feed as they did. Tests:
+  `backend/tests/orders/test_guests_merged.py`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
