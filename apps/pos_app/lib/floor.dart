@@ -3,6 +3,7 @@ library;
 
 import 'coursing.dart';
 import 'kitchen_word.dart';
+import 'seated.dart';
 import 'table_timers.dart';
 
 export 'coursing.dart' show Course;
@@ -238,6 +239,7 @@ class FloorPlan {
     this.moves = false,
     this.holds = const {},
     this.turn,
+    this.seated = const {},
   });
   factory FloorPlan.fromJson(Map<String, dynamic> json) => FloorPlan(
     width: (json['width'] as num).toDouble(),
@@ -262,7 +264,20 @@ class FloorPlan {
             ],
     },
     turn: json['turn'] is List ? [for (final id in json['turn'] as List) '$id'] : null,
+    seated: {
+      if (json['seated'] case final Map<dynamic, dynamic> seated)
+        for (final e in seated.entries)
+          if (_parties(e.value) case final parties when parties.isNotEmpty) '${e.key}': parties,
+    },
   );
+
+  /// The parties among [rows] that have something to show: a name, or a tag.
+  static List<SeatedParty> _parties(Object? rows) => [
+    if (rows case final List<dynamic> rows)
+      for (final row in rows)
+        if (row is Map)
+          if (SeatedParty.fromJson(row.cast()) case final party when party.says) party,
+  ];
   final double width, height;
   final List<Room> rooms;
   final List<TableSpot> tables;
@@ -287,6 +302,18 @@ class FloorPlan {
   /// Tonight's turn for a table (docs/table-servers.md): the staff ids of the people in it, whose turn it is
   /// first. Empty while nobody was said to be on; null from a hub older than the turn.
   final List<String>? turn;
+
+  /// Who sits at the tables (docs/guest-list.md, "On the floor map"): by the id of each open check the host
+  /// seated a party on, from its reservation or the waitlist, its parties, the first to sit first, each by
+  /// its name with the tags its number carries. Empty from a hub older than it, and a walk-in's check is
+  /// not in it.
+  final Map<String, List<SeatedParty>> seated;
+
+  /// The parties seated at the table, over all its checks: whose table it is.
+  List<SeatedParty> guestsAt(String tableId) => guestsOf(checksAt(tableId));
+
+  /// The parties seated on these checks, the first check's first.
+  List<SeatedParty> guestsOf(Iterable<TableCheck> checks) => [for (final check in checks) ...?seated[check.orderId]];
 
   /// What is still to come of the table's reservations at [nowMs], the earliest first: the ones whose
   /// table is still kept. One an hour and a half past its time with nobody seated is no longer among them.
@@ -373,5 +400,6 @@ class FloorPlan {
     moves: moves,
     holds: holds,
     turn: turn,
+    seated: seated,
   );
 }

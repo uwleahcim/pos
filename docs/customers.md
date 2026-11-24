@@ -74,7 +74,8 @@ The check of a table has the strip too when the host seated its party from a res
 the party's name, the tags that guest carries and the note of the reservation or the party, with no number,
 and nothing is written onto the check for it (`guest-list.md`, "At the table"). That note is the
 reservation's, not the customer note of this page: the customer note shows only on an order with their
-number.
+number. The floor map says that party's name on the table, with a star for a guest who carries a tag
+(`guest-list.md`, "On the floor map").
 
 ## Who sees it
 

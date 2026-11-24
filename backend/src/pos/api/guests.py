@@ -44,6 +44,8 @@
   answers them. No phone number, and not the line kept about a customer. It reads the book and the
   waitlist, as `GET /reservations` and `GET /waitlist` do for any terminal; it reads no order, and nothing
   goes onto the check.
+- The floor map is told the same people, by name and tags alone, with the floor (`GET /floor`, `seated`:
+  `seated_by_check` below), so a table says whose it is and whether that guest carries a tag.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -55,6 +57,7 @@ and `waitlist`), since both show a guest's tags; the feed says that something ch
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -68,6 +71,26 @@ from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
 from ..sync.oplog import phone_digits
 from .auth import holder_from
+
+
+def seated_by_check(state: Any, order_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+    """Who sits at the tables, for the floor map (`GET /floor`, `seated`): under the id of each of these
+    checks that the host seated somebody on, its parties, the first to sit first, each with the `name` on
+    its reservation or its line of the waitlist and the `tags` its number carries. A check nobody was seated
+    on (a walk-in's) is not in it. The name and the tags and no more: not the number, not the note. It reads
+    the book, the waitlist and the tags, and no order."""
+    wanted = set(order_ids)
+    if not wanted:
+        return {}
+    seated = sorted(
+        [row for row in (*state.reservations.seated(), *state.waitlist.seated()) if row.order_id in wanted],
+        key=lambda row: row.seated_ms or 0,
+    )
+    carried = state.guest_tags.all() if any(row.phone for row in seated) else {}
+    by_check: dict[str, list[dict[str, Any]]] = {}
+    for row in seated:
+        by_check.setdefault(row.order_id, []).append({"name": row.name, "tags": tags_together([row.phone], carried)})
+    return by_check
 
 
 class GuestIn(BaseModel):

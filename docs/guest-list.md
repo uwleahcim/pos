@@ -9,8 +9,9 @@ Since 16 November 2026 (the Toast comparison, row 30). Since 23 November 2026 th
 and shown where that guest's call and order are taken, and the note is written here too; the tags also show
 on the call while it rings, in the reservation book and on the waitlist, and a guest can be tagged from
 their reservation or their line of the waitlist as well. Since 24 November 2026 a guest tagged that way
-who has not ordered yet is in the list too, after the others. It grows out of the customers the to-go form
-already remembers by their number (`customers.md`): nothing is typed in for the list itself.
+who has not ordered yet is in the list too, after the others, and a party seated from the book or the
+waitlist is named on the check of its table and on the floor map. It grows out of the customers the
+to-go form already remembers by their number (`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
 
@@ -129,6 +130,9 @@ be written on the to-go form by whoever takes the call, as before.
 - **On the check of their table**, once the host seated them from their reservation or the waitlist, in
   the same slim strip under the app bar, after their name and before the reservation's note:
   [At the table](#at-the-table).
+- **On the floor map, as a star.** The table of a party seated that way says the party's name, with a
+  small star before it when that guest carries a tag. The star says that there is a tag, not which; the
+  list of your tables beside the map says them by name: [On the floor map](#on-the-floor-map).
 
 The book and the waitlist know a guest by the **phone number** written on the reservation or the party: a
 table booked or a party added without a number shows no tag, whoever they are. The tags are the number's,
@@ -142,7 +146,7 @@ is not. A tag is never printed, on no kitchen ticket and no bill, and nothing se
 A screen asks for a customer once, when the form looks the number up or the order is opened: a tag put on
 while an order is open shows the next time that order is opened. A call asks once, when it starts to ring.
 The book and the waitlist are told when a guest's tags change, and show it at once on every screen that
-has them open. So is the check of a table whose party was seated from one of them.
+has them open. So are the floor map and the check of a table whose party was seated from one of them.
 
 ### At the table
 
@@ -186,6 +190,49 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
 - As everywhere, none of it prints, on no kitchen ticket and no bill, and nothing sends it out of the
   hub. Every server who opens the check reads it, so the advice above holds for a note too: write in a
   reservation what the staff may read.
+
+### On the floor map
+
+A manager who looks over the room wants to know where the VIPs sit without opening forty checks. So a
+table whose party was **seated from its reservation or from the waitlist** says on the floor map whose
+table it is: the party's name on a small line of its own, under the server's name tag and over the party's
+size and what the table has run up. A small **star** stands before the name when a guest seated there
+carries a tag in this list.
+
+- Nothing is done for it. The host seats the party as always (**Seat**, then the table).
+- **The name** is the one on the reservation or on the line of the waitlist. A table has little room, so
+  a name of more than nine letters is cut short ("Papadopo…"). The check says it whole.
+- **The star says that there is a tag, not which.** It is one star whatever the tags and however many.
+  Open the check and its strip says them by name, with the note ([At the table](#at-the-table)).
+- **Two parties at one table**: the table says the first to sit and "+1" ("Omar +1"). The star is there
+  when either of them carries a tag.
+- A party that left **no phone number** has its name on the table and no star.
+- **A walk-in** seated straight from the map has no reservation and no party behind it: its table reads
+  as it always did.
+- **Beside the map, in the list of your tables** (the chip **Mine**, on a tablet on its side or a Mac;
+  `table-servers.md`), each of your tables has a line with the names of all its parties, whole, each
+  followed by its tags as labels: **Linda P.** `Catering client` `VIP`.
+- **It is one of the table's small words.** The name is as small as the party's size and the total under
+  it, and on a phone that is small: spread two fingers to make the map larger, or open the check. It is
+  drawn smaller sooner than it makes the table's own name smaller. A table that says whose it is has five
+  lines in place of four, so its other small words are drawn a little smaller than on a walk-in's table.
+- It stands in the middle of the table, where a round table and one turned on its corner are widest.
+- A table that is seated and **booked again** later still says the time of that booking under the rest
+  (`reservations.md`, "On the floor map"). A table that is booked and still free says the booking's name
+  as before, and no star.
+- **It follows the check.** Move the check to another table and the name is on that table. Close the
+  check and it is gone. **Put back** (the party goes back in the book or on the list) takes it off.
+- **It is read each time, not copied.** A tag a manager puts on or takes off while the party eats shows
+  on the map at once, on every screen. Without the hub's live updates it takes as long as the map takes
+  to read again.
+- **What the map is told**: for each open check, its parties by name, each with the tags its number
+  carries. Never the phone number and never the note. Everybody who is signed in and sees the floor map
+  reads the name and the star, as everybody who opens the check reads its strip. So the advice above
+  holds here too: keep a tag to what the staff may read.
+- **Nothing is written onto the check**, as at the table: no name, no number and no tag. So no bill, no
+  kitchen ticket and no figure changes, and a table still counts as a visit in this list only when
+  somebody types a number on its check.
+- The list of checks (the other half of the Orders screen) does not say it.
 
 ### From a reservation or the waitlist
 
@@ -266,6 +313,8 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   price, no payment, no reservation and no party. A device that is not rebuilt shows what it showed
   before. A rebuilt device with a hub that only knows the tags at the table shows the tags alone, and
   with an older hub a table's check has no strip.
+- The name and the star on the floor map change nothing either. A device that is not rebuilt, and a
+  rebuilt one with a hub that is not updated, show the map as it was.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
   With a hub older than listing tagged guests with no order, the list holds the guests who ordered, as
   before. A device that is not rebuilt shows that list too, whatever the hub.
@@ -289,12 +338,15 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 - The tags on the strip of a call once it is answered (the to-go form that opens shows them), on the
   iPhone's own call screen, on a table held on the floor map, on the waitlist's row of booked tables, and
   in the list of to-go orders.
-- At the table: the name, the tags or the note on the table itself on the floor map or in the list of
-  checks; how many the party was booked as and whether it came from the book or the waitlist (the check
-  counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their number
-  on the check and it shows what that number carries); a party on a check that its own check was merged
-  into; writing or changing the note from the check. Putting the party's number on the check by itself,
-  so that the table counts as their visit in this list, is not done: say so if you want it.
+- On the floor map: the tags by name on the table itself (a star says there is one), a colour or a mark
+  of its own for each tag, the note, the second party's name on the table (it says "+1"), showing the
+  tagged tables alone, and the list of your tables beside the map on a phone (a phone keeps the whole
+  width for the map). Nothing of it is in the list of checks.
+- At the table: how many the party was booked as and whether it came from the book or the waitlist (the
+  check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
+  number on the check and it shows what that number carries); a party on a check that its own check was
+  merged into; writing or changing the note from the check. Putting the party's number on the check by
+  itself, so that the table counts as their visit in this list, is not done: say so if you want it.
 - The restaurant's own name for a caller on the ringing strip: it still says the phone company's.
 - Renaming a tag for everybody who carries it in one go, or a colour for a tag.
 - Tagging many guests at once. Putting a first tag, from this list, on a number with no order in the
@@ -399,6 +451,19 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   seconds; `_CustomerStrip` shows the check's own customer first (`_guestTags`, the note), then a line
   for each party (`seated-party:<n>`, `seated-name:<n>`, `seated-tag:<n>:<tag>`, `seated-note:<n>`), in
   a scroll view no taller than a quarter of the screen.
+- On the floor map: `seated` of `GET /floor` (`seated_by_check` in `backend/src/pos/api/guests.py`,
+  called by `floor` in `api/app.py`): under the id of each open check that a party was seated on, its
+  parties, the first to sit first, each as `{name, tags}`; a check nobody was seated on is not in it, and
+  neither a phone number nor a note is. It is made from `Reservations.seated()` and `Waitlist.seated()`
+  (every party seated on a check among today's and yesterday's, which `seated_on` now filters) and one
+  reading of `GuestTags.all()`, and only when there are open checks. Like `holds` it is part of the
+  floor's answer, so the map asks no call of its own and the answer stays the same (304) until something
+  changes. App: `FloorPlan.seated`, `guestsAt(tableId)` and `guestsOf(checks)` in `lib/floor.dart`
+  (empty from an older hub); `_GuestMark`, `guestsInWords` and `taggedIcon` in
+  `lib/screens/floor_view.dart` (keys `table-guest:<table>`, `table-guest-tagged:<table>`), the line
+  `my-table-guests:<table>` of `_MyTableRow`; the map reads again on `LiveChange.waitlist` as well as
+  `reservations`. The tests' hub answers it from the seated reservations and parties it holds
+  (`floorSeated`; `seatedOnFloor = false` makes it an older hub).
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
@@ -410,4 +475,5 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `apps/pos_app/test/guest_tags_host_test.dart` (the call, the book and the waitlist),
   `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist),
   `apps/pos_app/test/guests_tagged_test.dart` (tagged guests with no order, in the list),
-  `apps/pos_app/test/table_tags_test.dart` (the tags on the check of a table).
+  `apps/pos_app/test/table_tags_test.dart` (the name, the tags and the note on the check of a table),
+  `apps/pos_app/test/floor_guests_test.dart` (the name and the star on the floor map).

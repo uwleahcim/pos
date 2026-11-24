@@ -11,7 +11,9 @@ import '../live.dart';
 import '../local_order.dart';
 import '../outbox.dart';
 import '../roster.dart';
+import '../seated.dart';
 import 'booked_table_dialog.dart' show holdColors;
+import 'guest_tag_mark.dart';
 import 'ready_mark.dart';
 import 'theme.dart';
 
@@ -98,8 +100,9 @@ class FloorViewState extends State<FloorView> {
     });
     _live = widget.api.live.changes.listen((change) {
       // a table booked, a reservation changed or ended, somebody put in tonight's turn or taken out: the
-      // tables kept for today and the turn come with the floor
-      if (_inFront && (change.anyOrder || change.reservations || change.floor)) _reader();
+      // tables kept for today and the turn come with the floor. So does who sits at each table: a party
+      // seated from the book or the waitlist, and a tag put on a guest (which tells both)
+      if (_inFront && (change.anyOrder || change.reservations || change.waitlist || change.floor)) _reader();
     });
     _second = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_inFront) _tick();
@@ -367,6 +370,7 @@ class FloorViewState extends State<FloorView> {
                                       top: top,
                                       checks: plan.checksAt(t.id),
                                       holds: plan.holds[t.id] ?? const [],
+                                      guests: plan.guestsAt(t.id),
                                       clock: _clock,
                                       ringed: rings.has(t.id),
                                       faded: faded(t.id),
@@ -1028,6 +1032,7 @@ class _TablePositioned extends StatelessWidget {
     required this.ringed,
     required this.onTap,
     this.holds = const [],
+    this.guests = const [],
     this.faded = false,
     this.moving = false,
     this.onHeld,
@@ -1036,6 +1041,10 @@ class _TablePositioned extends StatelessWidget {
   final TableSpot table;
   final double left, top;
   final List<TableCheck> checks;
+
+  /// The parties the host seated at this table, from a reservation or the waitlist, the first to sit first
+  /// (docs/guest-list.md, "On the floor map"). None at a walk-in's table.
+  final List<SeatedParty> guests;
 
   /// The reservations of today that hold this table, the earliest first (docs/reservations.md).
   final List<TableHold> holds;
@@ -1138,6 +1147,24 @@ class _TablePositioned extends StatelessWidget {
                                       color: fill,
                                       letterSpacing: 0.1,
                                       height: _busyLine,
+                                    ),
+                                  ),
+                                ),
+                              // who sits here: the party the host seated, by its name, with a star when a
+                              // guest of it carries a tag. It is the widest line, so it stands in the middle
+                              // of the table, where a round table and one turned on its corner are widest.
+                              // Like a booking, it is drawn smaller sooner than it makes the table's own
+                              // name smaller.
+                              if (check != null && guests.isNotEmpty)
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(maxWidth: w - 8),
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: _GuestMark(
+                                      key: ValueKey('table-guest:${table.id}'),
+                                      tableId: table.id,
+                                      guests: guests,
+                                      ink: textColor,
                                     ),
                                   ),
                                 ),
@@ -1295,6 +1322,52 @@ class _HoldMark extends StatelessWidget {
 
 /// The mark of a table that is booked, on the map and under it.
 const bookedIcon = Icons.event_rounded;
+
+/// The mark of a table where a guest sits who carries a tag in the guest list ("VIP").
+const taggedIcon = Icons.star_rounded;
+
+/// Who sits at a table, in words: "Linda P., tagged Catering client, VIP; Omar".
+String guestsInWords(List<SeatedParty> guests) => [
+  for (final party in guests)
+    [if (party.name.isNotEmpty) party.name, if (party.tags.isNotEmpty) 'tagged ${party.tags.join(', ')}'].join(', '),
+].join('; ');
+
+/// On a table the host seated a party at, from its reservation or the waitlist: whose table it is, by the
+/// party's name ("Chen"), with a star before it when a guest seated there carries a tag in the guest list.
+/// "+1" says another party sits there too. The check itself says the rest: the tags by name and the note.
+class _GuestMark extends StatelessWidget {
+  const _GuestMark({super.key, required this.tableId, required this.guests, required this.ink});
+
+  final String tableId;
+  final List<SeatedParty> guests;
+
+  /// The colour the table writes in.
+  final Color ink;
+
+  /// The most letters of a name a table has the room for.
+  static const _letters = 9;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = guests.firstWhere((party) => party.name.isNotEmpty, orElse: () => guests.first).name;
+    final name = first.characters.length > _letters ? '${first.characters.take(_letters - 1)}…' : first;
+    final more = guests.length - 1;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (guests.any((party) => party.tags.isNotEmpty)) ...[
+          Icon(taggedIcon, key: ValueKey('table-guest-tagged:$tableId'), size: 10, color: ink),
+          if (name.isNotEmpty || more > 0) const SizedBox(width: 1),
+        ],
+        Text(
+          [if (name.isNotEmpty) name, if (more > 0) '+$more'].join(' '),
+          semanticsLabel: 'seated here: ${guestsInWords(guests)}',
+          style: TextStyle(fontSize: 8.5, height: 1.25, fontWeight: FontWeight.w700, color: ink),
+        ),
+      ],
+    );
+  }
+}
 
 /// Another server's table, or the badge on it, while "Mine" is on: fainter, and nothing else about it changes.
 /// What is not faded is drawn as it always was, with no layer of its own.
@@ -1461,6 +1534,7 @@ class _MyTableRow extends StatelessWidget {
     final guests = checks.every((c) => c.guests == null) ? null : checks.fold<int>(0, (n, c) => n + (c.guests ?? 0));
     final party = guests == null ? '' : '$guests ${guests == 1 ? 'guest' : 'guests'} · ';
     final more = checks.length > 1 ? ' · ${checks.length} checks' : '';
+    final seated = plan.guestsOf(checks); // whose table it is, when the host seated them from the book or the list
     return InkWell(
       onTap: onTap,
       onLongPress: onHeld,
@@ -1528,6 +1602,32 @@ class _MyTableRow extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 2),
+                      // whose table it is, with the tags they carry: the list has the room the map has not
+                      if (seated.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Wrap(
+                            key: ValueKey('my-table-guests:${table.id}'),
+                            spacing: 6,
+                            runSpacing: 2,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              for (final guest in seated) ...[
+                                if (guest.name.isNotEmpty)
+                                  Text(
+                                    guest.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurface,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                for (final tag in guest.tags) GuestTagMark(tag),
+                              ],
+                            ],
+                          ),
+                        ),
                       // Food the kitchen has made for the table comes first: it is getting cold
                       if (ready > 0)
                         Container(

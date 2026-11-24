@@ -569,11 +569,14 @@ class Waitlist:
         """The parties that sat down on this check, the first to sit first: the one the check was opened for
         and any that joined its table after. Tonight's and last night's are looked at, so a check still
         open after the night is found too; one put back on the list is on no check."""
-        if not order_id:
-            return []
+        return [party for party in self.seated() if party.order_id == order_id] if order_id else []
+
+    def seated(self) -> list[Party]:
+        """Every party that sat down on a check, the first to sit first, among tonight's and last night's:
+        who is at the tables now, for the floor map, and whoever of last night is still there."""
         last_night = localtime.service_day_of(self.now_ms()) - timedelta(days=1)
         came = self.store.since(localtime.service_day(last_night)[0])
-        sat = [p for p in came if p.seated_ms is not None and p.order_id == order_id]
+        sat = [p for p in came if p.seated_ms is not None and p.order_id]
         return sorted(sat, key=lambda p: p.seated_ms or 0)
 
     def suggest(self) -> dict[str, Any]:

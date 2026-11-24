@@ -1434,6 +1434,30 @@ class Hub {
     return holds;
   }
 
+  /// Who sits at the tables, as the hub tells the floor map (`seated` of `GET /floor`): under the id of each
+  /// open check on the floor, the reservations and the parties of the waitlist that were seated with it,
+  /// the first to sit first, each by its name with the tags its number carries ([ringTags]). No number and
+  /// no note. With [seatedOnFloor] off the hub is older than it and says nothing.
+  bool seatedOnFloor = true;
+  Map<String, List<Map<String, dynamic>>> get floorSeated {
+    final open = {
+      for (final checks in ((floor ?? fixture('floor'))['status'] as Map? ?? const {}).values)
+        for (final check in checks as List) (check as Map)['order_id'],
+    };
+    final sat = [
+      for (final row in [...?bookings, ...?parties])
+        if (row['seated_ms'] != null && open.contains(row['order_id'])) row,
+    ]..sort((a, b) => (a['seated_ms'] as int).compareTo(b['seated_ms'] as int));
+    final seated = <String, List<Map<String, dynamic>>>{};
+    for (final row in sat) {
+      seated.putIfAbsent(row['order_id'] as String, () => []).add({
+        'name': row['name'],
+        'tags': [...?ringTags?[phoneDigits(row['phone'] as String?)]],
+      });
+    }
+    return seated;
+  }
+
   /// What the floor map is told of a reservation that holds a table: no number and no note.
   static Map<String, dynamic> holdOf(Map<String, dynamic> booking) {
     final at = booking['at_ms'] as int;
@@ -3457,6 +3481,7 @@ class Hub {
           ...floor ?? fixture('floor'),
           if (bookings != null) 'holds': tableHolds,
           if (turn != null) 'turn': turn,
+          if (seatedOnFloor && (bookings != null || parties != null)) 'seated': floorSeated,
         });
       case '/floor/turn' when request.method == 'POST':
         final word = jsonDecode(request.body) as Map<String, dynamic>;
