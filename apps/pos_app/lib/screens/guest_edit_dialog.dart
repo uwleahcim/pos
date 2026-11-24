@@ -26,6 +26,7 @@ class GuestEditDialog extends StatefulWidget {
        phone = guest.phone,
        tags = guest.tags,
        note = guest.note,
+       name = null,
        withNote = true;
 
   const GuestEditDialog.tags({
@@ -36,6 +37,7 @@ class GuestEditDialog extends StatefulWidget {
     required this.phone,
     required this.tags,
     required this.offered,
+    this.name,
     this.tagMax = 24,
     this.tagsMost = 6,
   }) : note = '',
@@ -53,6 +55,11 @@ class GuestEditDialog extends StatefulWidget {
   final String phone;
   final List<String> tags;
   final String note;
+
+  /// What the guest is called on the reservation or the party they are tagged from; null in the guest
+  /// list. It goes to the hub with the tags, which keeps it while the number carries one: a guest who
+  /// never ordered has no other name for the guest list to call them.
+  final String? name;
 
   /// Whether the note is shown and written with the tags (the guest list), or the tags alone.
   final bool withNote;
@@ -142,6 +149,7 @@ class _GuestEditDialogState extends State<GuestEditDialog> {
         widget.phone,
         note: widget.withNote ? _note.text : null, // the tags alone: the note stays as it is
         tags: _picked,
+        name: (widget.name ?? '').trim().isEmpty ? null : widget.name!.trim(),
       );
       if (mounted) Navigator.of(context).pop(kept);
     } on ApiException catch (err) {

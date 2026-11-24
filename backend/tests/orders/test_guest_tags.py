@@ -6,20 +6,32 @@ is to offer; the hub keeps who wrote what and when, and nothing else moves by it
 call or order is shown the tags beside the note (`GET /customers/lookup`); they go on no order and no print.
 The host stand sees them too: on the guest's reservation in the book, on their party on the waitlist, and
 while their call still rings (`GET /customers/tags`). A manager tags a guest from there as well, one who
-never ordered too: the box is handed what it needs by `GET /reports/guests/tags`."""
+never ordered too: the box is handed what it needs by `GET /reports/guests/tags`. A number that carries a
+tag and has no visit in the year stands in the list all the same, apart from the guests who ordered
+(`tagged`), under the name it was tagged by."""
 
 from __future__ import annotations
 
 import pytest
 
 from pos.customers import NOTE_MAX
-from pos.guest_tags import STANDARD, TAG_MAX, TAGS_MOST, GuestTags, clean_tags, offered, with_tags
+from pos.guest_tags import (
+    NAME_MAX,
+    STANDARD,
+    TAG_MAX,
+    TAGS_MOST,
+    GuestTags,
+    clean_name,
+    clean_tags,
+    offered,
+    with_tags,
+)
 from pos.reservations import Reservations
 from pos.waitlist import Waitlist
 
 from ..printing.fake_printer import decode
 from .test_day import DSN, Hub
-from .test_guests import GTC, LINDA, OMAR, PRIYA, SAM, TESS, a_year, guest, guests, one, order
+from .test_guests import GTC, LINDA, OMAR, PRIYA, SAM, TESS, a_year, ago, guest, guests, one, order
 
 NOBODY = "7815550199"
 """A number that never ordered."""
@@ -264,9 +276,10 @@ def test_a_number_outside_the_list_can_be_tagged_and_its_tag_is_one_to_offer():
     h = a_year()
     assert kept(h, NOBODY, tags=["Old friend"], note="moved away")["tags"] == ["Old friend"]
     report = guests(h)
-    assert all(row["phone"] != NOBODY for row in report["guests"])  # no visit in the year: not a guest of the list
+    # no visit in the year: not among the guests who ordered, and counted with none of them
+    assert all(row["phone"] != NOBODY for row in report["guests"])
     assert counts(report) == {"Friend of the house": 0, "Old friend": 0, "VIP": 0}
-    assert h.c.get(f"/reports/guests/{NOBODY}", headers=h.manager()).status_code == 404
+    assert [row["phone"] for row in report["tagged"]] == [NOBODY]  # it stands apart, for the tag it carries
     # the next guest given the tag gets it as it is spelt
     assert kept(h, TESS, tags=["old FRIEND"])["tags"] == ["Old friend"]
 
@@ -632,6 +645,181 @@ def test_handing_out_the_tag_box_reads_no_order_and_changes_nothing(monkeypatch)
     assert the_book(h)["booked"][0] == made
 
 
+# --- a tagged guest with no order, in the guest list ---------------------------------------------------------
+
+ZED = "7815550188"
+"""A number whose one order is older than the year the list reads."""
+
+
+def no_visit(phone: str, name: str, tags: list[str], **more) -> dict:
+    """The row of a number that carries a tag and has no visit in the year."""
+    return {
+        "phone": phone,
+        "name": name,
+        "note": "",
+        "tags": tags,
+        "visits": 0,
+        "spent": "0.00",
+        "per_visit": None,
+        "last": None,
+        "first": None,
+        "since_ms": None,
+        "orders_ever": 0,
+        "lately": 0,
+        "regular": False,
+        "lapsed": False,
+        "new": False,
+        "favourites": [],
+        **more,
+    }
+
+
+def test_the_name_a_number_was_tagged_by_is_kept_while_it_carries_a_tag():
+    tags = GuestTags()
+    assert tags.names() == {}
+    # the name comes with the tags, and what is handed back about the tags is as it was
+    assert tags.put(NOBODY, ["VIP"], by="Mike", at_ms=5, name="Novak") == {"tags": ["VIP"], "by": "Mike", "at_ms": 5}
+    assert tags.get(NOBODY) == {"tags": ["VIP"], "by": "Mike", "at_ms": 5}
+    assert tags.names() == {NOBODY: "Novak"}
+    tags.put(NOBODY, ["Bar", "VIP"], by="Olive", at_ms=6)  # tags changed with no name said: the name stays
+    tags.put(LINDA, ["VIP"], by="Mike", at_ms=6)  # tagged from the guest list: no name comes with it
+    assert tags.names() == {NOBODY: "Novak"}
+    tags.put(NOBODY, ["VIP"], by="Olive", at_ms=7, name="Novak family")  # called something else the next time
+    assert tags.names() == {NOBODY: "Novak family"}
+    tags.put(NOBODY, ["VIP"], by="Olive", at_ms=8, name="")  # an empty name is no name said
+    assert tags.names() == {NOBODY: "Novak family"}
+    # the name alone: who put the tags on, and when, stays
+    tags.rename(NOBODY, "Ana Novak")
+    tags.rename(LINDA, "Linda")
+    tags.rename(OMAR, "Omar")  # carries no tag: nothing is kept about the number
+    assert tags.names() == {NOBODY: "Ana Novak", LINDA: "Linda"}
+    assert tags.get(NOBODY) == {"tags": ["VIP"], "by": "Olive", "at_ms": 8} and tags.get(OMAR) is None
+    # every tag taken off takes the name with it, and a tag put on later does not bring it back
+    tags.put(NOBODY, [], by="Mike", at_ms=9)
+    assert tags.names() == {LINDA: "Linda"}
+    tags.put(NOBODY, ["VIP"], by="Mike", at_ms=10)
+    assert tags.names() == {LINDA: "Linda"}
+    tags.put(OMAR, [], by="Mike", at_ms=11, name="Omar")  # no tag, so no name
+    assert tags.names() == {LINDA: "Linda"}
+
+
+def test_a_name_is_kept_on_one_line_and_no_longer_than_a_line_of_the_list():
+    assert clean_name("  Novak\n  family\t") == "Novak family"
+    assert clean_name(None) == "" and clean_name("") == "" and clean_name("   ") == ""
+    assert clean_name("x" * (NAME_MAX + 5)) == "x" * NAME_MAX
+    assert clean_name("Ana" + " " * NAME_MAX + "Novak") == "Ana Novak"
+    assert NAME_MAX == 40
+
+
+def test_a_tagged_guest_who_never_ordered_stands_in_the_list_apart_from_those_who_did():
+    h = a_year()
+    before = guests(h)
+    assert before["tagged"] == []
+    kept(h, NOBODY, tags=["vip", "Wine club"], name="Novak")
+    kept(h, LINDA, tags=["VIP"], name="Linda at the door")  # a guest who ordered is where she was
+    report = guests(h)
+    assert report["tagged"] == [no_visit(NOBODY, "Novak", ["VIP", "Wine club"])]
+    assert guest(report, LINDA)["name"] == "Linda P." and guest(report, LINDA)["tags"] == ["VIP"]
+    # the guests who ordered, what they came to and how many of them carry each tag are as they were
+    assert [row["phone"] for row in report["guests"]] == [row["phone"] for row in before["guests"]]
+    assert report["totals"] == before["totals"]
+    assert counts(report) == {"VIP": 1, "Friend of the house": 0, "Wine club": 0}
+    # the note the restaurant keeps about the number stands beside it, as beside any guest
+    kept(h, NOBODY, note="likes the window")
+    assert guests(h)["tagged"] == [no_visit(NOBODY, "Novak", ["VIP", "Wine club"], note="likes the window")]
+
+
+def test_tagged_guests_with_no_order_stand_by_name_and_the_nameless_by_number_after_them():
+    h = a_year()
+    for phone, name in (("7815550193", "zoe"), ("7815550192", ""), ("7815550191", "Ana"), ("7815550194", "Bo")):
+        kept(h, phone, tags=["VIP"], **({"name": name} if name else {}))
+    kept(h, "7815550190", tags=["VIP"])
+    assert [(row["name"], row["phone"]) for row in guests(h)["tagged"]] == [
+        ("Ana", "7815550191"),
+        ("Bo", "7815550194"),
+        ("zoe", "7815550193"),
+        ("", "7815550190"),
+        ("", "7815550192"),
+    ]
+
+
+def test_a_guest_of_long_ago_who_carries_a_tag_says_since_when():
+    h = a_year()
+    order(h, "z1", ago(400), ZED, "Zed", GTC)
+    assert all(row["phone"] != ZED for row in guests(h)["guests"]) and guests(h)["tagged"] == []
+    kept(h, ZED, tags=["Old friend"], name="Zed")
+    assert guests(h)["tagged"] == [no_visit(ZED, "Zed", ["Old friend"], since_ms=ago(400), orders_ever=1)]
+
+
+def test_a_tagged_guest_with_no_order_is_read_closely_and_their_tags_are_changed_like_any_guests():
+    h = a_year()
+    assert h.c.get(f"/reports/guests/{NOBODY}", headers=h.manager()).status_code == 404
+    kept(h, NOBODY, tags=["VIP"], name="Novak", note="likes the window")
+    close = one(h, NOBODY)
+    assert close["guest"] == no_visit(NOBODY, "Novak", ["VIP"], note="likes the window")
+    assert close["latest"] == []
+    assert (close["tags_by"], close["tags_ms"], close["note_by"], close["note_ms"]) == ("Mike", h.now, "Mike", h.now)
+    assert (close["first"], close["last"], close["tag_max"]) == ("2025-11-17", "2026-11-16", TAG_MAX)
+    # changed from the list, where no name is said: the name they were tagged by stays
+    assert kept(h, NOBODY, tags=["VIP", "Wine club"])["tags"] == ["VIP", "Wine club"]
+    assert one(h, NOBODY)["guest"]["name"] == "Novak"
+    # the last tag taken off: no guest of the list any more, and the name is not kept
+    kept(h, NOBODY, tags=[])
+    assert guests(h)["tagged"] == [] and h.c.app.state.guest_tags.names() == {}
+    answer = h.c.get(f"/reports/guests/{NOBODY}", headers=h.manager())
+    assert (answer.status_code, answer.json()["detail"]["error"]) == (404, "no_guest")
+    assert card(h, NOBODY)["note"] == "likes the window"  # the note is the number's, tag or none
+
+
+def test_the_name_comes_with_the_tags_tidied_and_alone_it_leaves_who_tagged():
+    h = a_year()
+    names = h.c.app.state.guest_tags.names
+    kept(h, NOBODY, tags=["VIP"], name="  Novak\n family  ")
+    assert names() == {NOBODY: "Novak family"}
+    h.now += 60_000
+    # the same tags saved under another name: the name is kept, and who put the tags on is as it was
+    again = kept(h, NOBODY, tags=["VIP"], name="Ana Novak")
+    assert names() == {NOBODY: "Ana Novak"}
+    assert (again["tags_by"], again["tags_ms"]) == ("Mike", h.now - 60_000)
+    kept(h, NOBODY, name="A. Novak")  # the name alone
+    assert names() == {NOBODY: "A. Novak"}
+    kept(h, NOBODY, tags=["VIP"], name="x" * 200)
+    assert names() == {NOBODY: "x" * NAME_MAX}
+    # a name for a number that carries no tag is not kept, and too long a one is refused whole
+    kept(h, SAM, name="Sam at the door")
+    kept(h, OMAR, tags=[], name="Omar")
+    assert names() == {NOBODY: "x" * NAME_MAX}
+    assert keep(h, NOBODY, tags=["Bar"], name="x" * 201).status_code == 422
+    assert h.c.app.state.guest_tags.get(NOBODY)["tags"] == ["VIP"]
+    assert keep(h, NOBODY, tags=["VIP"], name=7).status_code == 422
+
+
+def test_a_tagged_guests_first_order_puts_them_among_the_guests_who_ordered():
+    h = a_year()
+    kept(h, NOBODY, tags=["VIP"], name="Novak")
+    assert [row["phone"] for row in guests(h)["tagged"]] == [NOBODY]
+    order(h, "n1", ago(0, 20), NOBODY, "Ana Novak", GTC)
+    report = guests(h)
+    assert report["tagged"] == []
+    row = guest(report, NOBODY)
+    assert (row["name"], row["tags"], row["visits"], row["new"]) == ("Ana Novak", ["VIP"], 1, True)
+    assert counts(report)["VIP"] == 1
+
+
+def test_listing_tagged_guests_changes_no_order_and_no_figure():
+    h = a_year()
+
+    def figures() -> tuple:
+        report = guests(h)
+        sales = h.c.get("/reports/sales", params={"from": "2026-11-01", "to": "2026-11-16"}, headers=h.manager())
+        return report["totals"], report["guests"], sales.json()["span"], h.report()["sales"]
+
+    before = figures()
+    kept(h, NOBODY, tags=["VIP"], name="Novak")
+    one(h, NOBODY)
+    assert figures() == before
+
+
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
 def test_tags_are_kept_in_postgresql_the_same_way():
     import psycopg
@@ -655,6 +843,67 @@ def test_tags_are_kept_in_postgresql_the_same_way():
     again = PgGuestTags(DSN)  # after a restart
     try:
         assert again.get(LINDA)["tags"] == ["Bar", "VIP"] and again.all() == {LINDA: ["Bar", "VIP"]}
+    finally:
+        again.close()
+    with psycopg.connect(DSN) as conn:
+        conn.execute("DROP TABLE IF EXISTS guest_tag")
+
+
+@pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
+def test_the_name_is_kept_in_postgresql_the_same_way_and_a_table_of_before_gets_its_column():
+    import psycopg
+
+    from pos.guest_tags import PgGuestTags
+
+    with psycopg.connect(DSN) as conn:
+        # the table as the hubs before this had it, with a guest tagged then
+        conn.execute("DROP TABLE IF EXISTS guest_tag")
+        conn.execute(
+            "CREATE TABLE guest_tag (phone TEXT PRIMARY KEY, tags JSONB NOT NULL DEFAULT '[]'::jsonb, "
+            "updated_by TEXT NOT NULL DEFAULT '', updated_ms BIGINT NOT NULL DEFAULT 0)"
+        )
+        conn.execute(
+            "INSERT INTO guest_tag (phone, tags, updated_by, updated_ms) VALUES (%s, '[\"VIP\"]', 'Mike', 3)", (LINDA,)
+        )
+    tags = PgGuestTags(DSN)
+    try:
+        assert tags.names() == {} and tags.all() == {LINDA: ["VIP"]}
+        assert tags.put(NOBODY, ["VIP"], by="Mike", at_ms=5, name="Novak") == {
+            "tags": ["VIP"],
+            "by": "Mike",
+            "at_ms": 5,
+        }
+        tags.put(NOBODY, ["Bar", "VIP"], by="Olive", at_ms=6)  # no name said: the name stays
+        tags.put(NOBODY, ["Bar", "VIP"], by="Olive", at_ms=6, name="")
+        assert tags.names() == {NOBODY: "Novak"}
+        tags.put(NOBODY, ["VIP"], by="Olive", at_ms=7, name="  Novak\n family ")
+        assert tags.names() == {NOBODY: "Novak family"}
+        tags.rename(NOBODY, "Ana Novak")
+        tags.rename(LINDA, "Linda")
+        tags.rename(OMAR, "Omar")  # carries no tag: nothing is kept about the number
+        assert tags.names() == {NOBODY: "Ana Novak", LINDA: "Linda"}
+        assert tags.get(NOBODY) == {"tags": ["VIP"], "by": "Olive", "at_ms": 7} and tags.get(OMAR) is None
+        assert tags.get(LINDA) == {"tags": ["VIP"], "by": "Mike", "at_ms": 3}
+        tags.put(LINDA, [], by="Mike", at_ms=8)  # every tag taken off takes the name with it
+        tags.put(LINDA, ["VIP"], by="Mike", at_ms=9)
+        tags.put(OMAR, [], by="Mike", at_ms=9, name="Omar")  # no tag, so no name
+        assert tags.names() == {NOBODY: "Ana Novak"}
+    finally:
+        tags.close()
+    again = PgGuestTags(DSN)  # after a restart
+    try:
+        assert again.names() == {NOBODY: "Ana Novak"}
+        # a database that lost the column under a running hub (one that took over from an older one): what
+        # is read is no name, and the next write puts the column back
+        with psycopg.connect(DSN) as conn:
+            conn.execute("ALTER TABLE guest_tag DROP COLUMN name")
+        assert again.names() == {} and again.all() == {LINDA: ["VIP"], NOBODY: ["VIP"]}
+        again.rename(NOBODY, "Novak")
+        assert again.names() == {NOBODY: "Novak"}
+        with psycopg.connect(DSN) as conn:
+            conn.execute("ALTER TABLE guest_tag DROP COLUMN name")
+        again.put(LINDA, ["VIP"], by="Mike", at_ms=10, name="Linda")
+        assert again.names() == {LINDA: "Linda"}
     finally:
         again.close()
     with psycopg.connect(DSN) as conn:

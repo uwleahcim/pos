@@ -8,21 +8,29 @@
   `new`, and their `favourites` (dishes, most ordered first). `totals` adds the list up. `regular_visits`,
   `regular_days`, `lapsed_days` and `new_days` say what the three words mean. `tags` is every tag there is
   to offer (`pos.guest_tags`), each with how many of the list's `guests` carry it, and `note_max`,
-  `tag_max` and `tags_most` are what a note and the tags are held to.
+  `tag_max` and `tags_most` are what a note and the tags are held to. `tagged` is every number that carries
+  a tag and has no visit in the year (tagged from a reservation or the waitlist before its first order, or
+  a guest of long ago), apart from `guests` and counted in none of the figures: rows of the same shape
+  with `visits` 0, `spent` "0.00", no `last`, `first` or `per_visit`, under the `name` the number was
+  tagged by, by that name. An app that does not know `tagged` shows the list as before.
 - `GET /reports/guests/{phone}` (manager token): one guest read closely: `guest` (the same row with more
   favourites), `latest` (their latest visits, each with its day, kind, net and dishes), who wrote the note
-  and when (`note_by`, `note_ms`) and who last put the tags on (`tags_by`, `tags_ms`). 404 `no_guest` for a
-  number with no visit in the year.
+  and when (`note_by`, `note_ms`) and who last put the tags on (`tags_by`, `tags_ms`). A number of `tagged`
+  is read the same way, with no visit in `latest`. 404 `no_guest` for a number with no visit in the year
+  that carries no tag.
 - `GET /reports/guests/tags` (manager token), with `?phone=` or without: what the box that tags a guest
   needs and no more, for a screen that has not read the list (a reservation, a party on the waitlist:
   docs/guest-list.md, "From a reservation or the waitlist"). `tags` is every tag there is to offer, each
   with how many numbers carry it (`guests`: every number, one that never ordered too), `tag_max` and
   `tags_most` what the tags are held to, and for a `phone` the tags it `carried` now with who put them on
   and when (`tags_by`, `tags_ms`). It reads no order. 422 `bad_value` for a `phone` that is no number.
-- `PUT /reports/guests/{phone}` `{note, tags}` (manager token): what the restaurant keeps about the guest
-  at this number, either or both; one left out stays as it is, an empty one is taken off. The answer is
-  both as they are kept now, each with who wrote it and when. The name behind the token is who wrote it.
-  422 `bad_value` for a number that is none, a tag too long or too many of them.
+- `PUT /reports/guests/{phone}` `{note, tags, name}` (manager token): what the restaurant keeps about the
+  guest at this number, either or both; one left out stays as it is, an empty one is taken off. The answer
+  is both as they are kept now, each with who wrote it and when. The name behind the token is who wrote it.
+  `name` is what the guest is called where they are tagged (their reservation, their party): it is kept
+  with the tags of a number that carries one, tidied to one line of `NAME_MAX` letters, so the list can
+  call a number that never ordered something; left out, the name the number had stays, and a number with
+  no tag keeps none. 422 `bad_value` for a number that is none, a tag too long or too many of them.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -41,7 +49,7 @@ from pydantic import BaseModel, Field
 
 from ..customers import SHORTEST, clean_note
 from ..customers import ReadOnlyError as NotesReadOnly
-from ..guest_tags import TAG_MAX, TAGS_MOST, clean_tags, offered
+from ..guest_tags import TAG_MAX, TAGS_MOST, clean_name, clean_tags, offered
 from ..guest_tags import ReadOnlyError as TagsReadOnly
 from ..identity.tokens import Grant
 from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
@@ -51,10 +59,12 @@ from .auth import holder_from
 
 class GuestIn(BaseModel):
     """What the restaurant keeps about a guest, written from the guest list: the note and the tags. One left
-    out stays as it is; an empty one is taken off."""
+    out stays as it is; an empty one is taken off. `name` is what the guest is called where they are tagged
+    (their reservation, their party): kept only with the tags of a number that carries one."""
 
     note: str | None = Field(None, max_length=400)
     tags: list[str] | None = Field(None, max_length=50)
+    name: str | None = Field(None, max_length=200)
 
 
 def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
@@ -85,6 +95,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             defs=app.state.menu.defs,
             now_ms=now_ms,
             tags=app.state.guest_tags.all(),
+            names=app.state.guest_tags.names(),
         )
 
     # Before `/reports/guests/{phone}`, which would take "tags" for a number.
@@ -118,6 +129,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         now_ms = store.now_ms()
         digits = phone_digits(phone)
         entries = store.index(phone=digits) if digits else []
+        kept_tags = app.state.guest_tags
         report = guest_report(
             digits,
             visits_of(entries, now_ms),
@@ -125,7 +137,8 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             app.state.customers.get(digits) if digits else None,
             defs=app.state.menu.defs,
             now_ms=now_ms,
-            tags=app.state.guest_tags.get(digits) if digits else None,
+            tags=kept_tags.get(digits) if digits else None,
+            name=kept_tags.names().get(digits, "") if digits else "",
         )
         if report is None:
             raise HTTPException(404, {"error": "no_guest", "message": "No visit from this number in the last year."})
@@ -147,14 +160,18 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         except ValueError as err:
             raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
         note = None if body.note is None else clean_note(body.note)
+        name = clean_name(body.name)
         now_ms = app.state.store.now_ms()
         try:
             if tags is not None and tags != (kept_tags.get(digits) or {}).get("tags", []):
-                kept_tags.put(digits, tags, by=grant.name, at_ms=now_ms)
+                kept_tags.put(digits, tags, by=grant.name, at_ms=now_ms, name=name)
                 # The book and the waitlist show a number's tags on its reservation and its party: the
                 # screens that have one open read it again. Only that something changed is told, never what.
                 for topic in ("reservations", "waitlist"):
                     app.state.feed.changed(topic)
+            elif name and name != kept_tags.names().get(digits, ""):
+                # the same tags under another name: the name alone, so who put the tags on stays
+                kept_tags.rename(digits, name)
             if note is not None and note != (notes.get(digits) or {}).get("note", ""):
                 notes.put(digits, note, by=grant.name, at_ms=now_ms)
         except (NotesReadOnly, TagsReadOnly) as err:

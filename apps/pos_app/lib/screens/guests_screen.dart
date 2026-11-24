@@ -17,7 +17,9 @@ import 'theme.dart';
 /// and their latest visits, each of which opens its check's history. The hub does every sum; this only
 /// picks the lists out and puts them in order. Two things are written from here, both about the guest and
 /// neither about their orders: the tags a manager puts on them ("VIP"), each of which is a list of its own,
-/// and the one line of the note.
+/// and the one line of the note. A guest who carries a tag and has no order in the year is in the list too,
+/// after the others (tagged from their reservation or the waitlist before their first order): their row
+/// says so in place of visits and money, and their tags and note are changed like anybody's.
 class GuestsScreen extends StatefulWidget {
   const GuestsScreen({super.key, required this.api, required this.token});
 
@@ -75,7 +77,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
     if (report != null && _tag != null && report.carried.every((tag) => tag.tag != _tag)) _tag = null;
     _shown = report == null
         ? const []
-        : sortedGuests(guestsNamed(guestsTagged(guestsOf(report.guests, _list), _tag), _find.text), _sort);
+        : sortedGuests(guestsNamed(guestsTagged(guestsOf(report.everyone, _list), _tag), _find.text), _sort);
   }
 
   Future<void> _load() async {
@@ -143,12 +145,31 @@ class _GuestsScreenState extends State<GuestsScreen> {
       ),
     );
     if (kept == null || !mounted) return;
+    // a guest with no order is in the list for their tags: with the last one off, they are out of it
+    final left = !guest.ordered && kept.tags.isEmpty;
     setState(() {
       _report = _report?.withKept(kept);
       final detail = _details[kept.phone];
-      if (detail != null) _details[kept.phone] = detail.withKept(kept);
+      if (left) {
+        _open.remove(kept.phone);
+        _details.remove(kept.phone);
+        _detailErrors.remove(kept.phone);
+      } else if (detail != null) {
+        _details[kept.phone] = detail.withKept(kept);
+      }
       _reshow();
     });
+    if (!left) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          key: const ValueKey('guest-left'),
+          content: Text(
+            '${guest.called} carries no tag now and has ${_noOrder(guest, report)}, so the list no longer shows them.',
+          ),
+        ),
+      );
   }
 
   /// Another list or order: it starts again from its top.
@@ -181,6 +202,17 @@ class _GuestsScreenState extends State<GuestsScreen> {
     return weekday ? local.formatMediumDate(day) : local.formatShortMonthDay(day);
   }
 
+  /// What the list says of a guest with no visit in the days it reads: one who never ordered, or one whose
+  /// orders are no visit of those days (older than them, for a day still to come, or with no dish on them).
+  static String _noOrder(Guest guest, GuestsReport report) => guest.ordersEver > 0
+      ? 'no visit in the last ${report.days == 365 ? '12 months' : '${report.days} days'}'
+      : 'no order yet';
+
+  /// What the foot of the list says when it shows guests with no order.
+  static const _taggedToo =
+      ' A guest who carries a tag and has no order in that time is listed too, after the others: nothing of '
+      'theirs is in the visits or in what the guests spent.';
+
   /// What a list means, in the hub's own numbers.
   String _meaning(GuestsReport report) => switch (_list) {
     GuestList.all => '',
@@ -205,7 +237,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
           spacing: 8,
           runSpacing: 6,
           children: [
-            chip(GuestList.all, 'all', totals?.guests),
+            chip(GuestList.all, 'all', totals == null ? null : totals.guests + report!.tagged.length),
             chip(GuestList.regulars, 'regulars', totals?.regulars),
             chip(GuestList.lapsed, 'lapsed', totals?.lapsed),
             chip(GuestList.fresh, 'new', totals?.fresh),
@@ -263,7 +295,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
         Text(
           // the days run over two years, so each says its own
           'Everyone who ordered with a phone number, ${local.formatShortDate(report.first)} to '
-          '${local.formatShortDate(report.last)}.',
+          '${local.formatShortDate(report.last)}'
+          '${report.tagged.isEmpty ? '' : ', and the tagged guests who did not'}.',
           key: const ValueKey('guests-span'),
           style: small,
         ),
@@ -271,11 +304,12 @@ class _GuestsScreenState extends State<GuestsScreen> {
         ReportLine(
           key: const ValueKey('guests-total'),
           'Guests',
-          _many(totals.guests),
+          _many(totals.guests + report.tagged.length),
           under: [
             _count(totals.regulars, 'regular', 'regulars'),
             '${_many(totals.lapsed)} stopped coming',
             '${_many(totals.fresh)} new',
+            if (report.tagged.isNotEmpty) '${_many(report.tagged.length)} with no order',
           ].join(' · '),
           strong: true,
           underWide: true,
@@ -410,25 +444,44 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 onPressed: () => _edit(guest),
               ),
             ),
-          Text(
-            ['A guest since $since', '${_count(guest.ordersEver, 'order', 'orders')} in all'].join(' · '),
-            key: ValueKey('guest-since:${listed.phone}'),
-            style: small,
-          ),
-          Text(
-            [
-              if (guest.perVisit != null) '${dollars(guest.perVisit!)} a visit',
-              '${_count(guest.lately, 'visit', 'visits')} in the last ${report.regularDays} days',
-            ].join(' · '),
-            key: ValueKey('guest-rate:${listed.phone}'),
-            style: small,
-          ),
-          if (guest.favourites.isNotEmpty) ...[
-            label('Favourite dishes'),
-            for (final dish in guest.favourites)
-              ReportLine(key: ValueKey('guest-dish:${listed.phone}:${dish.name}'), dish.name, '${_many(dish.count)}×'),
+          if (!guest.ordered)
+            // in the list for their tags: there is no visit, dish or money of the year to show
+            Text(
+              guest.ordersEver > 0
+                  ? [
+                      'A guest since $since',
+                      '${_count(guest.ordersEver, 'order', 'orders')} in all',
+                      _noOrder(guest, report),
+                    ].join(' · ')
+                  : 'No order from this number yet. They are in the list for the tags they carry.',
+              key: ValueKey('guest-since:${listed.phone}'),
+              style: small,
+            )
+          else ...[
+            Text(
+              ['A guest since $since', '${_count(guest.ordersEver, 'order', 'orders')} in all'].join(' · '),
+              key: ValueKey('guest-since:${listed.phone}'),
+              style: small,
+            ),
+            Text(
+              [
+                if (guest.perVisit != null) '${dollars(guest.perVisit!)} a visit',
+                '${_count(guest.lately, 'visit', 'visits')} in the last ${report.regularDays} days',
+              ].join(' · '),
+              key: ValueKey('guest-rate:${listed.phone}'),
+              style: small,
+            ),
+            if (guest.favourites.isNotEmpty) ...[
+              label('Favourite dishes'),
+              for (final dish in guest.favourites)
+                ReportLine(
+                  key: ValueKey('guest-dish:${listed.phone}:${dish.name}'),
+                  dish.name,
+                  '${_many(dish.count)}×',
+                ),
+            ],
+            label('Latest visits'),
           ],
-          label('Latest visits'),
           if (failed != null)
             Row(
               children: [
@@ -438,13 +491,13 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 TextButton(onPressed: () => _loadDetail(listed.phone), child: const Text('Try again')),
               ],
             )
-          else if (detail == null)
+          else if (detail == null && guest.ordered)
             Padding(
               key: ValueKey('guest-reading:${listed.phone}'),
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: const LinearProgressIndicator(),
             )
-          else
+          else if (detail != null)
             for (final visit in detail.latest)
               InkWell(
                 key: ValueKey('guest-visit:${listed.phone}:${visit.orderId}'),
@@ -501,11 +554,12 @@ class _GuestsScreenState extends State<GuestsScreen> {
                     children: [
                       ReportLine(
                         guest.called,
-                        dollars(guest.spent),
-                        count: _count(guest.visits, 'visit', 'visits'),
+                        // a guest with no order has no figure: the line under their name says so
+                        guest.ordered ? dollars(guest.spent) : '',
+                        count: guest.ordered ? _count(guest.visits, 'visit', 'visits') : '',
                         under: [
                           if (guest.name.isNotEmpty) guest.number,
-                          'last ${_dayWords(guest.last)}',
+                          guest.ordered ? 'last ${_dayWords(guest.last)}' : _noOrder(guest, report),
                           if (guest.isNew) 'new',
                         ].join(' · '),
                         change: standing,
@@ -578,7 +632,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 'stopped coming who came ${report.regularVisits} times or more in the year and not for '
                 '${report.lapsedDays} days. A new guest placed their first order ever in the last '
                 '${report.newDays} days.'
-                '${report.keeps ? ' Open a guest to put a tag on them or to write their note.' : ''}',
+                '${report.keeps ? ' Open a guest to put a tag on them or to write their note.' : ''}'
+                '${report.tagged.isEmpty ? '' : _taggedToo}',
                 key: const ValueKey('guests-note'),
                 style: small,
               ),

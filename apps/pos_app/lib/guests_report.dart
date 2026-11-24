@@ -8,7 +8,9 @@ import 'phone.dart' show formatPhoneNumber;
 /// puts them in ([sortedGuests]) and the ones a name or number finds ([guestsNamed]). Amounts stay the
 /// hub's own words ("109.65"). Beside each guest stand the note and the tags the restaurant keeps about
 /// them; a manager writes both from the list ([GuestKept] is what the hub then keeps), and a tag is a list
-/// of its own ([guestsTagged]).
+/// of its own ([guestsTagged]). A number that carries a tag and has no order in the year is listed too
+/// ([GuestsReport.tagged]): a guest tagged from their reservation or their line of the waitlist before
+/// their first order. Its row has no visit and nothing spent, and it is counted in none of the hub's sums.
 
 String _s(Object? value, [String or = '']) => value is String ? value : or;
 int _i(Object? value) => value is num ? value.toInt() : 0;
@@ -41,7 +43,8 @@ class GuestDish {
   final int count;
 }
 
-/// One guest: a phone number that ordered in the year the list reads.
+/// One guest: a phone number that ordered in the year the list reads, or one that carries a tag and did
+/// not ([ordered] tells them apart).
 class Guest {
   const Guest({
     required this.phone,
@@ -84,7 +87,8 @@ class Guest {
   /// The number's digits: what tells one guest from another.
   final String phone;
 
-  /// The name on their latest order that has one; empty when none has.
+  /// The name on their latest order that has one; empty when none has. For a guest with no order in the
+  /// year, the name they were tagged by (the one on their reservation or their party).
   final String name;
 
   /// The line the restaurant keeps about them, written on the to-go form or from the guest list.
@@ -100,12 +104,13 @@ class Guest {
   final String spent;
   final String? perVisit;
 
-  /// The days of their latest and of their first visit of the year.
+  /// The days of their latest and of their first visit of the year. A guest with no visit in it has
+  /// neither: both are then a day long before any list, so such a guest is last by "Latest".
   final DateTime last;
   final DateTime first;
 
   /// When the first order they ever placed was opened, and how many they ever placed: these two look past
-  /// the year, and are what the to-go form says of a caller.
+  /// the year, and are what the to-go form says of a caller. 0 and 0 for a number that never ordered.
   final int sinceMs;
   final int ordersEver;
 
@@ -121,6 +126,10 @@ class Guest {
   final List<GuestDish> favourites;
 
   num get money => double.tryParse(spent) ?? 0;
+
+  /// Whether they ordered in the year the list reads. A guest who did not is in the list for the tags
+  /// they carry.
+  bool get ordered => visits > 0;
 
   /// The number as people read it.
   String get number => formatPhoneNumber(phone);
@@ -276,6 +285,7 @@ class GuestsReport {
     this.newDays = 30,
     this.nowMs = 0,
     this.guests = const [],
+    this.tagged = const [],
     this.totals = const GuestTotals(),
     this.tags = const [],
     this.keeps = false,
@@ -284,26 +294,43 @@ class GuestsReport {
     this.tagsMost = 6,
   });
 
-  factory GuestsReport.fromJson(Map<String, dynamic> json) => GuestsReport(
-    first: _day(json['first']),
-    last: _day(json['last']),
-    days: json['days'] is num ? _i(json['days']) : 365,
-    regularVisits: json['regular_visits'] is num ? _i(json['regular_visits']) : 3,
-    regularDays: json['regular_days'] is num ? _i(json['regular_days']) : 90,
-    lapsedDays: json['lapsed_days'] is num ? _i(json['lapsed_days']) : 60,
-    newDays: json['new_days'] is num ? _i(json['new_days']) : 30,
-    nowMs: _i(json['now_ms']),
-    guests: [for (final row in _rows(json['guests'])) Guest.fromJson(row)],
-    totals: GuestTotals.fromJson((json['totals'] as Map?)?.cast<String, dynamic>() ?? const {}),
-    tags: [
-      for (final row in _rows(json['tags']))
-        if (_s(row['tag']).isNotEmpty) GuestTag.fromJson(row),
-    ],
-    keeps: json['tags'] is List,
-    noteMax: json['note_max'] is num ? _i(json['note_max']) : 120,
-    tagMax: json['tag_max'] is num ? _i(json['tag_max']) : 24,
-    tagsMost: json['tags_most'] is num ? _i(json['tags_most']) : 6,
-  );
+  factory GuestsReport.fromJson(Map<String, dynamic> json) {
+    // a row with a visit belongs to the guests who ordered, whatever list it came in
+    final tagged = [
+      for (final row in _rows(json['tagged']))
+        if (_i(row['visits']) == 0 && _words(row['tags']).isNotEmpty) Guest.fromJson(row),
+    ];
+    return GuestsReport(
+      first: _day(json['first']),
+      last: _day(json['last']),
+      days: json['days'] is num ? _i(json['days']) : 365,
+      regularVisits: json['regular_visits'] is num ? _i(json['regular_visits']) : 3,
+      regularDays: json['regular_days'] is num ? _i(json['regular_days']) : 90,
+      lapsedDays: json['lapsed_days'] is num ? _i(json['lapsed_days']) : 60,
+      newDays: json['new_days'] is num ? _i(json['new_days']) : 30,
+      nowMs: _i(json['now_ms']),
+      guests: [for (final row in _rows(json['guests'])) Guest.fromJson(row)],
+      tagged: tagged,
+      totals: GuestTotals.fromJson((json['totals'] as Map?)?.cast<String, dynamic>() ?? const {}),
+      tags: _mostFirst([
+        for (final row in _rows(json['tags']))
+          if (_s(row['tag']).isNotEmpty)
+            // the hub counts the guests who ordered; the list shows the tagged ones with no order too
+            GuestTag(_s(row['tag']), _i(row['guests']) + tagged.where((guest) => guest.carries(_s(row['tag']))).length),
+      ]),
+      keeps: json['tags'] is List,
+      noteMax: json['note_max'] is num ? _i(json['note_max']) : 120,
+      tagMax: json['tag_max'] is num ? _i(json['tag_max']) : 24,
+      tagsMost: json['tags_most'] is num ? _i(json['tags_most']) : 6,
+    );
+  }
+
+  /// The tags with the one most guests carry first, then by the alphabet: the order the hub hands them in.
+  static List<GuestTag> _mostFirst(List<GuestTag> tags) => tags
+    ..sort((a, b) {
+      final most = b.guests.compareTo(a.guests);
+      return most != 0 ? most : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
+    });
 
   /// The days the list reads, the running one the last of them.
   final DateTime first;
@@ -319,13 +346,23 @@ class GuestsReport {
   final int newDays;
   final int nowMs;
 
-  /// The one who spent most first.
+  /// The guests who ordered in the year, the one who spent most first.
   final List<Guest> guests;
+
+  /// The numbers that carry a tag and have no order in the year, by name: a guest tagged from their
+  /// reservation or their line of the waitlist before their first order, or one of long ago. Empty from a
+  /// hub older than listing them.
+  final List<Guest> tagged;
+
+  /// What the guests who ordered come to. The [tagged] ones are in none of these sums.
   final GuestTotals totals;
 
   /// Every tag there is to offer: the ones some guest carries and the standard ones, the one most guests
-  /// of the list carry first.
+  /// of the list carry first. A tag's count is of everybody the list shows: [guests] and [tagged].
   final List<GuestTag> tags;
+
+  /// Everybody the list shows: the guests who ordered, then the tagged ones who did not.
+  List<Guest> get everyone => tagged.isEmpty ? guests : [...guests, ...tagged];
 
   /// Whether this hub keeps tags, and takes a note written from the list. One older than that does not
   /// say [tags] at all: the list is then only read, as it was.
@@ -345,20 +382,23 @@ class GuestsReport {
 
   /// The list after the hub kept [now] about one of its guests: that guest with the note and the tags as
   /// they are kept, and every tag counted again. A tag nobody of the list carries any more is still one to
-  /// offer until the list is read again.
+  /// offer until the list is read again. A guest with no order who carries no tag any more has nothing to
+  /// be in the list for, and is out of it.
   GuestsReport withKept(GuestKept now) {
     final changed = [
       for (final guest in guests) guest.phone == now.phone ? guest.kept(note: now.note, tags: now.tags) : guest,
+    ];
+    final others = [
+      for (final guest in tagged)
+        if (guest.phone != now.phone) guest else if (now.tags.isNotEmpty) guest.kept(note: now.note, tags: now.tags),
     ];
     final names = <String>[for (final tag in tags) tag.tag];
     for (final tag in now.tags) {
       if (names.every((known) => known.toLowerCase() != tag.toLowerCase())) names.add(tag);
     }
-    final counted = [for (final name in names) GuestTag(name, changed.where((guest) => guest.carries(name)).length)]
-      ..sort((a, b) {
-        final most = b.guests.compareTo(a.guests);
-        return most != 0 ? most : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
-      });
+    final counted = _mostFirst([
+      for (final name in names) GuestTag(name, [...changed, ...others].where((guest) => guest.carries(name)).length),
+    ]);
     return GuestsReport(
       first: first,
       last: last,
@@ -369,6 +409,7 @@ class GuestsReport {
       newDays: newDays,
       nowMs: nowMs,
       guests: changed,
+      tagged: others,
       totals: totals,
       tags: counted,
       keeps: keeps,
