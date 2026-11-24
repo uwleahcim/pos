@@ -10,6 +10,8 @@ import 'customers.dart';
 /// in any order and whatever its case:
 ///
 /// - in the customer's name, the table or the server's name;
+/// - in the name of a party the host seated on the check, from its reservation or the waitlist
+///   ([Order.seated]): the check itself carries no such name, the list of checks is told it;
 /// - digits: at the start of the order number, or (three digits or more) anywhere in the phone number,
 ///   however either was punctuated (`555-1234` finds `(781) 555 1234`);
 /// - `#42`: the order number only;
@@ -20,6 +22,7 @@ bool checkMatches(Order order, String query) {
   final words = query.toLowerCase().split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
   if (words.isEmpty) return true;
   final name = order.customerName.toLowerCase();
+  final seated = [for (final party in order.seated) party.toLowerCase()];
   final table = order.table.toLowerCase();
   final server = (order.fields['server']?.toString() ?? '').toLowerCase();
   final number = order.orderNo?.toString() ?? '';
@@ -31,6 +34,7 @@ bool checkMatches(Order order, String query) {
       return asked.isNotEmpty && number.startsWith(asked);
     }
     if (name.contains(word) || server.contains(word)) return true;
+    if (seated.any((party) => party.contains(word))) return true;
     if (table.isNotEmpty && (table.contains(word) || word == 'table')) return true;
     if (order.isTab && (word == 'tab' || word == 'tabs')) return true;
     // A number, however it was typed: 42, 781-555-1234, (781).

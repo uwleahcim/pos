@@ -44,7 +44,8 @@ to the list, calls it off.
   tab with a payment on it can only be kept apart: money taken on a check stays with that check.
 
 From then on it is that table's check like any other: it is on the floor map, its tickets say the table,
-and it keeps the name it had as a tab, so the search still finds it by the name.
+and it keeps the name it had as a tab, so the search still finds it by the name and its row in the list
+of checks says it after the table ("Table B2 · Linda"; `finding-checks.md`, "Whose table it is").
 
 Every dish keeps saying who rang it in, so the drinks the bartender poured stay the bartender's in the
 day's sales by person, whoever has the check at the end.

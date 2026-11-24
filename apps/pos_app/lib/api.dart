@@ -250,6 +250,7 @@ class Order {
     this.discounts = const [],
     this.openedMs,
     this.due,
+    this.seated = const [],
   });
 
   /// A check the backend has not heard of yet (its create is still on the way).
@@ -262,7 +263,8 @@ class Order {
       allergies = const [],
       discounts = const [],
       openedMs = null,
-      due = null;
+      due = null,
+      seated = const [];
 
   factory Order.fromJson(Map<String, dynamic> json) {
     final lines = (json['lines'] as Map<String, dynamic>? ?? const {}).entries
@@ -288,6 +290,11 @@ class Order {
       ],
       openedMs: (json['opened_ms'] as num?)?.toInt(),
       due: json['due'] as String?,
+      seated: [
+        if (json['seated'] case final List names)
+          for (final name in names)
+            if (name is String && name.trim().isNotEmpty) name.trim(),
+      ],
     );
   }
 
@@ -299,6 +306,13 @@ class Order {
   /// once it is paid up): a deposit is not the whole of it. Null on an order nothing was paid on, on a
   /// table's check, on a read of one order (its check says it) and from a hub older than deposits.
   final String? due;
+
+  /// Whose check it is, as a list of checks says it: the names of the parties the host seated on it, from
+  /// their reservation or the waitlist, the first to sit first (docs/finding-checks.md). The hub reads them
+  /// from the book and the waitlist; none of it is on the check. Nobody for a check no party was seated on
+  /// (a walk-in's, a to-go order), on a read of one order (its screen asks who sits there) and from a hub
+  /// older than this.
+  final List<String> seated;
 
   final String orderId;
   final String status;
@@ -323,6 +337,17 @@ class Order {
 
   /// At a table: with seats to ring a dish in for, and on the floor map.
   bool get hasTable => table.isNotEmpty;
+
+  /// Whose table it is, for a list of checks: the name the check itself carries (a bar tab that sat down
+  /// keeps the name it was opened with), then the parties the host seated on it ([seated]), each name once
+  /// whatever its capitals. Nobody for a walk-in's check.
+  List<String> get tableNames {
+    final names = <String>[];
+    for (final name in [customerName.trim(), ...seated]) {
+      if (name.isNotEmpty && !names.any((had) => had.toLowerCase() == name.toLowerCase())) names.add(name);
+    }
+    return names;
+  }
 
   /// "Linda's tab", or "A tab" when nobody named it.
   String get tabLabel => customerName.trim().isEmpty ? 'A tab' : "${customerName.trim()}'s tab";

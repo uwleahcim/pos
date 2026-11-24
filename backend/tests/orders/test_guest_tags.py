@@ -928,6 +928,96 @@ def test_telling_the_map_who_sits_changes_no_order_no_bill_and_no_figure():
         assert "Linda" not in words and "VIP" not in words and LINDA not in words
 
 
+# --- in the list of checks: whose check it is ----------------------------------------------------------------
+
+
+def in_the_list(h: Hub, **asked) -> dict[str, dict]:
+    """The checks as the list of checks reads them (no token), by id; the open ones unless something else
+    is asked (a `status` of None is any)."""
+    params = {"brief": "true", "status": "open", **asked}
+    answer = h.c.get("/orders", params={key: value for key, value in params.items() if value is not None})
+    assert answer.status_code == 200, answer.text
+    return {order["order_id"]: order for order in answer.json()["orders"]}
+
+
+def test_the_list_of_checks_says_whose_check_a_seated_tables_is_by_name_and_no_more():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    linda = book_table(h, "Linda P.", "+1 (781) 555-0101", note="Window table, birthday")["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.table("t-2", h.now - 60_000, table="A8")  # a walk-in: nobody was seated on it from the book or the list
+    assert all("seated" not in check for check in in_the_list(h).values())  # she has not sat down yet
+    seat(h, linda, "t-1")
+    listed = in_the_list(h)
+    assert listed["t-1"]["seated"] == ["Linda P."] and "seated" not in listed["t-2"]
+    # the name: not the number, not the tags, not the reservation's note, not the line kept about the customer
+    assert not any(word in str(listed["t-1"]) for word in ("555", "VIP", "Catering", "Window", "no MSG"))
+    # the same check without the name: a list that is not `brief`, and the check read by itself
+    whole = {order["order_id"]: order for order in h.c.get("/orders", params={"status": "open"}).json()["orders"]}
+    assert "seated" not in whole["t-1"] and "Linda" not in h.c.get("/orders/t-1").text
+    # closed, it still says whose it was, for whoever looks for it among the closed checks of the day
+    h.op("t-1", "close", h.now)
+    assert "t-1" not in in_the_list(h)
+    assert in_the_list(h, status="closed", hours="24")["t-1"]["seated"] == ["Linda P."]
+    assert in_the_list(h, status=None, hours="24")["t-1"]["seated"] == ["Linda P."]
+
+
+def test_the_list_names_every_party_of_a_check_once_in_the_order_they_sat():
+    h = host_stand()
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.table("t-2", h.now - 60_000, table="A8")
+    omar = wait(h, "Omar", OMAR)["party"]
+    seat(h, omar, "t-1", book="waitlist")
+    h.now += 60_000
+    seat(h, book_table(h, "Wu", "", note="High chair")["booking"], "t-1")  # joins his table: the same check
+    h.now += 60_000
+    seat(h, wait(h, "  Omar ")["party"], "t-1", book="waitlist")  # a second party by the same name
+    seat(h, wait(h, "Tess")["party"], "t-2", table="A8", book="waitlist")
+    listed = in_the_list(h)
+    assert (listed["t-1"]["seated"], listed["t-2"]["seated"]) == (["Omar", "Wu"], ["Tess"])
+    # put back on the list, he is on no check; the others stay
+    assert h.c.post(f"/waitlist/{omar['id']}/back", json=HOLLY).status_code == 200
+    assert in_the_list(h)["t-1"]["seated"] == ["Wu", "Omar"]
+    # the day's list of a manager says them the same way
+    assert in_the_list(h, status=None, day=MONDAY)["t-2"]["seated"] == ["Tess"]
+
+
+def test_a_check_still_open_after_the_night_says_whose_it_is_for_a_day():
+    h = host_stand()
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.table("t-2", h.now - 60_000, table="A8")
+    seat(h, book_table(h, "Linda P.", LINDA)["booking"], "t-1")
+    seat(h, wait(h, "Omar", OMAR)["party"], "t-2", table="A8", book="waitlist")
+    h.now += 14 * 3_600_000  # eleven the next morning: a new day of service
+    listed = in_the_list(h)
+    assert (listed["t-1"]["seated"], listed["t-2"]["seated"]) == (["Linda P."], ["Omar"])
+    h.now += 2 * 24 * 3_600_000  # days later nobody looks them up for it any more
+    assert all("seated" not in check for check in in_the_list(h).values())
+
+
+def test_naming_the_parties_in_the_list_changes_no_order_no_bill_and_no_figure():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    made = book_table(h, "Linda P.", LINDA, note="Window table")["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.ring("t-1", "L1", GTC, h.now - 30_000)
+    seat(h, made, "t-1")
+    before = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    listed = in_the_list(h)["t-1"]
+    assert listed["seated"] == ["Linda P."]
+    # the rest of what the list says of the check is the check as it was
+    plain = {key: value for key, value in listed.items() if key != "seated"}
+    assert "Linda" not in str(plain) and LINDA not in str(plain)
+    after = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    assert after == before
+    for words in (h.c.get("/orders/t-1").text, str(h.check("t-1"))):
+        assert "Linda" not in words and LINDA not in words
+    printed = h.c.post("/orders/t-1/bill", json={})
+    assert printed.status_code == 202, printed.text
+    lines = [line for line in decode(h.printing.store.get(printed.json()["job_id"]).data).text if line.strip()]
+    assert lines and not any("Linda" in line or "Window" in line for line in lines)
+
+
 # --- a tagged guest with no order, in the guest list ---------------------------------------------------------
 
 ZED = "7815550188"

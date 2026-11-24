@@ -118,7 +118,7 @@ from .contests import add_contests
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
-from .guests import add_guest_list, seated_by_check
+from .guests import add_guest_list, names_by_check, seated_by_check
 from .history import add_history
 from .keys import add_hub_keys, sender_for, watch_keys
 from .kitchen import add_kitchen
@@ -1156,8 +1156,11 @@ def create_app(
         adds nothing to), the orders opened during that day's service, four in the morning to four the next,
         the location's time: what a manager looks through to find an older check. With `brief`, each line
         comes without what it was configured as and priced at: a list shows neither, and they are most of
-        the answer. The orders come from the log's index and are replayed only when they changed, so a
-        screen asking every two seconds costs a query."""
+        the answer. A `brief` check the host seated a party on, from its reservation or the waitlist, says
+        whose it is: `seated`, the names of its parties, the first to sit first
+        (`pos.api.guests.names_by_check`). The names are read from the book and the waitlist each time and
+        are on no order; the number and the note are not told. The orders come from the log's index and are
+        replayed only when they changed, so a screen asking every two seconds costs a query."""
         store: OpStore | PgOpStore = app.state.store
         if day is not None:
             try:
@@ -1176,6 +1179,8 @@ def create_app(
         states = sorted(store.views(entries), key=lambda state: state.last or _NEVER, reverse=True)
         if not brief:
             return polled({"orders": [state.snapshot() for state in states], "cursor": store.cursor})
+        # whose table it is, where the host seated a party from the book or the waitlist: read, not kept
+        named = names_by_check(app.state, (state.order_id for state in states))
         orders = []
         for state in states:
             order = listed(state)
@@ -1183,6 +1188,8 @@ def create_app(
             due = app.state.dues.of(state, app.state.taxes, app.state.pricing)
             if due is not None:
                 order["due"] = due
+            if state.order_id in named:
+                order["seated"] = named[state.order_id]
             orders.append(order)
         return polled({"orders": orders, "cursor": store.cursor})
 

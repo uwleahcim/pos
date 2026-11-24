@@ -10,7 +10,8 @@ and shown where that guest's call and order are taken, and the note is written h
 on the call while it rings, in the reservation book and on the waitlist, and a guest can be tagged from
 their reservation or their line of the waitlist as well. Since 24 November 2026 a guest tagged that way
 who has not ordered yet is in the list too, after the others, and a party seated from the book or the
-waitlist is named on the check of its table and on the floor map. It grows out of the customers the
+waitlist is named on the check of its table, on the floor map and in the list of checks, where the search
+finds the check by that name. It grows out of the customers the
 to-go form already remembers by their number (`customers.md`): nothing is typed in for the list itself.
 
 ## Opening it
@@ -232,7 +233,9 @@ carries a tag in this list.
 - **Nothing is written onto the check**, as at the table: no name, no number and no tag. So no bill, no
   kitchen ticket and no figure changes, and a table still counts as a visit in this list only when
   somebody types a number on its check.
-- The list of checks (the other half of the Orders screen) does not say it.
+- **The list of checks** (the other half of the Orders screen) says the party's name after the table
+  too, "Table A7 · Chen", and its search box finds the check by it. It says no star and no tag
+  (`finding-checks.md`, "Whose table it is").
 
 ### From a reservation or the waitlist
 
@@ -315,6 +318,8 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   with an older hub a table's check has no strip.
 - The name and the star on the floor map change nothing either. A device that is not rebuilt, and a
   rebuilt one with a hub that is not updated, show the map as it was.
+- Neither does the name in the list of checks: it is read from the book and the waitlist with the list,
+  and is on no check.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
   With a hub older than listing tagged guests with no order, the list holds the guests who ordered, as
   before. A device that is not rebuilt shows that list too, whatever the hub.
@@ -341,7 +346,9 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 - On the floor map: the tags by name on the table itself (a star says there is one), a colour or a mark
   of its own for each tag, the note, the second party's name on the table (it says "+1"), showing the
   tagged tables alone, and the list of your tables beside the map on a phone (a phone keeps the whole
-  width for the map). Nothing of it is in the list of checks.
+  width for the map).
+- In the list of checks: the star and the tags (a row says the party's name alone), and the name on a
+  check of another day than today's and yesterday's.
 - At the table: how many the party was booked as and whether it came from the book or the waitlist (the
   check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
   number on the check and it shows what that number carries); a party on a check that its own check was
@@ -464,6 +471,8 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `my-table-guests:<table>` of `_MyTableRow`; the map reads again on `LiveChange.waitlist` as well as
   `reservations`. The tests' hub answers it from the seated reservations and parties it holds
   (`floorSeated`; `seatedOnFloor = false` makes it an older hub).
+- In the list of checks: `seated` on a check of `GET /orders?brief=true`, the names alone
+  (`names_by_check`, beside `seated_by_check`); `finding-checks.md`, "On the wire", has the rest.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
@@ -476,4 +485,5 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `apps/pos_app/test/tag_guest_test.dart` (tagging from a reservation or the waitlist),
   `apps/pos_app/test/guests_tagged_test.dart` (tagged guests with no order, in the list),
   `apps/pos_app/test/table_tags_test.dart` (the name, the tags and the note on the check of a table),
-  `apps/pos_app/test/floor_guests_test.dart` (the name and the star on the floor map).
+  `apps/pos_app/test/floor_guests_test.dart` (the name and the star on the floor map),
+  `apps/pos_app/test/check_by_guest_test.dart` (the name in the list of checks and the search by it).
