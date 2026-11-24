@@ -20,6 +20,8 @@ COMBO = ("Maki Combination",)
 ROUND = {"asked": True, "came": 0, "known": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0}
 TODAY = {"came": 0, "by_push": 0, "by_poll": 0, "placed": 0, "booked": 0, "kept": 0, "failed": 0, "unread": 0}
 CUSTOMER = ("Pat", "Example", "555", "Restaurant Row", "3B", "Ring the bell")
+NO_TUNNEL = {"there": False, "state": "off", "since_ms": None, "reason": None}
+"""The tunnel in the status of a hub that runs none (`pos.online.wayin`)."""
 
 
 def lunch(number: int = 301, **more) -> dict:
@@ -58,7 +60,7 @@ def test_a_pushed_order_is_on_the_pos_at_once_numbered_and_printed_and_nobody_wa
     arrival = hub.inbox.get("gloriafood", "301")
     assert (arrival.state, arrival.order_id, arrival.via, arrival.fetched_ms) == ("placed", "gf-301", "push", NOW)
     status = hub.status()
-    assert status["push"] == {"configured": True, "pushed_ms": NOW, "refused": None}
+    assert status["push"] == {"configured": True, "pushed_ms": NOW, "refused": None, "tunnel": NO_TUNNEL}
     assert status["today"] == {**TODAY, "came": 1, "by_push": 1, "placed": 1}
 
 
@@ -190,6 +192,7 @@ def test_a_push_without_the_key_is_turned_away_unread_and_nothing_of_it_is_kept(
         "configured": True,
         "pushed_ms": None,
         "refused": {"at_ms": NOW, "reason": WRONG_KEY, "count": 6},
+        "tunnel": NO_TUNNEL,
     }
     # the log says it happened, once, and nothing of what was sent
     said = [record.getMessage() for record in caplog.records if record.name == "pos.online"]
@@ -212,7 +215,7 @@ def test_a_hub_with_no_key_for_pushes_takes_none_and_says_nothing():
         answer = hub.push(lunch(), key=key)
         assert (answer.status_code, answer.json()) == (404, {"error": "not_found"})
     assert orders_on_the_pos(hub) == 0 and hub.inbox.since(0) == []
-    assert hub.status()["push"] == {"configured": False, "pushed_ms": None, "refused": None}
+    assert hub.status()["push"] == {"configured": False, "pushed_ms": None, "refused": None, "tunnel": NO_TUNNEL}
 
 
 class Standby(Inbox):

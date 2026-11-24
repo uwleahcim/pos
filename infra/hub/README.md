@@ -100,12 +100,13 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `POS_TIMEZONE` (the restaurant's time zone, `America/New_York` unless set: menu hours, the day order numbers count through, "today" for a caller's order, the times on tickets and in texts) | `/opt/pos/.env`, optional |
 | The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, and `pbx` among `COMPOSE_PROFILES`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |
-| The keys a manager typed in the app (Location › Keys and connections; `docs/hub-keys.md`): the map service's, Google's, GloriaFood's key for asking, Apple's push key. Each takes the place of the one in `/opt/pos/.env` below, until `hubctl` is told a key again | Sealed in the database (table `hub_key`); the secret that opens them is `POS_SECRET`, or else the hub's own in the Docker volume `pos_pos-keys` |
+| The keys a manager typed in the app (Location › Keys and connections; `docs/hub-keys.md`): the map service's, Google's, GloriaFood's key for asking and its key for pushes, the Cloudflare Tunnel's token, Apple's push key. Each takes the place of the one in `/opt/pos/.env` below, until `hubctl` is told a key again | Sealed in the database (table `hub_key`); the secret that opens them is `POS_SECRET`, or else the hub's own in the Docker volume `pos_pos-keys` |
 | The map service's key for the delivery fee's distance lookup (`POS_MAPS`, `POS_MAPS_KEY`; see `docs/delivery.md`), written by `hubctl maps key` | `/opt/pos/.env`, optional |
 | Google's key for the same lookup when the first service gives no distance (`POS_MAPS_GOOGLE_KEY`; see "A second map service" in `docs/delivery.md`), written by `hubctl maps google` | `/opt/pos/.env`, optional |
 | GloriaFood's key for online orders (`POS_GLORIAFOOD_KEY`; see `docs/online-orders.md`), written by `hubctl online key` | `/opt/pos/.env`, optional |
-| The key GloriaFood's own pushes carry (`POS_GLORIAFOOD_PUSH_KEY`, and `push` among `COMPOSE_PROFILES`; "Push" in `docs/online-orders.md`), written by `hubctl online push key` | `/opt/pos/.env`, optional |
-| The Cloudflare Tunnel's token, the way in for those pushes (`POS_TUNNEL_TOKEN`, and `tunnel` among `COMPOSE_PROFILES`), written by `hubctl online tunnel token` | `/opt/pos/.env`, optional |
+| The key GloriaFood's own pushes carry (`POS_GLORIAFOOD_PUSH_KEY`; "Push" in `docs/online-orders.md`), written by `hubctl online push key` | `/opt/pos/.env`, optional |
+| The Cloudflare Tunnel's token, the way in for those pushes (`POS_TUNNEL_TOKEN`), written by `hubctl online tunnel token`; `POS_TUNNEL_IMAGE` names another image to take Cloudflare's program from than `cloudflare/cloudflared:latest` | `/opt/pos/.env`, optional |
+| What the hub's program hands the push door (a fingerprint of the key for pushes) and the tunnel (its token), and how the tunnel says it stands | Docker volumes `pos_pos-door` and `pos_pos-tunnel`; written anew at every start, part of no backup |
 | The code the hub runs | `/opt/pos/src`, a link to the clone |
 | PostgreSQL data | Docker volume `pos_pos-db` |
 | Backups from `hubctl backup` | `/var/backups/pos/` |
@@ -117,7 +118,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | --- | --- |
 | `hubctl status` | Services, API health, time, disk, temperature |
 | `hubctl logs api` | Follow the API log (`db` for PostgreSQL) |
-| `hubctl update` | Pull the clone, rebuild the image, restart what changed (the first build with face sign-in downloads its two models, about 290 MB, once; see `docs/face-signin.md`) |
+| `hubctl update` | Pull the clone, rebuild the image, restart what changed (the first build with face sign-in downloads its two models, about 290 MB, once; see `docs/face-signin.md`; an update also fetches Cloudflare's current tunnel program, a few tens of MB, and goes on with the one the hub has when it cannot) |
 | `hubctl restart` | Restart the services |
 | `hubctl backup` | A compressed SQL dump of the database |
 | `hubctl psql` | A database shell |
@@ -138,10 +139,13 @@ names; the address works everywhere. Run the backend's own test suite against th
 | `hubctl online status` / `hubctl online fetch` | Whether the hub has the key, when GloriaFood last answered, today's online orders and the ones to look at / ask GloriaFood now instead of within the minute |
 | `hubctl online show 123456` | One online order as GloriaFood sent it, by its number, without the customer: for looking at one that went on wrong |
 | `hubctl online forget` | Remove the key: the hub asks nobody, and the orders already on the POS stay |
-| `hubctl online push key` | Put the key GloriaFood's own pushes carry on the hub and open the push door, so an order is on the POS the moment it is accepted ("Push" in `docs/online-orders.md`); Enter alone and the hub makes the key and shows it once |
+| `hubctl online push key` | Put the key GloriaFood's own pushes carry on the hub, which opens the push door for it, so an order is on the POS the moment it is accepted ("Push" in `docs/online-orders.md`); Enter alone and the hub makes the key and shows it once |
 | `hubctl online push test` / `hubctl online push test https://orders.example.com/online/push` | An empty push through the door / through the whole way in from outside; says whether it got in and puts nothing on the POS |
-| `hubctl online push forget` | Remove that key and shut the door and the tunnel: the hub only asks |
-| `hubctl online tunnel token` / `status` / `forget` | Put a Cloudflare Tunnel's token on the hub and start the tunnel, the way in for pushes / whether it is connected / stop it and remove the token |
+| `hubctl online push forget` | Remove that key and the tunnel's token: the door is shut and the tunnel closed, and the hub only asks |
+| `hubctl online tunnel token` / `status` / `forget` | Put a Cloudflare Tunnel's token on the hub, the way in for pushes, and wait until the tunnel has reached Cloudflare / whether it is connected / close it and remove the token |
+
+The keys of the `maps` and `online` commands, the tunnel's token among them, can be typed in the app instead
+(Location › Keys and connections, `docs/hub-keys.md`).
 
 ## Ports
 
@@ -152,7 +156,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | 123/udp | the LAN | Time |
 | 5353/udp | the LAN | Name discovery (`pos-hub1.local`) |
 | 5432/tcp | the hub itself | PostgreSQL; the standby hub gets its own rule in the failover spike |
-| 8090/tcp | the hub itself (the LAN only with `POS_DOOR_BIND=0.0.0.0`) | The push door for online orders, when pushes are on: one call, and nothing else of the POS (`docs/online-orders.md`) |
+| 8090/tcp | the hub itself (the LAN only with `POS_DOOR_BIND=0.0.0.0`) | The push door for online orders: one call, and nothing else of the POS; shut until the hub has a key for pushes (`docs/online-orders.md`) |
 
 The link to the PBX opens nothing inbound: it is an SSH connection from the hub out to the PBX (`hubctl pbx link`).
 Neither does the tunnel for online orders: the hub calls out to Cloudflare, and pushes come down that line to

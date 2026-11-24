@@ -76,12 +76,16 @@ Without a key the hub asks nobody, and everything is as it was. Then add the pus
 | `sudo hubctl online fetch` | Asks GloriaFood now instead of within the minute, as **Ask now** on the screen Online orders does. Not within fifteen seconds of the last asking |
 | `sudo hubctl online show 123456` | One order as GloriaFood sent it, by GloriaFood's number, with everything of the customer taken out: for looking at an order that went on wrong |
 | `sudo hubctl online forget` | Takes the key for asking off the hub: it asks nobody. Orders already on the POS stay |
-| `sudo hubctl online push key` | Puts the key GloriaFood's pushes carry on the hub and opens the push door. Asked for and never shown; press Enter alone and the hub makes one, shown once, for you to put into GloriaFood's admin |
+| `sudo hubctl online push key` | Puts the key GloriaFood's pushes carry on the hub, which opens the push door for it. Asked for and never shown; press Enter alone and the hub makes one, shown once, for you to put into GloriaFood's admin |
 | `sudo hubctl online push test` | Sends an empty push through the door and says whether it got in. With an address (`sudo hubctl online push test https://orders.example.com/online/push`) it goes out to the internet and back in, the whole way GloriaFood's pushes will take. Nothing is put on the POS |
-| `sudo hubctl online push forget` | Takes that key off the hub and shuts the door and the tunnel: the hub only asks |
-| `sudo hubctl online tunnel token` | Puts a Cloudflare Tunnel's token on the hub (asked for, never shown) and starts the tunnel |
+| `sudo hubctl online push forget` | Takes that key and the tunnel's token off the hub: the door is shut, the tunnel closed, and the hub only asks |
+| `sudo hubctl online tunnel token` | Puts a Cloudflare Tunnel's token on the hub (asked for, never shown) and waits until the tunnel has reached Cloudflare |
 | `sudo hubctl online tunnel status` | Whether the tunnel is connected, and its last words when it is not |
-| `sudo hubctl online tunnel forget` | Stops the tunnel and takes its token off the hub |
+| `sudo hubctl online tunnel forget` | Closes the tunnel and takes its token off the hub |
+
+The key for asking, the key for pushes and the tunnel's token are all typed in the app as well, under
+Location › **Keys and connections**, and that is the shorter way (`hub-keys.md`). The terminal and the app
+set the same thing, and whichever was used last wins.
 
 ## Push
 
@@ -107,7 +111,11 @@ A push without the key is not read at all. The hub counts it and `hubctl online 
 away"), because a wrong key in GloriaFood's admin looks exactly like that. Strangers knocking at an address
 on the internet look like that too, so a few of these now and then mean nothing.
 
-The door starts when the key is put on, and listens only on the hub itself.
+The door runs all the time and is **shut until there is a key**: without one it answers "not found" to
+everything, a push too. It opens the moment a key is typed, in the app or the terminal, with nothing
+restarted. It listens only on the hub itself. And it never holds the key: the hub hands it a fingerprint of
+the key (its SHA-256), which is enough to tell a push that carries the key from one that does not, and is of
+no use to anybody who reads it.
 
 ### The way in
 
@@ -118,6 +126,12 @@ Cloudflare account, which is yours to make, and a domain name whose DNS is kept 
 own that is not there yet has to be moved there, or another name bought there). Orders pass through
 Cloudflare's machines on their way: see [What is kept](#what-is-kept-and-what-leaves-the-building).
 
+The hub runs Cloudflare's own program for it (`cloudflared`) and keeps an eye on it: it starts the program
+when a token is set, starts it again when it stops, and says how it stands, on the page Keys and connections
+and in `sudo hubctl online tunnel status`: connected and since when, on its way, or not connected and why
+(Cloudflare did not take the token; the hub cannot reach Cloudflare). Without a token the program is not
+run at all.
+
 **Or your own.** Anything that brings an HTTPS address to the door works: another tunnel program installed
 on the hub (pointed at `http://127.0.0.1:8090`), or your own router and a proxy that holds the certificate.
 For a proxy on another machine, put `POS_DOOR_BIND=0.0.0.0` into `/opt/pos/.env` and run `sudo hubctl
@@ -126,52 +140,78 @@ speaks plain HTTP; the HTTPS must end at the proxy. Forward to port 8090 only, n
 
 ### Turning push on
 
-After `sudo hubctl update`, and with the asking already on.
+After `sudo hubctl update` and the apps rebuilt, and with the asking already on. All of it is on one page
+of the app: Orders screen › the three dots › Location › **Keys and connections** (`hub-keys.md`). The
+hub's terminal does the same, and its command is under each step.
 
-1. **The key.** On the hub:
+1. **The key.** On the card **GloriaFood push key**: **Type the key**, then **Make one**, **Copy**, and
+   Save. The key is shown while that box is open and never again, to anybody, so copy it before you save:
+   it goes into GloriaFood's admin in step 4. (If GloriaFood's admin turns out to show a master key of its
+   own instead of asking for one, paste GloriaFood's into the box instead.) The push door is open for the
+   key from that moment.
 
-   ```
-   sudo hubctl online push key
-   ```
-
-   Press Enter alone. The hub makes a key and shows it once: copy it for step 4. (If GloriaFood's admin
-   turns out to show a master key of its own instead of asking for one, run the command again and paste
-   GloriaFood's.) The door is open from now on, and the command tries it.
+   In the terminal: `sudo hubctl online push key`, and Enter alone. The hub makes a key and shows it once.
 2. **The tunnel, at Cloudflare.** In Cloudflare's dashboard, under Zero Trust, Networks, Tunnels, create a
    tunnel of the kind "Cloudflared" and give it a name (`pos-hub1`). Cloudflare shows a command to install
-   it, with one very long word in it that starts with `eyJ`. That word is the tunnel's token; copy only
-   that. Then on the hub:
+   it, with one very long word in it that starts with `eyJ`. That word is the tunnel's token. Nothing is
+   installed by hand: the hub has the program already. On the card **Cloudflare Tunnel (the way in)**:
+   **Paste the token**, paste the whole command or only that word, and Save. The card says "On its way to
+   Cloudflare, not connected yet" and, a few seconds later and by itself, "Connected to Cloudflare since
+   14:02". If Cloudflare does not take the token, the card says that instead.
 
-   ```
-   sudo hubctl online tunnel token
-   ```
-
-   It asks for the token, does not show it, and says when the tunnel has reached Cloudflare.
+   In the terminal: `sudo hubctl online tunnel token`. It asks for the token, does not show it, and says
+   when the tunnel has reached Cloudflare.
 3. **The address.** Back at Cloudflare, give the tunnel a public hostname: a subdomain (`orders`), your
    domain, the path `online/push`, the service type **HTTP** and the address **`door:8090`**. Exactly
    that address: it is the door, and the only thing of the hub the tunnel should ever be told about. Then
-   try the whole way in:
+   **Try it**, on either of the two cards. It asks for the address (`orders.example.com`, your own name),
+   which the hub remembers, and should say "The whole way in works". See [Try it](#try-it) for what it
+   does and what else it can say.
 
-   ```
-   sudo hubctl online push test https://orders.example.com/online/push
-   ```
-
-   with your own name in it. It should say "the whole way in works".
+   In the terminal: `sudo hubctl online push test https://orders.example.com/online/push`.
 4. **GloriaFood.** In GloriaFood's restaurant admin, where the integrations are, add a custom integration
-   with the template **Push Accepted Order**: the address from step 3 as the endpoint, the key from step 1
-   as the master key, the format **JSON**, version 2. Leave "Poll Accepted Order v2" as it is: that is the
-   net.
+   with the template **Push Accepted Order**: the address from step 3 as the endpoint (the push key's card
+   shows it whole, "GloriaFood sends to https://orders.example.com/online/push", with a button that copies
+   it), the key from step 1 as the master key, the format **JSON**, version 2. Leave "Poll Accepted Order
+   v2" as it is: that is the net.
 5. **Look.** Place a small test order and accept it. It is on the POS before you have put the phone down,
-   and `sudo hubctl online status` counts it as "sent by GloriaFood".
+   and the screen Online orders (and `sudo hubctl online status`) counts it as "sent by GloriaFood".
 
 The labels in Cloudflare's and GloriaFood's pages may read a little differently from these.
+
+A hub that was set up in the terminal before this goes on as it did: its key and its token show on the page
+as "Set in the hub's terminal", and nothing has to be typed again.
+
+### Try it
+
+**Try it** proves the way in from end to end without GloriaFood: the hub knocks at its own push door, and,
+with an address, at that address from outside, the way GloriaFood comes: out to the internet, to Cloudflare,
+down the tunnel, through the door, and back to this hub. It knocks with a word made for that one try in
+place of the key, and knows its own word when it arrives. So **the key for pushes is sent nowhere**, a try
+puts nothing on the POS, and it is not counted as a push turned away.
+
+| It says | What that means, and where to look |
+| --- | --- |
+| "The whole way in works" | A call to that address reached this very hub. The address is the one for GloriaFood's admin |
+| "The push door is open and leads to this hub. Give the address ..." | No address was given, so only the door was tried |
+| "The push door is not running on this hub" / "is shut" | The hub is older than this, or could not hand the door its key: `sudo hubctl update` |
+| "nothing answers at orders.example.com" | The name does not exist yet. At Cloudflare, the tunnel needs a public hostname of that name (it makes the DNS record itself) |
+| "answers, but not from this hub" | The name leads somewhere else: to another hub, or to a website of yours. The public hostname's service must be `http://door:8090` on this hub's tunnel |
+| "is known, but leads nowhere for /online/push" | The public hostname's path is not `online/push`, or its service is not the door |
+| "Cloudflare answers ... but cannot get to the push door" | The tunnel is not connected (look at its card), or its service is not `http://door:8090` |
+| "turned the call away (403)" | A security rule at Cloudflare stops the call before the tunnel. It would stop GloriaFood's server too |
+| "sends callers on to another address" | Something redirects (a rule that forces another name, say). GloriaFood does not follow a redirect |
+
+The address has to be a name (`orders.example.com`): the hub tries no bare number, no port and nothing but
+HTTPS, follows no redirect, and says of the answer only its number. Only a manager or an owner can set the
+address or try it.
 
 ### What is not known yet
 
 GloriaFood's pages leave these open, and the first real orders will answer them. None of them can lose an
 order while the asking is on.
 
-- **Whether its admin asks for the master key or shows its own.** The command takes either.
+- **Whether its admin asks for the master key or shows its own.** The card and the command take either.
 - **How a push is wrapped.** The hub reads what GloriaFood answers when asked (`{"count": 1, "orders":
   [...]}`), one order by itself, and a bare list. Anything else is kept as it came and listed in the
   status with what it looked like, and the order arrives by the asking.
@@ -484,8 +524,8 @@ where the to-go orders print, alerts a manager's screen, and is listed on the sc
 | **An order cannot be put on the POS** (something in it this build cannot read) | It is tried again each minute, five times. Then the slip says NOT ON THE POS: look at it in GloriaFood's app and ring it in by hand |
 | **GloriaFood's answer cannot be read at all** | It is kept as it came, and a slip says to look at GloriaFood's app (at most one slip a quarter of an hour) |
 | **GloriaFood does not answer** when asked | Nothing is lost: it keeps the orders until the hub asks again. `hubctl online status` says since when and why ("refused the key", "did not answer in time") |
-| **Pushes are turned away** (the key in GloriaFood's admin is not the one on the hub) | Nothing of them is read or kept. The orders arrive by the asking, a minute later than they could. `hubctl online status` counts the pushes turned away, and says so in plain words when orders come only by asking while pushes are turned away. `sudo hubctl online push key` puts the right key on |
-| **The door or the tunnel is down**, or the internet is | The same: the asking brings the orders once the hub can call out again. The status says when the door is not running, and `sudo hubctl online tunnel status` what the tunnel last said |
+| **Pushes are turned away** (the key in GloriaFood's admin is not the one on the hub) | Nothing of them is read or kept. The orders arrive by the asking, a minute later than they could. `hubctl online status` counts the pushes turned away, and says so in plain words when orders come only by asking while pushes are turned away. Replace the key on the card GloriaFood push key (or `sudo hubctl online push key`) with the one in GloriaFood's admin, or make a new one and put it into both |
+| **The door or the tunnel is down**, or the internet is | The same: the asking brings the orders once the hub can call out again. The tunnel's card under Keys and connections says whether it is connected and why not, as does `sudo hubctl online tunnel status`, and **Try it** says where the way in stops |
 | **The test works, but GloriaFood's pushes never arrive**: nothing "sent by GloriaFood" and nothing "turned away" | The orders arrive by the asking. Something before the door is stopping the pushes. Look at the address in GloriaFood's admin first. With Cloudflare, look at its security log for that hostname: a setting that stops robots can stop GloriaFood's server too |
 | **A push cannot be read** (the integration was set to XML, say) | It is kept as it came and listed with what it looked like. Where the hub also asks, no slip prints: the order is on its way by the asking, and a slip would have somebody ring it in a second time. On a hub that only takes pushes, a slip says to look at GloriaFood's app |
 | **A push arrives and the hub cannot write it down** | GloriaFood is answered with an error, the order is held, and it is written down and put on the POS within the minute |
@@ -507,10 +547,16 @@ If the same order comes twice, by either way or both, it is one order on the POS
 
 - **To GloriaFood goes the key for asking**, in a header, once a minute. No order, no customer, nothing of
   the POS. A push is answered with a count ("received: 1") or one word of error, and nothing else.
-- **The keys** (for asking, for pushes, and the tunnel's token) live in `/opt/pos/.env` on the hub. They
-  are in no log, no status, and not in the repository. A key the hub makes is shown once, on the screen it
-  was made at. GloriaFood's own keys, which it puts on every order, are dropped before an order is written
-  down.
+- **The keys** (for asking, for pushes, and the tunnel's token) live on the hub: sealed in its database
+  when typed in the app (`hub-keys.md`, "Where a typed key is kept"), in `/opt/pos/.env` when put on in the
+  terminal. They are in no log, no status, and not in the repository. A key made for pushes is shown once,
+  on the screen it was made at. GloriaFood's own keys, which it puts on every order, are dropped before an
+  order is written down.
+- **The push door is handed a fingerprint of the key for pushes, not the key.** The tunnel's program is
+  handed its token as it is, since it has to show it to Cloudflare: in a folder only the hub's own programs
+  can read.
+- **A try of the way in sends no key.** It sends one made-up word, good for half a minute and for that one
+  try, to the address a manager typed.
 - **With a tunnel, every pushed order passes through Cloudflare** on its way from GloriaFood to the hub,
   with the customer's name, number and address in it, as it already rests at GloriaFood. The tunnel is
   there to carry it, and nothing here asks Cloudflare to keep it; what Cloudflare itself does with what it
@@ -561,8 +607,45 @@ If the same order comes twice, by either way or both, it is one order on the POS
 
 Code: `backend/src/pos/online/` (`gloriafood.py` asks and reads, `inbox.py` writes down, `place.py` turns
 an order into operations, `book.py` reads a booked table for the reservation book, `service.py` is the
-minute's round and the push, `door.py` is the push door), `backend/src/pos/api/online.py` (the calls, and
+minute's round and the push, `door.py` is the push door, `tunnel.py` keeps Cloudflare's program, `wayin.py`
+is what the API hands the two and how it tries them), `backend/src/pos/api/online.py` (the calls, and
 how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
+
+- **The way in, set in the app.** The API has no hold on the hub's containers and is given none (no Docker
+  socket). So the door and the tunnel **run all the time**, idle without their secret, and the API hands
+  each what it needs through a folder it shares with that one service (`pos.online.wayin.WayIn.hand`, called
+  at start and by `pos.api.keys.use_keys` whenever `online_push` or `online_tunnel` changes, on the other
+  hub of a pair within the minute):
+  - `/door/key.json` (volume `pos-door`, read-only in the door): `{"sha256": "<hex>"}` or `{"sha256": null}`.
+    `door.Told` looks at the file on every call (a stat, re-read when it changed), and `Door._judge` compares
+    the SHA-256 of what a push carries in constant time. No file: the door goes by `POS_GLORIAFOOD_PUSH_KEY`,
+    as before. A file it cannot read: shut.
+  - `/tunnel/token` (volume `pos-tunnel`, mode 0600): the token as it is. `python -m pos.online.tunnel`
+    (stdlib only, the compose service `tunnel`, in the hub's own image, which carries `cloudflared` copied
+    from Cloudflare's image at build: build arg `CLOUDFLARED_IMAGE`, `POS_TUNNEL_IMAGE` in `.env`) looks
+    every two seconds, runs `cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 run` with the
+    token in `TUNNEL_TOKEN` (never on the command line), asks its `/ready` whether it has a line, starts it
+    again after 5, 10, 20 ... 300 seconds when it stops, and writes `/tunnel/status.json`: `{state, since_ms,
+    reason, said, mark, version, beat_ms}`. `state` is `off`, `starting`, `connected` or `failing`; `reason`
+    `refused`, `unreachable`, `slow`, `missing` or `trouble`; `mark` says which token it is about (the start
+    of its SHA-256), so the API can tell a word about the token before; `beat_ms` every ten seconds, and no
+    beat for 45 means no tunnel program (`WayIn.tunnel`). Cloudflare's program's lines go to the container's
+    log with the token taken out of them.
+  The keys are the slots `online_push` and `online_tunnel` of `pos.keys` (`tunnel_token` finds the token in
+  a pasted command; `tunnel_of` reads the tunnel's id out of it for `shown.tunnel`). `GET /hub/keys` says
+  `way_in`: `{address, door, tunnel_told, tunnel: {there, state, since_ms, reason, said, version}}`, and
+  `GET /online/status` says `push.tunnel` (no `said`). `PUT /hub/online/push/address` keeps the setting
+  `online_push_address` (`wayin.clean_address`: a DNS name only). `POST /hub/online/push/try` knocks
+  (`WayIn.knock`) at `POS_DOOR_URL` and, with an address, at `https://<address>/online/push`, no redirect
+  followed, with `OnlineOrders.expect()` (a word `try-...`, good for 30 seconds and once) where the key
+  would be. The door hands a call without the key on with its header and an empty body, as it does for
+  anybody; `OnlineOrders.admit` knows the word, answers the usual 401 and counts nothing; the call says in
+  `tried` what `knocked_at_door` and `knocked_outside` made of what came back. `hubctl` puts a key in
+  `.env` and takes the app's off (`app_key_off`), so the terminal's word holds. In the app: `WayIn`,
+  `TunnelState`, `WayTried` (`lib/hub_keys.dart`), `PosApi.savePushAddress`, `tryWayIn`, `WayInDialog`,
+  `makePushKey` and the page's own look at a tunnel on its way (`lib/screens/hub_keys_screen.dart`). Tests:
+  `backend/tests/online/test_wayin.py`, `test_tunnel.py`, `apps/pos_app/test/hub_keys_test.dart` ("the way
+  in for GloriaFood's pushes"), and CI's step "The hub's services together" runs the compose file.
 
 - **A booked table.** An arrival whose `type` is `table_reservation` or `order_ahead`
   (`book.RESERVATION_TYPES`) is handed to `OnlineOrders.book` instead of `put`. `book.wanted(order,

@@ -14,7 +14,9 @@
   (`writable`), when GloriaFood was last asked and last answered (`asked_ms`, `answered_ms`) and why it did
   not (`last_failure`: `at_ms`, `reason`); whether it takes pushes (`push.configured`), when the last one
   came (`push.pushed_ms`) and the last one it turned away (`push.refused`: `at_ms`, `reason`, `count`
-  since the hub started); today's orders by what became of them and by how they came first (`today`:
+  since the hub started), and how the tunnel that brings pushes in stands (`push.tunnel`: `there`,
+  `state`, `since_ms`, `reason`, as `pos.online.wayin` reads them); today's orders by what became of them
+  and by how they came first (`today`:
   `came`, `by_push`, `by_poll`, `placed`, `booked` (tables, into the reservation book), `kept`, `failed`,
   and `unread`: what GloriaFood sent that could not be read), how many are still to be put on the POS
   (`waiting`), and the ones a person should look at (`look`), each by GloriaFood's number (`id`), with its
@@ -219,7 +221,11 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         return at if isinstance(at, int) and not isinstance(at, bool) else 0
 
     def status() -> dict[str, Any]:
-        return online.status(seen_ms())
+        said = online.status(seen_ms())
+        # the tunnel that brings pushes in, as it says it stands (`pos.online.wayin`): for `hubctl online status`
+        tunnel = app.state.wayin.tunnel()
+        said["push"]["tunnel"] = {name: tunnel[name] for name in ("there", "state", "since_ms", "reason")}
+        return said
 
     online.put = put
     online.book = book

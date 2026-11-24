@@ -92,7 +92,11 @@ def test_a_further_account_s_key_is_sealed_under_its_own_name_and_goes_with_the_
     )
     assert SUSHI_KEY not in str(view) and SUSHI_KEY.encode() not in keys.store.all()["online:s1"].sealed
     assert keys.data("online:s1") == {"key": SUSHI_KEY} and keys.data("online") == {"key": MAIN_KEY}
-    assert [v["name"] for v in keys.views()] == ["maps", "maps_google", "online", "push_apple"], "as before"
+    assert [v["name"] for v in keys.views() if v["name"].startswith("online")] == [
+        "online",
+        "online_push",
+        "online_tunnel",
+    ], "as before: an account's key is no key of the hub's own"
     assert keys.environ()["POS_GLORIAFOOD_KEY"] == MAIN_KEY, "the hub's own file names the first account's"
     before = keys.mark()
     keys.forget("online:s1", by="Mike")

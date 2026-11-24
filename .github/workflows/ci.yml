@@ -66,6 +66,34 @@ jobs:
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/faces/status | grep -q '"ready":true' && break; sleep 1; done
           curl -fsS http://127.0.0.1:8000/faces/status | tee /dev/stderr | grep -q '"ready":true'
           docker logs api
+          docker rm -f api
+      - name: The hub's services together, as a hub runs them
+        run: |
+          # The compose file itself, with the image just built: the database, the API, the push door and the
+          # tunnel's keeper. A key for pushes in the hub's own file, as `hubctl online push key` writes one.
+          docker tag pos-backend:ci pos-backend:local
+          mkdir -p /tmp/hub/apns
+          printf 'POSTGRES_PASSWORD=ci-only\nPOS_GLORIAFOOD_PUSH_KEY=ci-only-key-for-pushes-0123456789\n' > /tmp/hub/.env
+          compose() { docker compose --project-directory /tmp/hub -f infra/hub/docker-compose.yml "$@"; }
+          compose up -d
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health
+          # The door runs beside the API and was told the key by it (pos/online/wayin.py), in a folder the door
+          # may only read: it opens for that key and for nothing else, and an empty push puts nothing on the POS.
+          push() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "$@" --data '{"count": 0, "orders": []}' http://127.0.0.1:8090/online/push; }
+          for i in $(seq 1 30); do [ "$(push -H 'Authorization: ci-only-key-for-pushes-0123456789')" = 200 ] && break; sleep 1; done
+          test "$(push -H 'Authorization: ci-only-key-for-pushes-0123456789')" = 200
+          test "$(push -H 'Authorization: somebody-else')" = 401
+          test "$(push)" = 401
+          compose exec -T door sh -c 'grep -q sha256 /door/key.json && ! grep -q ci-only /door/key.json'
+          compose exec -T door sh -c '! touch /door/x 2> /dev/null'
+          # The tunnel's keeper has Cloudflare's program, waits for a token, and says so where the API reads it.
+          compose exec -T tunnel cloudflared --version
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/online/status | jq -e '.push.tunnel.there' > /dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/online/status | jq -e '.push.configured and .push.tunnel.there and .push.tunnel.state == "off"'
+          compose ps
+          compose logs --tail 30 door tunnel
+          compose down -v
 
   app:
     runs-on: ubuntu-latest

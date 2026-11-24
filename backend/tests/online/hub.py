@@ -11,12 +11,14 @@ from fastapi.testclient import TestClient
 
 from pos import localtime
 from pos.api.app import create_app
+from pos.keys import HubKeys
 from pos.menu.gloriafood import load_restaurant_menu
 from pos.menu.service import MenuService
 from pos.online.accounts import MAIN, Account
 from pos.online.gloriafood import NAME, FetchFailed
 from pos.online.inbox import Inbox
 from pos.online.service import OnlineOrders
+from pos.online.wayin import WayIn
 from pos.orders.adjustments import PricingRules
 from pos.orders.numbers import OrderNumbers
 from pos.printing.jobs import JobStore
@@ -72,6 +74,8 @@ class Hub:
         printers: bool = True,
         more: tuple[FakeFood, ...] = (),
         accounts: tuple[Account, ...] = (),
+        keys: HubKeys | None = None,
+        wayin: WayIn | None = None,
     ) -> None:
         self.clock = NOW
         self.food = source if source is not None else FakeFood()
@@ -109,6 +113,8 @@ class Hub:
                 online=self.online,
                 reservations=self.book,
                 location="The Restaurant",
+                keys=keys,
+                wayin=wayin,
             )
         )
 

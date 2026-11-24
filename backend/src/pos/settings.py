@@ -145,6 +145,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # The restaurant's accounts with GloriaFood beyond the first, with the name each was given and which
     # one is for testing (`pos.online.accounts`). No key is here: those are sealed in `pos.keys`.
     "online_accounts": {"accounts": []},
+    # The name on the internet GloriaFood sends its pushes to (docs/online-orders.md, "Push"), as a manager
+    # typed it for trying the way in. No secret, and no screen but a manager's is told it (`GET /hub/keys`).
+    "online_push_address": {"address": ""},
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},

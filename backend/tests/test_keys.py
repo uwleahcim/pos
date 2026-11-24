@@ -127,7 +127,14 @@ def test_a_key_from_the_hub_s_own_file_is_in_force_and_shown_by_its_ending_only(
     }
     assert keys.data(MAPS) == {"key": GEOCODIO_KEY}
     assert keys.view(ONLINE)["set"] is False and keys.view(ONLINE)["source"] is None
-    assert [v["name"] for v in keys.views()] == ["maps", "maps_google", "online", "push_apple"]
+    assert [v["name"] for v in keys.views()] == [
+        "maps",
+        "maps_google",
+        "online",
+        "online_push",
+        "online_tunnel",
+        "push_apple",
+    ]
 
 
 def test_a_key_typed_in_the_app_is_sealed_and_wins_over_the_hub_s_file():
@@ -358,7 +365,7 @@ def test_a_manager_types_the_map_keys_and_the_hub_asks_with_them_at_once():
     api, _ = wired()
     auth = token(api)
     before = api.get("/hub/keys", headers=auth).json()
-    assert [key["set"] for key in before["keys"]] == [False, False, False, False] and before["kept"] is True
+    assert [key["set"] for key in before["keys"]] == [False] * 6 and before["kept"] is True
     assert api.get("/maps/status").json()["configured"] is False
     saved = api.put("/hub/keys/maps", json={"key": GEOCODIO_KEY}, headers=auth)
     assert saved.status_code == 200 and GEOCODIO_KEY not in saved.text
@@ -426,16 +433,26 @@ def test_what_is_wrong_with_a_key_is_said_without_the_key_and_nothing_changes():
     assert keys.store.all() == {} and api.app.state.lookups.ready is False
 
 
+async def one_look(app, within: float = 10.0) -> None:
+    """The watcher's next look, whole. `use_keys` moves the hub's mark as the last thing it does, so the mark
+    having moved is the look having finished: waited for as such, and not for a length of time, which a busy
+    machine does not keep to (the watcher's first look starts a thread)."""
+    was = app.state.keys_mark
+    looking = asyncio.create_task(watch_keys(app, every=0.01))
+    try:
+        async with asyncio.timeout(within):
+            while app.state.keys_mark == was:
+                await asyncio.sleep(0.01)
+    finally:
+        looking.cancel()
+        await asyncio.gather(looking, return_exceptions=True)
+
+
 def test_a_hub_notices_keys_that_changed_under_it():
     """Typed on the location's other hub, or taken back with hubctl: found at the next look."""
     store = KeyStore()
     api, keys = wired(hub({"POS_MAPS_KEY": "this-hub-s-own-key-from-hubctl-2222"}, store))
     app = api.app
-
-    async def one_look() -> None:
-        looking = asyncio.create_task(watch_keys(app, every=0.01))
-        await asyncio.sleep(0.1)
-        looking.cancel()
 
     asyncio.run(use_keys(app))  # as the hub starts: its own file's key
     assert app.state.lookups.names == ["geocodio"]
@@ -443,10 +460,10 @@ def test_a_hub_notices_keys_that_changed_under_it():
     other_hub.remove(MAPS, by="Mike")
     other_hub.set(MAPS_GOOGLE, {"key": GOOGLE_KEY}, by="Mike")
     assert app.state.lookups.names == ["geocodio"]
-    asyncio.run(one_look())
+    asyncio.run(one_look(app))
     assert app.state.lookups.names == ["google"]
     store._rows.pop(MAPS)  # noqa: SLF001 - what `hubctl maps key` does: the app's row goes, the file's key is back
-    asyncio.run(one_look())
+    asyncio.run(one_look(app))
     assert app.state.lookups.names == ["geocodio", "google"]
 
 
@@ -479,9 +496,14 @@ def test_a_manager_adds_a_second_gloriafood_account_and_the_hub_asks_both():
         "5555",
     )
     assert sushi["key"]["by"] == "Mike"
-    assert [key["name"] for key in added.json()["keys"]] == [MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE], (
-        "as an older app reads it"
-    )
+    assert [key["name"] for key in added.json()["keys"]] == [
+        MAPS,
+        MAPS_GOOGLE,
+        ONLINE,
+        "online_push",
+        "online_tunnel",
+        PUSH_APPLE,
+    ], "as an older app reads it"
     online: OnlineOrders = api.app.state.online
     assert [(source.account, type(source)) for source in online.sources] == [
         ("main", GloriaFood),
@@ -621,23 +643,18 @@ def test_a_hub_notices_an_account_that_was_added_or_named_on_the_other_hub():
         staff=staff(), settings=settings, keys=keys, lookups=Lookups(), online=OnlineOrders(None), relay=relay
     )
 
-    async def one_look() -> None:
-        looking = asyncio.create_task(watch_keys(app, every=0.01))
-        await asyncio.sleep(0.1)
-        looking.cancel()
-
     asyncio.run(use_keys(app))
     online: OnlineOrders = app.state.online
     assert [source.account for source in online.sources] == ["main"]
     # the other hub of the location: the same database, another process
     settings.put("online_accounts", {"accounts": [{"id": "s1", "name": "Sushi site", "test": False}]})
     HubKeys(store, vault(), now=lambda: 1_800_000_060_000).set("online:s1", {"key": SUSHI_KEY}, by="Mike")
-    asyncio.run(one_look())
+    asyncio.run(one_look(app))
     assert [source.account for source in online.sources] == ["main", "s1"] and online.accounts[
         "s1"
     ].name == "Sushi site"
     settings.put("online_accounts", {"accounts": [{"id": "s1", "name": "Sushi bar", "test": True}]})
-    asyncio.run(one_look())
+    asyncio.run(one_look(app))
     assert (online.accounts["s1"].name, online.accounts["s1"].test) == ("Sushi bar", True)
 
 

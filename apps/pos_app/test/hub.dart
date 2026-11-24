@@ -682,9 +682,43 @@ class Hub {
   /// none of the calls. `POST /hub/online/accounts` adds one ([accountsAdded] keeps what was typed, the key
   /// too), `PUT` names it or says it is for testing ([accountsChanged]) and `DELETE` removes it with its key
   /// ([accountsRemoved]). [refuseAccount] answers 422 with these words instead.
+  ///
+  /// The way in for GloriaFood's pushes (docs/online-orders.md, "Push"): the keys `online_push` and
+  /// `online_tunnel`, and beside the keys [wayIn], which is the address GloriaFood sends to, whether the push
+  /// door could be told its key, and how the tunnel stands ([tunnelStands]). Null is a hub from before these
+  /// were typed in the app: it lists neither key, says nothing of the way in and knows none of its calls.
+  /// A typed token starts the tunnel (`starting`, with [tunnelShown] as the start of its id), and every look
+  /// at the keys after that takes the next of [tunnelNext] as how it stands ([hubKeysAsks] counts the looks).
+  /// `PUT /hub/online/push/address` remembers the address ([addressesTyped]; [refuseAddress] answers 422
+  /// with these words instead), and `POST /hub/online/push/try` answers [wayTried] ([wayTries] counts them),
+  /// or 409 while the hub has no key for pushes.
   Map<String, Map<String, dynamic>>? hubKeys = {
-    for (final name in ['maps', 'maps_google', 'online', 'push_apple']) name: noKey(name),
+    for (final name in ['maps', 'maps_google', 'online', 'online_push', 'online_tunnel', 'push_apple'])
+      name: noKey(name),
   };
+  Map<String, dynamic>? wayIn = {'address': '', 'door': true, 'tunnel_told': true, 'tunnel': tunnelStands('off')};
+  final tunnelNext = <Map<String, dynamic>>[];
+  String tunnelShown = '6ff42ae2';
+  int hubKeysAsks = 0;
+  final addressesTyped = <String>[];
+  String? refuseAddress;
+  Map<String, dynamic> wayTried = {
+    'door': {'ok': true, 'reason': null, 'code': 401},
+    'outside': null,
+  };
+  int wayTries = 0;
+
+  /// How the tunnel stands, as the hub's tunnel program says it.
+  static Map<String, dynamic> tunnelStands(
+    String state, {
+    bool there = true,
+    int? sinceMs,
+    String? reason,
+    String said = '',
+  }) => {'there': there, 'state': state, 'since_ms': sinceMs, 'reason': reason, 'said': said, 'version': '2026.10.0'};
+
+  /// The two keys of the way in, which a hub from before them does not list.
+  static const wayInKeys = {'online_push', 'online_tunnel'};
   List<Map<String, dynamic>>? onlineAccounts = [];
   String firstAccountName = '';
   bool firstAccountTest = false;
@@ -729,12 +763,13 @@ class Hub {
       }, hubKeysAuth == null ? 401 : 403);
     }
     if (request.url.path.startsWith('/hub/online/accounts')) return _accounts(request);
+    if (request.url.path.startsWith('/hub/online/push/')) return _wayIn(request);
     final name = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
     // an account's own key: `online:<id>`, of an account this hub has
     final further = name != null && name.startsWith('online:') ? name.substring(7) : null;
     final ofAccount = further != null && (onlineAccounts ?? const []).any((account) => account['id'] == further);
     final held = ofAccount ? accountKeys : hubKeys!;
-    if (name != null && !ofAccount && !hubKeys!.containsKey(name)) {
+    if (name != null && !ofAccount && (!hubKeys!.containsKey(name) || (wayIn == null && wayInKeys.contains(name)))) {
       return json({
         'detail': {'error': 'unknown_key', 'message': 'this hub holds no key of that name'},
       }, 404);
@@ -759,22 +794,63 @@ class Hub {
                 'team_id': typed['team_id'],
                 'bundle_id': '${typed['bundle_id'] ?? ''}'.isEmpty ? 'org.chinasky.posApp' : typed['bundle_id'],
               }
+            : name == 'online_tunnel'
+            ? {'tunnel': tunnelShown}
             : <String, dynamic>{},
         'by': 'Mike',
         'at_ms': keysAtMs,
       };
+      // the tunnel's program has not looked at the new token yet
+      if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('starting')};
     }
     if (request.method == 'DELETE' && name != null) {
       keysRemoved.add(name);
       held[name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
+      if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('off')};
+    }
+    if (request.method == 'GET') {
+      hubKeysAsks += 1;
+      if (wayIn != null && tunnelNext.isNotEmpty) wayIn = {...wayIn!, 'tunnel': tunnelNext.removeAt(0)};
     }
     return json(hubKeysSaid());
   }
 
+  http.Response _wayIn(http.Request request) {
+    if (wayIn == null) return json({'detail': 'Not Found'}, 404);
+    final typed = request.body.isEmpty ? <String, dynamic>{} : jsonDecode(request.body) as Map<String, dynamic>;
+    if (request.url.path == '/hub/online/push/address' && request.method == 'PUT') {
+      final address = typed['address'] as String;
+      addressesTyped.add(address);
+      if (refuseAddress != null) {
+        return json({
+          'detail': {'error': 'bad_value', 'message': refuseAddress},
+        }, 422);
+      }
+      // as the hub cleans it: no https:// before it, no path after
+      final name = address.trim().toLowerCase().replaceFirst(RegExp('^https?://'), '').split('/').first;
+      wayIn = {...wayIn!, 'address': name};
+      return json(hubKeysSaid());
+    }
+    if (request.url.path == '/hub/online/push/try' && request.method == 'POST') {
+      wayTries += 1;
+      if (hubKeys!['online_push']!['set'] != true) {
+        return json({
+          'detail': {'error': 'no_key', 'message': 'this hub has no key for pushes'},
+        }, 409);
+      }
+      return json({...hubKeysSaid(), 'tried': wayTried});
+    }
+    return json({'detail': 'Method Not Allowed'}, 405);
+  }
+
   /// What `GET /hub/keys` answers, and every call that changes a key or an account after it.
   Map<String, dynamic> hubKeysSaid() => {
-    'keys': hubKeys!.values.toList(),
+    'keys': [
+      for (final key in hubKeys!.values)
+        if (wayIn != null || !wayInKeys.contains(key['name'])) key,
+    ],
     'kept': hubKeysKept,
+    'way_in': ?wayIn,
     if (onlineAccounts != null)
       'online_accounts': [
         {'id': 'main', 'name': firstAccountName, 'test': firstAccountTest, 'key': hubKeys!['online']},
@@ -2875,7 +2951,10 @@ class Hub {
       });
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
-    if (path == '/hub/keys' || path.startsWith('/hub/keys/') || path.startsWith('/hub/online/accounts')) {
+    if (path == '/hub/keys' ||
+        path.startsWith('/hub/keys/') ||
+        path.startsWith('/hub/online/accounts') ||
+        path.startsWith('/hub/online/push/')) {
       return _keys(request);
     }
     if (path == '/push/status' || path == '/push/test') return _push(request);

@@ -25,6 +25,11 @@ terminal, so of the two ways the one used last wins.
 tests with, has a key for each (`pos.online.accounts`). The first is the slot `online`, as it always was;
 every other account's is kept under `online:<id>`, typed in the app only, and gone with its account.
 
+**Two of the keys are used by a program beside the API**: the key GloriaFood's own pushes carry
+(`online_push`), which the push door checks, and the Cloudflare Tunnel's token (`online_tunnel`), which the
+tunnel runs with. They are kept here like the rest, and the API hands each of the two programs what it
+needs whenever one changes (`pos.online.wayin`), so neither is restarted and neither is started by the API.
+
 Nothing here is written to a log but who set or removed which key. No message of this module carries what
 was typed.
 """
@@ -70,6 +75,11 @@ APPLE_BUNDLE = "org.chinasky.posApp"
 
 MAP_KEY = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 ONLINE_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{8,200}$")
+PUSH_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{16,200}$")
+"""The key GloriaFood's pushes carry: what `hubctl online push key` takes."""
+TUNNEL_TOKEN = re.compile(r"^[A-Za-z0-9_=+/-]{40,4000}$")
+"""A Cloudflare Tunnel's token: one long run of letters and digits. What `hubctl online tunnel token` takes."""
+TUNNEL_ID = re.compile(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,63}$")
 APPLE_ID = re.compile(r"^[A-Z0-9]{10}$")
 BUNDLE_ID = re.compile(r"^[A-Za-z0-9.-]{1,155}$")
 _PEM_BODY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(.*?)-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)
@@ -153,6 +163,53 @@ def _apple_from_env(env: Mapping[str, str]) -> dict[str, str] | None:
     }
 
 
+def tunnel_token(text: str) -> str:
+    """The tunnel's token out of what was pasted. Cloudflare shows it inside a command (`cloudflared service
+    install eyJ...`), and the whole command is what gets copied: the one word of it that is long enough to
+    be a token is the token. A token that picked up line ends on its way is put together again, from the
+    word that starts the way a token does (`eyJ`) to the end. ValueError when no token is in it; the words
+    never say what was pasted."""
+    words = text.split()
+    if not words:
+        raise ValueError("no token was typed")
+    long = [word for word in words if TUNNEL_TOKEN.fullmatch(word)]
+    if len(long) == 1:
+        return long[0]
+    starts = [n for n, word in enumerate(words) if word.startswith("eyJ")]
+    if len(starts) == 1:
+        joined = "".join(words[starts[0] :])
+        if TUNNEL_TOKEN.fullmatch(joined):
+            return joined
+    raise ValueError(
+        "that does not look like a tunnel's token (one long run of letters and digits, usually starting with eyJ)"
+    )
+
+
+def tunnel_of(token: str) -> str:
+    """The start of the tunnel's own id at Cloudflare, which its token carries in the clear and which is no
+    secret (it is in the tunnel's address): what a screen shows to tell one tunnel from another. Nothing
+    for a token that does not read that way; such a token is kept all the same."""
+    for decode in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            held = json.loads(decode(token + "=" * (-len(token) % 4)))
+        except (binascii.Error, ValueError):
+            continue
+        ident = held.get("t") if isinstance(held, dict) else None
+        if isinstance(ident, str) and TUNNEL_ID.fullmatch(ident):
+            return ident[:8]
+    return ""
+
+
+def _clean_tunnel(typed: Mapping[str, Any]) -> dict[str, str]:
+    token = tunnel_token(str(typed.get("key") or ""))
+    return {"key": token, "tunnel": tunnel_of(token)}
+
+
+def _tunnel_from_env(env: Mapping[str, str]) -> dict[str, str] | None:
+    token = (env.get("POS_TUNNEL_TOKEN") or "").strip()
+    return {"key": token, "tunnel": tunnel_of(token)} if token else None
+
+
 @dataclass(frozen=True)
 class Slot:
     """One key the hub can hold. `env` are the names the hub's own file has it under (what `hubctl` writes);
@@ -169,6 +226,7 @@ class Slot:
 
 
 MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE = "maps", "maps_google", "online", "push_apple"
+ONLINE_PUSH, ONLINE_TUNNEL = "online_push", "online_tunnel"
 
 SLOTS: dict[str, Slot] = {
     slot.name: slot
@@ -196,6 +254,25 @@ SLOTS: dict[str, Slot] = {
             _one_key(ONLINE_KEY, "letters and digits, 8 or more, no spaces"),
             _one_from_env("POS_GLORIAFOOD_KEY"),
             lambda data: {"POS_GLORIAFOOD_KEY": data["key"]},
+        ),
+        # the key GloriaFood's own pushes of an order carry (docs/online-orders.md, "Push"), checked by the
+        # push door and by the API behind it: `hubctl online push key`
+        Slot(
+            ONLINE_PUSH,
+            ("POS_GLORIAFOOD_PUSH_KEY",),
+            _one_key(PUSH_KEY, "letters and digits, 16 or more, no spaces"),
+            _one_from_env("POS_GLORIAFOOD_PUSH_KEY"),
+            lambda data: {"POS_GLORIAFOOD_PUSH_KEY": data["key"]},
+        ),
+        # the token of the Cloudflare Tunnel that brings those pushes in ("The way in" in the same guide):
+        # `hubctl online tunnel token`
+        Slot(
+            ONLINE_TUNNEL,
+            ("POS_TUNNEL_TOKEN",),
+            _clean_tunnel,
+            _tunnel_from_env,
+            lambda data: {"POS_TUNNEL_TOKEN": data["key"]},
+            shown=("tunnel",),
         ),
         # Apple's key for waking a locked iPhone or iPad (docs/push-relay.md): `hubctl push apple`
         Slot(
@@ -560,6 +637,8 @@ __all__ = [
     "MAPS",
     "MAPS_GOOGLE",
     "ONLINE",
+    "ONLINE_PUSH",
+    "ONLINE_TUNNEL",
     "PUSH_APPLE",
     "SLOTS",
     "HubKeys",
@@ -574,5 +653,7 @@ __all__ = [
     "ending_of",
     "keys_from_env",
     "slot_for",
+    "tunnel_of",
+    "tunnel_token",
     "vault_from_env",
 ]

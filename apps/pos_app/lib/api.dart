@@ -1672,6 +1672,34 @@ class PosApi {
     ),
   );
 
+  /// The name on the internet GloriaFood sends its pushes to ("orders.example.com", with or without
+  /// https:// and the path), remembered on the hub for trying the way in; empty forgets it. Answers with
+  /// how the keys stand; an [ApiException] with the hub's words for what is no such name.
+  Future<HubKeys> savePushAddress(String token, String address) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/hub/online/push/address'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'address': address}),
+      ),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// The hub tries its own way in for GloriaFood's pushes: it knocks at its push door, and, where an
+  /// address is known, from outside at that address ([HubKeys.tried]). No key is sent anywhere. The hub
+  /// waits for the outside, so this waits longer than most calls. 409 from a hub with no key for pushes.
+  Future<HubKeys> tryWayIn(String token) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(
+        Uri.parse('$base/hub/online/push/try'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: '{}',
+      ),
+      timeout: const Duration(seconds: 45),
+    ),
+  );
+
   /// An account is gone, and its key with it: the hub stops asking it. Not the first account.
   Future<HubKeys> removeOnlineAccount(String token, String id) async => HubKeys.fromJson(
     await _withFailover(

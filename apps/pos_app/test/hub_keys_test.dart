@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/hub_keys.dart';
 import 'package:pos_app/screens/hub_keys_screen.dart';
 import 'package:pos_app/screens/location_settings_screen.dart';
+import 'package:pos_app/takeout.dart' show clockTime;
 
 import 'hub.dart';
 import 'location_rows.dart';
@@ -28,6 +30,23 @@ Future<void> tapKey(WidgetTester tester, String key) async {
 
 String textOf(WidgetTester tester, String key) => tester.widget<Text>(find.byKey(ValueKey(key))).data!;
 
+/// What the page puts on the clipboard from here on, in order.
+List<String> clipboard(WidgetTester tester) {
+  final copied = <String>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+    if (call.method == 'Clipboard.setData') copied.add((call.arguments as Map)['text'] as String);
+    return null;
+  });
+  addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+  return copied;
+}
+
+/// The page's next look at a tunnel that is on its way, two seconds on, and what it shows after it.
+Future<void> nextLook(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 2));
+  await tester.pumpAndSettle();
+}
+
 /// The page as Location opens it for a manager, on the day the pretend hub stamps a typed key with.
 /// Whatever it reports back comes to [told].
 Future<Terminal> pumpKeys(
@@ -37,6 +56,7 @@ Future<Terminal> pumpKeys(
   double textScale = 1,
   String token = 'tok-admin',
   List<HubKeys>? told,
+  String Function()? makeKey,
 }) async {
   final t = await terminal(tester);
   hub?.call(t.hub);
@@ -54,6 +74,7 @@ Future<Terminal> pumpKeys(
         keys: keys,
         onChanged: told?.add,
         clock: () => DateTime.fromMillisecondsSinceEpoch(t.hub.keysAtMs),
+        makeKey: makeKey ?? makePushKey,
       ),
     ),
   );
@@ -119,6 +140,10 @@ void main() {
       expect(
         of({'maps': false, 'maps_google': false, 'online': false, 'push_apple': false}).summary,
         'None set yet: map service, Google Maps, GloriaFood, Apple push',
+      );
+      expect(
+        of({'online': true, 'online_push': true, 'online_tunnel': false, 'push_apple': false}).summary,
+        'Set: GloriaFood, GloriaFood push · Not set: Cloudflare tunnel, Apple push',
       );
       expect(
         of({'maps': true, 'maps_google': false, 'online': true, 'push_apple': false}).summary,
@@ -429,17 +454,22 @@ void main() {
       expect([for (final account in keys.accounts) account.key.name], ['online', 'online:su01', 'online:te01']);
       expect([for (final account in keys.accounts) account.key.set], [true, true, false]);
       expect(keys.accounts.last.test, isTrue);
-      // the four keys of the page are still four: an account's key is not one of them
-      expect([for (final key in keys.keys) key.name], ['maps', 'maps_google', 'online', 'push_apple']);
+      // the keys of the page are as many as they were: an account's key is not one of them
+      expect(
+        [for (final key in keys.keys) key.name],
+        ['maps', 'maps_google', 'online', 'online_push', 'online_tunnel', 'push_apple'],
+      );
       expect(
         keys.summary,
-        'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, GloriaFood (Testing), Apple push',
+        'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, GloriaFood (Testing), GloriaFood push, '
+        'Cloudflare tunnel, Apple push',
       );
     });
 
     test('a hub from before there could be several has the one account, by the key online', () {
       final hub = Hub()
         ..onlineAccounts = null
+        ..wayIn = null
         ..hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz');
       final keys = HubKeys.fromJson(hub.hubKeysSaid());
       expect(keys.onlineAccounts, isNull);
@@ -635,6 +665,492 @@ void main() {
     });
   });
 
+  group("the way in for GloriaFood's pushes", () {
+    const madeKey = 'Qw3rTyUiOpAsDfGhJkLzXcVbNm0123456789AbCd';
+    const token = 'eyJhIjoiMDAwMCIsInQiOiI2ZmY0MmFlMi0wMDAwIiwicyI6Ik1EQXdNREF3TURBd01EQXdNREF3TURBd01EQXcifQ==';
+    final now = DateTime(2026, 11, 24, 15);
+
+    /// A hub whose key for pushes and tunnel's token were typed in the app, the tunnel connected.
+    void bothSet(Hub hub) {
+      hub
+        ..hubKeys!['online_push'] = {...Hub.hubKey('online_push', ending: 'AbCd'), 'source': 'app', 'by': 'Mike'}
+        ..hubKeys!['online_tunnel'] = {
+          ...Hub.hubKey('online_tunnel', ending: 'fQ=='),
+          'source': 'app',
+          'by': 'Mike',
+          'shown': {'tunnel': '6ff42ae2'},
+        }
+        ..wayIn = {...hub.wayIn!, 'tunnel': Hub.tunnelStands('connected', sinceMs: hub.keysAtMs)};
+    }
+
+    test('how the tunnel stands, in words', () {
+      TunnelState stands(String state, {bool there = true, int? sinceMs, String? reason, String said = ''}) =>
+          TunnelState.fromJson(Hub.tunnelStands(state, there: there, sinceMs: sinceMs, reason: reason, said: said));
+      final nine = DateTime(2026, 11, 24, 9, 5).millisecondsSinceEpoch;
+      expect(stands('connected', sinceMs: nine).words(now), 'Connected to Cloudflare since 09:05.');
+      expect(
+        stands('connected', sinceMs: DateTime(2026, 11, 23, 22).millisecondsSinceEpoch).words(now),
+        'Connected to Cloudflare since yesterday.',
+      );
+      expect(stands('connected').words(now), 'Connected to Cloudflare.');
+      expect(stands('connected', sinceMs: nine).connected, isTrue);
+      expect(stands('connected', sinceMs: nine).bad, isFalse);
+      expect(stands('starting').words(now), 'On its way to Cloudflare, not connected yet.');
+      expect(stands('starting').bad, isFalse);
+      expect(stands('failing', reason: 'refused').words(now), startsWith('Not connected: Cloudflare did not take'));
+      expect(stands('failing', reason: 'refused').bad, isTrue);
+      expect(stands('failing', reason: 'unreachable').words(now), contains("the restaurant's internet"));
+      expect(stands('failing', reason: 'slow').words(now), 'Not connected yet: it is taking long to reach Cloudflare.');
+      expect(stands('failing', reason: 'missing').words(now), contains('this hub has no tunnel program'));
+      expect(
+        stands('failing', reason: 'trouble', said: 'failed to dial to edge').words(now),
+        "Not connected. Cloudflare's program says: failed to dial to edge",
+      );
+      expect(stands('failing', reason: 'trouble').words(now), 'Not connected to Cloudflare.');
+      // a hub whose tunnel program does not speak
+      final silent = stands('off', there: false);
+      expect(silent.words(now), "The hub's tunnel program is not running. Update the hub (sudo hubctl update).");
+      expect(silent.bad, isTrue);
+      expect(silent.connected, isFalse);
+    });
+
+    test('what a try came to, in words', () {
+      WayTried tried(Map<String, dynamic> door, [Map<String, dynamic>? outside]) =>
+          WayTried.fromJson({'door': door, 'outside': outside});
+      const open = {'ok': true, 'reason': null, 'code': 401};
+      Map<String, dynamic> from(String? reason, {int? code}) => {
+        'address': 'orders.example.com',
+        'ok': reason == null,
+        'reason': reason,
+        'code': code,
+        'url': 'https://orders.example.com/online/push',
+      };
+      // the door
+      expect(
+        tried({'ok': false, 'reason': 'no_answer', 'code': null}).words,
+        startsWith('The push door is not running'),
+      );
+      expect(tried({'ok': false, 'reason': 'shut', 'code': 404}).words, startsWith('The push door is shut'));
+      expect(tried({'ok': false, 'reason': 'api', 'code': 502}).words, contains('could not hand a push on'));
+      expect(tried({'ok': false, 'reason': 'other', 'code': 500}).words, contains('(500)'));
+      expect(tried({'ok': false, 'reason': 'shut', 'code': 404}).bad, isTrue);
+      // the door alone, with no address to try from outside, is no fault
+      expect(tried(open).words, startsWith('The push door is open and leads to this hub. Give the address'));
+      expect(tried(open).bad, isFalse);
+      // from outside
+      final whole = tried(open, from(null, code: 401));
+      expect(whole.ok, isTrue);
+      expect(
+        whole.words,
+        'The whole way in works: https://orders.example.com/online/push reaches this hub. That is the address for '
+        "GloriaFood's admin. No key was sent anywhere.",
+      );
+      final said = {
+        'no_answer': 'nothing answers at orders.example.com',
+        'late': 'orders.example.com did not answer in time',
+        'elsewhere': 'answers, but not from this hub',
+        'not_routed': 'leads nowhere for /online/push',
+        'blocked': 'turned the call away (403)',
+        'tunnel_down': 'cannot get to the push door (502)',
+        'redirect': 'sends callers on to another address (301)',
+        'other': 'answered 418',
+      };
+      final codes = {
+        'elsewhere': 200,
+        'not_routed': 404,
+        'blocked': 403,
+        'tunnel_down': 502,
+        'redirect': 301,
+        'other': 418,
+      };
+      for (final entry in said.entries) {
+        final failed = tried(open, from(entry.key, code: codes[entry.key]));
+        expect(failed.bad, isTrue, reason: entry.key);
+        expect(failed.words, startsWith('The push door is open, but from outside '), reason: entry.key);
+        expect(failed.words, contains(entry.value), reason: entry.key);
+      }
+    });
+
+    test("a tunnel's token is told by the start of its tunnel's id, and an older hub says nothing of the way in", () {
+      final hub = Hub();
+      bothSet(hub);
+      final keys = HubKeys.fromJson(hub.hubKeysSaid());
+      expect(
+        keys.named('online_tunnel')!.words(DateTime.fromMillisecondsSinceEpoch(hub.keysAtMs)),
+        'Set · tunnel 6ff42ae2 · typed here by Mike',
+      );
+      expect(keys.wayIn!.address, '');
+      expect(keys.wayIn!.endpoint, isNull);
+      expect(keys.wayIn!.door, isTrue);
+      expect(keys.wayIn!.tunnel.connected, isTrue);
+      hub.wayIn = {...hub.wayIn!, 'address': 'orders.example.com'};
+      expect(HubKeys.fromJson(hub.hubKeysSaid()).wayIn!.endpoint, 'https://orders.example.com/online/push');
+      hub.wayIn = null;
+      final older = HubKeys.fromJson(hub.hubKeysSaid());
+      expect(older.wayIn, isNull);
+      expect([for (final key in older.keys) key.name], ['maps', 'maps_google', 'online', 'push_apple']);
+    });
+
+    testWidgets('the two are cards of their own, and say what is lost without them', (tester) async {
+      await pumpKeys(tester);
+      expect(find.text('GloriaFood push key'), findsOneWidget);
+      expect(find.text('Cloudflare Tunnel (the way in)'), findsOneWidget);
+      expect(textOf(tester, 'key-online_push-state'), 'Not set');
+      expect(textOf(tester, 'key-online_tunnel-state'), 'Not set');
+      expect(find.textContaining('Without it every push is turned away'), findsOneWidget);
+      expect(find.textContaining('Without it nothing from outside reaches the hub'), findsOneWidget);
+      // nothing of a tunnel that has no token, and nothing to try
+      expect(find.byKey(const ValueKey('tunnel-state')), findsNothing);
+      expect(find.byKey(const ValueKey('way-in-endpoint')), findsNothing);
+      expect(find.byKey(const ValueKey('key-online_push-try')), findsNothing);
+      expect(find.byKey(const ValueKey('key-online_tunnel-try')), findsNothing);
+    });
+
+    testWidgets('a hub from before them shows the four cards it always did', (tester) async {
+      await pumpKeys(tester, hub: (hub) => hub.wayIn = null);
+      expect(find.text('GloriaFood push key'), findsNothing);
+      expect(find.text('Cloudflare Tunnel (the way in)'), findsNothing);
+      for (final title in ['Map service (Geocodio)', 'Google Maps', 'GloriaFood (online orders)', 'Apple push key']) {
+        expect(find.text(title), findsOneWidget, reason: title);
+      }
+    });
+
+    testWidgets('a key for pushes is made here, copied, saved, and never shown again', (tester) async {
+      final copied = clipboard(tester);
+      final made = [madeKey, 'Zz${madeKey.substring(2)}'];
+      final t = await pumpKeys(tester, makeKey: () => made.removeAt(0));
+      await tapKey(tester, 'key-online_push-type');
+      expect(find.textContaining('Yours to make'), findsOneWidget);
+      expect(find.byKey(const ValueKey('key-copy')), findsNothing);
+      expect(find.byKey(const ValueKey('key-made-note')), findsNothing);
+      // nothing typed and nothing made: nothing is sent
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Paste the key, or press Make one, first.');
+      await tapKey(tester, 'key-make');
+      final field = find.byKey(const ValueKey('key-field'));
+      expect(tester.widget<TextField>(field).controller!.text, madeKey);
+      // a made key is shown, since it has to be copied
+      expect(tester.widget<TextField>(field).obscureText, isFalse);
+      expect(find.byKey(const ValueKey('key-problem')), findsNothing);
+      expect(textOf(tester, 'key-made-note'), startsWith("Copy it now, for GloriaFood's admin."));
+      expect(find.text('Make another'), findsOneWidget);
+      await tapKey(tester, 'key-copy');
+      expect(copied, [madeKey]);
+      expect(find.text('Copied'), findsOneWidget);
+      // another one is another key, still to be copied
+      await tapKey(tester, 'key-make');
+      expect(tester.widget<TextField>(field).controller!.text, 'Zz${madeKey.substring(2)}');
+      expect(find.text('Copy'), findsOneWidget);
+      await tapKey(tester, 'key-copy');
+      await tapKey(tester, 'key-save');
+      expect(find.byType(HubKeyDialog), findsNothing);
+      expect(t.hub.keysTyped.single.$1, 'online_push');
+      expect(t.hub.keysTyped.single.$2, {'key': 'Zz${madeKey.substring(2)}'});
+      expect(copied.last, 'Zz${madeKey.substring(2)}');
+      expect(textOf(tester, 'key-online_push-state'), 'Set · ends in AbCd · typed here by Mike, today');
+      expect(
+        textOf(tester, 'key-online_push-said'),
+        "Saved. The push door is open for it. Put the same key into GloriaFood's admin.",
+      );
+      expect(find.textContaining(madeKey.substring(2)), findsNothing);
+      expect(find.byKey(const ValueKey('key-online_push-try')), findsOneWidget);
+      // replacing it starts from an empty box: the key in force is not brought back
+      await tapKey(tester, 'key-online_push-type');
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      expect(find.text('Make one'), findsOneWidget);
+    });
+
+    testWidgets('a key of your own can be pasted for pushes instead', (tester) async {
+      final t = await pumpKeys(tester);
+      await tapKey(tester, 'key-online_push-type');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), ' $madeKey ');
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-field'))).obscureText, isTrue);
+      await tapKey(tester, 'key-save');
+      expect(t.hub.keysTyped.single.$2, {'key': madeKey});
+      expect(find.byKey(const ValueKey('key-made-note')), findsNothing);
+    });
+
+    testWidgets("the tunnel's token is pasted as Cloudflare's command, and the card follows it to Cloudflare", (
+      tester,
+    ) async {
+      final told = <HubKeys>[];
+      final t = await pumpKeys(tester, told: told);
+      await tapKey(tester, 'key-online_tunnel-type');
+      expect(find.text("The token, or Cloudflare's command"), findsOneWidget);
+      expect(find.textContaining('Zero Trust, Networks, Tunnels'), findsOneWidget);
+      expect(find.byKey(const ValueKey('key-make')), findsNothing);
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Paste the token, or the command Cloudflare shows, first.');
+      // the hub finds the token in the command: the app sends what was pasted
+      await tester.enterText(find.byKey(const ValueKey('key-field')), 'sudo cloudflared service install $token');
+      t.hub.tunnelNext.addAll([Hub.tunnelStands('starting'), Hub.tunnelStands('connected', sinceMs: t.hub.keysAtMs)]);
+      await tapKey(tester, 'key-save');
+      expect(t.hub.keysTyped.single.$1, 'online_tunnel');
+      expect(t.hub.keysTyped.single.$2, {'key': 'sudo cloudflared service install $token'});
+      expect(textOf(tester, 'key-online_tunnel-state'), 'Set · tunnel 6ff42ae2 · typed here by Mike, today');
+      expect(textOf(tester, 'key-online_tunnel-said'), 'Saved. The tunnel is started with it.');
+      expect(textOf(tester, 'tunnel-state'), 'On its way to Cloudflare, not connected yet.');
+      expect(find.textContaining('eyJ'), findsNothing);
+      // nobody presses anything: the page looks again by itself until the tunnel says how it went
+      expect(t.hub.hubKeysAsks, 0);
+      await nextLook(tester);
+      expect(t.hub.hubKeysAsks, 1);
+      expect(textOf(tester, 'tunnel-state'), 'On its way to Cloudflare, not connected yet.');
+      await nextLook(tester);
+      expect(t.hub.hubKeysAsks, 2);
+      expect(textOf(tester, 'tunnel-state'), 'Connected to Cloudflare since ${clockTime(t.hub.keysAtMs)}.');
+      expect(told.last.wayIn!.tunnel.connected, isTrue);
+      // and then it is left alone
+      await nextLook(tester);
+      await nextLook(tester);
+      expect(t.hub.hubKeysAsks, 2);
+      expect(find.byKey(const ValueKey('key-online_tunnel-try')), findsOneWidget);
+    });
+
+    testWidgets('a token Cloudflare does not take is said on the card, and the looking stops', (tester) async {
+      final t = await pumpKeys(tester);
+      await tapKey(tester, 'key-online_tunnel-type');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), token);
+      t.hub.tunnelNext.add(Hub.tunnelStands('failing', sinceMs: t.hub.keysAtMs, reason: 'refused'));
+      await tapKey(tester, 'key-save');
+      await nextLook(tester);
+      expect(textOf(tester, 'tunnel-state'), startsWith('Not connected: Cloudflare did not take the token.'));
+      final theme = Theme.of(tester.element(find.byType(HubKeysScreen)));
+      expect(tester.widget<Text>(find.byKey(const ValueKey('tunnel-state'))).style!.color, theme.colorScheme.error);
+      await nextLook(tester);
+      expect(t.hub.hubKeysAsks, 1);
+    });
+
+    testWidgets('a tunnel that stays on its way is looked at for half a minute, not for ever', (tester) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          bothSet(hub);
+          hub.wayIn = {...hub.wayIn!, 'tunnel': Hub.tunnelStands('starting')};
+        },
+      );
+      for (var n = 0; n < 20; n++) {
+        await nextLook(tester);
+      }
+      expect(t.hub.hubKeysAsks, 15);
+      expect(textOf(tester, 'tunnel-state'), 'On its way to Cloudflare, not connected yet.');
+    });
+
+    testWidgets('a hub that does not answer one look is asked again at the next', (tester) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          bothSet(hub);
+          hub.wayIn = {...hub.wayIn!, 'tunnel': Hub.tunnelStands('starting')};
+        },
+      );
+      t.hub.down = true;
+      await nextLook(tester);
+      expect(tester.takeException(), isNull);
+      expect(textOf(tester, 'tunnel-state'), 'On its way to Cloudflare, not connected yet.');
+      t.hub
+        ..down = false
+        ..tunnelNext.add(Hub.tunnelStands('connected', sinceMs: t.hub.keysAtMs));
+      await nextLook(tester);
+      expect(textOf(tester, 'tunnel-state'), startsWith('Connected to Cloudflare'));
+    });
+
+    testWidgets('a hub whose tunnel program is not running says so under a token that is set', (tester) async {
+      await pumpKeys(
+        tester,
+        hub: (hub) {
+          bothSet(hub);
+          hub.wayIn = {...hub.wayIn!, 'door': false, 'tunnel': Hub.tunnelStands('off', there: false)};
+        },
+      );
+      expect(
+        textOf(tester, 'tunnel-state'),
+        "The hub's tunnel program is not running. Update the hub (sudo hubctl update).",
+      );
+      // and a push door that could not be told the key
+      expect(textOf(tester, 'door-not-told'), startsWith('The hub could not tell the push door its key'));
+    });
+
+    testWidgets('the way in is tried with the address GloriaFood sends to, which the hub remembers', (tester) async {
+      final copied = clipboard(tester);
+      final told = <HubKeys>[];
+      final t = await pumpKeys(
+        tester,
+        told: told,
+        hub: (hub) {
+          bothSet(hub);
+          hub.wayTried = {
+            'door': {'ok': true, 'reason': null, 'code': 401},
+            'outside': {
+              'address': 'orders.example.com',
+              'ok': true,
+              'reason': null,
+              'code': 401,
+              'url': 'https://orders.example.com/online/push',
+            },
+          };
+        },
+      );
+      expect(find.byKey(const ValueKey('way-in-endpoint')), findsNothing);
+      await tapKey(tester, 'key-online_push-try');
+      expect(find.text('Try the way in'), findsOneWidget);
+      expect(find.textContaining('No key is sent anywhere'), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('way-in-address')), 'https://Orders.Example.com/online/push');
+      await tapKey(tester, 'way-in-try');
+      expect(find.byType(WayInDialog), findsNothing);
+      expect(t.hub.addressesTyped, ['https://Orders.Example.com/online/push']);
+      expect(t.hub.wayTries, 1);
+      expect(
+        textOf(tester, 'key-online_push-said'),
+        'The whole way in works: https://orders.example.com/online/push reaches this hub. That is the address for '
+        "GloriaFood's admin. No key was sent anywhere.",
+      );
+      // the address stays on the card, to copy into GloriaFood's admin
+      expect(textOf(tester, 'way-in-endpoint'), 'GloriaFood sends to https://orders.example.com/online/push');
+      await tapKey(tester, 'way-in-copy');
+      expect(copied, ['https://orders.example.com/online/push']);
+      expect(told.last.wayIn!.address, 'orders.example.com');
+      // tried again from the tunnel's card: the address is there already and is not saved a second time
+      t.hub.wayTried = {
+        'door': {'ok': true, 'reason': null, 'code': 401},
+        'outside': {'address': 'orders.example.com', 'ok': false, 'reason': 'elsewhere', 'code': 200},
+      };
+      await tapKey(tester, 'key-online_tunnel-try');
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey('way-in-address'))).controller!.text,
+        'orders.example.com',
+      );
+      await tapKey(tester, 'way-in-try');
+      expect(t.hub.addressesTyped.length, 1);
+      expect(t.hub.wayTries, 2);
+      expect(
+        textOf(tester, 'key-online_tunnel-said'),
+        'The push door is open, but from outside orders.example.com answers, but not from this hub. At Cloudflare, '
+        'the public hostname must be handed to http://door:8090.',
+      );
+      final theme = Theme.of(tester.element(find.byType(HubKeysScreen)));
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('key-online_tunnel-said'))).style!.color,
+        theme.colorScheme.error,
+      );
+    });
+
+    testWidgets('with no address the push door alone is tried, and Cancel tries nothing', (tester) async {
+      final t = await pumpKeys(tester, hub: bothSet);
+      await tapKey(tester, 'key-online_push-try');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.wayTries, 0);
+      expect(find.byKey(const ValueKey('key-online_push-said')), findsNothing);
+      await tapKey(tester, 'key-online_push-try');
+      await tapKey(tester, 'way-in-try');
+      expect(t.hub.addressesTyped, isEmpty);
+      expect(t.hub.wayTries, 1);
+      expect(
+        textOf(tester, 'key-online_push-said'),
+        startsWith('The push door is open and leads to this hub. Give the address GloriaFood sends to'),
+      );
+    });
+
+    testWidgets('what is no address is said in the dialog, and nothing is tried', (tester) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          bothSet(hub);
+          hub.refuseAddress = 'that does not look like an address on the internet (a name such as orders.example.com)';
+        },
+      );
+      await tapKey(tester, 'key-online_push-try');
+      await tester.enterText(find.byKey(const ValueKey('way-in-address')), '192.168.1.20:8090');
+      await tapKey(tester, 'way-in-try');
+      expect(
+        textOf(tester, 'way-in-problem'),
+        'That does not look like an address on the internet (a name such as orders.example.com).',
+      );
+      expect(find.byType(WayInDialog), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey('way-in-address'))).controller!.text,
+        '192.168.1.20:8090',
+      );
+      expect(t.hub.wayTries, 0);
+    });
+
+    testWidgets('a tunnel with no key for pushes behind it says the key comes first', (tester) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          bothSet(hub);
+          hub.hubKeys!['online_push'] = Hub.noKey('online_push');
+        },
+      );
+      expect(find.byKey(const ValueKey('key-online_push-try')), findsNothing);
+      await tapKey(tester, 'key-online_tunnel-try');
+      await tapKey(tester, 'way-in-try');
+      expect(t.hub.wayTries, 1);
+      expect(textOf(tester, 'key-online_tunnel-said'), startsWith('This hub has no key for pushes yet.'));
+    });
+
+    testWidgets('removing the token closes the tunnel, and says what stops', (tester) async {
+      final t = await pumpKeys(tester, hub: bothSet);
+      await tapKey(tester, 'key-online_tunnel-remove');
+      expect(find.textContaining('The tunnel is closed: nothing from outside reaches the hub.'), findsOneWidget);
+      await tapKey(tester, 'key-remove-sure');
+      expect(t.hub.keysRemoved, ['online_tunnel']);
+      expect(textOf(tester, 'key-online_tunnel-state'), 'Not set · removed here by Mike, today');
+      expect(find.byKey(const ValueKey('tunnel-state')), findsNothing);
+    });
+
+    testWidgets('both cards and their dialogs fit a 320-wide phone with large text', (tester) async {
+      await pumpKeys(
+        tester,
+        size: const Size(320, 568),
+        textScale: 1.3,
+        hub: (hub) {
+          bothSet(hub);
+          hub.wayIn = {
+            ...hub.wayIn!,
+            'address': 'orders.a-long-name-of-a-restaurant.example.com',
+            'tunnel': Hub.tunnelStands('failing', sinceMs: hub.keysAtMs, reason: 'refused'),
+          };
+        },
+      );
+      final page = find.descendant(of: find.byType(HubKeysScreen), matching: find.byType(Scrollable)).first;
+      for (final name in ['online_push', 'online_tunnel']) {
+        await tester.scrollUntilVisible(find.byKey(ValueKey('key-$name-remove')), 200, scrollable: page);
+        expect(tester.takeException(), isNull, reason: name);
+        for (final button in ['type', 'try', 'remove']) {
+          final at = tester.getRect(find.byKey(ValueKey('key-$name-$button')));
+          expect(at.left >= 0 && at.right <= 320, isTrue, reason: '$name $button');
+        }
+      }
+      await tester.scrollUntilVisible(find.byKey(const ValueKey('way-in-copy')), -100, scrollable: page);
+      final copy = tester.getRect(find.byKey(const ValueKey('way-in-copy')));
+      expect(copy.right <= 320, isTrue);
+      // the key's dialog with a key made in it
+      await tapKey(tester, 'key-online_push-type');
+      await tapKey(tester, 'key-make');
+      expect(tester.takeException(), isNull);
+      for (final key in ['key-make', 'key-copy', 'key-save']) {
+        final at = tester.getRect(find.byKey(ValueKey(key)));
+        expect(at.left >= 0 && at.right <= 320 && at.bottom <= 568, isTrue, reason: key);
+      }
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      // the token's
+      await tapKey(tester, 'key-online_tunnel-type');
+      expect(tester.takeException(), isNull);
+      final save = tester.getRect(find.byKey(const ValueKey('key-save')));
+      expect(save.right <= 320 && save.bottom <= 568, isTrue);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      // and the try's
+      await tapKey(tester, 'key-online_tunnel-try');
+      expect(tester.takeException(), isNull);
+      final go = tester.getRect(find.byKey(const ValueKey('way-in-try')));
+      expect(go.right <= 320 && go.bottom <= 568, isTrue);
+    });
+  });
+
   group('Location', () {
     Future<Terminal> pumpLocation(WidgetTester tester, {Set<String>? holds, void Function(Hub hub)? hub}) async {
       final t = await terminal(tester);
@@ -656,7 +1172,10 @@ void main() {
     testWidgets('a manager finds the row, which keys are set, and the page behind it', (tester) async {
       final t = await pumpLocation(tester, hub: (hub) => hub.hubKeys!['maps'] = Hub.hubKey('maps', ending: 'wxyz'));
       await bringUp(tester, 'hub-keys');
-      expect(row(tester), 'Set: map service · Not set: Google Maps, GloriaFood, Apple push');
+      expect(
+        row(tester),
+        'Set: map service · Not set: Google Maps, GloriaFood, GloriaFood push, Cloudflare tunnel, Apple push',
+      );
       await tapKey(tester, 'hub-keys');
       expect(find.byType(HubKeysScreen), findsOneWidget);
       await tapKey(tester, 'key-online-type');
@@ -665,7 +1184,10 @@ void main() {
       expect(t.hub.keysTyped.single.$1, 'online');
       await tester.pageBack();
       await tester.pumpAndSettle();
-      expect(row(tester), 'Set: map service, GloriaFood · Not set: Google Maps, Apple push');
+      expect(
+        row(tester),
+        'Set: map service, GloriaFood · Not set: Google Maps, GloriaFood push, Cloudflare tunnel, Apple push',
+      );
     });
 
     testWidgets('an older hub has no keys to type: the row says so and opens nothing', (tester) async {

@@ -6,7 +6,13 @@
 ///
 /// GloriaFood's key comes in several: a restaurant with more than one website there, or an account it only
 /// tests with, has a key for each ([OnlineAccount]; docs/online-orders.md, "Several accounts").
+///
+/// Two of the keys are for GloriaFood's own pushes (docs/online-orders.md, "Push"): the key a push must
+/// carry, and the token of the Cloudflare Tunnel that brings pushes in. The hub says how that way in stands
+/// ([WayIn]) and can try it ([WayTried]).
 library;
+
+import 'takeout.dart' show clockTime;
 
 /// One key as the hub describes it.
 class HubKey {
@@ -37,7 +43,8 @@ class HubKey {
     unreadable: json['unreadable'] == true,
   );
 
-  /// `maps`, `maps_google`, `online` or `push_apple`; `online:<id>` for a further account of GloriaFood's.
+  /// `maps`, `maps_google`, `online`, `online_push`, `online_tunnel` or `push_apple`; `online:<id>` for a
+  /// further account of GloriaFood's.
   final String name;
 
   /// A key is in force on the hub.
@@ -50,7 +57,8 @@ class HubKey {
   /// The key's last characters, to tell one key from another; empty for a short key and for Apple's.
   final String ending;
 
-  /// What belongs to a key and is no secret: Apple's `key_id`, `team_id` and `bundle_id`.
+  /// What belongs to a key and is no secret: Apple's `key_id`, `team_id` and `bundle_id`, and of a tunnel's
+  /// token the start of the tunnel's id at Cloudflare (`tunnel`).
   final Map<String, String> shown;
 
   /// Who typed or removed it in the app last, and when; empty and null when nobody has.
@@ -70,6 +78,7 @@ class HubKey {
     final when = at == null ? '' : ', ${keyDay(at, now)}';
     final tail = switch (name) {
       'push_apple' => shown['key_id'] == null ? '' : ' · key ${shown['key_id']}, team ${shown['team_id'] ?? ''}',
+      'online_tunnel' => (shown['tunnel'] ?? '').isEmpty ? '' : ' · tunnel ${shown['tunnel']}',
       _ => ending.isEmpty ? '' : ' · ends in $ending',
     };
     if (unreadable) {
@@ -133,9 +142,161 @@ class OnlineAccount {
   String get called => name.isNotEmpty ? name : 'First account';
 }
 
+/// How the Cloudflare Tunnel stands, as the hub's tunnel program says.
+class TunnelState {
+  const TunnelState({this.there = false, this.state = 'off', this.sinceMs, this.reason, this.said = ''});
+
+  factory TunnelState.fromJson(Map<String, dynamic> json) => TunnelState(
+    there: json['there'] == true,
+    state: json['state'] as String? ?? 'off',
+    sinceMs: (json['since_ms'] as num?)?.toInt(),
+    reason: json['reason'] as String?,
+    said: json['said'] as String? ?? '',
+  );
+
+  /// The hub runs a tunnel program that says how it stands. False on a hub that was not updated, or
+  /// whose tunnel program stopped.
+  final bool there;
+
+  /// `off` (it has no token), `starting`, `connected` or `failing`.
+  final String state;
+  final int? sinceMs;
+
+  /// While it is failing: `refused` (Cloudflare did not take the token), `unreachable`, `slow`, `missing`
+  /// (the hub has no tunnel program), or `trouble`, with Cloudflare's program's own last word in [said].
+  final String? reason;
+  final String said;
+
+  bool get connected => there && state == 'connected';
+
+  /// Something a person has to do something about, on a hub that has a token.
+  bool get bad => !there || state == 'failing';
+
+  /// How the tunnel of a hub that has a token stands, in a line or two. [now] is the terminal's clock.
+  String words(DateTime now) {
+    if (!there) return "The hub's tunnel program is not running. Update the hub (sudo hubctl update).";
+    var since = '';
+    if (sinceMs != null) {
+      final day = keyDay(DateTime.fromMillisecondsSinceEpoch(sinceMs!), now);
+      since = day == 'today' ? ' since ${clockTime(sinceMs!)}' : ' since $day';
+    }
+    return switch (state) {
+      'connected' => 'Connected to Cloudflare$since.',
+      'failing' => switch (reason) {
+        'refused' =>
+          'Not connected: Cloudflare did not take the token. Copy it again from the tunnel at Cloudflare, and '
+              'replace it here.',
+        'unreachable' => "Not connected: the hub cannot reach Cloudflare. Look at the restaurant's internet.",
+        'slow' => 'Not connected yet: it is taking long to reach Cloudflare.',
+        'missing' => 'Not connected: this hub has no tunnel program. Update the hub (sudo hubctl update).',
+        _ => said.isEmpty ? 'Not connected to Cloudflare.' : "Not connected. Cloudflare's program says: $said",
+      },
+      _ => 'On its way to Cloudflare, not connected yet.',
+    };
+  }
+}
+
+/// The way in for GloriaFood's pushes, as the hub describes it beside its keys.
+class WayIn {
+  const WayIn({this.address = '', this.door, this.tunnel = const TunnelState()});
+
+  factory WayIn.fromJson(Map<String, dynamic> json) => WayIn(
+    address: json['address'] as String? ?? '',
+    door: json['door'] as bool?,
+    tunnel: json['tunnel'] is Map
+        ? TunnelState.fromJson((json['tunnel'] as Map).cast<String, dynamic>())
+        : const TunnelState(),
+  );
+
+  /// The name on the internet GloriaFood sends its pushes to, as a manager typed it; empty when none was.
+  final String address;
+
+  /// Whether the hub could tell the push door its key; null on a machine that runs no door.
+  final bool? door;
+  final TunnelState tunnel;
+
+  /// What goes into GloriaFood's admin as the endpoint, or null while no address is known.
+  String? get endpoint => address.isEmpty ? null : 'https://$address/online/push';
+}
+
+/// What a try of the way in came to: the hub knocked at its own push door, and, where an address is known,
+/// from outside at the address GloriaFood sends to.
+class WayTried {
+  const WayTried({required this.doorOk, this.doorReason, this.doorCode, this.outside});
+
+  factory WayTried.fromJson(Map<String, dynamic> json) {
+    final door = (json['door'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final outside = (json['outside'] as Map?)?.cast<String, dynamic>();
+    return WayTried(
+      doorOk: door['ok'] == true,
+      doorReason: door['reason'] as String?,
+      doorCode: (door['code'] as num?)?.toInt(),
+      outside: outside == null
+          ? null
+          : (
+              address: outside['address'] as String? ?? '',
+              ok: outside['ok'] == true,
+              reason: outside['reason'] as String?,
+              code: (outside['code'] as num?)?.toInt(),
+            ),
+    );
+  }
+
+  final bool doorOk;
+  final String? doorReason;
+  final int? doorCode;
+
+  /// The knock from outside; null when no address is known, and when the door did not open.
+  final ({String address, bool ok, String? reason, int? code})? outside;
+
+  /// The whole way in works, as far as it was tried.
+  bool get ok => doorOk && (outside?.ok ?? true);
+
+  /// Something is wrong. A door that opens with no address to try from outside is not.
+  bool get bad => !ok;
+
+  String get words {
+    if (!doorOk) {
+      return switch (doorReason) {
+        'no_answer' => 'The push door is not running on this hub. Update the hub (sudo hubctl update).',
+        'shut' => 'The push door is shut: it was not told the key. Replace the key here, or update the hub.',
+        'api' => 'The push door is up, but could not hand a push on to the hub.',
+        _ => 'The push door answered in a way this hub does not know (${doorCode ?? 'nothing'}).',
+      };
+    }
+    final tried = outside;
+    if (tried == null) {
+      return 'The push door is open and leads to this hub. Give the address GloriaFood sends to, and the way in '
+          'from outside is tried too.';
+    }
+    final at = tried.address;
+    if (tried.ok) {
+      return 'The whole way in works: https://$at/online/push reaches this hub. That is the address for '
+          "GloriaFood's admin. No key was sent anywhere.";
+    }
+    final why = switch (tried.reason) {
+      'no_answer' => 'nothing answers at $at. Check the name, and that the tunnel has a public hostname for it.',
+      'late' => '$at did not answer in time.',
+      'elsewhere' =>
+        '$at answers, but not from this hub. At Cloudflare, the public hostname must be handed to '
+            'http://door:8090.',
+      'not_routed' =>
+        '$at is known, but leads nowhere for /online/push. At Cloudflare, the public hostname needs the path '
+            'online/push and the service http://door:8090.',
+      'blocked' => '$at turned the call away (403). A rule at Cloudflare is in the way.',
+      'tunnel_down' =>
+        'Cloudflare answers for $at but cannot get to the push door (${tried.code}). Is the tunnel connected, '
+            'and its service http://door:8090?',
+      'redirect' => '$at sends callers on to another address (${tried.code}), which GloriaFood does not follow.',
+      _ => "$at answered ${tried.code ?? 'nothing'}, which is not what this hub's door answers.",
+    };
+    return 'The push door is open, but from outside $why';
+  }
+}
+
 /// Every key the hub holds, as it stands.
 class HubKeys {
-  const HubKeys({required this.keys, this.kept = true, this.onlineAccounts, this.added});
+  const HubKeys({required this.keys, this.kept = true, this.onlineAccounts, this.added, this.wayIn, this.tried});
 
   factory HubKeys.fromJson(Map<String, dynamic> json) => HubKeys(
     keys: [
@@ -150,10 +311,18 @@ class HubKeys {
           ]
         : null,
     added: json['added'] as String?,
+    wayIn: json['way_in'] is Map ? WayIn.fromJson((json['way_in'] as Map).cast<String, dynamic>()) : null,
+    tried: json['tried'] is Map ? WayTried.fromJson((json['tried'] as Map).cast<String, dynamic>()) : null,
   );
 
   /// The account that was just added, in the answer to adding one.
   final String? added;
+
+  /// The way in for GloriaFood's pushes; null from a hub older than setting it in the app.
+  final WayIn? wayIn;
+
+  /// What a try of the way in came to, in the answer to trying it.
+  final WayTried? tried;
 
   final List<HubKey> keys;
 
@@ -277,6 +446,30 @@ const hubKeyInfo = <String, HubKeyInfo>{
         "In GloriaFood's admin: Others, Third party integrations, the key of the integration Poll Accepted "
         'Order v2.',
     removing: 'The hub stops asking GloriaFood for orders. The orders already on the POS stay as they are.',
+  ),
+  'online_push': HubKeyInfo(
+    title: 'GloriaFood push key',
+    short: 'GloriaFood push',
+    about:
+        'GloriaFood sends an order to the hub the moment it is accepted, and every push must carry this key. '
+        'The asking every minute stays on beside it.',
+    without: 'Without it every push is turned away, and orders arrive by the asking alone.',
+    where:
+        'Yours to make: press Make one, copy it, and save. Then put the same key into GloriaFood\'s admin, as '
+        'the master key of the integration Push Accepted Order.',
+    removing: 'The hub turns every push away, and the push door shuts. Orders still arrive by the asking.',
+  ),
+  'online_tunnel': HubKeyInfo(
+    title: 'Cloudflare Tunnel (the way in)',
+    short: 'Cloudflare tunnel',
+    about:
+        'The hub calls out to Cloudflare and holds the line, and GloriaFood\'s pushes come down it to the push '
+        'door. Nothing is opened on your router.',
+    without: 'Without it nothing from outside reaches the hub, unless your own router brings pushes to the door.',
+    where:
+        'In Cloudflare\'s dashboard: Zero Trust, Networks, Tunnels, your tunnel. Copy the command it shows for '
+        'installing it and paste it here whole, or only the long word in it that starts with eyJ.',
+    removing: 'The tunnel is closed: nothing from outside reaches the hub. Orders still arrive by the asking.',
   ),
   'push_apple': HubKeyInfo(
     title: 'Apple push key',
