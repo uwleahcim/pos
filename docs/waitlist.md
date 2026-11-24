@@ -149,7 +149,9 @@ names an allergy tells the kitchen nothing: the server marks it with the **Aller
 (`allergies.md`). **Put back** takes the party off the check again.
 
 **On the floor map the table then says whose it is**: the party's name, with a small star before it when
-the guest carries a tag (`guest-list.md`, "On the floor map").
+the guest carries a tag (`guest-list.md`, "On the floor map"). **The list of checks says the name too**,
+after the table ("Table A7 · Chen"), and its search box finds the check by it (`finding-checks.md`,
+"Whose table it is").
 
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The list keeps that table."
