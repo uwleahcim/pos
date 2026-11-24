@@ -754,6 +754,13 @@ class PosApi {
     return tags == null ? null : TableGuests(tags: tags);
   }
 
+  /// Says which guest of this check pays it ([pays] false takes the word back): the check's money counts
+  /// for that guest in the guest list, and for no other (docs/guest-list.md, "Who pays"). [party] is the
+  /// [SeatedParty.key] the hub gave. It says who the money counts for and takes none: nothing is written on
+  /// the check, and no bill, ticket or sale changes. Hands back the check's guests as they stand now.
+  Future<TableGuests> sayPayer(String staffId, String orderId, String party, {required bool pays}) async =>
+      TableGuests.fromJson(await _post('/orders/$orderId/payer', {'staff_id': staffId, 'party': party, 'pays': pays}));
+
   /// Keeps the one line about the customer at this number (an empty one takes it off), with who wrote it.
   /// Hands back the note as the hub keeps it: on one line, cut to its length.
   Future<String> saveCustomerNote(String phone, String note, {String? by}) async {

@@ -43,7 +43,14 @@
   or the party, and the `tags` its number carries; and `tags`, all of theirs together, as the call above
   answers them. No phone number, and not the line kept about a customer. It reads the book and the
   waitlist, as `GET /reservations` and `GET /waitlist` do for any terminal; it reads no order, and nothing
-  goes onto the check.
+  goes onto the check. Each party also says its `key` (what it is known by below), whether it is `listed`
+  (it left a number, so the guest list counts it) and whether it `pays`; `payer` true at the top says
+  this hub takes the word below.
+- `POST /orders/{order_id}/payer` `{staff_id, party, pays}` (no token, as the host stand's calls): whoever
+  serves the table says which guest of the check pays it, or takes the word back (`pays` false). The
+  check's money counts for that guest in the list and for no other (`pos.orders.guests.payer_of`). It is
+  kept beside who sat on the check (`pos.check_guests`, `pay`), with who said it; nothing is written on
+  the check and no money is taken by it. The answer is the check's guests as the call above says them.
 - The floor map is told the same people, by name and tags alone, with the floor (`GET /floor`, `seated`:
   `seated_by_check` below), so a table says whose it is and whether that guest carries a tag.
 - The list of checks is told their names and no more (`GET /orders?brief=true`, `seated` on a check:
@@ -55,7 +62,8 @@
   that left a number, and the number of a check that was merged in. Who sat on which check is noted as it
   happens (`note_guest`, `note_seated` and `follow_merges` below; kept in `pos.check_guests`), since the
   book and the waitlist forget long before the year the list reads is over. Each of them has the visit;
-  the check's money is the one's who pays (`pos.orders.guests.shared_out`).
+  the check's money is the one's who pays (`pos.orders.guests.shared_out`): the guest a tap on the check
+  said, else the number typed on it, else its only guest.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -229,6 +237,15 @@ def _seated_on(state: Any, order_ids: Iterable[str]) -> list[Any]:
     return sorted(rows, key=lambda row: row.seated_ms or 0)
 
 
+class PayerIn(BaseModel):
+    """Who pays a check, as whoever serves the table says it: `party` is the `key` the check's guests were
+    told with (`GET /orders/{id}/seated`), `pays` false takes the word back."""
+
+    staff_id: str = Field(max_length=120)
+    party: str = Field(max_length=200)
+    pays: bool = True
+
+
 class GuestIn(BaseModel):
     """What the restaurant keeps about a guest, written from the guest list: the note and the tags. One left
     out stays as it is; an empty one is taken off. `name` is what the guest is called where they are tagged
@@ -396,20 +413,43 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         tags = tags_together(phones, app.state.guest_tags.all()) if phones else []
         return {"order_id": order_id, "tags": tags}
 
-    @app.get("/orders/{order_id}/seated")
-    def read_seated(order_id: str) -> dict[str, Any]:
-        """Who was seated on this check: each reservation's and each waitlist party the host sat down on
-        it, the first to sit first, with its name, how many they are, the note written on the reservation
-        or the party and the tags its number carries; and all their `tags` together. For whoever serves the
-        table. The number is not told, and nothing is put on the check: it opens no order."""
-        seated = sorted(
+    def sits_on(order_id: str) -> list[tuple[str, Any]]:
+        """The reservations and the waitlist parties the host sat down on this check, the first to sit
+        first, each with where it is from."""
+        return sorted(
             [
                 *(("reservation", booking) for booking in app.state.reservations.seated_on(order_id)),
                 *(("waitlist", party) for party in app.state.waitlist.seated_on(order_id)),
             ],
             key=lambda sat: sat[1].seated_ms or 0,
         )
+
+    def id_of(where: str, row: Any) -> str:
+        """A party's id where it is from: its reservation's, or its line's of the waitlist."""
+        return str(row.booking_id if where == "reservation" else row.party_id)
+
+    def key_of(where: str, row: Any) -> str:
+        """What a party is known by when somebody says it pays: where it is from and its id there. It says
+        nothing of the guest."""
+        return f"{where}:{id_of(where, row)}"
+
+    @app.get("/orders/{order_id}/seated")
+    def read_seated(order_id: str) -> dict[str, Any]:
+        """Who was seated on this check: each reservation's and each waitlist party the host sat down on
+        it, the first to sit first, with its name, how many they are, the note written on the reservation
+        or the party and the tags its number carries; and all their `tags` together. For whoever serves the
+        table. The number is not told, and nothing is put on the check: it opens no order.
+
+        Each party also says what it is known by (`key`), whether it left a number and so is a guest of the
+        guest list (`listed`), and whether somebody said it `pays` the check (`POST /orders/{id}/payer`).
+        `payer` says this hub takes that word."""
+        seated = sits_on(order_id)
         carried = app.state.guest_tags.all() if any(row.phone for _, row in seated) else {}
+        try:
+            paying = {(guest.source, guest.source_id) for guest in app.state.check_guests.on([order_id]) if guest.pays}
+        except Exception:  # noqa: BLE001 - who sits here is told whether or not who pays can be read
+            _log.exception("who pays a check could not be read")
+            paying = set()
         return {
             "order_id": order_id,
             "parties": [
@@ -419,8 +459,54 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
                     "size": row.size,
                     "note": row.note,
                     "tags": tags_together([row.phone], carried),
+                    "key": key_of(where, row),
+                    "listed": len(phone_digits(row.phone)) >= SHORTEST,
+                    "pays": (where, id_of(where, row)) in paying,
                 }
                 for where, row in seated
             ],
             "tags": tags_together([row.phone for _, row in seated], carried),
+            "payer": True,
         }
+
+    @app.post("/orders/{order_id}/payer")
+    def say_payer(order_id: str, body: PayerIn) -> dict[str, Any]:
+        """Whoever serves the table says which guest of this check pays it (`pays` false takes the word
+        back): the check's money counts for that guest in the guest list, and for no other
+        (docs/guest-list.md, "Who pays"). One guest pays a check, so the word moves from whoever had it. Any
+        of the staff may say it, as any of them may open the check; who said it is kept with the word.
+
+        It is a word about the guest list alone. No money is taken, nothing is written on the check, and no
+        bill, kitchen ticket, sale or report other than the guest list changes. 404 `unknown_staff`; 404
+        `unknown_party` for a party that does not sit on this check; 409 `no_number` for one that left no
+        phone number, which the guest list cannot count. The answer is who sits on the check now, as
+        `GET /orders/{id}/seated` says it; no number is in it."""
+        staff = app.state.staff.get(body.staff_id)
+        if staff is None:
+            raise HTTPException(404, {"error": "unknown_staff", "message": "Nobody here has this id."})
+        found = next(((where, row) for where, row in sits_on(order_id) if key_of(where, row) == body.party), None)
+        if found is None:
+            raise HTTPException(
+                404, {"error": "unknown_party", "message": "This party does not sit on this check any more."}
+            )
+        where, row = found
+        if len(phone_digits(row.phone)) < SHORTEST:
+            who = " ".join(str(row.name or "").split()) or "This party"
+            raise HTTPException(
+                409,
+                {"error": "no_number", "message": f"{who} left no phone number, so the guest list cannot count them."},
+            )
+        note_guest(app.state, where, row)  # the party is a guest of this check, noted or not when it sat down
+        try:
+            said = app.state.check_guests.pay(where, id_of(where, row), body.pays, by=staff.name)
+        except GuestsReadOnly as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        if said is None or said.order_id != order_id:
+            raise HTTPException(
+                503, {"error": "not_kept", "message": "The hub could not keep who pays. Try again in a moment."}
+            )
+        _log.info(
+            "who pays check %s was said by %s (%s)", order_id, staff.staff_id, "pays" if body.pays else "taken back"
+        )
+        app.state.feed.changed("reservations" if where == "reservation" else "waitlist")
+        return read_seated(order_id)

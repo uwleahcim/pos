@@ -73,10 +73,12 @@ A tap opens a guest:
   one). See below.
 - **A guest since** the day of the first order they ever placed, and how many orders in all. These two look
   past the 12 months, and say what the to-go form says of a caller.
-- What they spend a visit, and their visits in the last 90 days.
+- What they spend a visit, and their visits in the last 90 days. A guest who was at a table that another
+  guest paid says how many of their visits they paid themselves (**paid 3 of 5**).
 - **Favourite dishes**: the ten they ordered most in the year, with how many.
 - **Latest visits**: the last ten, each with its day, whether it was to go, delivery or a table, what it
-  came to and its dishes. **A tap on a visit opens that check's history** (`check-history.md`).
+  came to and its dishes. A table that another guest paid says **another guest paid** in place of the
+  money. **A tap on a visit opens that check's history** (`check-history.md`).
 
 Any number of guests can be open at once.
 
@@ -116,15 +118,33 @@ table), and the hub notes whose check it is.
 
 **Who pays**
 
-- **A number is typed on the check**: that guest pays, whoever else sits there. This is how it always
-  was, and it is how a server says who pays today.
-- **No number on the check and one guest** (one party seated): that guest pays.
-- **No number and several guests** (two parties at a table, two tables put together): each has the visit,
-  and the money counts for **nobody** until somebody types the payer's number on the check.
-- A visit that somebody else paid is in the guest's **Latest visits** at $0.00: they were there, and it
-  cost them nothing. It counts as a visit for **regular**, **stopped coming** and the day of their last
-  visit, and not in what they spent. "A visit" (what they spend a visit) is reckoned over the visits they
-  paid.
+- **One guest on the check** (one party seated, no number typed): that guest pays. Nothing to do.
+- **Several guests** (two parties at a table, two tables put together): each has the visit, and the money
+  counts for **nobody** until somebody says who pays. The check asks: its strip says
+  **Who pays? Tap a name.**
+- **Say it with a tap on the check.** In the strip under the app bar, the name of each party that left a
+  number has a small arrow. Tap the name and then the one line of the menu, **Linda P. pays**. A red
+  **Pays** label stands beside that name from then on, on every screen that has the check open.
+  - **One guest pays a check.** Tap another name and the label moves.
+  - **Taken back the same way**: tap the name that pays, and its ticked line. The check asks again.
+  - Anybody signed in who has the check open can say it, as anybody can ring a dish in. The hub keeps who
+    said it.
+  - It can be said at any time while the party sits on the check, before the dishes or after the bill.
+  - A party that left **no number** has no arrow: this list cannot count it. With one party that left a
+    number and one that did not, the one with the number is the check's only guest and pays without a
+    word.
+  - **It takes no money.** It says who the money counts for in this list, and nothing else: the check,
+    the bill, the kitchen and Sales never hear of it.
+- **A number typed on the check** pays when nobody was tapped, whoever else sits there, as it always did.
+  **A tap wins over it**: the tap says "pays" in so many words.
+- **Put back** (the party goes back in the book or on the list) takes its word along. **Two tables put
+  together**: the word of the check that is kept stands. A word said of the emptied check does not go
+  over, so if the kept check had none, the joined check asks again.
+- A visit that somebody else paid is in the guest's **Latest visits** with **another guest paid** where
+  its money would stand; one whose check still waits for the word says **nobody said who paid**. Both
+  count as a visit for **regular**, **stopped coming** and the day of their last visit, and not in what
+  they spent. "A visit" (what they spend a visit) is reckoned over the visits they paid, and a guest who
+  did not pay them all says so: **paid 3 of 5**.
 - At the top of the list, **what all of them spent** counts every check once, never once for each guest.
 
 **What is kept for it, and where**
@@ -135,8 +155,10 @@ table), and the hub notes whose check it is.
 - **For 400 days**: the year this list reads and a month to spare. The reservation book forgets a name
   and number 30 days after the day, and the waitlist the night after. This list reads a year, so what it
   counts a seated party's visit from is kept that long, and then let go.
-- It is read by this list alone, behind the manager's PIN. The check, the floor map and the list of
-  checks are still told no number, and nothing sends it out of the hub.
+- **Who pays** is kept there too, beside the party it was said of, with who said it.
+- The names and numbers are read by this list alone, behind the manager's PIN. The check is told who
+  pays and whether a party left a number, and never the number. The floor map and the list of checks are
+  told what they were told. Nothing sends any of it out of the hub.
 - **From the update on.** The tables seated today and yesterday when the hub is updated count; a party
   seated before that does not.
 
@@ -250,6 +272,9 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
   on the open check at once, and a party that sits down on a check somebody already has open is named
   there at once. Without the hub's live updates it takes up to half a minute.
 - Put the party back in the book or on the list (**Put back**) and it leaves the check.
+- **With two or more parties that left a number**, the strip also says who pays, and takes the word: a
+  tap on a name, then **Linda P. pays**. A check with one party has none of that and looks as it did
+  ([Every guest of a check](#every-guest-of-a-check), "Who pays").
 - A **walk-in** seated straight from the floor map has no reservation and no party behind it, so its
   check has no strip.
 - As everywhere, none of it prints, on no kitchen ticket and no bill, and nothing sends it out of the
@@ -322,7 +347,8 @@ joined table said nobody. Nothing to turn on, and no app to rebuild: the hub doe
   table. **Nothing is written onto any check**: no name, no number, no note and no tag. So no bill, no
   kitchen ticket and no sale changes.
 - **In this list** the guests of both tables are guests of the check that was kept: each has the visit,
-  and its money counts for the one who pays ([Every guest of a check](#every-guest-of-a-check)).
+  and its money counts for the one who pays. The joined check asks who that is, unless it was said of
+  the kept check before ([Every guest of a check](#every-guest-of-a-check)).
 - **Tables put together before the hub was updated** are not looked at again: a party whose check was
   merged earlier stays on the emptied check. Put it back and seat it again at the joined table if the
   check should say it. Every merge after the update is followed.
@@ -449,11 +475,17 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
   number on the check and it shows what that number carries); writing or changing the note from the
   check.
-- For the guests of a check: a tap on the check that says who pays (today: type the payer's number on
-  it); sharing a check's money out between its guests; who at the table ate what; points or rewards for a
-  guest (the visits and the money they would be reckoned from are here); counting a party that was seated
-  before the hub was updated, other than today's and yesterday's; a party's visit in what the to-go form
-  says of a caller ("12 orders since Mar 2025" still counts the orders that carry the number).
+- For the guests of a check: sharing a check's money out between its guests; who at the table ate what;
+  points or rewards for a guest (the visits and the money they would be reckoned from are here); counting
+  a party that was seated before the hub was updated, other than today's and yesterday's; a party's visit
+  in what the to-go form says of a caller ("12 orders since Mar 2025" still counts the orders that carry
+  the number).
+- For who pays: saying it once the book or the waitlist has forgotten the party (the waitlist the next
+  night, the book after 30 days: the check's strip is gone by then); saying it from the guest list or
+  from a check's history; a tap for a guest whose number was typed on a check that was merged in (that
+  guest is in this list with the visit, and is not named on the joined check: type the payer's number
+  there); a list of the checks that still wait for the word; who said it, shown on a screen (the hub
+  keeps it).
 - When two tables are put together: going back over the tables put together before the hub was updated;
   changing the table the book says the party was seated at; taking a party along with dishes that are
   moved one by one.
@@ -615,6 +647,23 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   those checks in one call (`store.entries(order_ids)`, new on both stores); `GET /reports/guests/{phone}`
   reads `of_phone` and then everybody `on` those checks. Each `latest` visit says `paid`, and `net` is
   "0.00" when somebody else paid. Tests: `backend/tests/orders/test_check_guests.py`.
+- Who pays: `CheckGuest.pays` and `pays_by` (columns added to `check_guest` with
+  `ADD COLUMN IF NOT EXISTS`; a standby whose primary lacks them reads nobody as paying).
+  `CheckGuests.pay(source, source_id, pays, by=)` puts the word on one row and takes it from the others
+  of that check; `put` keeps it while the row stays on its check; `follow` takes it off the rows it
+  moves. `payer_of(typed, guests, said)`: the guest somebody said, when that is a guest of the check;
+  else as before. `Visit.waits` and `waits` on each `latest` visit: several guests and nobody pays yet.
+  `GET /orders/{id}/seated` gains, on each party, `key` (`reservation:<id>` or `waitlist:<id>`),
+  `listed` (it left a number of seven digits or more) and `pays`, and `payer: true` at the top (this hub
+  takes the word); no number is in it. `POST /orders/{id}/payer` `{staff_id, party, pays}` (no token, as
+  the host stand's calls): 404 `unknown_staff`, 404 `unknown_party` (not on this check), 409 `no_number`,
+  503 `read_only` or `not_kept`; it notes the party afresh (`note_guest`), says `pay`, tells the feed
+  (`reservations` or `waitlist`, which the open check re-reads on) and answers as the `seated` call. App:
+  `SeatedParty.key`, `listed`, `pays`; `TableGuests.takesPayer`, `payers`, `asksPayer` (two or more
+  could pay); `PosApi.sayPayer`; `_OrderScreenState._sayPayer`; `_CustomerStrip.onPays`, `asksWho` and
+  `_payer` (a `PopupMenuButton` of one ticked line) in `lib/screens/order_screen.dart`;
+  `GuestVisit.paid`, `waits`, `unpaidWords`; `Guest.paid`, `paidWords`. Tests:
+  `backend/tests/orders/test_who_pays.py`, `apps/pos_app/test/who_pays_test.dart`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while

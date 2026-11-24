@@ -187,7 +187,7 @@ together").
 
 **A party that left a phone number counts in the guest list** once it is seated and its check has a dish
 on it: it came in and ordered. With one party at the table the check's money counts for it too; with
-several, for the guest whose number is typed on the check. A party with no number is not in that list.
+several, for the one a tap on the check says pays. A party with no number is not in that list.
 The hub notes this beside the check, and nothing is written on the check (`guest-list.md`, "Every guest
 of a check").
 
