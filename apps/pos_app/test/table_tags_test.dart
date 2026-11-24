@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:pos_app/api.dart';
@@ -7,6 +8,7 @@ import 'package:pos_app/outbox.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/order_screen.dart';
+import 'package:pos_app/seated.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,11 +20,12 @@ import 'table_moves_test.dart' show checkAt;
 import 'table_servers_test.dart' show amy;
 import 'waitlist_test.dart' show key, pumpFloorWith, seatFromList, tapKey;
 
-/// Tags at the table (the Toast comparison, 2026-11-24): a guest who carries a tag in the guest list ("VIP")
-/// and is seated from their reservation or the waitlist brings the tag to the table's check, where whoever
-/// serves the table sees it in the strip under the bar. The check itself carries no number and no name: the
-/// hub finds the guest through the reservation or the party the host sat down on the check
-/// (`GET /orders/{id}/tags`).
+/// At the table (the Toast comparison, 2026-11-24): a party the host seats from its reservation or from the
+/// waitlist is known at its table. The table's check says, in the strip under the bar, whose table it is,
+/// the tags that guest carries in the guest list ("VIP") and the note written on the reservation or the
+/// party ("Window table, birthday"), for whoever serves the table. The check itself carries none of it: the
+/// hub finds the party through the reservation or the line of the waitlist it was seated from
+/// (`GET /orders/{id}/seated`; from a hub that says the tags and not yet who, `GET /orders/{id}/tags`).
 
 const linda = '7815550101';
 const omar = '7815550102';
@@ -32,20 +35,36 @@ const strip = 'customer-note-strip';
 final seven = DateTime(2026, 11, 16, 19).millisecondsSinceEpoch;
 
 /// A reservation whose party sits at [table] on the check [orderId].
-Map<String, dynamic> seatedBooking(String id, String name, String phone, String orderId, {String table = 'A7'}) => {
-  ...Hub.booking(id, name, 2, time: '18:30', phone: phone),
+Map<String, dynamic> seatedBooking(
+  String id,
+  String name,
+  String phone,
+  String orderId, {
+  String table = 'A7',
+  String note = '',
+  int? seatedMs,
+}) => {
+  ...Hub.booking(id, name, 2, time: '18:30', phone: phone, note: note),
   'status': 'seated',
-  'seated_ms': seven,
+  'seated_ms': seatedMs ?? seven,
   'seated_table': table,
   'seated_label': table,
   'order_id': orderId,
 };
 
 /// A party of the waitlist that sits at [table] on the check [orderId].
-Map<String, dynamic> seatedParty(String id, String name, String phone, String orderId, {String table = 'A7'}) => {
-  ...Hub.waitParty(id, name, 2, atMs: seven - 20 * 60000, phone: phone),
+Map<String, dynamic> seatedParty(
+  String id,
+  String name,
+  String phone,
+  String orderId, {
+  String table = 'A7',
+  String note = '',
+  int? seatedMs,
+}) => {
+  ...Hub.waitParty(id, name, 2, atMs: seven - 20 * 60000, phone: phone, note: note),
   'status': 'seated',
-  'seated_ms': seven,
+  'seated_ms': seatedMs ?? seven,
   'table': table,
   'table_label': table,
   'order_id': orderId,
@@ -60,13 +79,22 @@ Map<String, dynamic> a7([Map<String, dynamic> fields = const {}]) {
   };
 }
 
-/// A hub where Linda (a VIP and a catering client) booked and sits at A7 on the check `o1`.
+/// A hub where Linda (a VIP and a catering client) booked the window table for a birthday and sits at A7 on
+/// the check `o1`.
 void lindaAtA7(Hub hub) => hub
   ..ringTags = {
     linda: ['Catering client', 'VIP'],
   }
-  ..bookings = [seatedBooking('b1', 'Linda P.', '781 555 0101', 'o1')]
+  ..bookings = [seatedBooking('b1', 'Linda P.', '781 555 0101', 'o1', note: 'Window table, birthday')]
   ..parties = [];
+
+/// The same hub before it learnt to say who sits: it says the table's tags and no more.
+void tagsAlone(Hub hub) {
+  lindaAtA7(hub);
+  hub.seatedCall = false;
+}
+
+String said(WidgetTester tester, String name) => tester.widget<Text>(key(name)).data!;
 
 /// The check `o1` on the screen, on a hub that [hub] set up.
 Future<Terminal> pumpCheck(
@@ -98,8 +126,8 @@ Future<Terminal> pumpCheck(
 }
 
 void main() {
-  group('the call', () {
-    test('the tags of the guests seated on a check, and what an older hub and no hub answer', () async {
+  group('the calls', () {
+    Future<(Hub, PosApi)> hubAndApi() async {
       SharedPreferences.setMockInitialValues({});
       final settings = Settings(
         device: 't1',
@@ -108,45 +136,100 @@ void main() {
       );
       final hub = Hub();
       lindaAtA7(hub);
-      final api = PosApi(settings, client: MockClient(hub.handle));
+      return (hub, PosApi(settings, client: MockClient(hub.handle)));
+    }
+
+    test('who sits on a check: each party with its name, its note and its tags', () async {
+      final (hub, api) = await hubAndApi();
+      hub.parties!.add(seatedParty('p1', 'Omar', omar, 'o1', note: 'High chair', seatedMs: seven + 60000));
+      final table = (await api.tableGuests('o1'))!;
+      expect(table.parties, const [
+        SeatedParty(
+          name: 'Linda P.',
+          size: 2,
+          note: 'Window table, birthday',
+          tags: ['Catering client', 'VIP'],
+          booked: true,
+        ),
+        SeatedParty(name: 'Omar', size: 2, note: 'High chair'),
+      ]);
+      expect(table.tags, ['Catering client', 'VIP']);
+      expect((await api.tableGuests('o2'))!.isEmpty, isTrue); // a check nobody was seated on
+      expect(hub.seatedAsks, ['o1', 'o2']);
+      expect(hub.tableTagAsks, isEmpty); // the one call says it all
+    });
+
+    test('a hub that says the tags and not who, an older one still, and none at all', () async {
+      final (hub, api) = await hubAndApi();
+      hub.seatedCall = false;
+      expect(await api.tableGuests('o1'), const TableGuests(tags: ['Catering client', 'VIP']));
+      expect(hub.requests.where((r) => r.contains('/o1/')), ['GET /orders/o1/seated', 'GET /orders/o1/tags']);
+      hub.ringTags = null; // older than the tags at the table too
+      expect(await api.tableGuests('o1'), TableGuests.none);
+      hub
+        ..seatedCall = true
+        ..tableTagsDown = true;
+      expect(await api.tableGuests('o1'), isNull); // nothing answers: a screen keeps what it has
+    });
+
+    test('the tags alone, as the call before this one answers them', () async {
+      final (hub, api) = await hubAndApi();
       expect(await api.tableTags('o1'), ['Catering client', 'VIP']);
-      expect(await api.tableTags('o2'), isEmpty); // a check nobody was seated on
-      expect(hub.requests.where((r) => r.contains('/tags')), ['GET /orders/o1/tags', 'GET /orders/o2/tags']);
+      expect(await api.tableTags('o2'), isEmpty);
       hub.tableTagsDown = true;
-      expect(await api.tableTags('o1'), isNull); // nothing answers: a screen keeps what it has
+      expect(await api.tableTags('o1'), isNull);
       hub
         ..tableTagsDown = false
         ..ringTags = null;
-      expect(await api.tableTags('o1'), isEmpty); // a hub older than this: no tags, as before
+      expect(await api.tableTags('o1'), isEmpty);
       expect(hub.tableTagAsks, ['o1', 'o2']);
+    });
+
+    test('what the hub sends is read with care', () {
+      final table = TableGuests.fromJson({
+        'parties': [
+          {'from': 'waitlist', 'name': '  Chen ', 'size': 4, 'note': ' High chair ', 'tags': null},
+          {'from': 'reservation', 'name': '', 'size': 2, 'note': '', 'tags': <String>[]}, // nothing to show
+          'nonsense',
+        ],
+      });
+      expect(table.parties, const [SeatedParty(name: 'Chen', size: 4, note: 'High chair')]);
+      expect(table.tags, isEmpty);
+      expect(TableGuests.fromJson(const {}), TableGuests.none);
     });
   });
 
   group('on the check of a table', () {
-    testWidgets('a party seated from its reservation: the check says the guest\'s tags and nothing else', (
-      tester,
-    ) async {
+    testWidgets('a party seated from its reservation: whose table it is, their tags and the note', (tester) async {
       final t = await pumpCheck(tester, hub: lindaAtA7);
       expect(key(strip), findsOneWidget);
-      expect(tagsIn(tester, strip), ['Catering client', 'VIP']);
-      // the words alone: no name, no number and no note of the guest
-      expect(find.textContaining('Customer note'), findsNothing);
-      expect(find.textContaining('Linda'), findsNothing);
+      expect(said(tester, 'seated-name:0'), 'Linda P.');
+      expect(tagsIn(tester, 'seated-party:0'), ['Catering client', 'VIP']);
+      expect(said(tester, 'seated-note:0'), 'Window table, birthday');
+      // read from left to right: the name, the labels, the note
+      final name = tester.getRect(key('seated-name:0'));
+      final vip = tester.getRect(key('seated-tag:0:VIP'));
+      final note = tester.getRect(key('seated-note:0'));
+      expect(name.right <= vip.left && vip.right <= note.left, isTrue);
+      expect(tester.getSize(key(strip)).height, lessThan(30)); // one line on a tablet
+      // not the number, and not the line the restaurant keeps about a customer
       expect(find.textContaining('0101'), findsNothing);
-      expect(t.hub.tableTagAsks, ['o1']);
+      expect(find.textContaining('Customer note'), findsNothing);
+      expect(t.hub.seatedAsks, ['o1']);
       expect(t.hub.requests.where((r) => r.contains('/customers/')), isEmpty); // the check has no number to ask about
-      // the check is read again and again: its guests' tags once, then every half minute
+      // the check is read again and again: who sits on it once, then every half minute
       await tester.pump(const Duration(seconds: 20));
       await tester.pump();
-      expect(t.hub.tableTagAsks, ['o1']);
+      expect(t.hub.seatedAsks, ['o1']);
       await tester.pump(const Duration(seconds: 10));
       await tester.pump();
-      expect(t.hub.tableTagAsks, ['o1', 'o1']);
+      expect(t.hub.seatedAsks, ['o1', 'o1']);
+      expect(t.hub.tableTagAsks, isEmpty);
       expect(t.hub.sent, isEmpty); // seeing them wrote nothing onto the check
       await stop(tester);
     });
 
-    testWidgets('a party seated from the waitlist brings its tags the same way', (tester) async {
+    testWidgets('a party seated from the waitlist is named the same way', (tester) async {
       await pumpCheck(
         tester,
         hub: (hub) => hub
@@ -156,11 +239,26 @@ void main() {
           ..bookings = []
           ..parties = [seatedParty('p1', 'Omar', '781-555-0102', 'o1')],
       );
+      expect(said(tester, 'seated-name:0'), 'Omar');
       expect(tagsIn(tester, strip), ['Regular']);
+      expect(key('seated-note:0'), findsNothing); // listed with no note
       await stop(tester);
     });
 
-    testWidgets('a party that joined the table adds its tags, each tag once', (tester) async {
+    testWidgets('a party with no number and no tag is still named, with its note', (tester) async {
+      await pumpCheck(
+        tester,
+        hub: (hub) => hub
+          ..bookings = [seatedBooking('b2', 'Wu', '', 'o1', note: 'High chair')]
+          ..parties = [],
+      );
+      expect(said(tester, 'seated-name:0'), 'Wu');
+      expect(said(tester, 'seated-note:0'), 'High chair');
+      expect(tagsIn(tester, strip), isEmpty);
+      await stop(tester);
+    });
+
+    testWidgets('two parties at one table stand each on a line of its own, with its own tags', (tester) async {
       await pumpCheck(
         tester,
         hub: (hub) => hub
@@ -168,38 +266,29 @@ void main() {
             linda: ['Catering client', 'VIP'],
             omar: ['Regular', 'VIP'],
           }
-          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o1')]
-          ..parties = [seatedParty('p1', 'Omar', omar, 'o1')],
+          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o1', note: 'Window table')]
+          ..parties = [seatedParty('p1', 'Omar', omar, 'o1', seatedMs: seven + 60000)],
       );
-      expect(tagsIn(tester, strip), ['Catering client', 'Regular', 'VIP']);
+      expect((said(tester, 'seated-name:0'), said(tester, 'seated-name:1')), ('Linda P.', 'Omar'));
+      expect(tagsIn(tester, 'seated-party:0'), ['Catering client', 'VIP']);
+      expect(tagsIn(tester, 'seated-party:1'), ['Regular', 'VIP']); // whose VIP it is can be read
+      expect(tester.getRect(key('seated-party:0')).bottom <= tester.getRect(key('seated-party:1')).top, isTrue);
       await stop(tester);
     });
 
-    testWidgets('nobody was seated on the check, or nobody tagged them: no strip', (tester) async {
-      // Linda sits at another table, and the party at this one left no number
-      var t = await pumpCheck(
+    testWidgets('nobody was seated on the check: no strip', (tester) async {
+      // Linda sits at another table, and this one is a walk-in's
+      final t = await pumpCheck(
         tester,
         hub: (hub) => hub
           ..ringTags = {
             linda: ['VIP'],
           }
-          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o2', table: 'A8'), seatedBooking('b2', 'Wu', '', 'o1')]
+          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o2', table: 'A8')]
           ..parties = [],
       );
       expect(key(strip), findsNothing);
-      expect(t.hub.tableTagAsks, ['o1']);
-      await stop(tester);
-      // a walk-in: no reservation and no party behind the check
-      t = await pumpCheck(
-        tester,
-        hub: (hub) => hub
-          ..ringTags = {
-            linda: ['VIP'],
-          }
-          ..bookings = []
-          ..parties = [],
-      );
-      expect(key(strip), findsNothing);
+      expect(t.hub.seatedAsks, ['o1']);
       expect(tester.takeException(), isNull);
       await stop(tester);
     });
@@ -212,6 +301,7 @@ void main() {
       );
       await tester.pump(const Duration(seconds: 31));
       await tester.pump();
+      expect(t.hub.seatedAsks, isEmpty);
       expect(t.hub.tableTagAsks, isEmpty);
       expect(key(strip), findsNothing);
       await stop(tester);
@@ -228,18 +318,54 @@ void main() {
       );
       await tester.pump(const Duration(seconds: 31));
       await tester.pump();
+      expect(t.hub.seatedAsks, isEmpty);
       expect(t.hub.tableTagAsks, isEmpty);
       await stop(tester);
     });
 
-    testWidgets('a check that has a number too: the customer\'s tags and note, then the table\'s, each once', (
-      tester,
-    ) async {
+    testWidgets('a check that has a number too: that customer\'s tags and note first, then who sits', (tester) async {
       await pumpCheck(
         tester,
         order: a7({'phone': '781 555 0102', 'customer_name': 'Omar'}),
         hub: (hub) {
           lindaAtA7(hub);
+          hub.customers[omar] = {
+            'phone': omar,
+            'known': true,
+            'name': 'Omar',
+            'note': 'no MSG',
+            'tags': ['Regular'],
+            'orders': 3,
+            'recent': <dynamic>[],
+          };
+        },
+      );
+      expect(tagsIn(tester, strip), ['Regular', 'Catering client', 'VIP']);
+      expect(find.text('Customer note: no MSG'), findsOneWidget);
+      expect(said(tester, 'seated-name:0'), 'Linda P.');
+      expect(
+        tester.getRect(find.text('Customer note: no MSG')).bottom <= tester.getRect(key('seated-party:0')).top,
+        isTrue,
+      );
+      await stop(tester);
+    });
+
+    testWidgets('a hub that says the tags and not who: the tags alone, as before', (tester) async {
+      final t = await pumpCheck(tester, hub: tagsAlone);
+      expect(tagsIn(tester, strip), ['Catering client', 'VIP']);
+      expect(key('seated-name:0'), findsNothing);
+      expect(find.textContaining('Linda'), findsNothing);
+      expect(find.textContaining('Window'), findsNothing);
+      expect(t.hub.tableTagAsks, ['o1']);
+      await stop(tester);
+    });
+
+    testWidgets('such a hub, and a check with a number too: every tag once', (tester) async {
+      await pumpCheck(
+        tester,
+        order: a7({'phone': '781 555 0102', 'customer_name': 'Omar'}),
+        hub: (hub) {
+          tagsAlone(hub);
           hub.customers[omar] = {
             'phone': omar,
             'known': true,
@@ -256,22 +382,24 @@ void main() {
       await stop(tester);
     });
 
-    testWidgets('a hub older than this: the check is as it was', (tester) async {
+    testWidgets('a hub older than all of it: the check is as it was', (tester) async {
       final t = await pumpCheck(
         tester,
         hub: (hub) => hub
-          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o1')]
+          ..seatedCall = false
+          ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o1', note: 'Window table')]
           ..parties = [],
       );
       expect(key(strip), findsNothing);
       expect(find.text('Egg roll'), findsWidgets);
       expect(tester.takeException(), isNull);
+      expect(t.hub.seatedAsks, isEmpty);
       expect(t.hub.tableTagAsks, isEmpty); // it asked, and the hub had no word for it
-      expect(t.hub.requests, contains('GET /orders/o1/tags'));
+      expect(t.hub.requests, containsAll(['GET /orders/o1/seated', 'GET /orders/o1/tags']));
       await stop(tester);
     });
 
-    testWidgets('tags changed in the guest list show on the check within half a minute', (tester) async {
+    testWidgets('what changes in the guest list or the book shows on the check within half a minute', (tester) async {
       final t = await pumpCheck(tester, hub: lindaAtA7);
       expect(tagsIn(tester, strip), ['Catering client', 'VIP']);
       t.hub.ringTags![linda] = ['Allergy: shellfish', 'VIP'];
@@ -286,17 +414,18 @@ void main() {
       await stop(tester);
     });
 
-    testWidgets('the hub does not answer for a while: the check keeps the tags it has', (tester) async {
+    testWidgets('the hub does not answer for a while: the check keeps what it has', (tester) async {
       final t = await pumpCheck(tester, hub: lindaAtA7);
       t.hub.tableTagsDown = true;
       await tester.pump(const Duration(seconds: 30));
       await tester.pump();
+      expect(said(tester, 'seated-name:0'), 'Linda P.');
       expect(tagsIn(tester, strip), ['Catering client', 'VIP']);
       expect(tester.takeException(), isNull);
       await stop(tester);
     });
 
-    testWidgets('on a small phone, in the dark and with large type, six long tags all stay on the strip', (
+    testWidgets('on a small phone, in the dark and with large type, a long name, six tags and a long note fit', (
       tester,
     ) async {
       const tags = [
@@ -307,6 +436,8 @@ void main() {
         'Sushi counter regular',
         'VIP',
       ];
+      const name = 'Linda Papadopoulos-Chen';
+      const note = 'Window table for her mother\'s 80th birthday, cake at nine, no shellfish please'; // 80 letters
       for (final (dark, scale) in [(false, 1.0), (true, 1.0), (false, 1.5)]) {
         await pumpCheck(
           tester,
@@ -315,18 +446,33 @@ void main() {
           textScale: scale,
           hub: (hub) => hub
             ..ringTags = {linda: tags}
-            ..bookings = [seatedBooking('b1', 'Linda P.', linda, 'o1')]
+            ..bookings = [seatedBooking('b1', name, linda, 'o1', note: note)]
             ..parties = [],
         );
         expect(tester.takeException(), isNull, reason: 'dark $dark, type $scale'); // nothing runs off the screen
         final whole = tester.getRect(key(strip));
         expect(whole.width, 320);
+        // never more than a quarter of the screen, so the check and the menu keep their room
+        expect(whole.height, lessThanOrEqualTo(568 / 4), reason: 'dark $dark, type $scale');
         expect(tagsIn(tester, strip), tags);
+        bool across(Rect rect) => rect.left >= whole.left && rect.right <= whole.right;
+        bool inside(Rect rect) => across(rect) && rect.top >= whole.top && rect.bottom <= whole.bottom;
+        // the name is there to be read at once, and no label runs off the side
+        expect(inside(tester.getRect(key('seated-name:0'))), isTrue);
         for (final tag in tags) {
-          final mark = tester.getRect(key('customer-tag:$tag'));
-          expect(mark.left >= whole.left && mark.right <= whole.right, isTrue, reason: '$tag at $mark');
-          expect(mark.top >= whole.top && mark.bottom <= whole.bottom, isTrue, reason: '$tag at $mark');
+          expect(across(tester.getRect(key('seated-tag:0:$tag'))), isTrue, reason: tag);
         }
+        // the note is whole, on as many lines as it takes, under the labels
+        expect(tester.getRect(key('seated-note:0')).top >= tester.getRect(key('seated-tag:0:VIP')).bottom, isTrue);
+        final painted = tester.renderObject<RenderParagraph>(key('seated-note:0'));
+        expect(painted.didExceedMaxLines, isFalse);
+        // and what does not fit is a scroll away, inside the strip
+        expect(inside(tester.getRect(key('seated-note:0'))), isFalse);
+        await tester.drag(key('customer-note-strip-scroll'), const Offset(0, -600));
+        await tester.pump();
+        expect(tester.getRect(key(strip)), whole);
+        final end = tester.getRect(key('seated-note:0')); // its last line is in the strip now
+        expect(across(end) && end.bottom <= whole.bottom && end.bottom > whole.top, isTrue, reason: 'type $scale');
         await stop(tester);
       }
     });
@@ -376,7 +522,12 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('a party sits down on a check that is open: its tags are there at once', (tester) async {
+    Future<void> told(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    testWidgets('a party sits down on a check that is open: it is named there at once', (tester) async {
       final (live, t) = await liveCheck(
         tester,
         (hub) => hub
@@ -390,41 +541,38 @@ void main() {
       expect(key(strip), findsNothing);
 
       // the host seats Linda's reservation on this check: the hub says the book changed
-      t.hub.bookings!.add(seatedBooking('b1', 'Linda P.', linda, 'o1'));
+      t.hub.bookings!.add(seatedBooking('b1', 'Linda P.', linda, 'o1', note: 'Window table'));
       live.changed(topics: ['reservations']);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 10));
+      await told(tester);
+      expect((said(tester, 'seated-name:0'), said(tester, 'seated-note:0')), ('Linda P.', 'Window table'));
       expect(tagsIn(tester, strip), ['VIP']);
 
       // a party of the waitlist joins the table
-      t.hub.parties!.add(seatedParty('p1', 'Omar', omar, 'o1'));
+      t.hub.parties!.add(seatedParty('p1', 'Omar', omar, 'o1', seatedMs: seven + 60000));
       live.changed(topics: ['waitlist']);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(tagsIn(tester, strip), ['Regular', 'VIP']);
+      await told(tester);
+      expect(said(tester, 'seated-name:1'), 'Omar');
+      expect(tagsIn(tester, strip), ['VIP', 'Regular']);
 
       // a manager takes Linda's tag off in the guest list: the hub tells the book and the list to read again
       t.hub.ringTags!.remove(linda);
       live.changed(topics: ['reservations', 'waitlist']);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 10));
+      await told(tester);
       expect(tagsIn(tester, strip), ['Regular']);
+      expect(said(tester, 'seated-name:0'), 'Linda P.'); // she is still named
 
       // what is none of this check's business asks nothing
-      final asks = t.hub.tableTagAsks.length;
+      final asks = t.hub.seatedAsks.length;
       live.changed(topics: ['menu', 'settings', 'notes']);
       live.changed(orders: ['o9']);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 10));
-      expect(t.hub.tableTagAsks.length, asks);
+      await told(tester);
+      expect(t.hub.seatedAsks.length, asks);
       await finish(tester, live, t);
     });
   });
 
   group('from the door to the table', () {
-    testWidgets('a server seats a tagged party from the waitlist: the check that opens says their tags', (
-      tester,
-    ) async {
+    testWidgets('a server seats a party from the waitlist: the check that opens says who they are', (tester) async {
       final t = await pumpFloorWith(
         tester,
         amy,
@@ -440,13 +588,25 @@ void main() {
       await tapKey(tester, 'seat');
       expect(find.byType(OrderScreen), findsOneWidget);
       final seated = t.hub.parties!.firstWhere((p) => p['id'] == 'p1');
-      expect(t.hub.tableTagAsks, contains(seated['order_id']));
+      expect(t.hub.seatedAsks, contains(seated['order_id']));
+      expect(said(tester, 'seated-name:0'), 'Garcia');
       expect(tagsIn(tester, strip), ['Regular', 'VIP']);
       // the check was opened as every table's is: nothing of the guest went onto it
       final create = t.hub.sent.firstWhere((sent) => sent.$2['kind'] == 'create').$2;
       expect(create.toString(), isNot(contains('0102')));
       expect(create.toString(), isNot(contains('Garcia')));
       expect(create.toString(), isNot(contains('VIP')));
+      await stop(tester);
+    });
+
+    testWidgets('a party that left no number brings its name and its note all the same', (tester) async {
+      await pumpFloorWith(tester, amy, hub: (hub) => hub.bookings = []);
+      await seatFromList(tester, 'p2'); // Chen, party of 4, "High chair", no number
+      await tester.tap(find.text('A8'));
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'seat');
+      expect(find.byType(OrderScreen), findsOneWidget);
+      expect((said(tester, 'seated-name:0'), said(tester, 'seated-note:0')), ('Chen', 'High chair'));
       await stop(tester);
     });
   });

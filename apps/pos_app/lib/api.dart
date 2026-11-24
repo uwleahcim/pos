@@ -35,6 +35,7 @@ import 'printers.dart';
 import 'roster.dart';
 import 'runs.dart';
 import 'sales_report.dart';
+import 'seated.dart';
 import 'settings.dart';
 import 'shift_notes.dart';
 import 'suggestions_report.dart';
@@ -697,6 +698,22 @@ class PosApi {
       final status = err.status;
       return status == null || status >= 500 ? null : const [];
     }
+  }
+
+  /// Who was seated on this check, for whoever serves the table: each party the host sat down on it from
+  /// its reservation or the waitlist, with its name, its note and the tags its number carries
+  /// (docs/guest-list.md, "At the table"). From a hub that says the tags and not yet who, the tags alone.
+  /// Nobody from a hub older than both and for a check nobody was seated on; null when nothing answers, so
+  /// a screen keeps what it has.
+  Future<TableGuests?> tableGuests(String orderId) async {
+    try {
+      return TableGuests.fromJson(await _get('/orders/$orderId/seated'));
+    } on ApiException catch (err) {
+      final status = err.status;
+      if (status == null || status >= 500) return null;
+    }
+    final tags = await tableTags(orderId);
+    return tags == null ? null : TableGuests(tags: tags);
   }
 
   /// Keeps the one line about the customer at this number (an empty one takes it off), with who wrote it.

@@ -23,6 +23,7 @@ import '../phone.dart';
 import '../photos.dart';
 import '../pricing.dart';
 import '../printers.dart';
+import '../seated.dart';
 import '../session.dart';
 import '../floor.dart';
 import '../moves.dart';
@@ -128,9 +129,9 @@ class _OrderScreenState extends State<OrderScreen> {
   String _customerNote = ''; // the line kept about the customer at this order's number
   List<String> _customerTags = const []; // and the tags a manager put on them in the guest list
   String? _noteFor; // the number's digits it was read for
-  List<String> _tableTags = const []; // the tags of the guests the host seated on this check
+  TableGuests _table = TableGuests.none; // the parties the host seated on this check, and their tags
   bool _tableAsked = false; // they were asked for, once it was known that this is a table's check
-  int _ticks = 0; // of the timer: the guests' tags are asked again every fifteenth
+  int _ticks = 0; // of the timer: the table's guests are asked for again every fifteenth
   Quotes? _quotes; // read once for a to-go order: a big order is promised later, settled as it is sent
   bool _quotesAsked = false;
   DeliveryFees? _fees; // what a delivery costs here, read once for a to-go order; null where none is charged
@@ -150,14 +151,14 @@ class _OrderScreenState extends State<OrderScreen> {
     _timer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_poll.due()) _refresh();
       // a party sat down on this check, or a guest's tags changed, where the hub cannot tell: asked now and then
-      if (++_ticks % 15 == 0) unawaited(_readTableTags());
+      if (++_ticks % 15 == 0) unawaited(_readTable());
       // a dish that has waited too long to still be at the pass leaves the Ready strip by itself
       if (_readyShown != _readyLines(_order).length) setState(() {});
     });
     _live = widget.api.live.changes.listen((change) {
       if (change.touches(widget.orderId)) _reader();
       // a party sat down or was put back, or a guest's tags changed: this check may say other tags now
-      if (change.everything || change.reservations || change.waitlist) unawaited(_readTableTags());
+      if (change.everything || change.reservations || change.waitlist) unawaited(_readTable());
     });
     widget.outbox.addListener(_onOutbox);
     _refresh();
@@ -165,7 +166,7 @@ class _OrderScreenState extends State<OrderScreen> {
     final fresh = _order; // a to-go order opened here a moment ago: no hub has it yet
     if (fresh != null) unawaited(_readQuotes(fresh));
     if (fresh != null) unawaited(_readFees(fresh));
-    if (fresh != null) unawaited(_readTableTags()); // a party seated a moment ago: its check is open at once
+    if (fresh != null) unawaited(_readTable()); // a party seated a moment ago: its check is open at once
   }
 
   /// What a delivery costs here, once, for a to-go order: the buttons of "Pickup or delivery". Nothing
@@ -319,7 +320,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayAllergic(order, quiet: first);
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
-        if (!_tableAsked) unawaited(_readTableTags());
+        if (!_tableAsked) unawaited(_readTable());
         unawaited(_readQuotes(order));
         unawaited(_readFees(order));
         if (order.isTakeout && order.isOpen) unawaited(_bagQuestion()); // read by the time Send is tapped
@@ -347,27 +348,29 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  /// The tags of the guests the host seated on this check ("VIP"), for a table's check: a party seated from
-  /// its reservation or the waitlist brings them, and no number is on the check for it (docs/guest-list.md,
+  /// Who the host seated on this check, for a table's check: the party of a reservation or of the waitlist,
+  /// by its name, with the note written on it ("Window table, birthday") and the tags its number carries
+  /// ("VIP"). None of it is on the check: the hub reads it from the book and the list (docs/guest-list.md,
   /// "At the table"). Asked when the check is opened or first read, when the hub says the book or the
   /// waitlist changed (a party sat down or joined the table, a tag was put on or taken off), and now and
   /// then. A to-go order and a bar tab have nobody seated: they do not ask.
-  Future<void> _readTableTags() async {
+  Future<void> _readTable() async {
     if (!(_order?.hasTable ?? false)) return;
     _tableAsked = true;
-    final tags = await widget.api.tableTags(widget.orderId);
-    if (!mounted || tags == null || listEquals(tags, _tableTags)) return;
-    setState(() => _tableTags = tags);
+    final table = await widget.api.tableGuests(widget.orderId);
+    if (!mounted || table == null || table == _table) return;
+    setState(() => _table = table);
   }
 
-  /// The tags this check shows: the ones of the customer at its number, then the ones of the guests seated
-  /// on it, each once whatever its capitals.
+  /// The tags this check shows by themselves: the ones of the customer at its number, and from a hub that
+  /// says the table's tags without saying whose, those after them, each once whatever its capitals. The
+  /// tags of a party the hub names stand beside its name.
   List<String> get _guestTags {
-    if (_tableTags.isEmpty) return _customerTags;
+    if (_table.parties.isNotEmpty || _table.tags.isEmpty) return _customerTags;
     final said = {for (final tag in _customerTags) tag.toLowerCase()};
     return [
       ..._customerTags,
-      for (final tag in _tableTags)
+      for (final tag in _table.tags)
         if (said.add(tag.toLowerCase())) tag,
     ];
   }
@@ -1745,8 +1748,8 @@ class _OrderScreenState extends State<OrderScreen> {
                 ],
                 onOut: () => unawaited(_wentOut(ready)),
               ),
-            if (order != null && (_customerNote.isNotEmpty || _guestTags.isNotEmpty))
-              _CustomerStrip(note: _customerNote, tags: _guestTags),
+            if (order != null && (_customerNote.isNotEmpty || _guestTags.isNotEmpty || _table.parties.isNotEmpty))
+              _CustomerStrip(note: _customerNote, tags: _guestTags, parties: _table.parties),
             // an order from the website says so, with how it is paid and what the customer wrote for the
             // whole of it (docs/online-orders.md, "On the screens")
             if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
@@ -2907,53 +2910,129 @@ class _ReadyStrip extends StatelessWidget {
 
 /// What the restaurant keeps about the customer at the order's number, in a slim strip under the app bar:
 /// the tags a manager put on them, each a small label ("VIP"), then the line of the note ("no MSG, side
-/// door"). A table's check has no number: its strip says the tags of the guests the host seated on it, from
-/// their reservation or the waitlist. It is for whoever takes the order; none of it prints, in the kitchen
-/// or on the bill. One line where it all fits, as the note alone always was; on a narrow screen the note
-/// goes under the labels, so neither hides the other.
-class _CustomerStrip extends StatelessWidget {
-  const _CustomerStrip({required this.note, this.tags = const []});
+/// door"). A table's check has no number: its strip says who the host seated on it, from their reservation
+/// or the waitlist: each party on a line of its own, by its name, with the tags its number carries and the
+/// note written on the reservation or the party ("Window table, birthday"). It is for whoever takes the
+/// order; none of it prints, in the kitchen or on the bill. One line where it all fits, as the note alone
+/// always was; on a narrow screen a note goes under the labels, so neither hides the other. The strip is
+/// never more than a quarter of the screen's height, so the check and the menu keep their room: many
+/// labels and a long note on a small phone are a scroll away inside it, and a bar at its side says so.
+class _CustomerStrip extends StatefulWidget {
+  const _CustomerStrip({required this.note, this.tags = const [], this.parties = const []});
 
   final String note;
   final List<String> tags;
+
+  /// The parties seated on a table's check, the first to sit first.
+  final List<SeatedParty> parties;
+
+  @override
+  State<_CustomerStrip> createState() => _CustomerStripState();
+}
+
+class _CustomerStripState extends State<_CustomerStrip> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final note = widget.note;
+    final tags = widget.tags;
+    final parties = widget.parties;
     return Material(
       key: const ValueKey('customer-note-strip'),
       color: scheme.surfaceContainerHighest, // plain: red is the allergy strip's
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
         child: Row(
           children: [
             Icon(
-              note.isEmpty ? Icons.sell_outlined : Icons.sticky_note_2_outlined,
+              note.isNotEmpty
+                  ? Icons.sticky_note_2_outlined
+                  : parties.isNotEmpty
+                  ? Icons.event_seat_outlined
+                  : Icons.sell_outlined,
               size: 16,
               color: scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 2,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  for (final tag in tags) GuestTagMark(tag, key: ValueKey('customer-tag:$tag')),
-                  if (note.isNotEmpty)
-                    Text(
-                      'Customer note: $note',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
-                    ),
-                ],
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height / 4 - 8),
+                child: Scrollbar(
+                  controller: _scroll,
+                  thumbVisibility: true, // only when there is more than fits
+                  child: SingleChildScrollView(
+                    key: const ValueKey('customer-note-strip-scroll'),
+                    controller: _scroll,
+                    padding: const EdgeInsets.only(right: 12),
+                    child: _words(theme, note, tags, parties),
+                  ),
+                ),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _words(ThemeData theme, String note, List<String> tags, List<SeatedParty> parties) {
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      spacing: 2,
+      children: [
+        if (tags.isNotEmpty || note.isNotEmpty)
+          Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              for (final tag in tags) GuestTagMark(tag, key: ValueKey('customer-tag:$tag')),
+              if (note.isNotEmpty)
+                Text(
+                  'Customer note: $note',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
+                ),
+            ],
+          ),
+        // who sits here: the name, the tags of that party's number, and the note it was booked
+        // or listed with, whole (it is what the host wrote for the table)
+        for (final (at, party) in parties.indexed)
+          Wrap(
+            key: ValueKey('seated-party:$at'),
+            spacing: 6,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (party.name.isNotEmpty)
+                Text(
+                  party.name,
+                  key: ValueKey('seated-name:$at'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w700),
+                ),
+              for (final tag in party.tags) GuestTagMark(tag, key: ValueKey('seated-tag:$at:$tag')),
+              if (party.note.isNotEmpty)
+                Text(
+                  party.note,
+                  key: ValueKey('seated-note:$at'),
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface),
+                ),
+            ],
+          ),
+      ],
     );
   }
 }

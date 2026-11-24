@@ -106,6 +106,14 @@ class Hub {
   final tableTagAsks = <String>[];
   bool tableTagsDown = false;
 
+  /// Who sits on a check (`GET /orders/{id}/seated`): every reservation and every party seated with that
+  /// check's id, the first to sit first, each with its name, size, note and the tags of its number, and
+  /// all their tags together, as the real hub answers. A hub that keeps no book and no waitlist has no
+  /// such call, and with [seatedCall] off neither has one that keeps them: a hub that says the tags and
+  /// not yet who. [seatedAsks] are the checks asked about; [tableTagsDown] fails this call too.
+  bool seatedCall = true;
+  final seatedAsks = <String>[];
+
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
   Map<String, dynamic>? tableTimers = {
@@ -1769,6 +1777,7 @@ class Hub {
   static final _pack = RegExp(r'^/orders/([^/]+)/pack-sheet$');
   static final _order = RegExp(r'^/orders/([^/]+)$');
   static final _tableTags = RegExp(r'^/orders/([^/]+)/tags$');
+  static final _seatedOn = RegExp(r'^/orders/([^/]+)/seated$');
   static final _history = RegExp(r'^/orders/([^/]+)/history$');
   static final _photo = RegExp(r'^/events/photos/([^/]+)$');
   static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
@@ -2548,6 +2557,38 @@ class Hub {
       final digits = phoneDigits(request.url.queryParameters['phone']);
       tagAsks.add(digits);
       return json({'phone': digits, 'tags': ringTags![digits] ?? const <String>[]});
+    }
+    final whoSits = _seatedOn.firstMatch(path);
+    if (whoSits != null) {
+      if (!seatedCall || (bookings == null && parties == null)) return json({'detail': 'Not Found'}, 404);
+      if (tableTagsDown) throw const SocketException('down');
+      final id = whoSits.group(1)!;
+      seatedAsks.add(id);
+      List<String> carried(Map<String, dynamic> row) => [...?ringTags?[phoneDigits(row['phone'] as String?)]];
+      final sat = [
+        for (final row in [...?bookings, ...?parties])
+          if (row['seated_ms'] != null && row['order_id'] == id) row,
+      ]..sort((a, b) => (a['seated_ms'] as int).compareTo(b['seated_ms'] as int));
+      final all = <String, String>{};
+      for (final row in sat) {
+        for (final tag in carried(row)) {
+          all.putIfAbsent(tag.toLowerCase(), () => tag);
+        }
+      }
+      return json({
+        'order_id': id,
+        'parties': [
+          for (final row in sat)
+            {
+              'from': row.containsKey('seated_table') ? 'reservation' : 'waitlist',
+              'name': row['name'],
+              'size': row['size'],
+              'note': row['note'],
+              'tags': carried(row),
+            },
+        ],
+        'tags': all.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+      });
     }
     final seatedOn = _tableTags.firstMatch(path);
     if (seatedOn != null) {

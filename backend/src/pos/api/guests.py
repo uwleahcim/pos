@@ -37,6 +37,13 @@
   check (`POST /reservations/{id}/seat`, `POST /waitlist/{id}/seat` keep its id), and through any party
   that joined the table after; the number is read there and never written onto the check. Each tag once,
   in the order of the alphabet; none for a check nobody was seated on. It reads no order and names nobody.
+- `GET /orders/{order_id}/seated` (no token): who was seated on this check, for the same screen: `parties`,
+  each reservation's and each waitlist party the host sat down on it, the first to sit first, with where
+  it is `from` ("reservation" or "waitlist"), its `name`, its `size`, the `note` written on the reservation
+  or the party, and the `tags` its number carries; and `tags`, all of theirs together, as the call above
+  answers them. No phone number, and not the line kept about a customer. It reads the book and the
+  waitlist, as `GET /reservations` and `GET /waitlist` do for any terminal; it reads no order, and nothing
+  goes onto the check.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -208,3 +215,32 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         phones = [row.phone for row in seated if row.phone]
         tags = tags_together(phones, app.state.guest_tags.all()) if phones else []
         return {"order_id": order_id, "tags": tags}
+
+    @app.get("/orders/{order_id}/seated")
+    def read_seated(order_id: str) -> dict[str, Any]:
+        """Who was seated on this check: each reservation's and each waitlist party the host sat down on
+        it, the first to sit first, with its name, how many they are, the note written on the reservation
+        or the party and the tags its number carries; and all their `tags` together. For whoever serves the
+        table. The number is not told, and nothing is put on the check: it opens no order."""
+        seated = sorted(
+            [
+                *(("reservation", booking) for booking in app.state.reservations.seated_on(order_id)),
+                *(("waitlist", party) for party in app.state.waitlist.seated_on(order_id)),
+            ],
+            key=lambda sat: sat[1].seated_ms or 0,
+        )
+        carried = app.state.guest_tags.all() if any(row.phone for _, row in seated) else {}
+        return {
+            "order_id": order_id,
+            "parties": [
+                {
+                    "from": where,
+                    "name": row.name,
+                    "size": row.size,
+                    "note": row.note,
+                    "tags": tags_together([row.phone], carried),
+                }
+                for where, row in seated
+            ],
+            "tags": tags_together([row.phone for _, row in seated], carried),
+        }
