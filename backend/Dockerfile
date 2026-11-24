@@ -1,5 +1,13 @@
 # The one backend image: the same image runs on every hub and in the cloud.
 # Build from this directory:  docker build -t pos-backend .
+
+# Cloudflare's tunnel program, which a hub's `tunnel` service runs (pos/online/tunnel.py; docs/online-orders.md,
+# "The way in"). Taken from Cloudflare's own image; `hubctl update` fetches the current one before it builds,
+# so a hub has a current program after every update. POS_TUNNEL_IMAGE in /opt/pos/.env names another (a
+# version to stay on).
+ARG CLOUDFLARED_IMAGE=cloudflare/cloudflared:latest
+FROM ${CLOUDFLARED_IMAGE} AS cloudflared
+
 FROM python:3.12-slim AS build
 WORKDIR /src
 COPY pyproject.toml ./
@@ -23,8 +31,9 @@ RUN curl -fsSL --retry 5 -o sc.zip https://github.com/deepinsight/insightface/re
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 # A font that covers Chinese, for kitchen tickets printed as images; zone data so TZ gives the restaurant's time;
-# the ssh client for the hub's tunnel to the PBX (the `pbx` service in infra/hub/docker-compose.yml).
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei tzdata openssh-client \
+# the ssh client for the hub's tunnel to the PBX (the `pbx` service in infra/hub/docker-compose.yml); the
+# certificates Cloudflare's program knows Cloudflare by.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei tzdata openssh-client ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --create-home --home-dir /app pos
 # Where a hub keeps the secret that opens the keys a manager typed in the app (pos/keys.py; the `pos-keys`
@@ -33,6 +42,13 @@ RUN useradd --system --uid 10001 --create-home --home-dir /app pos
 RUN install -d -m 0700 -o pos -g pos /keys \
   && echo "The secret this hub seals its keys with is kept here (pos/keys.py). Not part of any backup." > /keys/README \
   && chown pos:pos /keys/README
+# Where the API leaves the push door its word and the tunnel its token (pos/online/wayin.py; the `pos-door` and
+# `pos-tunnel` volumes). New volumes take the folders as they are here: the hub's own user's, and nobody else's.
+RUN install -d -m 0700 -o pos -g pos /door /tunnel \
+  && echo "The API tells the push door here which key a push must carry (its SHA-256, not the key)." > /door/README \
+  && echo "The API leaves the tunnel its token here, and the tunnel says how it stands. Not part of any backup." > /tunnel/README \
+  && chown pos:pos /door/README /tunnel/README
+COPY --from=cloudflared /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY --from=build /install /usr/local
 COPY --from=models /models /app/models
 ENV POS_FACE_MODELS=/app/models

@@ -14,9 +14,10 @@ compose() {
   docker compose --project-directory "$POS_HOME" -f "$POS_HOME/src/infra/hub/docker-compose.yml" "$@"
 }
 
-# The optional services of the hub (the PBX tunnel, the push door, the way in for pushes) each run under a
-# profile, and the profiles that are on are one line of /opt/pos/.env. These turn one on or off and leave
-# the others as they are.
+# An optional service of the hub (the PBX tunnel) runs under a profile, and the profiles that are on are one
+# line of /opt/pos/.env. These turn one on or off and leave the others as they are. The push door and the
+# way in for pushes used to have profiles of their own (`push`, `tunnel`); they run all the time now, idle
+# until the hub has their keys, and what is left of those two names in the file means nothing.
 profiles() {
   sed -nE 's/^COMPOSE_PROFILES=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1
 }
@@ -66,7 +67,16 @@ case "${1:-status}" in
   update)
     git -C "$POS_HOME/src" pull --ff-only
     install -m 0755 "$POS_HOME/src/infra/hub/hubctl" /usr/local/bin/hubctl
-    docker build -t pos-backend:local "$POS_HOME/src/backend"
+    # Cloudflare's tunnel program is built into the image, from Cloudflare's own as it is today: a build
+    # goes by the copy the hub already has, so the current one is fetched first. Where Cloudflare's registry
+    # cannot be reached the hub's copy does (a first build has none, and says so itself).
+    # POS_TUNNEL_IMAGE in /opt/pos/.env names another one (cloudflare/cloudflared:<version>) to stay on.
+    build_args=()
+    tunnel_image=$(sed -nE 's/^POS_TUNNEL_IMAGE=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1)
+    [[ -z "$tunnel_image" ]] || build_args+=(--build-arg "CLOUDFLARED_IMAGE=$tunnel_image")
+    docker pull -q "${tunnel_image:-cloudflare/cloudflared:latest}" > /dev/null \
+      || echo "Could not look for a newer tunnel program at Cloudflare; building with the one this hub has." >&2
+    docker build "${build_args[@]}" -t pos-backend:local "$POS_HOME/src/backend"
     compose up -d --remove-orphans
     compose ps
     ;;
@@ -406,12 +416,14 @@ case "${1:-status}" in
     # hubctl online show <number>    one order as GloriaFood sent it, by its number, with everything of the customer taken out:
     #                                for looking at an order that went on the POS wrong
     # hubctl online forget           removes the key: the hub asks nobody; the orders already on the POS stay as they are
+    # The key for pushes and the tunnel's token can be typed in the app instead (Location, Keys and connections), and
+    # tried there. Of the two ways the one used last wins: a key told here takes off what the app was told.
     # hubctl online push key         puts the key GloriaFood's own pushes carry on the hub (asked for and not shown; Enter alone and
     #                                the hub makes one, shown once, to put into GloriaFood's admin), and opens the push door
     # hubctl online push test [https://<address>/online/push]
     #                                sends an empty push through the door, or with an address through the whole way in from
-    #                                outside, and says whether it got in; puts nothing on the POS
-    # hubctl online push forget      removes that key and shuts the door (and the tunnel): the hub only asks
+    #                                outside, and says whether it got in; puts nothing on the POS. For a key put on here
+    # hubctl online push forget      removes that key and shuts the door (and stops the tunnel): the hub only asks
     # hubctl online tunnel token     puts a Cloudflare Tunnel's token on the hub (asked for and not shown) and starts the tunnel
     # hubctl online tunnel status    the tunnel as it stands, and its last words
     # hubctl online tunnel forget    stops the tunnel and removes its token
@@ -427,10 +439,11 @@ case "${1:-status}" in
       if [[ -n "$cid" ]]; then docker inspect -f '{{.State.Status}}' "$cid"; else echo "not set up"; fi
     }
     online_status() {
-      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r --arg door "$(state_of door)" --arg tunnel "$(state_of tunnel)" '
+      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r --arg door "$(state_of door)" '
         def at: if . then (. / 1000 | strflocaltime("%H:%M")) else "never" end;
+        def tunnel: (.push.tunnel // {}) as $t | if ($t.there // false) | not then "" elif $t.state == "connected" then "; the tunnel is connected to Cloudflare" elif $t.state == "starting" then "; the tunnel is on its way to Cloudflare" elif $t.state == "failing" then "; THE TUNNEL IS NOT CONNECTED (hubctl online tunnel status)" else "" end;
         (if .configured or .push.configured then "online orders: on" else "online orders: off, no key (hubctl online push key, hubctl online key)" end),
-        (if .push.configured then "  sent by GloriaFood (push): on; last push " + (.push.pushed_ms | at) + "; the door is " + $door + (if $tunnel != "not set up" then "; the tunnel is " + $tunnel else "" end) else "  sent by GloriaFood (push): off (hubctl online push key)" end),
+        (if .push.configured then "  sent by GloriaFood (push): on; last push " + (.push.pushed_ms | at) + "; the door is " + $door + tunnel else "  sent by GloriaFood (push): off (hubctl online push key)" end),
         (if .configured then "  asked for every minute: " + (if .running then "on" else "NOT RUNNING: hubctl restart" end) + "; last answer " + (.answered_ms | at) else "  asked for every minute: off, no key (hubctl online key)" + (if .push.configured then ". Nothing brings an order whose push is lost" else "" end) end),
         ((.accounts // []) | if length > 1 then (.[] | "    " + (if .name != "" then .name else "the first account" end) + (if .test then " (for testing)" else "" end) + ": " + (if .configured then "last answer " + (.answered_ms | at) + (if .last_failure then "; TROUBLE at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else "" end) + "; \(.came) today" else "no key (in the app: Location, Keys and connections)" end)) else empty end),
         (if (.configured or .push.configured) and (.writable | not) then "this hub cannot write orders down now (it is the standby), so it takes none" else empty end),
@@ -454,7 +467,14 @@ case "${1:-status}" in
     push_test() { # through the door on the hub, or with an address through the whole way in from outside
       local key answer code url=${1:-}
       key=$(env_of POS_GLORIAFOOD_PUSH_KEY)
-      [[ -n "$key" ]] || { echo "this hub has no key for pushes (hubctl online push key)"; return 1; }
+      if [[ -z "$key" ]]; then
+        if [[ "$(curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '.push.configured' 2> /dev/null || true)" == true ]]; then
+          echo "the key for pushes was typed in the app, and the hub's terminal does not have it. Try it there: Location, Keys and connections, Try it."
+        else
+          echo "this hub has no key for pushes (hubctl online push key, or in the app: Location, Keys and connections)"
+        fi
+        return 1
+      fi
       if [[ -z "$url" ]]; then
         answer=$(push_try http://127.0.0.1:8090/online/push "$key")
         code=${answer##*$'\n'}
@@ -486,22 +506,28 @@ case "${1:-status}" in
         return 1
       fi
     }
-    tunnel_status() {
-      local cid state started logs
-      cid=$(compose ps -aq tunnel 2> /dev/null | head -n 1 || true)
-      if [[ -z "$cid" ]]; then
-        echo "tunnel: not set up (hubctl online tunnel token)"
+    tunnel_status() { # the tunnel as its keeper says it stands (the API reads it), and Cloudflare's program's last words
+      local told state
+      told=$(curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -c '.push.tunnel // empty' 2> /dev/null || true)
+      if [[ -z "$told" ]]; then
+        echo "tunnel: the API is not answering, or is older than this (hubctl update)"
         return 0
       fi
-      state=$(docker inspect -f '{{.State.Status}}' "$cid")
-      started=$(docker inspect -f '{{.State.StartedAt}}' "$cid")
-      logs=$(docker logs --since "$started" "$cid" 2>&1 | tail -n 8 || true)
-      if docker logs --since "$started" "$cid" 2>&1 | grep -q "Registered tunnel connection"; then
-        echo "tunnel: $state, and connected to Cloudflare"
-      else
-        echo "tunnel: $state, NOT connected to Cloudflare yet; its last words:"
-        [[ -z "$logs" ]] || while IFS= read -r line; do echo "  | $line"; done <<< "$logs"
+      jq -r '
+        def at: if . then (. / 1000 | strflocaltime("%H:%M")) else "a moment ago" end;
+        def why: if .reason == "refused" then "Cloudflare did not take the token. Copy it again from the tunnel in Cloudflare (hubctl online tunnel token, or in the app)" elif .reason == "unreachable" then "the hub cannot reach Cloudflare. Is its internet up?" elif .reason == "slow" then "it is taking long to reach Cloudflare" elif .reason == "missing" then "this hub has no cloudflared (hubctl update builds it in)" else "see its last words" end;
+        if (.there | not) then "tunnel: its keeper is not running on this hub (hubctl update; hubctl logs tunnel)"
+        elif .state == "connected" then "tunnel: connected to Cloudflare since " + (.since_ms | at)
+        elif .state == "starting" then "tunnel: on its way to Cloudflare, not connected yet"
+        elif .state == "failing" then "tunnel: NOT connected to Cloudflare since " + (.since_ms | at) + ": " + why
+        else "tunnel: no token (hubctl online tunnel token, or in the app: Location, Keys and connections)" end' <<< "$told"
+      state=$(jq -r 'if .there then .state else "gone" end' <<< "$told")
+      if [[ "$state" == failing || "$state" == starting || "$state" == gone ]]; then
+        compose logs --no-log-prefix --tail 8 tunnel 2> /dev/null | while IFS= read -r line; do echo "  | $line"; done || true
       fi
+    }
+    tunnel_state() {
+      curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '.push.tunnel | if .there then .state else "gone" end' 2> /dev/null || true
     }
     case "${2:-status}" in
       key)
@@ -565,7 +591,7 @@ case "${1:-status}" in
               umask 077
               printf 'POS_GLORIAFOOD_PUSH_KEY=%s\n' "$key" >> "$POS_HOME/.env"
             )
-            profile_on push
+            app_key_off online_push
             compose up -d api door
             if [[ -n "$made" ]]; then
               echo "The hub made this key. Put it into GloriaFood's admin as the integration's master key. It is shown this once"
@@ -597,12 +623,12 @@ case "${1:-status}" in
             ;;
           forget)
             unset_env POS_GLORIAFOOD_PUSH_KEY POS_TUNNEL_TOKEN
-            compose --profile tunnel stop tunnel door 2> /dev/null || true
-            compose --profile tunnel rm -f tunnel door 2> /dev/null || true
+            app_key_off online_push
+            app_key_off online_tunnel
             profile_off tunnel
             profile_off push
-            compose up -d api
-            echo "The key for pushes is gone from the hub, and the door and the tunnel with it: every push is turned away."
+            compose up -d api door tunnel
+            echo "The key for pushes is gone from the hub, and the tunnel's token with it: within the minute the door is shut and the tunnel stopped, and every push is turned away."
             if [[ -n "$(env_of POS_GLORIAFOOD_KEY)" ]]; then echo "The hub still asks GloriaFood every minute, so orders keep arriving."; fi
             echo "(Remove the push integration in GloriaFood's admin too, and the tunnel in Cloudflare's.)"
             ;;
@@ -615,7 +641,10 @@ case "${1:-status}" in
       tunnel)
         case "${3:-status}" in
           token)
-            [[ -n "$(env_of POS_GLORIAFOOD_PUSH_KEY)" ]] || { echo "First the key for pushes (hubctl online push key): the tunnel leads to the door, and the door is shut without it." >&2; exit 2; }
+            if [[ -z "$(env_of POS_GLORIAFOOD_PUSH_KEY)" && "$(curl -fsS http://127.0.0.1:8000/online/status 2> /dev/null | jq -r '.push.configured' 2> /dev/null || true)" != true ]]; then
+              echo "First the key for pushes (hubctl online push key, or in the app): the tunnel leads to the door, and the door is shut without it." >&2
+              exit 2
+            fi
             read -rsp "The tunnel's token from Cloudflare (it is not shown as you paste it): " token
             echo
             token=${token//[[:space:]]/}
@@ -626,21 +655,19 @@ case "${1:-status}" in
               printf 'POS_TUNNEL_TOKEN=%s\n' "$token" >> "$POS_HOME/.env"
             )
             unset token
-            profile_on tunnel
-            compose up -d door
-            compose up -d --force-recreate tunnel
+            app_key_off online_tunnel
+            compose up -d api door tunnel
             echo "The token is on the hub. Waiting for the tunnel to reach Cloudflare..."
-            for _ in $(seq 1 30); do
+            for _ in $(seq 1 60); do
               sleep 1
-              cid=$(compose ps -aq tunnel 2> /dev/null | head -n 1 || true)
-              if [[ -n "$cid" ]] && docker logs "$cid" 2>&1 | grep -q "Registered tunnel connection"; then
+              if [[ "$(tunnel_state)" == connected ]]; then
                 tunnel_status
                 echo "In Cloudflare, the tunnel's public hostname must be handed to http://door:8090. Then: hubctl online push test https://<that hostname>/online/push"
                 exit 0
               fi
             done
             tunnel_status
-            echo "Not connected within 30 s. hubctl logs tunnel says more; hubctl online tunnel forget takes the token off again."
+            echo "Not connected within a minute. hubctl logs tunnel says more; hubctl online tunnel forget takes the token off again."
             exit 1
             ;;
           status)
@@ -648,10 +675,10 @@ case "${1:-status}" in
             ;;
           forget)
             unset_env POS_TUNNEL_TOKEN
-            compose --profile tunnel stop tunnel 2> /dev/null || true
-            compose --profile tunnel rm -f tunnel 2> /dev/null || true
+            app_key_off online_tunnel
             profile_off tunnel
-            echo "The tunnel is stopped and its token is gone from the hub: nothing reaches the door from outside. The hub's asking still brings the orders. (Delete the tunnel in Cloudflare too.)"
+            compose up -d api tunnel
+            echo "The tunnel's token is gone from the hub, and within the minute the tunnel is stopped: nothing reaches the door from outside. The hub's asking still brings the orders. (Delete the tunnel in Cloudflare too.)"
             ;;
           *)
             echo "usage: hubctl online tunnel token | status | forget" >&2

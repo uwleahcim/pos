@@ -10,6 +10,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import threading
 import time
@@ -58,6 +59,7 @@ from ..online.gloriafood import push_key_from_env
 from ..online.inbox import default_inbox
 from ..online.place import own_word
 from ..online.service import OnlineOrders
+from ..online.wayin import WayIn, wayin_from_env
 from ..orders.adjustments import APPROVAL_TTL, PricingRules, load_rules
 from ..orders.ahead import orders_ahead
 from ..orders.bag import bag_ops
@@ -120,7 +122,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list, follow_merges, names_by_check, seated_by_check
 from .history import add_history
-from .keys import add_hub_keys, keys_mark, online_setup, sender_for, watch_keys
+from .keys import add_hub_keys, hand_way_in, keys_mark, online_setup, sender_for, watch_keys
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
@@ -138,6 +140,8 @@ if TYPE_CHECKING:
     from ..sync.pgstore import PgOpStore
 
 from ..sync.pgstore import ReadOnlyError
+
+log = logging.getLogger(__name__)
 
 
 class OpIn(BaseModel):
@@ -877,6 +881,7 @@ def create_app(
     reservations: Reservations | None = None,
     online: OnlineOrders | None = None,
     keys: HubKeys | None = None,
+    wayin: WayIn | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -895,6 +900,15 @@ def create_app(
             # hands over is put on the POS and printed by the one that asked. Nothing without a key.
             app.state.online.start()
             app.state.asks_online = True  # and a key typed in the app later starts the asking (`use_keys`)
+            # The push door and the tunnel run beside the API and are told their secrets by it: the key for
+            # pushes and the tunnel's token in force now, from the app or from the hub's own file.
+            try:
+                hand_way_in(app)
+            except Exception as err:  # noqa: BLE001 - the API starts without it, and tries again within the minute
+                log.warning(
+                    "the way in: the door and the tunnel could not be told at the start (%s)", type(err).__name__
+                )
+                app.state.keys_mark = ""  # so that the next look at the keys puts them all to work (`watch_keys`)
         # A key typed on the location's other hub, or taken back with hubctl, is found within the minute.
         watching = asyncio.create_task(watch_keys(app)) if keys is None else None
         unhook = end_on_stop(app.state.feed)
@@ -907,6 +921,7 @@ def create_app(
             if pbx is not None:
                 await pbx.stop()
             await app.state.relay.close()
+            await app.state.wayin.close()
 
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)", lifespan=lifespan)
     app.state.menu = menu if menu is not None else default_menu()
@@ -995,7 +1010,11 @@ def create_app(
         app.state.online = online
     else:
         sources, accounts = online_setup(app.state.keys, app.state.settings)
-        app.state.online = OnlineOrders(sources, default_inbox(), push_key=push_key_from_env(), accounts=accounts)
+        pushes = push_key_from_env(outside)  # typed in the app, or in the hub's own file
+        app.state.online = OnlineOrders(sources, default_inbox(), push_key=pushes, accounts=accounts)
+    # What the API hands the push door and the tunnel, and hears back (`pos.online.wayin`). Nothing on a
+    # machine that runs neither.
+    app.state.wayin = wayin if wayin is not None else wayin_from_env()
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(

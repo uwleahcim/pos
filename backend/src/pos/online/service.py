@@ -43,6 +43,7 @@ A push that is turned away is counted and told of by why, never by what it carri
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 import time
 import traceback
@@ -83,6 +84,8 @@ STALE_MS = 5 * 60_000
 REFUSAL_LOG_MS = 60_000
 """A push that is turned away is counted every time and logged at most this often: the way in is open to
 the internet, and whoever knocks must not fill the hub's log."""
+KNOCK_MS = 30_000
+"""How long the hub knows a word it made for a try of its own way in (`OnlineOrders.expect`)."""
 NO_KEY_SENT = "it carried no key"
 WRONG_KEY = "it carried the wrong key"
 
@@ -167,6 +170,7 @@ class OnlineOrders:
         self._refused: tuple[int, str] | None = None  # the last push it turned away, and why
         self._refusals = 0
         self._refusal_logged_ms: int | None = None
+        self._knocks: dict[str, list[int | bool]] = {}  # the hub's own tries: until when, and whether it came
         self._thread: threading.Thread | None = None
 
     def use(self, source: Source | Sequence[Source] | None, accounts: Sequence[Account] | None = None) -> None:
@@ -190,6 +194,30 @@ class OnlineOrders:
             if accounts is not None:
                 self.accounts = {account.id: account for account in accounts}
                 self._restaurants = {}
+
+    def use_push_key(self, key: str | None) -> None:
+        """This key for pushes from now on, or none: one was typed, replaced or removed while the hub runs
+        (`pos.keys`). What was turned away under the last key says nothing about this one, so the last
+        refusal is forgotten; how many there were since the hub started is kept."""
+        key = key or None
+        if key != self._push_key:
+            self._push_key = key
+            self._refused = None
+
+    def expect(self) -> str:
+        """A word the hub makes for one try of its own way in (`pos.online.wayin`): a push that carries it
+        where the key would be is the hub's own knock. It is turned away like any push without the key,
+        but known, not counted, and not said in the log. Good for half a minute."""
+        now = self._now()
+        self._knocks = {word: told for word, told in self._knocks.items() if int(told[0]) > now}
+        word = f"try-{secrets.token_urlsafe(32)}"
+        self._knocks[word] = [now + KNOCK_MS, False]
+        return word
+
+    def arrived(self, word: str) -> bool:
+        """Whether the hub's own knock with this word reached it. The word is used up by asking."""
+        told = self._knocks.pop(word, None)
+        return told is not None and told[1] is True
 
     @property
     def source(self) -> Source | None:
@@ -323,6 +351,10 @@ class OnlineOrders:
         does not carry the key (401)."""
         if self._push_key is None:
             raise PushRefused("this hub takes no pushes", 404)
+        knock = self._knocks.get((authorization or "").strip())
+        if knock is not None and int(knock[0]) > self._now():
+            knock[1] = True
+            raise PushRefused("a try of this hub's own", 401)
         if not allowed(authorization, self._push_key):
             raise self._turned_away(WRONG_KEY if (authorization or "").strip() else NO_KEY_SENT)
 

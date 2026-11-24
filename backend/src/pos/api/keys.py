@@ -33,6 +33,26 @@ calls like the rest:
 - `DELETE /hub/online/accounts/{id}`: the account is gone, and its key with it: the hub stops asking it. The
   orders it brought stay as they are. 409 `first_account` for `main`: that one stays, with or without a key.
 
+**The way in for GloriaFood's pushes** (`pos.online.wayin`; docs/online-orders.md, "Push"). Its two secrets
+are keys like the rest: `online_push`, the key a push must carry, and `online_tunnel`, the Cloudflare
+Tunnel's token (pasted alone or inside the command Cloudflare shows; `shown.tunnel` is the start of the
+tunnel's id, which is no secret). The push door and the tunnel are programs beside the API. It hands each
+what it needs when a key changes, and neither is restarted.
+
+- `GET /hub/keys` also gives `way_in`: `address` (the name GloriaFood sends to, as a manager typed it, or
+  empty), `door` (whether the door could be told its key; null on a machine that runs none) and `tunnel`:
+  `there` (the hub runs a tunnel program), `state` (`off`, `starting`, `connected`, `failing`), `since_ms`,
+  and while it fails `reason` (`refused`, `unreachable`, `slow`, `missing`, `trouble`) and `said`
+  (Cloudflare's program's own last word on it).
+- `PUT /hub/online/push/address`: `{"address": "orders.example.com"}`, with or without `https://` and the
+  path; empty forgets it. 422 `bad_value` for what is no name on the internet. Answers like the `GET`.
+- `POST /hub/online/push/try`: the hub knocks at its own door, and with an address at
+  `https://<address>/online/push`, with a word made for that knock where the key would be, and says
+  whether each knock reached it: `tried.door` and `tried.outside` (null without an address, or when the
+  door did not open), each with `ok`, `reason` and the answer's `code`. The key for pushes is sent
+  nowhere, and a try counts as no push. 409 `no_key` on a hub without a key for pushes. Answers like the
+  `GET` beside it.
+
 A key changes the service that uses it in place (`use_keys`): the map lookups keep the day's counts, the
 online orders start asking (or stop) and Apple's sender is exchanged. A hub also looks once a minute whether
 the keys changed under it (`watch_keys`): typed on the other hub of the location, or taken back by `hubctl`.
@@ -49,11 +69,23 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..keys import MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE, SLOTS, HubKeys, UnknownKey, slot_for
+from ..keys import (
+    MAPS,
+    MAPS_GOOGLE,
+    ONLINE,
+    ONLINE_PUSH,
+    ONLINE_TUNNEL,
+    PUSH_APPLE,
+    SLOTS,
+    HubKeys,
+    UnknownKey,
+    slot_for,
+)
 from ..maps import Lookups, fallback_from_env, maps_from_env
 from ..online.accounts import MAIN, SETTING, Account, account_of_slot, accounts_of, clean_accounts, name_of, new_id
 from ..online.gloriafood import GloriaFood
 from ..online.service import OnlineOrders
+from ..online.wayin import ADDRESS_SETTING, WayIn, clean_address
 from ..push.apns import ApnsConfig, ApnsSender
 from ..push.relay import PushRelay
 from ..settings import SettingStore
@@ -85,6 +117,67 @@ class AccountIn(BaseModel):
     name: str | None = None
     key: str = ""
     test: bool | None = None
+
+
+class AddressIn(BaseModel):
+    """The name on the internet GloriaFood sends its pushes to. Empty: none is remembered."""
+
+    address: str = ""
+
+
+def hand_way_in(app: FastAPI) -> None:
+    """The key for pushes and the tunnel's token in force now: the API's own check of a push goes by the
+    one, and the push door and the tunnel are handed what each needs (`pos.online.wayin`)."""
+    keys: HubKeys = app.state.keys
+    push, tunnel = keys.data(ONLINE_PUSH), keys.data(ONLINE_TUNNEL)
+    push_key = push["key"] if push is not None else None
+    online: OnlineOrders = app.state.online
+    online.use_push_key(push_key)
+    wayin: WayIn = app.state.wayin
+    wayin.hand(push_key, tunnel["key"] if tunnel is not None else None)
+
+
+def knocked_at_door(came: dict[str, Any], arrived: bool) -> dict[str, Any]:
+    """What a knock at the hub's own door came to: `ok`, or why not. `shut`: the door has no key yet;
+    `no_answer`: no door runs; `api`: the door is up and the API behind it did not answer it; `other`."""
+    code = came["code"]
+    if code == 401 and came["refused"] and arrived:
+        reason = None
+    elif code is None:
+        reason = "no_answer"
+    elif code == 404:
+        reason = "shut"
+    elif code in (502, 504):
+        reason = "api"
+    else:
+        reason = "other"
+    return {"ok": reason is None, "reason": reason, "code": code}
+
+
+def knocked_outside(came: dict[str, Any], arrived: bool) -> dict[str, Any]:
+    """What a knock from outside came to: `ok` when it reached this very hub, or why not. `no_answer`:
+    nothing answers at that name (`late`: not in time); `elsewhere`: something answers, and it is not this
+    hub; `not_routed`: the name is known and leads nowhere for this path (404); `blocked`: whoever keeps the
+    name turns the call away (403); `tunnel_down`: the name's keeper cannot get to the door (502, 503, 504,
+    Cloudflare's 52x and 530); `redirect`; `other`."""
+    code = came["code"]
+    if code == 401 and came["refused"] and arrived:
+        reason = None
+    elif code is None:
+        reason = "late" if came["late"] else "no_answer"
+    elif code == 401:
+        reason = "elsewhere"
+    elif code == 404:
+        reason = "not_routed"
+    elif code == 403:
+        reason = "blocked"
+    elif code in (502, 503, 504) or 520 <= code <= 530:
+        reason = "tunnel_down"
+    elif 300 <= code < 400:
+        reason = "redirect"
+    else:
+        reason = "other"
+    return {"ok": reason is None, "reason": reason, "code": code, "url": came["url"]}
 
 
 def online_setup(keys: HubKeys, settings: SettingStore) -> tuple[list[GloriaFood], list[Account]]:
@@ -134,6 +227,9 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
         if app.state.asks_online:
             online.start()  # nothing where the round already runs, and nothing without a key
         app.state.feed.changed("online")  # the screens say whether the hub asks
+    if wanted & {ONLINE_PUSH, ONLINE_TUNNEL}:
+        await run_in_threadpool(hand_way_in, app)
+        app.state.feed.changed("online")  # the screens say whether the hub takes pushes
     if PUSH_APPLE in wanted:
         relay: PushRelay = app.state.relay
         fresh = await run_in_threadpool(sender_for, keys)
@@ -163,12 +259,18 @@ def add_hub_keys(app: FastAPI) -> None:
     def accounts() -> list[Account]:
         return accounts_of(app.state.settings.get(SETTING))
 
+    def address() -> str:
+        held = app.state.settings.get(ADDRESS_SETTING).get("address")
+        return held if isinstance(held, str) else ""
+
     def said() -> dict[str, Any]:
         keys: HubKeys = app.state.keys
+        wayin: WayIn = app.state.wayin
         return {
             "keys": keys.views(),
             "kept": keys.vault.kept,
             "online_accounts": [{**account.about(), "key": keys.view(account.slot)} for account in accounts()],
+            "way_in": {"address": address(), **wayin.about()},
         }
 
     def slot_of(name: str) -> str:
@@ -303,3 +405,38 @@ def add_hub_keys(app: FastAPI) -> None:
         await run_in_threadpool(remove)
         await use_keys(app, [ONLINE])
         return await run_in_threadpool(said)
+
+    @app.put("/hub/online/push/address")
+    def write_push_address(body: AddressIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """The name GloriaFood sends its pushes to, remembered for trying the way in. It is no secret."""
+        manager_from(app.state.tokens, authorization)
+        if len(body.address) > 300:
+            raise HTTPException(422, {"error": "bad_value", "message": "that is far too long to be an address"})
+        try:
+            cleaned = clean_address(body.address)
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from None
+        try:
+            app.state.settings.put(ADDRESS_SETTING, {"address": cleaned})
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        return said()
+
+    @app.post("/hub/online/push/try")
+    async def try_way_in(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """The hub knocks at its own door, and from outside at the address GloriaFood sends to, and says
+        whether each knock reached it. No key is sent anywhere, and a try counts as no push."""
+        manager_from(app.state.tokens, authorization)
+        online: OnlineOrders = app.state.online
+        wayin: WayIn = app.state.wayin
+        if not online.pushable:
+            message = "this hub has no key for pushes yet"
+            raise HTTPException(409, {"error": "no_key", "message": message})
+        word = online.expect()
+        door = knocked_at_door(await wayin.knock(word), online.arrived(word))
+        outside = None
+        host = await run_in_threadpool(address)
+        if host and door["ok"]:
+            word = online.expect()
+            outside = {"address": host, **knocked_outside(await wayin.knock(word, host), online.arrived(word))}
+        return {**await run_in_threadpool(said), "tried": {"door": door, "outside": outside}}

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -24,6 +27,14 @@ String _refusal(ApiException err) => switch (err.status) {
   _ => _sentence(err.detail?['message'] as String? ?? err.message),
 };
 
+/// A key for GloriaFood's pushes, made on this screen: forty letters and digits nobody could guess. It is
+/// shown while the dialog is open, for copying into GloriaFood's admin, and goes to the hub with Save.
+String makePushKey() {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  final dice = Random.secure();
+  return [for (var n = 0; n < 40; n++) letters[dice.nextInt(letters.length)]].join();
+}
+
 /// Keys and connections (docs/hub-keys.md): the hub's keys for the services outside the restaurant, each
 /// with how it stands, and for a manager the buttons to type one, replace it, try it and remove it. What
 /// used to be typed in the hub's terminal. The hub keeps a typed key sealed and uses it at once; this page
@@ -36,6 +47,8 @@ class HubKeysScreen extends StatefulWidget {
     required this.keys,
     this.onChanged,
     this.clock = DateTime.now,
+    this.lookEvery = const Duration(seconds: 2),
+    this.makeKey = makePushKey,
   });
 
   final PosApi api;
@@ -48,9 +61,18 @@ class HubKeysScreen extends StatefulWidget {
   final ValueChanged<HubKeys>? onChanged;
   final DateTime Function() clock;
 
+  /// How often the page looks again while the tunnel is on its way to Cloudflare.
+  final Duration lookEvery;
+
+  /// Makes a key for GloriaFood's pushes when the manager asks for one.
+  final String Function() makeKey;
+
   @override
   State<HubKeysScreen> createState() => _HubKeysScreenState();
 }
+
+/// How many times the page looks again for a tunnel that is on its way: half a minute, then it is left.
+const _looksMost = 15;
 
 /// Where the page says what came of adding or removing an account: under the button that adds one.
 const _accountsSaid = 'online-accounts';
@@ -59,6 +81,20 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
   late HubKeys _keys = widget.keys;
   String? _busy; // the key being tried or removed
   final _said = <String, _Said>{};
+  Timer? _look; // the next look at a tunnel that is on its way to Cloudflare
+  int _looks = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _watchTunnel();
+  }
+
+  @override
+  void dispose() {
+    _look?.cancel();
+    super.dispose();
+  }
 
   void _stand(HubKeys keys, String name, String words) {
     setState(() {
@@ -68,14 +104,90 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     widget.onChanged?.call(keys);
   }
 
+  /// The tunnel has a token and has not said yet whether it reached Cloudflare.
+  bool get _tunnelOnItsWay {
+    final tunnel = _keys.wayIn?.tunnel;
+    if (tunnel == null || !(_keys.named('online_tunnel')?.set ?? false)) return false;
+    return tunnel.there && tunnel.state != 'connected' && tunnel.state != 'failing';
+  }
+
+  /// A tunnel takes a few seconds to reach Cloudflare after its token was typed. While it is on its way the
+  /// page looks again by itself, so that the card says how it went without anybody pressing anything.
+  void _watchTunnel() {
+    _look?.cancel();
+    _looks = 0;
+    if (_tunnelOnItsWay) _look = Timer(widget.lookEvery, _lookAgain);
+  }
+
+  Future<void> _lookAgain() async {
+    _looks += 1;
+    HubKeys? keys;
+    try {
+      keys = await widget.api.hubKeys(widget.token);
+    } on ApiException {
+      keys = null; // the next look may fare better
+    }
+    if (!mounted) return;
+    if (keys != null) {
+      setState(() => _keys = keys!);
+      widget.onChanged?.call(keys);
+    }
+    if (_tunnelOnItsWay && _looks < _looksMost) _look = Timer(widget.lookEvery, _lookAgain);
+  }
+
   Future<void> _type(HubKey key, HubKeyInfo info) async {
     final saved = await showDialog<HubKeys>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => HubKeyDialog(api: widget.api, token: widget.token, was: key, info: info),
+      builder: (_) => HubKeyDialog(api: widget.api, token: widget.token, was: key, info: info, makeKey: widget.makeKey),
     );
     if (saved == null || !mounted) return;
-    _stand(saved, key.name, 'Saved. The hub uses it from now on.');
+    _stand(saved, key.name, switch (key.name) {
+      'online_push' => "Saved. The push door is open for it. Put the same key into GloriaFood's admin.",
+      'online_tunnel' => 'Saved. The tunnel is started with it.',
+      _ => 'Saved. The hub uses it from now on.',
+    });
+    _watchTunnel();
+  }
+
+  /// The way in for GloriaFood's pushes is tried: the hub knocks at its own push door, and from outside at
+  /// the address GloriaFood sends to. The address is asked for first, and the hub remembers it.
+  Future<void> _tryWayIn(String name) async {
+    final asked = await showDialog<HubKeys>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => WayInDialog(api: widget.api, token: widget.token, keys: _keys),
+    );
+    if (asked == null || !mounted) return;
+    setState(() => _keys = asked);
+    widget.onChanged?.call(asked);
+    await _trying(name, () async {
+      final HubKeys answer;
+      try {
+        answer = await widget.api.tryWayIn(widget.token);
+      } on ApiException catch (err) {
+        if (err.status == 409) {
+          return (
+            words:
+                'This hub has no key for pushes yet. Set the GloriaFood push key first: the way in leads to the '
+                'push door, and the door is shut without it.',
+            bad: true,
+          );
+        }
+        if (err.status == 404 || err.status == 405) {
+          return (words: 'This hub is older than trying the way in from the app. Update it first.', bad: true);
+        }
+        rethrow;
+      }
+      if (mounted) {
+        setState(() => _keys = answer);
+        widget.onChanged?.call(answer);
+      }
+      final tried = answer.tried;
+      if (tried == null) return (words: 'The hub did not say what the try came to.', bad: true);
+      return (words: tried.words, bad: tried.bad);
+    });
+    if (mounted) _watchTunnel();
   }
 
   /// Another account with GloriaFood: its name, its key and whether it is for testing, typed in one dialog.
@@ -294,6 +406,8 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
         _tryMaps(key.name, 'google', 'Google Maps');
       case 'push_apple':
         _tryApple(key.name);
+      case 'online_push' || 'online_tunnel':
+        _tryWayIn(key.name);
       case _ when account != null || key.name == 'online':
         _tryOnline(key.name, account);
     }
@@ -370,6 +484,7 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
               key: ValueKey('key-${key.name}-state'),
               style: theme.textTheme.bodyMedium?.copyWith(color: key.unreadable ? scheme.error : null),
             ),
+            ..._wayInLines(context, key),
             const SizedBox(height: 4),
             Text(
               [
@@ -387,7 +502,13 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
                 FilledButton.tonal(
                   key: ValueKey('key-${key.name}-type'),
                   onPressed: _busy != null ? null : () => _type(key, info),
-                  child: Text(key.set ? 'Replace' : 'Type the key'),
+                  child: Text(
+                    key.set
+                        ? 'Replace'
+                        : key.name == 'online_tunnel'
+                        ? 'Paste the token'
+                        : 'Type the key',
+                  ),
                 ),
                 if (key.set)
                   OutlinedButton(
@@ -409,6 +530,64 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
         ),
       ),
     );
+  }
+
+  /// What the two cards of the way in say beyond their key: the tunnel's, whether it has reached Cloudflare;
+  /// the key for pushes', the address that goes into GloriaFood's admin once one is known, and a door that
+  /// could not be told its key.
+  List<Widget> _wayInLines(BuildContext context, HubKey key) {
+    final way = _keys.wayIn;
+    if (way == null || !key.set) return const [];
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    if (key.name == 'online_tunnel') {
+      final tunnel = way.tunnel;
+      return [
+        const SizedBox(height: 2),
+        Text(
+          tunnel.words(widget.clock()),
+          key: const ValueKey('tunnel-state'),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: tunnel.bad ? scheme.error : null,
+            fontWeight: tunnel.connected || tunnel.bad ? FontWeight.w600 : null,
+          ),
+        ),
+      ];
+    }
+    if (key.name != 'online_push') return const [];
+    final endpoint = way.endpoint;
+    return [
+      if (way.door == false) ...[
+        const SizedBox(height: 2),
+        Text(
+          'The hub could not tell the push door its key, so the door goes by the old one. Update the hub (sudo '
+          'hubctl update).',
+          key: const ValueKey('door-not-told'),
+          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
+        ),
+      ],
+      if (endpoint != null)
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'GloriaFood sends to $endpoint',
+                key: const ValueKey('way-in-endpoint'),
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+            IconButton(
+              key: const ValueKey('way-in-copy'),
+              tooltip: 'Copy the address',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              iconSize: 18,
+              onPressed: () => Clipboard.setData(ClipboardData(text: endpoint)),
+              icon: const Icon(Icons.copy_outlined),
+            ),
+          ],
+        ),
+    ];
   }
 
   /// What a try or a change came to, under the buttons it belongs to.
@@ -559,7 +738,14 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
 /// a key, a wrong id) shows here with everything typed still in the boxes. Pops with how the keys stand
 /// once the hub took it.
 class HubKeyDialog extends StatefulWidget {
-  const HubKeyDialog({super.key, required this.api, required this.token, required this.was, required this.info});
+  const HubKeyDialog({
+    super.key,
+    required this.api,
+    required this.token,
+    required this.was,
+    required this.info,
+    this.makeKey = makePushKey,
+  });
 
   final PosApi api;
   final String token;
@@ -567,6 +753,9 @@ class HubKeyDialog extends StatefulWidget {
   /// The key as it stands: Apple's ids start from the ones in force.
   final HubKey was;
   final HubKeyInfo info;
+
+  /// Makes a key for GloriaFood's pushes: that one key is the restaurant's own to make.
+  final String Function() makeKey;
 
   @override
   State<HubKeyDialog> createState() => _HubKeyDialogState();
@@ -579,9 +768,28 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
   late final _bundleId = TextEditingController(text: widget.was.shown['bundle_id'] ?? '');
   bool _hidden = true;
   bool _busy = false;
+  bool _made = false; // the key in the box was made here, and is still to be copied
+  bool _copied = false;
   String? _message;
 
   bool get _apple => widget.was.name == 'push_apple';
+  bool get _push => widget.was.name == 'online_push';
+  bool get _tunnel => widget.was.name == 'online_tunnel';
+
+  void _make() {
+    setState(() {
+      _key.text = widget.makeKey();
+      _hidden = false;
+      _made = true;
+      _copied = false;
+      _message = null;
+    });
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: _key.text.trim()));
+    if (mounted) setState(() => _copied = true);
+  }
 
   @override
   void dispose() {
@@ -595,7 +803,15 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
   Future<void> _save() async {
     final key = _key.text.trim();
     if (key.isEmpty) {
-      setState(() => _message = _apple ? 'Paste the text of the .p8 file first.' : 'Type or paste the key first.');
+      setState(
+        () => _message = _apple
+            ? 'Paste the text of the .p8 file first.'
+            : _tunnel
+            ? 'Paste the token, or the command Cloudflare shows, first.'
+            : _push
+            ? 'Paste the key, or press Make one, first.'
+            : 'Type or paste the key first.',
+      );
       return;
     }
     if (_apple && (_keyId.text.trim().isEmpty || _teamId.text.trim().isEmpty)) {
@@ -642,7 +858,7 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
             children: [
               Text(widget.info.where, key: const ValueKey('key-where'), style: quiet),
               const SizedBox(height: 10),
-              if (_apple)
+              if (_apple || _tunnel)
                 TextField(
                   key: const ValueKey('key-field'),
                   controller: _key,
@@ -652,12 +868,14 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                   minLines: 3,
                   maxLines: 5,
                   style: theme.textTheme.bodySmall,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     isDense: true,
-                    border: OutlineInputBorder(),
-                    labelText: 'The text of the .p8 file',
+                    border: const OutlineInputBorder(),
+                    labelText: _tunnel ? "The token, or Cloudflare's command" : 'The text of the .p8 file',
                     alignLabelWithHint: true,
-                    helperText: 'Open the file in a text editor, copy all of it, and paste it here',
+                    helperText: _tunnel
+                        ? 'The token is one very long word that starts with eyJ'
+                        : 'Open the file in a text editor, copy all of it, and paste it here',
                     helperMaxLines: 3,
                   ),
                 )
@@ -667,6 +885,11 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                   controller: _key,
                   autofocus: true,
                   obscureText: _hidden,
+                  // a key that is shown is shown whole, over as many lines as it takes: one made here has to be
+                  // read or copied before it is saved
+                  minLines: 1,
+                  maxLines: _hidden ? 1 : 6,
+                  textInputAction: TextInputAction.done,
                   autocorrect: false,
                   enableSuggestions: false,
                   onSubmitted: (_) => _busy ? null : _save(),
@@ -681,6 +904,33 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                     ),
                   ),
                 ),
+              if (_push) ...[
+                Wrap(
+                  spacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    TextButton.icon(
+                      key: const ValueKey('key-make'),
+                      onPressed: _busy ? null : _make,
+                      icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                      label: Text(_made ? 'Make another' : 'Make one'),
+                    ),
+                    if (_made)
+                      TextButton.icon(
+                        key: const ValueKey('key-copy'),
+                        onPressed: _busy ? null : _copy,
+                        icon: Icon(_copied ? Icons.check : Icons.copy_outlined, size: 18),
+                        label: Text(_copied ? 'Copied' : 'Copy'),
+                      ),
+                  ],
+                ),
+                if (_made)
+                  Text(
+                    "Copy it now, for GloriaFood's admin. Once it is saved it is not shown again, to anybody.",
+                    key: const ValueKey('key-made-note'),
+                    style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+              ],
               if (_apple) ...[
                 const SizedBox(height: 10),
                 TextField(
@@ -851,6 +1101,10 @@ class _OnlineAccountDialogState extends State<OnlineAccountDialog> {
                   key: const ValueKey('key-field'),
                   controller: _key,
                   obscureText: _hidden,
+                  // a key that is shown is shown whole, over as many lines as it takes
+                  minLines: 1,
+                  maxLines: _hidden ? 1 : 6,
+                  textInputAction: TextInputAction.done,
                   autocorrect: false,
                   enableSuggestions: false,
                   onSubmitted: (_) => _busy ? null : _save(),
@@ -904,6 +1158,111 @@ class _OnlineAccountDialogState extends State<OnlineAccountDialog> {
           onPressed: _busy ? null : _save,
           child: Text(_adding ? 'Add' : 'Save'),
         ),
+      ],
+    );
+  }
+}
+
+/// Before the way in is tried: the address GloriaFood sends its pushes to, which the hub remembers. The
+/// dialog saves a changed address itself, so that what the hub says of it (not a name on the internet) shows
+/// here with the address still in the box. Pops with how the keys stand, to go on and try.
+class WayInDialog extends StatefulWidget {
+  const WayInDialog({super.key, required this.api, required this.token, required this.keys});
+
+  final PosApi api;
+  final String token;
+  final HubKeys keys;
+
+  @override
+  State<WayInDialog> createState() => _WayInDialogState();
+}
+
+class _WayInDialogState extends State<WayInDialog> {
+  late final _address = TextEditingController(text: widget.keys.wayIn?.address ?? '');
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void dispose() {
+    _address.dispose();
+    super.dispose();
+  }
+
+  Future<void> _try() async {
+    final address = _address.text.trim();
+    if (address == (widget.keys.wayIn?.address ?? '')) {
+      Navigator.of(context).pop(widget.keys);
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final saved = await widget.api.savePushAddress(widget.token, address);
+      if (mounted) Navigator.of(context).pop(saved);
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = _refusal(err);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return AlertDialog(
+      title: const Text('Try the way in'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const ValueKey('way-in-address'),
+                controller: _address,
+                autofocus: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.url,
+                onSubmitted: (_) => _busy ? null : _try(),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Address GloriaFood sends to',
+                  hintText: 'orders.example.com',
+                  helperText:
+                      'The public hostname you gave the tunnel at Cloudflare. Leave it empty to try the push door '
+                      'alone',
+                  helperMaxLines: 3,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'The hub knocks at its own push door, and with an address from outside, the way GloriaFood '
+                'comes. No key is sent anywhere, and nothing goes on the POS.',
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              if (_message != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _message!,
+                    key: const ValueKey('way-in-problem'),
+                    style: TextStyle(color: scheme.error),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(key: const ValueKey('way-in-try'), onPressed: _busy ? null : _try, child: const Text('Try')),
       ],
     );
   }

@@ -59,9 +59,9 @@ services:
       POS_APNS_KEY_ID: ${POS_APNS_KEY_ID:-}
       POS_APNS_TEAM_ID: ${POS_APNS_TEAM_ID:-}
       POS_APNS_BUNDLE_ID: ${POS_APNS_BUNDLE_ID:-org.chinasky.posApp}
-      # The keys below (the map services', GloriaFood's for asking, Apple's) can be typed in the app instead,
-      # by a manager: Location, Keys and connections (docs/hub-keys.md). What is typed there is in force over
-      # what is here, until hubctl is told a key again.
+      # The keys below (the map services', GloriaFood's for asking and for its pushes, the tunnel's token,
+      # Apple's) can be typed in the app instead, by a manager: Location, Keys and connections
+      # (docs/hub-keys.md). What is typed there is in force over what is here, until hubctl is told a key again.
       # The map service a delivery's distance is asked of (docs/delivery.md, "Looking the distance up"):
       # `hubctl maps key` writes the first two. Empty: nothing is looked up and the delivery fee is picked by
       # hand. POS_MAPS_DAILY is the most the hub asks in a day (500 unless set).
@@ -82,12 +82,19 @@ services:
       # The key GloriaFood's own pushes of an order must carry ("Push" in the same guide), written by
       # `hubctl online push key`. Empty: every push is turned away, and the hub only asks.
       POS_GLORIAFOOD_PUSH_KEY: ${POS_GLORIAFOOD_PUSH_KEY:-}
+      # The Cloudflare Tunnel's token ("The way in"), written by `hubctl online tunnel token`. The API does
+      # not use it: it hands the tunnel whichever token is in force, this one or the one typed in the app.
+      POS_TUNNEL_TOKEN: ${POS_TUNNEL_TOKEN:-}
     volumes:
       - ./apns:/apns:ro
       # The secret that opens the keys a manager typed in the app (Location, Keys and connections;
       # docs/hub-keys.md). The keys themselves are in the database, sealed; this is kept apart from it, so a
       # backup of the database opens nothing. A hub with POS_SECRET seals with that instead.
       - pos-keys:/keys
+      # Where the API tells the push door which key a push must carry, and leaves the tunnel its token
+      # (pos.online.wayin). Each of the two is shared with that one service and nothing else.
+      - pos-door:/door
+      - pos-tunnel:/tunnel
     ports:
       - "8000:8000"
     depends_on:
@@ -120,12 +127,12 @@ services:
   door:
     # The push door (pos.online.door; docs/online-orders.md, "The door"): the one thing on the hub that a way
     # in from outside the building may reach. It hands a push that carries the key on to the API and answers
-    # everything else with nothing. Runs only with the profile `push`, which `hubctl online push key` turns
-    # on. On the hub it listens on 127.0.0.1:8090 (`hubctl online push test`, or a tunnel program installed
-    # on the hub itself); POS_DOOR_BIND=0.0.0.0 in /opt/pos/.env opens it to the restaurant's network, for
-    # when the restaurant's own router or proxy is the way in.
+    # everything else with nothing. It runs all the time and is shut until the hub has a key for pushes: the
+    # API tells it of the key in /door (the key's SHA-256, which the door may only read), so a key typed in
+    # the app opens it with no restart. On the hub it listens on 127.0.0.1:8090 (`hubctl online push test`,
+    # or a tunnel program installed on the hub itself); POS_DOOR_BIND=0.0.0.0 in /opt/pos/.env opens it to
+    # the restaurant's network, for when the restaurant's own router or proxy is the way in.
     image: pos-backend:local
-    profiles: ["push", "tunnel"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8090), 2).close()"]
@@ -133,8 +140,11 @@ services:
       timeout: 3s
       retries: 3
     environment:
+      # what the door goes by until the API has told it anything
       POS_GLORIAFOOD_PUSH_KEY: ${POS_GLORIAFOOD_PUSH_KEY:-}
       POS_DOOR_TO: http://api:8000
+    volumes:
+      - pos-door:/door:ro
     command:
       - uvicorn
       - --factory
@@ -157,14 +167,18 @@ services:
     # The way in from outside (docs/online-orders.md, "The way in"): a Cloudflare Tunnel. The hub calls out
     # to Cloudflare and holds the line, and GloriaFood's pushes come down it; nothing is opened on the
     # router. It shares a network with the door and with nothing else of the hub, and what it may reach is
-    # told to Cloudflare by the restaurant: only http://door:8090. Runs only with the profile `tunnel` and the
-    # tunnel's token (POS_TUNNEL_TOKEN), both written by `hubctl online tunnel token`.
-    image: ${POS_TUNNEL_IMAGE:-cloudflare/cloudflared:latest}
-    profiles: ["tunnel"]
+    # told to Cloudflare by the restaurant: only http://door:8090. This is the tunnel's keeper
+    # (pos.online.tunnel): it runs all the time, waits for the token the API leaves it in /tunnel (typed in
+    # the app, or written by `hubctl online tunnel token`), runs Cloudflare's program with it, and says how
+    # the tunnel stands. Cloudflare's program is in the backend image (backend/Dockerfile).
+    image: pos-backend:local
     restart: unless-stopped
-    environment:
-      TUNNEL_TOKEN: ${POS_TUNNEL_TOKEN:-}
-    command: ["tunnel", "--no-autoupdate", "run"]
+    healthcheck:
+      disable: true # the image's check asks the API, which this container does not run
+    volumes:
+      - pos-tunnel:/tunnel
+    command: ["python", "-m", "pos.online.tunnel"]
+    stop_grace_period: 15s
     networks: [door]
     depends_on:
       - door
@@ -176,3 +190,5 @@ networks:
 volumes:
   pos-db:
   pos-keys:
+  pos-door:
+  pos-tunnel:
