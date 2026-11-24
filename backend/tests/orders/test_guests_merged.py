@@ -29,7 +29,7 @@ from .test_guest_tags import (
     the_list,
     wait,
 )
-from .test_guests import GTC, LINDA, OMAR, guests
+from .test_guests import GTC, LINDA, OMAR
 
 
 def merge(h: Hub, emptied: str, onto: str) -> None:
@@ -190,15 +190,16 @@ def test_following_a_merge_writes_which_check_the_party_sits_on_and_nothing_else
     h.ring("t-2", "L1", GTC, h.now - 30_000)
     sat = seat(h, made, "t-1")["booking"]
     waited = seat(h, omar, "t-1", book="waitlist")["party"]
-    figures = (guests(h)["totals"], h.report()["sales"], h.check("t-2"))
+    figures = (h.report()["sales"], h.check("t-2"))
     merge(h, "t-1", "t-2")
     # in the book and on the list: the check, and not the table they first sat down at
     now = the_book(h)["earlier"][0]
     assert now == {**sat, "tags": ["VIP"], "order_id": "t-2"} and now["seated_table"] == "A7"
     listed = next(party for party in the_list(h)["earlier"] if party["id"] == waited["id"])
     assert listed["order_id"] == "t-2" and {**listed, "order_id": "t-1"} == {**waited, "tags": listed["tags"]}
-    # no figure moved, and the kept check carries nothing of either guest; its bill prints none of it
-    assert (guests(h)["totals"], h.report()["sales"], h.check("t-2")) == figures
+    # no sale moved, and the kept check carries nothing of either guest; its bill prints none of it. (What
+    # the guest list makes of the two guests is in test_check_guests.py.)
+    assert (h.report()["sales"], h.check("t-2")) == figures
     for words in (h.c.get("/orders/t-2").text, h.c.get("/orders/t-1").text, str(h.check("t-2"))):
         assert not any(word in words for word in ("Linda", "Omar", "VIP", "Window", LINDA, OMAR))
     printed = h.c.post("/orders/t-2/bill", json={})

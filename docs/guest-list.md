@@ -11,8 +11,10 @@ on the call while it rings, in the reservation book and on the waitlist, and a g
 their reservation or their line of the waitlist as well. Since 24 November 2026 a guest tagged that way
 who has not ordered yet is in the list too, after the others, and a party seated from the book or the
 waitlist is named on the check of its table, on the floor map and in the list of checks, where the search
-finds the check by that name. It grows out of the customers the
-to-go form already remembers by their number (`customers.md`): nothing is typed in for the list itself.
+finds the check by that name. And such a party is a guest of this list: it came in and ordered, so it has
+the visit, and so has every other guest of its check ([Every guest of a check](#every-guest-of-a-check)).
+It grows out of the customers the to-go form already remembers by their number (`customers.md`): nothing
+is typed in for the list itself.
 
 ## Opening it
 
@@ -77,6 +79,66 @@ A tap opens a guest:
   came to and its dishes. **A tap on a visit opens that check's history** (`check-history.md`).
 
 Any number of guests can be open at once.
+
+## Every guest of a check
+
+A check used to have one guest for this list: the phone number typed on it. But a party the host seats
+**from its reservation or from the waitlist** left a number too, and it came in and ordered. And when two
+tables are put together, two tables' guests sit at one check. So a check can have several guests, and the
+list counts them this way:
+
+- **Everybody who came in and ordered has the visit.**
+- **The money of a check counts for one guest: the one who pays.**
+
+Nothing is done for it and nothing is turned on. The host seats the party as always (**Seat**, then the
+table), and the hub notes whose check it is.
+
+**Who is a guest of a check**
+
+- The **number typed on the check**, as always.
+- Every **party seated on it** from the book or the waitlist **that left a phone number**: the party the
+  check was opened for, and any that joined the table. It is listed under the name on the reservation or
+  on the line of the waitlist.
+- When two tables are put together: the guests of **both** tables are guests of the check that is kept.
+  That goes for a number typed on the emptied check too. That check is closed with no dish left on it, so
+  it is nobody's visit any more; its customer is a guest of the joined check.
+- The same number twice at one check is one guest.
+- A party that left **no number** cannot be in this list: a guest here is a phone number. A **walk-in**
+  seated straight from the floor map has no party behind it; type a number on the check, as before.
+
+**The visit**
+
+- It counts once the check has a dish on it, on the day Sales counts the check. A check voided whole is no
+  visit. **Put back** (the party goes back in the book or on the list) takes the visit away again.
+- **Favourite dishes**: every guest of a check is counted the dishes of that check. The POS does not know
+  who at the table ate what.
+- "Orders in all" counts a table a guest was seated at as one more.
+
+**Who pays**
+
+- **A number is typed on the check**: that guest pays, whoever else sits there. This is how it always
+  was, and it is how a server says who pays today.
+- **No number on the check and one guest** (one party seated): that guest pays.
+- **No number and several guests** (two parties at a table, two tables put together): each has the visit,
+  and the money counts for **nobody** until somebody types the payer's number on the check.
+- A visit that somebody else paid is in the guest's **Latest visits** at $0.00: they were there, and it
+  cost them nothing. It counts as a visit for **regular**, **stopped coming** and the day of their last
+  visit, and not in what they spent. "A visit" (what they spend a visit) is reckoned over the visits they
+  paid.
+- At the top of the list, **what all of them spent** counts every check once, never once for each guest.
+
+**What is kept for it, and where**
+
+- **On the hub**, beside the checks: for each seated party that left a number, which check it sits on,
+  under which name and number, and since when. **Nothing is written onto the check itself**: no name and
+  no number. So no bill, no kitchen ticket, no sale and no report other than this list changes.
+- **For 400 days**: the year this list reads and a month to spare. The reservation book forgets a name
+  and number 30 days after the day, and the waitlist the night after. This list reads a year, so what it
+  counts a seated party's visit from is kept that long, and then let go.
+- It is read by this list alone, behind the manager's PIN. The check, the floor map and the list of
+  checks are still told no number, and nothing sends it out of the hub.
+- **From the update on.** The tables seated today and yesterday when the hub is updated count; a party
+  seated before that does not.
 
 ## Tags and the note
 
@@ -167,8 +229,9 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
   shows its name and its note, and no tag.
 - **The phone number is not shown, and nothing is written onto the check**: not the name, not the number,
   not the note and no tag. They stay in the book or on the waitlist and are read from there. So the check
-  is what it always was: the same on the bill, in the kitchen, in Sales and in this list, where a table
-  still counts as a visit only when somebody types a number on it.
+  is what it always was: the same on the bill, in the kitchen and in Sales. In this list the party is a
+  guest of that check, by what the hub notes beside the check
+  ([Every guest of a check](#every-guest-of-a-check)).
 - **A party that joins a table** (the host taps a seated table and **Join**) has a line of its own under
   the first party, with its own name, tags and note. So it can be read who carries which tag.
 - A check that has a number of its own (typed on it) shows that customer's tags and note first, then the
@@ -232,8 +295,7 @@ carries a tag in this list.
   reads the name and the star, as everybody who opens the check reads its strip. So the advice above
   holds here too: keep a tag to what the staff may read.
 - **Nothing is written onto the check**, as at the table: no name, no number and no tag. So no bill, no
-  kitchen ticket and no figure changes, and a table still counts as a visit in this list only when
-  somebody types a number on its check.
+  kitchen ticket and no figure changes.
 - **The list of checks** (the other half of the Orders screen) says the party's name after the table
   too, "Table A7 · Chen", and its search box finds the check by it. It says no star and no tag
   (`finding-checks.md`, "Whose table it is").
@@ -258,8 +320,9 @@ joined table said nobody. Nothing to turn on, and no app to rebuild: the hub doe
   is what **Seat** wrote there, changed to the check that was kept. The table the party first sat down at
   stays as the book or the list has it ("seated at A7"), as it does when a check is moved to another
   table. **Nothing is written onto any check**: no name, no number, no note and no tag. So no bill, no
-  kitchen ticket, no report and no figure changes, and a table still counts as a visit in this list only
-  when somebody types a number on its check.
+  kitchen ticket and no sale changes.
+- **In this list** the guests of both tables are guests of the check that was kept: each has the visit,
+  and its money counts for the one who pays ([Every guest of a check](#every-guest-of-a-check)).
 - **Tables put together before the hub was updated** are not looked at again: a party whose check was
   merged earlier stays on the emptied check. Put it back and seat it again at the joined table if the
   check should say it. Every merge after the update is followed.
@@ -322,15 +385,16 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 ## Good to know
 
 - **A guest is a phone number that ordered.** Calls, to-go and delivery orders carry one; a table has one
-  only when someone typed it on the check. A table with no number is not in the list, so the list is not
-  all of the sales: the line "They spent" is the sales of the checks that carry a number. Numbers match by
-  their digits, and one of fewer than seven digits is nobody's.
+  when someone typed it on the check, or when its party was seated from the book or the waitlist and left
+  one ([Every guest of a check](#every-guest-of-a-check)). A table with neither is not in the list, so the
+  list is not all of the sales: the line "They spent" is the sales of the checks that have a guest who
+  pays. Numbers match by their digits, and one of fewer than seven digits is nobody's.
 - **A visit** is an order with at least one dish on it. It counts on the day Sales counts it on: the day it
   was opened, or the day it is for when that is later, and only once that day has come (an order placed
   today for Saturday is not a visit yet). A check voided whole is no visit; a dish voided or taken off is
   not among the favourites.
-- **What a guest spent** is what their checks came to before tax, charges and tips, less comps and
-  discounts: the net sales of Sales. A table that split its check is still one visit.
+- **What a guest spent** is what the checks they paid came to before tax, charges and tips, less comps
+  and discounts: the net sales of Sales. A table that split its check is still one visit.
 - **Favourite dishes** are counted by how many were sold, under the name the menu gives the dish today. An
   off-menu dish is counted under the name that was typed for it.
 - "Orders in all" can be more than the visits even within the year: it counts every order the number
@@ -350,6 +414,8 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   rebuilt one with a hub that is not updated, show the map as it was.
 - Neither does the name in the list of checks: it is read from the book and the waitlist with the list,
   and is on no check.
+- Counting a seated party as a guest changes this list and nothing else: no order, no check, no bill and
+  no figure of Sales or The day. It needs the hub updated and no app rebuilt.
 - With a hub older than the tags, the list is what it was: it reads, and there is no button to write.
   With a hub older than listing tagged guests with no order, the list holds the guests who ordered, as
   before. A device that is not rebuilt shows that list too, whatever the hub.
@@ -382,8 +448,12 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 - At the table: how many the party was booked as and whether it came from the book or the waitlist (the
   check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
   number on the check and it shows what that number carries); writing or changing the note from the
-  check. Putting the party's number on the check by itself, so that the table counts as their visit in
-  this list, is not done: say so if you want it.
+  check.
+- For the guests of a check: a tap on the check that says who pays (today: type the payer's number on
+  it); sharing a check's money out between its guests; who at the table ate what; points or rewards for a
+  guest (the visits and the money they would be reckoned from are here); counting a party that was seated
+  before the hub was updated, other than today's and yesterday's; a party's visit in what the to-go form
+  says of a caller ("12 orders since Mar 2025" still counts the orders that carry the number).
 - When two tables are put together: going back over the tables put together before the hub was updated;
   changing the table the book says the party was seated at; taking a party along with dishes that are
   moved one by one.
@@ -521,6 +591,30 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   book that cannot be written is logged (no guest is named) and left: the operations were taken. It is
   hub only: the screens read again on the feed as they did. Tests:
   `backend/tests/orders/test_guests_merged.py`.
+- Every guest of a check: `backend/src/pos/check_guests.py` keeps who sat on which check, apart from the
+  number typed on it. `CheckGuest` is `(source, source_id, order_id, phone, name, at_ms)`, one row for
+  each `(source, source_id)`: `reservation` and `waitlist` by the booking's or the party's id, `check` by
+  the id of a check that was merged in (its typed number). `CheckGuests` (memory) and `PgCheckGuests`
+  (table `check_guest`) on `app.state.check_guests`: `put` (noted, or moved when it was noted before;
+  rows older than `KEEP_DAYS = 400` are let go), `drop`, `follow(emptied, kept)`, `on(order_ids)`,
+  `of_phone(phone)`, `since(at_ms)`. It is written in three places, all in
+  `backend/src/pos/api/guests.py`: `note_guest(state, source, row)`, which the `done` of
+  `api/reservations.py` and of `api/waitlist.py` call after every change (seated on a check with a number
+  of seven digits or more: `put`; anything else: `drop`); `note_seated(state)`, once when the hub starts
+  (every party `seated()` of today and yesterday); and `follow_merges`, which moves the rows of the
+  emptied check and notes its typed number as a `check` guest of the kept one. A failure there is logged
+  with no guest named and never stops the host's change or the merge.
+- Reckoning (`backend/src/pos/orders/guests.py`): `check_of` is `visit_of` for a check with or without a
+  number (`phone` empty without), remembered in `CheckMemo`; `shared_out(typed, checks, seated)` hands
+  every guest of a check the visit, a number once, the typed number first and the others as they sat, and
+  marks one of them `paid` (`payer_of`: the typed number; else the only guest; else nobody). `Visit.paid`
+  and `Visit.seated` are new; a visit of an order nobody was seated on comes out the same object, so a
+  list with no seated guest is the list it was. `spent` adds the paid visits, `per_visit` is over them
+  (`paid` in each row and in `totals` says how many), `orders_ever` adds the seated visits to the orders
+  that carry the number. `GET /reports/guests` reads `check_guests.since(...)` and the index rows of
+  those checks in one call (`store.entries(order_ids)`, new on both stores); `GET /reports/guests/{phone}`
+  reads `of_phone` and then everybody `on` those checks. Each `latest` visit says `paid`, and `net` is
+  "0.00" when somebody else paid. Tests: `backend/tests/orders/test_check_guests.py`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while

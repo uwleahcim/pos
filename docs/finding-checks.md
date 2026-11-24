@@ -60,8 +60,8 @@ November 2026. Nothing to turn on.
   says the tags and the note (`guest-list.md`, "At the table"). Everybody who is signed in and sees the
   list reads the name, as they read it on the floor map.
 - **Nothing is written onto the check.** The name is read from the book and the waitlist each time the
-  list is read. No bill, no kitchen ticket, no report and no figure changes, and a table still counts as a
-  visit in the guest list only when somebody types a number on its check.
+  list is read. No bill, no kitchen ticket and no sale changes. (In the guest list a seated party that
+  left a number counts as a guest of its check: `guest-list.md`, "Every guest of a check".)
 - A device that is not rebuilt shows the list as it was. A rebuilt device with a hub that is not updated
   does too.
 

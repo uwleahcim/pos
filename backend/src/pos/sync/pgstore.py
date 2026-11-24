@@ -291,6 +291,23 @@ class PgOpStore:
         except (errors.UndefinedTable, errors.UndefinedColumn):
             return [entry for entry in self.index() if entry.phone]
 
+    def entries(self, order_ids: Iterable[str]) -> list[OrderEntry]:
+        """The index's rows for these orders, by order id (in one query); one the log has never heard of
+        is left out."""
+        wanted = sorted(set(order_ids))
+        if not wanted:
+            return []
+        try:
+            with self._pool.connection() as conn:
+                rows = conn.execute(
+                    f"SELECT {_ENTRY} FROM orders WHERE order_id = ANY(%s) ORDER BY order_id", (wanted,)
+                )
+                return [OrderEntry(*row) for row in rows]
+        except (errors.UndefinedTable, errors.UndefinedColumn):
+            if self._ensure_index():
+                return self.entries(wanted)
+            return self._scan(wanted)
+
     def views(self, entries: Sequence[OrderEntry]) -> list[OrderState]:
         """The orders of these index rows, in the same order, each replayed only if it changed since it was
         last read (the changed ones in one query). Shared: read them, never change them."""

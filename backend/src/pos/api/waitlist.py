@@ -42,6 +42,7 @@ from ..floor import FloorPlan
 from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..waitlist import Party, ReadOnlyError, Refused, Waitlist
+from .guests import note_guest
 
 
 class WhoIn(BaseModel):
@@ -102,6 +103,7 @@ def add_waitlist(app: FastAPI) -> None:
             raise refused(err) from err
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        note_guest(app.state, "waitlist", party)  # seated with a number: a guest of that check, for the guest list
         app.state.feed.changed("waitlist")
         return tagged({**waitlist().tonight(), "party": party.as_json()})
 

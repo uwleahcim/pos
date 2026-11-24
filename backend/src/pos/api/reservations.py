@@ -47,6 +47,7 @@ from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..reservations import Booking, ReadOnlyError, Refused, Reservations, day_of
 from ..sync.oplog import phone_digits
+from .guests import note_guest
 
 
 class WhoIn(BaseModel):
@@ -126,6 +127,7 @@ def add_reservations(app: FastAPI) -> None:
             raise refused(err) from err
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        note_guest(app.state, "reservation", booking)  # seated with a number: a guest of that check, for the guest list
         app.state.feed.changed("reservations")
         return tagged(book().book(booking.day, changed=booking))
 

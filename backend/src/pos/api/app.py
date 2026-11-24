@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
+from ..check_guests import CheckGuests, default_check_guests
 from ..customers import (
     NOTE_MAX,
     SHORTEST,
@@ -874,6 +875,7 @@ def create_app(
     feed: ChangeFeed | None = None,
     customers: CustomerNotes | None = None,
     guest_tags: GuestTags | None = None,
+    check_guests: CheckGuests | None = None,
     clock: TimeClock | None = None,
     notes: ShiftNotes | None = None,
     waste: WasteLog | None = None,
@@ -968,6 +970,8 @@ def create_app(
     app.state.customers = customers if customers is not None else default_notes()
     # The tags a manager puts on a guest, by phone number too (docs/guest-list.md).
     app.state.guest_tags = guest_tags if guest_tags is not None else default_guest_tags()
+    # Who sat on which check, by phone number: what the guest list counts a seated party's visit from.
+    app.state.check_guests = check_guests if check_guests is not None else default_check_guests()
     # Desk phones: the links are the manager's setting, read when a phone answers; the watcher needs POS_AMI_HOST.
     app.state.answered = (
         answered

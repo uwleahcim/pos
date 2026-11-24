@@ -15,9 +15,15 @@ How it is counted:
 - A visit is an order with at least one dish on it that carries the number. It counts on the day the sales
   count it on (the day it was opened, or the day it is for when that is later), and only once that day has
   come. An order voided whole is no visit, and a dish voided or taken off is not in it.
-- `spent` is the net sales of their visits: every dish at the price it was sold at, less comps and
+- A check can have more guests than the number typed on it: every party the host seated on it from its
+  reservation or the waitlist that left a number, and the number of a check that was merged into it
+  (`pos.check_guests`). Each of them has the visit, a number once (`shared_out`): they came in and ordered.
+- The money of a check is one guest's, the one who pays (`payer_of`): the number typed on the check; on a
+  check with no number, its only guest. A check with several guests and no number is nobody's money until
+  a number is typed on it. A visit that somebody else paid is `paid` false, and counts as a visit.
+- `spent` is the net sales of the visits they paid: every dish at the price it was sold at, less comps and
   discounts, before tax, charges and gratuity. Added up over every guest it is the net sales of the checks
-  that carry a number.
+  that have a guest who pays, each check once.
 - Favourite dishes are counted by how many were sold, a dish by its code while the menu has it (called what
   the menu calls it today), an off-menu dish by the name typed for it.
 - `since_ms` and `orders_ever` are of every order the number ever placed, not only the year's: what the
@@ -39,13 +45,14 @@ once after the hub starts and from memory after that.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, timedelta
 from decimal import Decimal
 from sys import intern
 from typing import Any, NamedTuple
 
 from .. import localtime
+from ..check_guests import CheckGuest
 from ..customers import NOTE_MAX, SHORTEST
 from ..guest_tags import TAG_MAX, TAGS_MOST, offered
 from ..menu.defs import Definitions
@@ -80,12 +87,28 @@ class Visit(NamedTuple):
     name: str  # the customer's name on the order
     kind: str
     dishes: tuple[tuple[str | None, str, int], ...]  # code (None for a name that was typed), name, how many
+    paid: bool = True  # the check's money is this guest's; false for a guest of a check somebody else pays
+    seated: bool = False  # a guest the host seated on the check (`pos.check_guests`), not the number typed on it
 
 
 def visit_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one: Any = _same) -> Visit | None:
     """This order as a visit, or None when it is none: no number on it, voided whole, or no dish on it."""
     phone = phone_digits(state.fields.get("phone"))
-    if len(phone) < SHORTEST or state.first is None:
+    if len(phone) < SHORTEST:
+        return None
+    return _visit(state, taxes, rules, one, phone)
+
+
+def check_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one: Any = _same) -> Visit | None:
+    """This order as the visit of whoever sat on it, whether or not a number is typed on it: what `visit_of`
+    makes of it, with `phone` the number on the check or empty. None for an order voided whole or with no
+    dish on it."""
+    phone = phone_digits(state.fields.get("phone"))
+    return _visit(state, taxes, rules, one, phone if len(phone) >= SHORTEST else "")
+
+
+def _visit(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one: Any, phone: str) -> Visit | None:
+    if state.first is None:
         return None
     sale = sale_of(state, taxes, rules)
     if sale is None or sale.void or not sale.lines:
@@ -115,21 +138,75 @@ class VisitMemo(OrderMemo):
         super().__init__(visit_of, keep, at_once)
 
 
+class CheckMemo(OrderMemo):
+    """Each check that somebody was seated on, as a `Visit` (`check_of`), remembered the same way: 40,000
+    checks, more than a year of seated parties, some 20 MB at the very most."""
+
+    def __init__(self, keep: int = 40_000, at_once: int = 500) -> None:
+        super().__init__(check_of, keep, at_once)
+
+
+def payer_of(typed: str, guests: Sequence[str]) -> str:
+    """Which guest of a check pays, so that its money counts for one guest and for no more: the number
+    `typed` on the check; with none typed, the only one of its `guests`; with several guests and no
+    number, nobody yet (empty)."""
+    if typed:
+        return typed
+    return guests[0] if len(guests) == 1 else ""
+
+
+def shared_out(typed: Iterable[Visit], checks: Iterable[Visit], seated: Iterable[CheckGuest]) -> Iterator[Visit]:
+    """The visits as the guest list counts them, with the guests the hub knows sat on a check
+    (`pos.check_guests`) counted beside the number typed on it. `typed` are the visits of the orders that
+    carry a number (`visit_of`), `checks` the checks somebody sat on (`check_of`), `seated` who sat on them.
+
+    Every guest of a check has the visit, a number once: the number on the check first, then the others in
+    the order they sat down. The money is the one's who pays (`payer_of`); for everybody else the visit is
+    `paid` false. A visit of an order nobody was seated on comes out as it went in, so a list with no
+    seated guest is the list it always was."""
+    by_check: dict[str, list[CheckGuest]] = {}
+    for guest in sorted(seated, key=lambda guest: (guest.at_ms, guest.source, guest.source_id)):
+        by_check.setdefault(guest.order_id, []).append(guest)
+    seen: set[str] = set()
+    for visit in typed:
+        seen.add(visit.order_id)
+        others = by_check.get(visit.order_id)
+        if others:
+            yield from _guests_of(visit, others)
+        else:
+            yield visit
+    for check in checks:
+        others = by_check.get(check.order_id)
+        if others and check.order_id not in seen:
+            seen.add(check.order_id)
+            yield from _guests_of(check, others)
+
+
+def _guests_of(check: Visit, seated: Sequence[CheckGuest]) -> Iterator[Visit]:
+    names: dict[str, str] = {check.phone: check.name} if check.phone else {}
+    for guest in seated:
+        names.setdefault(guest.phone, intern(guest.name))
+    payer = payer_of(check.phone, list(names))
+    for phone, name in names.items():
+        yield check._replace(phone=phone, name=name, paid=phone == payer, seated=phone != check.phone)
+
+
 def window(now_ms: int) -> tuple[date, date]:
     """The days the list reads: the `LOOK_BACK_DAYS` days of service that end with the one running."""
     today = localtime.service_day_of(now_ms)
     return today - timedelta(days=LOOK_BACK_DAYS - 1), today
 
 
-def in_window(entries: Iterable[OrderEntry], first: date) -> list[OrderEntry]:
+def in_window(entries: Iterable[OrderEntry], first: date, *, numbered: bool = True) -> list[OrderEntry]:
     """Of the orders that carry a number, the ones that can count on a day from `first` on: opened since
-    then, or wanted for a time since then. Voided ones apart."""
+    then, or wanted for a time since then. Voided ones apart. With `numbered` false the orders are checks
+    somebody was seated on, which need no number of their own."""
     since = localtime.service_day(first)[0]
     return [
         entry
         for entry in entries
         if entry.status != "void"
-        and len(entry.phone) >= SHORTEST
+        and (not numbered or len(entry.phone) >= SHORTEST)
         and entry.first_ms is not None
         and (entry.first_ms >= since or (entry.promised_ms is not None and entry.promised_ms >= since))
     ]
@@ -139,11 +216,14 @@ class _Guest:
     def __init__(self) -> None:
         self.visits: list[Visit] = []
         self.spent = ZERO
+        self.paid = 0  # how many of the visits they paid
         self.dishes: dict[tuple[str | None, str], int] = {}
 
     def add(self, visit: Visit) -> None:
         self.visits.append(visit)
-        self.spent += visit.net
+        if visit.paid:
+            self.spent += visit.net
+            self.paid += 1
         for item, name, qty in visit.dishes:
             self.dishes[(item, name)] = self.dishes.get((item, name), 0) + qty
 
@@ -195,11 +275,13 @@ def _row(
         "tags": list(tags),
         "visits": len(visits),
         "spent": str(guest.spent),
-        "per_visit": _each(guest.spent, len(visits)),
+        "per_visit": _each(guest.spent, guest.paid),
+        "paid": guest.paid,
         "last": last.isoformat(),
         "first": visits[-1].day.isoformat(),
         "since_ms": since_ms,
-        "orders_ever": max(ever[0] if ever is not None else 0, len(visits)),
+        # every order the number ever placed, and every check they were seated on besides
+        "orders_ever": max((ever[0] if ever is not None else 0) + sum(1 for v in visits if v.seated), len(visits)),
         "lately": lately,
         "regular": lately >= REGULAR_VISITS and not lapsed,
         "lapsed": lapsed,
@@ -219,6 +301,7 @@ def _tagged_row(phone: str, name: str, ever: tuple[int, int] | None, note: str, 
         "visits": 0,
         "spent": str(ZERO),
         "per_visit": None,
+        "paid": 0,
         "last": None,
         "first": None,
         "since_ms": ever[1] if ever is not None else None,
@@ -292,6 +375,7 @@ def guests_report(
     rows.sort(key=lambda row: (-Decimal(row["spent"]), -row["visits"], row["name"].lower(), row["phone"]))
     spent = sum((Decimal(row["spent"]) for row in rows), ZERO)
     count = sum(row["visits"] for row in rows)
+    paid = sum(row["paid"] for row in rows)
     listed = {row["phone"] for row in rows}
     others = [
         _tagged_row(phone, called.get(phone, ""), ever.get(phone), notes.get(phone, ""), words)
@@ -308,7 +392,8 @@ def guests_report(
             "guests": len(rows),
             "visits": count,
             "spent": str(spent.quantize(CENT)),
-            "per_visit": _each(spent, count),
+            "per_visit": _each(spent, paid),
+            "paid": paid,
             "regulars": sum(1 for row in rows if row["regular"]),
             "lapsed": sum(1 for row in rows if row["lapsed"]),
             "new": sum(1 for row in rows if row["new"]),
@@ -361,7 +446,9 @@ def guest_report(
                 "day": visit.day.isoformat(),
                 "opened_ms": visit.opened_ms,
                 "kind": visit.kind,
-                "net": str(visit.net),
+                # what the visit counts for in their `spent`: nothing when another guest of the check pays
+                "net": str(visit.net if visit.paid else ZERO),
+                "paid": visit.paid,
                 "dishes": _favourites({(item, name): qty for item, name, qty in visit.dishes}, defs, len(visit.dishes)),
             }
             for visit in latest[:LATEST]

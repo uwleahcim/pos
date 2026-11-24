@@ -51,6 +51,11 @@
 - Two tables put together: the parties seated on the check that was emptied sit on the check that was
   kept from then on (`follow_merges` below, called when the hub takes the merge's operations), so all of
   the above say them on that check.
+- Every guest of a check counts in the list, not only the number typed on it: a party the host seated
+  that left a number, and the number of a check that was merged in. Who sat on which check is noted as it
+  happens (`note_guest`, `note_seated` and `follow_merges` below; kept in `pos.check_guests`), since the
+  book and the waitlist forget long before the year the list reads is over. Each of them has the visit;
+  the check's money is the one's who pays (`pos.orders.guests.shared_out`).
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -69,12 +74,15 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from .. import localtime
+from ..check_guests import CheckGuest, guest_of
+from ..check_guests import ReadOnlyError as GuestsReadOnly
 from ..customers import SHORTEST, clean_note
 from ..customers import ReadOnlyError as NotesReadOnly
 from ..guest_tags import TAG_MAX, TAGS_MOST, clean_name, clean_tags, offered, tags_together
 from ..guest_tags import ReadOnlyError as TagsReadOnly
 from ..identity.tokens import Grant
-from ..orders.guests import VisitMemo, guest_report, guests_report, in_window, window
+from ..orders.guests import CheckMemo, VisitMemo, guest_report, guests_report, in_window, shared_out, window
 from ..sync.oplog import phone_digits
 from .auth import holder_from
 
@@ -122,6 +130,7 @@ def follow_merges(state: Any, ops: Iterable[Any]) -> list[str]:
             kept = kept_check(state.store, emptied)
             if kept is None:
                 continue
+            _guests_follow(state, emptied, kept)
             for topic, book in (("reservations", state.reservations), ("waitlist", state.waitlist)):
                 if book.follow(emptied, kept) and topic not in told:
                     told.append(topic)
@@ -130,6 +139,56 @@ def follow_merges(state: Any, ops: Iterable[Any]) -> list[str]:
     for topic in told:
         state.feed.changed(topic)
     return told
+
+
+def _guests_follow(state: Any, emptied: str, kept: str) -> None:
+    """The guests noted on a merged check are guests of the check that was kept, for the guest list: the
+    parties seated on it, and the customer whose number is typed on it. That number stays on the emptied
+    check, which has no dish left and so is nobody's visit any more; here it is noted as a guest of the
+    kept check, from when the emptied one was opened. Nothing is written on either check."""
+    try:
+        state.check_guests.follow(emptied, kept)
+        view = state.store.view(emptied)
+        phone = phone_digits(view.fields.get("phone")) if view is not None else ""
+        if view is not None and len(phone) >= SHORTEST:
+            at_ms = view.first.wall_ms if view.first is not None else state.store.now_ms()
+            state.check_guests.put(guest_of("check", emptied, kept, phone, view.fields.get("customer_name"), at_ms))
+    except GuestsReadOnly:
+        pass  # a standby hub takes no operations of its own; the primary noted it
+    except Exception:  # noqa: BLE001 - the operations were taken, and the parties are still to be moved
+        _log.exception("the guests of a merged check were not noted on the check that was kept")
+
+
+def note_guest(state: Any, source: str, row: Any) -> None:
+    """A reservation (`source` "reservation") or a party of the waitlist ("waitlist") was changed: the note
+    of who sat on which check (`pos.check_guests`) is brought in step with it. Seated on a check with a
+    number left: a guest of that check, under the name and the number written there. Anything else (put
+    back, no number, not seated): no guest of any. It is called after every change the host stand makes, so
+    the note cannot fall behind the book. It must not stop that change: a failure is logged, without the
+    guest's name, and left."""
+    try:
+        source_id = str(row.booking_id if source == "reservation" else row.party_id)
+        phone = phone_digits(row.phone)
+        if row.seated_ms is not None and row.order_id and len(phone) >= SHORTEST:
+            state.check_guests.put(guest_of(source, source_id, row.order_id, phone, row.name, row.seated_ms))
+        else:
+            state.check_guests.drop(source, source_id)
+    except GuestsReadOnly:
+        pass  # a standby hub: the primary noted it, and this database is its copy
+    except Exception:  # noqa: BLE001 - the host's change was made: the note of it is left
+        _log.exception("a guest of a check was not noted")
+
+
+def note_seated(state: Any) -> None:
+    """Every party that sits on a check is noted as its guest: what a hub does when it starts, so the tables
+    seated before it was updated count in the guest list too. Today's and yesterday's parties, as the book
+    and the waitlist hand them out."""
+    for source, book in (("reservation", state.reservations), ("waitlist", state.waitlist)):
+        try:
+            for row in book.seated():
+                note_guest(state, source, row)
+        except Exception:  # noqa: BLE001 - a book that cannot be read now is read at the next seating
+            _log.exception("the seated parties were not noted as guests of their checks")
 
 
 def seated_by_check(state: Any, order_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
@@ -183,6 +242,9 @@ class GuestIn(BaseModel):
 def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
     memo = memo if memo is not None else VisitMemo()
     app.state.visit_memo = memo
+    checks = CheckMemo()
+    app.state.check_memo = checks
+    note_seated(app.state)
 
     def manager(authorization: str | None) -> Grant:
         return holder_from(app.state, authorization, "guests")
@@ -193,6 +255,19 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         picked = in_window(entries, window(now_ms)[0])
         return memo.each(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing)
 
+    def sat_on(seated: list[CheckGuest], now_ms: int) -> Any:
+        """The checks these guests sat on, each as a visit, among the ones that can count in that year."""
+        store = app.state.store
+        picked = in_window(store.entries({guest.order_id for guest in seated}), window(now_ms)[0], numbered=False)
+        return checks.each(picked, store.views, taxes=app.state.taxes, rules=app.state.pricing)
+
+    def everybody(entries: list[Any], seated: list[CheckGuest], now_ms: int) -> Any:
+        """The visits of the orders that carry a number and of the guests who sat on a check, each guest of
+        a check with the visit and the one who pays with its money."""
+        if not seated:
+            return visits_of(entries, now_ms)
+        return shared_out(visits_of(entries, now_ms), sat_on(seated, now_ms), seated)
+
     @app.get("/reports/guests")
     def read_guests(authorization: str | None = Header(None)) -> dict[str, Any]:
         """Every customer who ordered with a phone number in the last year: how often, what they spent,
@@ -201,8 +276,10 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         store = app.state.store
         now_ms = store.now_ms()
         entries = store.with_phone()
+        # who sat down on a check since the year began (a check opened the day before can count in it)
+        began = localtime.service_day(window(now_ms)[0])[0] - 2 * 24 * 60 * 60 * 1000
         return guests_report(
-            visits_of(entries, now_ms),
+            everybody(entries, app.state.check_guests.since(began), now_ms),
             entries,
             app.state.customers.all(),
             defs=app.state.menu.defs,
@@ -243,9 +320,12 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         digits = phone_digits(phone)
         entries = store.index(phone=digits) if digits else []
         kept_tags = app.state.guest_tags
+        # the checks this number sat on, with everybody else who sat on them: who pays depends on them
+        mine = app.state.check_guests.of_phone(digits) if digits else []
+        seated = app.state.check_guests.on({guest.order_id for guest in mine}) if mine else []
         report = guest_report(
             digits,
-            visits_of(entries, now_ms),
+            everybody(entries, seated, now_ms),
             entries,
             app.state.customers.get(digits) if digits else None,
             defs=app.state.menu.defs,
