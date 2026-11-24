@@ -20,6 +20,12 @@
   (`waiting`), and the ones a person should look at (`look`), each by GloriaFood's number (`id`), with its
   `kind`, `state`, how it came (`via`), the POS order it became (`order_id`) and what there is to say of it
   (`said`). Nothing of a customer is in it, and no key.
+  A restaurant with several accounts at GloriaFood (`pos.online.accounts`) is told of each in `accounts`:
+  its `id`, the `name` the restaurant gave it, whether it is the one for testing (`test`), whether the hub
+  asks it (`configured`), when it was last asked and last answered and why it did not, and how many of
+  today's orders it brought (`came`). `asked_ms`, `answered_ms` and `last_failure` beside them are of all
+  the accounts together. A `look` row says its account (`account`, and `store`: its name; `test`), and so
+  does a `not_answering` trouble where there are several.
   `look` rows also say since when they are as they are (`at_ms`) and whether that is after somebody last
   looked (`new`; never for one that is still being tried, nor for a push that could not be read on a hub
   that also asks); `news` counts those, and `seen_ms` is when somebody last looked. `trouble` lists what is
@@ -31,8 +37,10 @@
   screen's operations it takes no token: it changes no order, no money and no setting anybody chose. 503
   `read_only` on a hub that cannot write.
 - `POST /online/fetch`: asks GloriaFood now, as the hub does every minute by itself, and answers with what
-  that round did (`asked`, `came`, `known`: here already, `placed`, `booked`, `kept`, `failed`), whether GloriaFood
-  `answered` and the `reason` it did not, and the `status` after it. It is the button **Ask now** on the
+  that round did (`asked`, `came`, `known`: here already, `placed`, `booked`, `kept`, `failed`), whether
+  GloriaFood `answered` (every account, where there are several: `accounts` then says each, with its
+  `answered`, `reason` and how many orders `came`) and the `reason` it did not, and the `status` after it.
+  It is the button **Ask now** on the
   Online orders screen and `hubctl online fetch`. GloriaFood is not asked again within fifteen seconds of
   the last asking (`pos.online.service.ASK_GAP_MS`): then nothing is done and `soon` is true. Like the
   screens' other calls here it takes no token: it does what the hub's own minute does, no oftener than
@@ -61,7 +69,7 @@ from starlette.concurrency import run_in_threadpool
 from ..online.book import BY as BOOKED_BY
 from ..online.book import RESERVATION_TYPES, Booked, wanted
 from ..online.door import body_of
-from ..online.gloriafood import NAME, pushed
+from ..online.gloriafood import NAME, pushed_by
 from ..online.inbox import Arrival
 from ..online.place import DEVICE, CannotPlace, Placed, ext_id_of, hidden, ops_for, order_id_for
 from ..online.service import SEVERAL, UNREADABLE, OnlineOrders, PushRefused
@@ -94,6 +102,19 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
     online: OnlineOrders = app.state.online
     clock = Clock(DEVICE, lambda: app.state.store.now_ms())
 
+    def origin_of(ext_id: str | None) -> dict[str, Any]:
+        """Which of the restaurant's accounts an order came from, as it was written down with it: the
+        account, its name and that it is the one for testing. Nothing for an order no account is known of."""
+        arrival = online.inbox.get(NAME, ext_id) if ext_id is not None else None
+        account = online.account(arrival.account) if arrival is not None else None
+        if account is None:
+            return {}
+        return {"account": account.id, "store": account.name, "test": account.test}
+
+    def store_of(arrival: Arrival) -> str:
+        name = online.store_of(arrival.account)
+        return f" ({name})" if name else ""
+
     def put(order: Mapping[str, Any]) -> Placed:
         store = app.state.store
         ext_id = ext_id_of(order)
@@ -110,6 +131,7 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             rules=app.state.pricing,
             minutes=app.state.settings.get("quotes").get("minutes"),
             now_ms=store.now_ms(),
+            origin=origin_of(ext_id),
         )
         # Stored and taken off the numbers left as one step, like a screen's order. An online order is
         # never refused for a dish that ran out: it was sold, and somebody accepted it.
@@ -151,12 +173,12 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
     def notice(arrival: Arrival, said: str) -> None:
         """The slip for an order somebody has to look at: one that is not on the POS, or is on it and was
         not sent to the kitchen; and for a booked table that is not in the book, or came after its time."""
-        number = f"Online order {arrival.ext_id}"
+        number = f"Online order {arrival.ext_id}{store_of(arrival)}"
         if arrival.kind == UNREADABLE:
             words = [
                 "ONLINE ORDERS: LOOK",
-                "GloriaFood sent the hub something it could not read. There may be online orders in it that "
-                "are not on the POS.",
+                f"GloriaFood{store_of(arrival)} sent the hub something it could not read. There may be online "
+                "orders in it that are not on the POS.",
                 "Look at GloriaFood's own app and ring in by hand what is missing.",
             ]
         elif arrival.kind == SEVERAL:
@@ -164,20 +186,20 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         elif arrival.kind in RESERVATION_TYPES and arrival.state == "booked":
             words = [
                 "RESERVATION CAME LATE",
-                f"Online reservation {arrival.ext_id}: {said}.",
+                f"Online reservation {arrival.ext_id}{store_of(arrival)}: {said}.",
                 "It is in the book now. See whether the party is here.",
             ]
         elif arrival.kind in RESERVATION_TYPES:
             words = [
                 "NOT IN THE BOOK",
-                f"Online reservation {arrival.ext_id}: {said}.",
+                f"Online reservation {arrival.ext_id}{store_of(arrival)}: {said}.",
                 f"{LOOK} Write it into the book by hand if the table is still to come.",
             ]
         elif arrival.state == "placed":
             state = app.state.store.view(arrival.order_id) if arrival.order_id else None
             order_no = state.fields.get("order_no") if state is not None else None
             if isinstance(order_no, int):
-                number = f"Online order #{order_no} ({arrival.ext_id})"
+                number = f"Online order #{order_no} ({arrival.ext_id}){store_of(arrival)}"
             words = [
                 "NOT SENT TO THE KITCHEN",
                 f"{number}: {said}.",
@@ -212,7 +234,8 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             body = await body_of(request)
             if body is None:
                 return JSONResponse({"error": "too_big"}, 413)
-            done = await run_in_threadpool(online.push, lambda: pushed(body))
+            # each order is put to the account whose key it carries, before that key is dropped
+            done = await run_in_threadpool(online.push, lambda: pushed_by(body, online.whose))
         except PushRefused as err:
             return JSONResponse({"error": PUSH_ERRORS[err.status]}, err.status)
         if done["unwritten"]:
@@ -242,9 +265,10 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
 
     @app.get("/online/orders/{ext_id}")
     def online_order(ext_id: str) -> dict[str, Any]:
-        arrival = online.inbox.get(online.source.name if online.source is not None else NAME, ext_id)
+        arrival = online.inbox.get(online.name, ext_id)
         if arrival is None:
             raise HTTPException(404, {"error": "unknown_order", "message": "No online order with that number."})
         if arrival.raw is None:
             raise HTTPException(410, {"error": "forgotten", "message": "That order is older than the hub keeps."})
-        return {**arrival.about(), "order": hidden(arrival.raw)}
+        store = online.store_of(arrival.account)
+        return {**arrival.about(), **({"store": store} if store else {}), "order": hidden(arrival.raw)}

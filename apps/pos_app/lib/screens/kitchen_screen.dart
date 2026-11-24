@@ -547,6 +547,22 @@ class _TicketCard extends StatelessWidget {
               ],
             ),
           ),
+          // an order from the account for testing: said first and loudest, as the paper prints it
+          if (ticket.test)
+            Container(
+              key: ValueKey('kitchen-test:${ticket.id}'),
+              color: scheme.inverseSurface,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Text(
+                'TEST ORDER · DO NOT MAKE',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: scheme.onInverseSurface,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
           // every station has made its part: what the pass waits to see
           if (pass && !finished && ticket.allMade)
             Container(

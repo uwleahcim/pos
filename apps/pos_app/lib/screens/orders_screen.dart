@@ -2232,32 +2232,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
 /// A row's number in the list of checks, with a small globe on its corner for an order that came from the
 /// website by itself (docs/online-orders.md, "On the screens"): found at a glance, and it takes no room
-/// from the name or the line under it on a phone. Any other order's number is as it was.
-Widget _marked(Widget number, Order order, ColorScheme scheme) => order.online == null
-    ? number
-    : Stack(
-        clipBehavior: Clip.none,
-        children: [
-          number,
-          Positioned(
-            right: -5,
-            bottom: -5,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: scheme.surface, shape: BoxShape.circle),
-              child: Padding(
-                padding: const EdgeInsets.all(1),
-                child: Icon(
-                  Icons.language,
-                  key: ValueKey('online-${order.orderId}'),
-                  size: 16,
-                  color: scheme.onSurfaceVariant,
-                  semanticLabel: fromTheWebsite,
-                ),
-              ),
+/// from the name or the line under it on a phone. Any other order's number is as it was. An order from the
+/// account for testing has its globe white on black, as its tickets print TEST ORDER ("Several accounts").
+Widget _marked(Widget number, Order order, ColorScheme scheme) {
+  final online = order.online;
+  if (online == null) return number;
+  return Stack(
+    clipBehavior: Clip.none,
+    children: [
+      number,
+      Positioned(
+        right: -5,
+        bottom: -5,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: online.test ? scheme.inverseSurface : scheme.surface,
+            shape: BoxShape.circle,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(1),
+            child: Icon(
+              Icons.language,
+              key: ValueKey('online-${order.orderId}'),
+              size: 16,
+              color: online.test ? scheme.onInverseSurface : scheme.onSurfaceVariant,
+              semanticLabel: online.test ? '$testOrder, ${fromWhere(online)}' : fromWhere(online),
             ),
           ),
-        ],
-      );
+        ),
+      ),
+    ],
+  );
+}
 
 /// When a check was opened, for the list a check is looked for in: the time, and the day before it when
 /// that is not today ("19:42", "yesterday 19:42", "14 Nov 19:42").

@@ -121,7 +121,9 @@ ORDER_FIELDS = frozenset(
         "delivery_fee",
         # An order that came from the restaurant's website (pos.online.place): where from, the website's
         # own number for it, how the customer chose to pay and what they were charged, {source, id, type,
-        # payment, total}. Only the hub writes it.
+        # payment, total}; and, of a restaurant with several accounts there, which one brought it, what the
+        # restaurant calls it and that it is the one for testing, {account, store, test}. Only the hub
+        # writes it.
         "online",
     }
 )

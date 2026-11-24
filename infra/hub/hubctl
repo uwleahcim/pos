@@ -397,7 +397,9 @@ case "${1:-status}" in
     ;;
   online)
     # hubctl online key              puts GloriaFood's key for this restaurant on the hub (asked for and not shown, never on the
-    #                                command line), restarts the API; from then on the hub asks GloriaFood for accepted orders every minute
+    #                                command line), restarts the API; from then on the hub asks GloriaFood for accepted orders every minute.
+    #                                It is the first account's key: a second website or a testing account is added in the app
+    #                                (Location, Keys and connections), each with its own key, and `status` lists each
     # hubctl online status           whether the hub has the key, when GloriaFood last answered, today's online orders by what became
     #                                of them, and the ones somebody should look at, each by GloriaFood's own number
     # hubctl online fetch            asks GloriaFood now instead of within the minute
@@ -430,6 +432,7 @@ case "${1:-status}" in
         (if .configured or .push.configured then "online orders: on" else "online orders: off, no key (hubctl online push key, hubctl online key)" end),
         (if .push.configured then "  sent by GloriaFood (push): on; last push " + (.push.pushed_ms | at) + "; the door is " + $door + (if $tunnel != "not set up" then "; the tunnel is " + $tunnel else "" end) else "  sent by GloriaFood (push): off (hubctl online push key)" end),
         (if .configured then "  asked for every minute: " + (if .running then "on" else "NOT RUNNING: hubctl restart" end) + "; last answer " + (.answered_ms | at) else "  asked for every minute: off, no key (hubctl online key)" + (if .push.configured then ". Nothing brings an order whose push is lost" else "" end) end),
+        ((.accounts // []) | if length > 1 then (.[] | "    " + (if .name != "" then .name else "the first account" end) + (if .test then " (for testing)" else "" end) + ": " + (if .configured then "last answer " + (.answered_ms | at) + (if .last_failure then "; TROUBLE at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else "" end) + "; \(.came) today" else "no key (in the app: Location, Keys and connections)" end)) else empty end),
         (if (.configured or .push.configured) and (.writable | not) then "this hub cannot write orders down now (it is the standby), so it takes none" else empty end),
         (if .push.configured and $door != "running" then "TROUBLE: the push door is not running, so no push gets in: hubctl logs door" else empty end),
         (if .last_failure then "TROUBLE asking at " + (.last_failure.at_ms | at) + ": " + .last_failure.reason else empty end),
@@ -438,7 +441,7 @@ case "${1:-status}" in
         "today: \(.today.came) came (\(.today.by_push) sent by GloriaFood, \(.today.by_poll) asked for), \(.today.placed) on the POS, \(.today.booked // 0) tables into the reservation book, \(.today.kept) not for the POS, \(.today.failed) could not be put on; \(.waiting) waiting",
         (if .today.unread > 0 then "  \(.today.unread) of what GloriaFood sent could not be read (below)" else empty end),
         (if (.look | length) > 0 then "to look at:" else empty end),
-        (.look[] | (.kind == "table_reservation" or .kind == "order_ahead") as $table | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .state == "placed" then "on the POS" elif .state == "booked" then "in the reservation book" elif .state == "kept" then (if $table then "not in the reservation book" else "not on the POS" end) elif .kind == "unreadable" then "could not be read" elif $table then "NOT IN THE RESERVATION BOOK" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
+        (.look[] | (.kind == "table_reservation" or .kind == "order_ahead") as $table | "  \(.id)  " + (.fetched_ms | at) + "  " + (if .store then .store + (if .test then " (for testing)" else "" end) + ": " else "" end) + (if .state == "placed" then "on the POS" elif .state == "booked" then "in the reservation book" elif .state == "kept" then (if $table then "not in the reservation book" else "not on the POS" end) elif .kind == "unreadable" then "could not be read" elif $table then "NOT IN THE RESERVATION BOOK" else "NOT ON THE POS" end) + ": " + .said)' || echo "the API is not answering, or is older than online orders (hubctl update)"
     }
     push_try() { # an empty push to an address, with or without the hub's key: prints the answer's number and what it said
       local url=$1 key=${2:-}

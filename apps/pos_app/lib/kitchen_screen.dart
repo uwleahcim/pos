@@ -139,6 +139,8 @@ class KitchenTicket {
     this.course = '',
     this.allergies = const [],
     this.note = '',
+    this.store = '',
+    this.test = false,
     this.alsoAt = const [],
     this.lines = const [],
     this.doneMs,
@@ -160,6 +162,8 @@ class KitchenTicket {
     course: json['course'] as String? ?? '',
     allergies: [for (final told in json['allergies'] as List? ?? const []) told.toString()],
     note: oneLine(json['note']),
+    store: oneLine(json['store']),
+    test: json['test'] == true,
     alsoAt: [for (final station in json['also_at'] as List? ?? const []) station.toString()],
     lines: [
       for (final line in json['lines'] as List? ?? const [])
@@ -192,6 +196,14 @@ class KitchenTicket {
   /// station's ticket with it under CUSTOMER'S NOTE: it may say "no onions in anything".
   final String note;
 
+  /// Which of the restaurant's websites an online order came from, where it has several and named them
+  /// ("Sushi site"); empty otherwise.
+  final String store;
+
+  /// It came from the restaurant's account for testing: the paper heads it TEST ORDER, DO NOT MAKE, and so
+  /// does the screen (docs/online-orders.md, "Several accounts").
+  final bool test;
+
   /// The other stations cooking for the same send.
   final List<String> alsoAt;
   final List<KitchenLine> lines;
@@ -223,6 +235,7 @@ class KitchenTicket {
   /// The smaller line under it: "Amy · 4 guests · Mains", "Phone · ready 18:30".
   String get detail => [
     if (toGo && channel.isNotEmpty) channelLabel(channel),
+    if (toGo && store.isNotEmpty) store,
     if (toGo && promisedMs != null) 'ready ${clockTime(promisedMs!)}',
     if (!toGo && server.isNotEmpty) server,
     if (!toGo && guests != null && guests! > 0) guests == 1 ? '1 guest' : '$guests guests',
@@ -253,6 +266,8 @@ class KitchenTicket {
       course: course,
       allergies: allergies,
       note: note,
+      store: store,
+      test: test,
       alsoAt: alsoAt,
       lines: now,
       doneMs: all ? (doneMs ?? atMs) : null,

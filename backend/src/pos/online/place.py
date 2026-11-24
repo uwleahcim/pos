@@ -18,6 +18,16 @@ number, which GloriaFood and the POS count alike. A dish that cannot be found, o
 will not take, goes on **as written**: under the name and with the choices GloriaFood sent, at the station
 of the dish when the dish is known. Nothing is ever left off an order.
 
+A restaurant with a second website at GloriaFood (`pos.online.accounts`) has its dishes numbered a second
+time there: the same dish has another number on each. So a dish whose number the menu does not have is
+looked for by its name, and taken when exactly one dish on the POS is called that (its menu number, where it
+has one, picks between two of a name). Its size and its choices are then found as above.
+
+**Which account.** `origin` says which of the restaurant's accounts the order came from, in the hub's own
+words: the account, the name the restaurant gave it, and that it is the one for testing. They are kept on
+the order beside GloriaFood's number (`online.account`, `online.store`, `online.test`), for the screens and
+the tickets to say.
+
 **The prices are GloriaFood's.** The customer was shown a price and agreed to it, and the dining room's
 prices can differ from the website's. So every dish carries what it cost online, whatever the POS's menu
 says; the POS's own price is kept beside it when it differs (`priced.online.menu_price`).
@@ -214,10 +224,12 @@ def ops_for(
     rules: PricingRules | None = None,
     minutes: Mapping[str, Any] | None = None,
     now_ms: int,
+    origin: Mapping[str, Any] | None = None,
 ) -> Placed:
     """The operations that put this order on the POS. `stamp` stamps each one, `check_of` reckons a check
     as the hub does, `rules` are the location's own charges, `minutes` its quoted minutes by channel (for an
-    order the customer wants later: how long before its time the kitchen gets it)."""
+    order the customer wants later: how long before its time the kitchen gets it), `origin` which of the
+    restaurant's accounts it came from (`account`, `store`: its name, `test`)."""
     ext_id = ext_id_of(order)
     if ext_id is None:
         raise NotAnOrder("it has no number")
@@ -254,7 +266,7 @@ def ops_for(
         **_times(order, minutes or {}, delivery=delivery, now_ms=now_ms),
         **(_delivery(order, fee) if delivery else {}),
         "note": _note(order, delivery=delivery),
-        "online": _about(order, ext_id, kind, total),
+        "online": {**_about(order, ext_id, kind, total), **_origin(origin or {})},
     }
     locale = str(order.get("client_language") or "")[:2].lower()
     if locale.isalpha() and len(locale) == 2:
@@ -399,6 +411,19 @@ def _about(order: Mapping[str, Any], ext_id: str, kind: str, total: Decimal | No
         about["payment"] = payment
     if total is not None:
         about["total"] = str(total)
+    return about
+
+
+def _origin(origin: Mapping[str, Any]) -> dict[str, Any]:
+    """Which of the restaurant's accounts an order came from, as the order keeps it: nothing that was not
+    said, so an order of a restaurant with one unnamed account reads as it always did."""
+    about: dict[str, Any] = {}
+    if account := _line(origin.get("account"), 12):
+        about["account"] = account
+    if store := _line(origin.get("store"), NAME_MAX):
+        about["store"] = store
+    if origin.get("test") is True:
+        about["test"] = True
     return about
 
 
@@ -600,20 +625,39 @@ def _many(count: int, one: str, many: str) -> str:
 
 
 class _Matcher:
-    """Finds the POS's dish for what GloriaFood sold, by GloriaFood's own ids."""
+    """Finds the POS's dish for what GloriaFood sold, by GloriaFood's own ids, and by its name when the id
+    is one the menu does not have."""
 
     def __init__(self, menu: MenuService) -> None:
         self._menu = menu
         self._defs: Definitions = menu.defs
         self._items: dict[str, Item] = {}
+        self._named: dict[str, list[Item]] = {}
         for item in self._defs.items.values():
             number = item.attrs.get("gloriafood_id")
             if number is not None:
                 self._items.setdefault(str(number), item)
+            if not item.asks_name and (name := _plain(self._defs.localizer.text(item.names, "en"))):
+                self._named.setdefault(name, []).append(item)
 
     def item(self, row: Mapping[str, Any]) -> Item | None:
         number = row.get("type_id")
-        return None if number is None or isinstance(number, bool) else self._items.get(str(number))
+        found = None if number is None or isinstance(number, bool) else self._items.get(str(number))
+        return found if found is not None else self._by_name(row)
+
+    def _by_name(self, row: Mapping[str, Any]) -> Item | None:
+        """The one dish on the POS that is called what GloriaFood calls this one: for a dish sold on another
+        website of the restaurant, which numbers the same dish by itself. Two dishes of a name are told
+        apart by the menu number in front of GloriaFood's name, then by which of them is still sold; when
+        that leaves more than one, none is taken."""
+        told = _line(row.get("name"), 200)
+        named = self._named.get(_plain(told), [])
+        menu_no = split_number(told)[0]
+        if len(named) > 1 and menu_no:
+            named = [item for item in named if menu_no.lower() in (alias.lower() for alias in item.aliases)] or named
+        if len(named) > 1:
+            named = [item for item in named if item.active] or named
+        return named[0] if len(named) == 1 else None
 
     def priced(self, row: Mapping[str, Any], unit: Decimal) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """The dish as the menu on the POS makes it, at the price it was sold for online, and the request a

@@ -315,6 +315,17 @@ def order_note(state: OrderState) -> str:
     return " ".join(note.split()) if isinstance(note, str) else ""
 
 
+def online_store(state: OrderState) -> tuple[str, bool]:
+    """For an order the hub took from one of the restaurant's websites (`pos.online.place`): what the
+    restaurant calls that one, where it gave it a name, and whether it is the account it only tests with.
+    Nothing and no for any other order: only the hub writes `online`."""
+    about = state.fields.get("online")
+    if not isinstance(about, Mapping):
+        return "", False
+    store = about.get("store")
+    return (" ".join(store.split()) if isinstance(store, str) else ""), about.get("test") is True
+
+
 def ticket_for(
     state: OrderState,
     sent: list[Line],
@@ -375,6 +386,8 @@ def ticket_for(
         tab=state.is_tab,
         was_tab=was_tab,
         note=order_note(state),
+        store=online_store(state)[0],
+        test=online_store(state)[1],
     )
 
 
@@ -873,6 +886,8 @@ class PrintService:
             money=self.money(state),
             bag=self.bag(state),
             at=_local(self._now()) or datetime.now(),
+            store=online_store(state)[0],
+            test=online_store(state)[1],
         )
 
     def print_pack(

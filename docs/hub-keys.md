@@ -45,13 +45,23 @@ dashed lines, and paste it into the box. It needs two ids beside it: the **Key I
 digits in the file's name) and the **Team ID** (ten more, under Membership details in the developer
 account). The Bundle ID stays empty unless the app was renamed at Apple.
 
+**Several GloriaFood accounts.** A restaurant with a second website, or an account it only tests with, adds
+each under the GloriaFood card: **Add another GloriaFood account** asks for a name, that account's key and
+whether it is for testing. Each account is then a card of its own ("GloriaFood · Sushi site"), with a pencil
+beside its name for the name and the testing switch, and **Remove** takes a further account away whole, its
+key with it.
+The row under Location counts them ("GloriaFood (2 accounts)") and names the ones without a key. What the
+hub does with several accounts, and what a testing account's orders look like, is in `online-orders.md`,
+"Several accounts".
+
 Trying a map service takes the restaurant's own address (Location › Delivery fee › Restaurant address),
 since that is where the distance starts. A try counts as one question of the day's allowance. Nothing of
 a try is kept.
 
 ## The terminal and the app
 
-Both can set every one of these four keys, and **whichever was used last wins**:
+Both can set every one of these four keys, and **whichever was used last wins**. (A further GloriaFood
+account's key is the exception: it is typed in the app only. `hubctl online key` is the first account's.)
 
 - A key typed in the app is used in place of the one in the hub's own file (`/opt/pos/.env`).
 - A key put on with `hubctl` (or taken off with `hubctl ... forget`) clears what the app typed for that key,
@@ -100,13 +110,21 @@ A standby that cannot write takes no typed key: the app then types it on the hub
 
 ## The calls
 
-All three are a manager's or an owner's (the token from `POST /admin/session`); no setting hands them out.
+All of them are a manager's or an owner's (the token from `POST /admin/session`); no setting hands them out.
 
 | Call | What it does |
 | --- | --- |
 | `GET /hub/keys` | `keys`: each with `name` (`maps`, `maps_google`, `online`, `push_apple`), `set`, `source` (`app`, `hub` or null), `ending`, `shown` (Apple's ids), `by`, `at_ms`, `removed`, `unreadable`. And `kept`: false on a hub with nowhere to keep its sealing secret. Never a key |
 | `PUT /hub/keys/{name}` | `{"key": "..."}`; for Apple's also `key_id`, `team_id` and, when not the usual one, `bundle_id`. Checked, sealed, stored and in force at once. Answers like the `GET`. 422 `bad_value` with words; 404 `unknown_key`; 503 `read_only` on a standby |
 | `DELETE /hub/keys/{name}` | None is in force from now on. Answers like the `GET` |
+| `POST /hub/online/accounts` | Another GloriaFood account: `{"name": "Sushi site", "key": "...", "test": false}`. The key is checked first, sealed under `online:<id>` and asked with at once. Answers like the `GET`, with the new account's `id` as `added`. 422 `bad_value` with words |
+| `PUT /hub/online/accounts/{id}` | Its `name`, or whether it is for testing (`test`); what is left out stays, and its key is not touched. The first account is `main`. 404 `unknown_account` |
+| `DELETE /hub/online/accounts/{id}` | The account is gone and its key forgotten; its orders stay. 409 `first_account` for `main` |
+
+`GET /hub/keys` also lists `online_accounts`: each with `id`, `name`, `test` and its `key` as above (the
+first account's is the key `online`; another's is named `online:<id>` and is set and removed with
+`PUT`/`DELETE /hub/keys/online:<id>` like any key). The accounts themselves are the location setting
+`online_accounts`; only their keys are sealed.
 
 The code is `backend/src/pos/keys.py` (what is kept and how) and `backend/src/pos/api/keys.py` (the calls,
 and putting a key to work without a restart); the page is `apps/pos_app/lib/screens/hub_keys_screen.dart`.

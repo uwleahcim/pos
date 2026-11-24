@@ -33,7 +33,17 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from ..sync.oplog import Line, OrderState
-from .service import SOON_MS, Takes, _ticket_lines, allergy_lines, allergy_words, is_to_go, order_note, starts_ms
+from .service import (
+    SOON_MS,
+    Takes,
+    _ticket_lines,
+    allergy_lines,
+    allergy_words,
+    is_to_go,
+    online_store,
+    order_note,
+    starts_ms,
+)
 
 KEEP_MS = 4 * 60 * 60 * 1000
 """How long a ticket stays on a screen when nobody marks it: past this the food is long gone from the kitchen."""
@@ -91,7 +101,9 @@ def kitchen_screen(
     A ticket says whose it is (`table`, `tab`, or `order_no` and `customer` of a to-go order with `channel`
     and `promised_ms`), `server`, `guests`, `course`, since when it is in the kitchen (`since_ms`), the
     allergies told on the order, what the customer wrote for the whole of it (`note`: an online order's
-    instructions), the other stations cooking for the same send (`also_at`) and its `lines`.
+    instructions), the other stations cooking for the same send (`also_at`) and its `lines`. An order from one
+    of the restaurant's websites says which, where it has several (`store`), and `test` when it came from the
+    account the restaurant only tests with.
     A line is a dish as the paper ticket words it (`qty`, `label`, `modifiers` with their `depths`, `note`,
     `seat`, `header`, `allergy`), the order line it stands for (`line_id`), the stations of this screen that
     make it (`stations`: what a `done` names) and the ones of them that said it is made (`made`), and whether
@@ -119,6 +131,7 @@ def kitchen_screen(
         if not to_go and state.status != "open":
             continue
         held = waiting(state)
+        store, test = online_store(state)
         whole = takeout if to_go and takeout in own and not passing else None
         by_seat = {
             told["seat"]: allergy_words(told, allergens or {}) for told in state.allergy_list() if told.get("seat")
@@ -220,6 +233,10 @@ def kitchen_screen(
                 "note": order_note(state),
                 "also_at": list(others),
                 "lines": rows,
+                # an order from one of the restaurant's websites: which, where it has several (`store`), and
+                # that it came from the account it tests with (`test`): nobody is to make it
+                **({"store": store} if store else {}),
+                **({"test": True} if test else {}),
             }
             if all(row["done"] for row in rows):
                 ticket["done_ms"] = max(row["done_ms"] or 0 for row in rows)

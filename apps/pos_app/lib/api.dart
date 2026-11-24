@@ -1641,6 +1641,45 @@ class PosApi {
     ),
   );
 
+  /// Another account of the restaurant's with GloriaFood (docs/online-orders.md, "Several accounts"): what
+  /// the restaurant calls it, its key for asking, and whether it is the one it only tests with. Answers
+  /// with how the keys stand; an [ApiException] with the hub's words for a name or a key it does not take.
+  Future<HubKeys> addOnlineAccount(
+    String token, {
+    required String name,
+    required String key,
+    bool test = false,
+  }) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(
+        Uri.parse('$base/hub/online/accounts'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'name': name, 'key': key, 'test': test}),
+      ),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// An account's name, or whether it is the one for testing; what is left out stays. Its key is not touched.
+  Future<HubKeys> changeOnlineAccount(String token, String id, {String? name, bool? test}) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/hub/online/accounts/$id'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'name': ?name, 'test': ?test}),
+      ),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// An account is gone, and its key with it: the hub stops asking it. Not the first account.
+  Future<HubKeys> removeOnlineAccount(String token, String id) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.delete(Uri.parse('$base/hub/online/accounts/$id'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
   /// A manager removed the key [name]: none is in force from now on. Answers how every key stands after it.
   Future<HubKeys> removeHubKey(String token, String name) async => HubKeys.fromJson(
     await _withFailover(

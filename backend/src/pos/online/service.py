@@ -29,6 +29,13 @@ reservation book (`pos.online.book`). One the book cannot take is told like an o
 One order at a time is written down and put on the POS (`_lock`), whichever way it came, so the two ways
 cannot both place the same order. Asking GloriaFood is done outside that lock: a push never waits for it.
 
+**A restaurant with several accounts** at GloriaFood (`pos.online.accounts`: two websites, one to test with)
+has a source for each, and a round asks them all, one after the other. An order is written down with the
+account that brought it. GloriaFood's own number for an order is still what an order is known by, whichever
+account it is from: the same order come twice is one order. A push is put to its account by the key the
+order carries, or by GloriaFood's number for the restaurant when an earlier order of an account had it
+(`whose`); one that cannot be put to any is taken all the same, as the restaurant's, and says no account.
+
 Nothing here names a customer in a log or in `status`: an order is told of by GloriaFood's number for it.
 A push that is turned away is counted and told of by why, never by what it carried.
 """
@@ -40,13 +47,14 @@ import threading
 import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from .. import localtime
+from .accounts import MAIN, Account
 from .book import RESERVATION_TYPES, Booked
 from .gloriafood import NAME, FetchFailed, allowed
-from .inbox import KEEP_DAYS, MOST_TRIES, POLL, PUSH, Arrival, Inbox
+from .inbox import KEEP_DAYS, MOST_TRIES, POLL, PUSH, Arrival, Inbox, restaurant_of
 from .place import ORDER_TYPES, CannotPlace, NotAnOrder, Placed, ext_id_of
 
 log = logging.getLogger("pos.online")
@@ -89,23 +97,53 @@ class PushRefused(Exception):
 
 
 class Source(Protocol):
-    """Where online orders come from: `pop` gives the ones accepted since it was last asked, once."""
+    """Where online orders come from: `pop` gives the ones accepted since it was last asked, once. One that
+    is an account of several says which (`account`); one that says nothing is the first."""
 
     name: str
 
     def pop(self) -> list[dict[str, Any]]: ...
 
 
+@dataclass
+class _Asked:
+    """How the asking of one account goes."""
+
+    asked_ms: int | None = None
+    answered_ms: int | None = None
+    failure: tuple[int, str] | None = None  # the last time asking failed, and why
+    failing_ms: int | None = None  # since when asking has failed every time; None while it works
+
+
+def _account(source: Source) -> str:
+    return str(getattr(source, "account", "") or MAIN)
+
+
+def _listed(source: Source | Sequence[Source] | None) -> list[Source]:
+    """The sources given, one for an account: a second one for the same account is not asked."""
+    if source is None:
+        return []
+    given = list(source) if isinstance(source, Sequence) else [source]
+    first: dict[str, Source] = {}
+    for one in given:
+        first.setdefault(_account(one), one)
+    return list(first.values())
+
+
 class OnlineOrders:
     def __init__(
         self,
-        source: Source | None,
+        source: Source | Sequence[Source] | None,
         inbox: Inbox | None = None,
         *,
         push_key: str | None = None,
+        accounts: Sequence[Account] = (),
         now: Callable[[], int] = lambda: int(time.time() * 1000),
     ) -> None:
-        self.source = source
+        # one for each account the hub has a key for asking: every one of them is asked each round
+        self.sources: list[Source] = _listed(source)
+        # what the restaurant calls its accounts, and which one it tests with (`pos.online.accounts`)
+        self.accounts: dict[str, Account] = {account.id: account for account in accounts}
         self.inbox = inbox if inbox is not None else Inbox()
         self._push_key = push_key or None  # what a push must carry; None: every push is turned away
         # Set by the API: `put` stores an order's operations and prints its tickets; `book` writes a table
@@ -120,10 +158,9 @@ class OnlineOrders:
         self._asking = threading.Lock()  # one round at a time: the minute's own and one a person asked for
         self._lock = threading.Lock()  # one order at a time is written down and placed, however it came
         self._unwritten: list[Arrival] = []  # given by GloriaFood and not written down yet
-        self._asked_ms: int | None = None
-        self._answered_ms: int | None = None
-        self._failure: tuple[int, str] | None = None  # the last time asking failed, and why
-        self._failing_ms: int | None = None  # since when asking has failed every time; None while it works
+        self._asked: dict[str, _Asked] = {}  # how the asking of each account goes
+        self._asked_ms: int | None = None  # when any of them was last asked: what `ASK_GAP_MS` is held against
+        self._restaurants: dict[str, str] = {}  # GloriaFood's number for a restaurant, and the account it is
         self._forgot_ms = 0
         self._unread_slip_ms: int | None = None
         self._pushed_ms: int | None = None  # the last push the hub took
@@ -132,19 +169,37 @@ class OnlineOrders:
         self._refusal_logged_ms: int | None = None
         self._thread: threading.Thread | None = None
 
-    def use(self, source: Source | None) -> None:
-        """This key for asking from now on, or none: it was typed, replaced or removed while the hub runs
-        (`pos.keys`). Never in the middle of a round. What the last key was answered says nothing about
-        this one, so the status starts over, and whoever asks now is served at once."""
+    def use(self, source: Source | Sequence[Source] | None, accounts: Sequence[Account] | None = None) -> None:
+        """These keys for asking from now on, one for each account, or none: a key was typed, replaced or
+        removed while the hub runs (`pos.keys`), or an account was added, named or taken away (`accounts`,
+        when they are given). Never in the middle of a round. What the last key of an account was answered
+        says nothing about its new one, so that account's status starts over, and whoever asks now is served
+        at once. An account whose key is the one it had keeps what is known of it."""
         with self._asking:
-            self.source = source
-            self._asked_ms = self._answered_ms = None
-            self._failure = self._failing_ms = None
+            before = {_account(old): old for old in self.sources}
+            self.sources = _listed(source)
+            kept: dict[str, _Asked] = {}
+            for new in self.sources:
+                old = before.get(_account(new))
+                same = old is new or (old is not None and getattr(new, "same_as", lambda other: False)(old))
+                if same and _account(new) in self._asked:
+                    kept[_account(new)] = self._asked[_account(new)]
+            if len(kept) < len(self.sources) or not self.sources:
+                self._asked_ms = None
+            self._asked = kept
+            if accounts is not None:
+                self.accounts = {account.id: account for account in accounts}
+                self._restaurants = {}
+
+    @property
+    def source(self) -> Source | None:
+        """The first of the sources the hub asks, or none."""
+        return self.sources[0] if self.sources else None
 
     @property
     def configured(self) -> bool:
-        """Whether this hub asks GloriaFood: it has the key for that."""
-        return self.source is not None
+        """Whether this hub asks GloriaFood: it has a key for that."""
+        return bool(self.sources)
 
     @property
     def pushable(self) -> bool:
@@ -153,7 +208,39 @@ class OnlineOrders:
 
     @property
     def name(self) -> str:
-        return self.source.name if self.source is not None else NAME
+        return self.sources[0].name if self.sources else NAME
+
+    def account(self, account: str) -> Account | None:
+        """The account of that id as the restaurant named it; None for no account, or one that is gone."""
+        return self.accounts.get(account) if account else None
+
+    def store_of(self, account: str) -> str:
+        """What the restaurant calls the account an order came from; nothing where it gave no name."""
+        known = self.account(account)
+        return known.name if known is not None else ""
+
+    def whose(self, order: Mapping[str, Any]) -> str:
+        """The account an order GloriaFood sent by itself is from, by what the order carries: the key of the
+        restaurant it was placed with, which is the key that account is asked with; failing that,
+        GloriaFood's number for the restaurant, when an earlier order of an account carried it. A hub with
+        one account takes every order as that account's. Nothing when it cannot tell."""
+        for source in self.sources:
+            if getattr(source, "owns", lambda order: False)(order):
+                return _account(source)
+        restaurant = restaurant_of(order)
+        if restaurant is not None:
+            known = self._restaurants.get(restaurant)
+            if known is None:
+                try:
+                    known = self.inbox.account_of(restaurant)
+                except Exception:  # noqa: BLE001 - the database: the order is taken without an account
+                    known = None
+                if known is not None:
+                    self._restaurants[restaurant] = known
+            if known is not None and (known in self.accounts or known == MAIN):
+                return known
+        ids = {MAIN, *self.accounts, *(_account(source) for source in self.sources)}
+        return MAIN if ids == {MAIN} else ""
 
     def now_ms(self) -> int:
         """The time by the clock every order here is stamped with: what "somebody looked" is set against."""
@@ -185,30 +272,49 @@ class OnlineOrders:
             about: dict[str, Any] = {"answered": False, "reason": None, "soon": False}
             if not self.inbox.writable():
                 return done, about
-            answer: list[dict[str, Any]] | FetchFailed | None = None
+            answers: list[tuple[str, list[dict[str, Any]] | FetchFailed]] = []
             now = self._now()
-            if self.source is not None:
+            if self.sources:
                 if gap_ms and self._asked_ms is not None and 0 <= now - self._asked_ms < gap_ms:
                     return done, {**about, "soon": True}
                 done["asked"] = True
                 self._asked_ms = now
-                try:
-                    answer = self.source.pop()  # outside `_lock`: a push is not kept waiting for GloriaFood
-                except FetchFailed as err:
-                    answer = err
+                for source in self.sources:
+                    self._asked.setdefault(_account(source), _Asked()).asked_ms = now
+                    try:
+                        # outside `_lock`: a push is not kept waiting for GloriaFood
+                        answers.append((_account(source), source.pop()))
+                    except FetchFailed as err:
+                        answers.append((_account(source), err))
+            said: list[dict[str, Any]] = []
             with self._lock:
-                if isinstance(answer, FetchFailed):
-                    self._failed(now, answer)
-                    about["reason"] = answer.reason
-                elif answer is not None:
-                    self._answered_ms, self._failure, self._failing_ms = now, None, None
-                    about["answered"] = True
-                    done["came"] = len(answer)
-                    done["known"], _ = self._take(answer, now, POLL)
-                else:
+                for account, answer in answers:
+                    asked = self._asked.setdefault(account, _Asked())
+                    told: dict[str, Any] = {"id": account, "name": self.store_of(account), "answered": False}
+                    if isinstance(answer, FetchFailed):
+                        self._failed(now, answer, account)
+                        told["reason"] = answer.reason
+                    else:
+                        asked.answered_ms, asked.failure, asked.failing_ms = now, None, None
+                        told["answered"], told["reason"], told["came"] = True, None, len(answer)
+                        done["came"] += len(answer)
+                        done["known"] += self._take([(account, order) for order in answer], now, POLL)[0]
+                    said.append(told)
+                if not answers:
                     self._write_down()
                 self._settle(done)
                 self._forget()
+            failed = [told for told in said if not told["answered"]]
+            about["answered"] = bool(said) and not failed
+            if failed:
+                # with several accounts, which of them it was is said before why
+                named = len(said) > 1
+                about["reason"] = "; ".join(
+                    f"{told['name'] or 'the first account'}: {told['reason']}" if named else str(told["reason"])
+                    for told in failed
+                )
+            if len(said) > 1:
+                about["accounts"] = said
             return done, about
 
     def admit(self, authorization: str | None) -> None:
@@ -220,8 +326,9 @@ class OnlineOrders:
         if not allowed(authorization, self._push_key):
             raise self._turned_away(WRONG_KEY if (authorization or "").strip() else NO_KEY_SENT)
 
-    def push(self, read: Callable[[], Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
-        """Orders GloriaFood sent by itself, in a push that was let in (`admit`). `read` gives them, and
+    def push(self, read: Callable[[], Sequence[Mapping[str, Any] | tuple[str, Mapping[str, Any]]]]) -> dict[str, Any]:
+        """Orders GloriaFood sent by itself, in a push that was let in (`admit`). `read` gives them, each
+        by itself or with the account it is from (`pos.online.gloriafood.pushed_by` with `whose`), and
         raises `FetchFailed` for a push that cannot be read. They are written down and put on the POS now,
         before GloriaFood is answered. Gives how many were `received`, how many of them were here already
         (`known`), how many orders were `placed`, `booked` (a table, into the reservation book), `kept` and
@@ -260,14 +367,28 @@ class OnlineOrders:
             log.warning("online orders: a push was turned away: %s (%d so far)", reason, self._refusals)
         return PushRefused(reason, 401)
 
-    def _take(self, orders: Sequence[Mapping[str, Any]], now: int, via: str) -> tuple[int, int]:
-        """Writes down the orders that just came, this way. Gives how many of them were here already, and
-        how many could not be written down now."""
+    def _take(
+        self, orders: Sequence[Mapping[str, Any] | tuple[str, Mapping[str, Any]]], now: int, via: str
+    ) -> tuple[int, int]:
+        """Writes down the orders that just came, this way, each with the account it came from when that is
+        said. Gives how many of them were here already, and how many could not be written down now."""
         mine = []
-        for n, order in enumerate(orders):
+        for n, given in enumerate(orders):
+            account, order = given if isinstance(given, tuple) else ("", given)
             ext_id = ext_id_of(order) or f"unnumbered-{now}-{n}"
+            restaurant = restaurant_of(order)
+            if account and restaurant is not None:
+                self._restaurants[restaurant] = account  # GloriaFood's number for this account's restaurant
             mine.append(
-                Arrival(source=self.name, ext_id=ext_id, fetched_ms=now, raw=dict(order), kind=_kind(order), via=via)
+                Arrival(
+                    source=self.name,
+                    ext_id=ext_id,
+                    fetched_ms=now,
+                    raw=dict(order),
+                    kind=_kind(order),
+                    via=via,
+                    account=account,
+                )
             )
         self._unwritten.extend(mine)
         known = {id(arrival) for arrival in self._write_down()}
@@ -308,17 +429,19 @@ class OnlineOrders:
         for arrival, said in slips:
             self._tell(arrival, said)
 
-    def _failed(self, now: int, err: FetchFailed) -> None:
-        """GloriaFood was asked and gave no orders: why is kept for `status`, and what it did send, when it
-        sent something, for a person."""
-        self._failure = (now, err.reason)
-        if self._failing_ms is None:
-            self._failing_ms = now
-        log.warning("online orders: %s", err.reason)
+    def _failed(self, now: int, err: FetchFailed, account: str = MAIN) -> None:
+        """GloriaFood was asked for an account's orders and gave none: why is kept for `status`, and what
+        it did send, when it sent something, for a person."""
+        asked = self._asked.setdefault(account, _Asked())
+        asked.failure = (now, err.reason)
+        if asked.failing_ms is None:
+            asked.failing_ms = now
+        name = self.store_of(account)
+        log.warning("online orders: %s%s", f"{name}: " if name else "", err.reason)
         if err.body is not None:
-            self._unread(now, err, POLL)
+            self._unread(now, err, POLL, account)
 
-    def _unread(self, now: int, err: FetchFailed, via: str) -> None:
+    def _unread(self, now: int, err: FetchFailed, via: str, account: str = "") -> None:
         """Something of GloriaFood's that cannot be read is kept as it came, for a person: there may be
         orders in it.
 
@@ -334,7 +457,7 @@ class OnlineOrders:
             said = f"{err.reason}: it may hold orders, which are in its own app"
         unread = Arrival(
             source=self.name,
-            ext_id=f"unread-{now}",
+            ext_id=f"unread-{now}" if account in ("", MAIN) else f"unread-{now}-{account}",
             fetched_ms=now,
             raw={"unreadable": err.body or ""},
             kind=UNREADABLE,
@@ -343,6 +466,7 @@ class OnlineOrders:
             tries=MOST_TRIES,
             settled_ms=now,
             via=via,
+            account=account,
         )
         self._unwritten.append(unread)
         self._write_down()
@@ -470,7 +594,10 @@ class OnlineOrders:
             if _to_look_at(row):
                 look.setdefault((row.source, row.ext_id), row)
         listed = sorted(look.values(), key=lambda row: row.fetched_ms, reverse=True)[:LISTED]
-        looked = [{**row.about(), "at_ms": _since(row), "new": self._news(row, seen_ms)} for row in listed]
+        looked = [
+            {**row.about(), **self._store(row.account), "at_ms": _since(row), "new": self._news(row, seen_ms)}
+            for row in listed
+        ]
         orders = [row for row in today if row.kind != UNREADABLE]
         by_push = sum(row.via == PUSH for row in orders)
         by_poll = sum(row.via == POLL for row in orders)
@@ -479,14 +606,19 @@ class OnlineOrders:
         refused = None
         if self._refused is not None:
             refused = {"at_ms": self._refused[0], "reason": self._refused[1], "count": self._refusals}
+        asking = [self._asked.get(_account(source), _Asked()) for source in self.sources]
+        failures = sorted(asked.failure for asked in asking if asked.failure is not None)
         return {
             "configured": self.configured,
             "source": self.source.name if self.source is not None else None,
             "running": self._thread is not None and self._thread.is_alive(),
             "writable": self.inbox.writable(),
-            "asked_ms": self._asked_ms,
-            "answered_ms": self._answered_ms,
-            "last_failure": None if self._failure is None else {"at_ms": self._failure[0], "reason": self._failure[1]},
+            # of all the accounts together: when any was last asked and last answered, and the newest failure
+            # of one that is failing now. `accounts` says each by itself.
+            "asked_ms": max((asked.asked_ms for asked in asking if asked.asked_ms is not None), default=None),
+            "answered_ms": max((a.answered_ms for a in asking if a.answered_ms is not None), default=None),
+            "last_failure": {"at_ms": failures[-1][0], "reason": failures[-1][1]} if failures else None,
+            "accounts": self._accounts(orders),
             "push": {"configured": self.pushable, "pushed_ms": pushed_ms, "refused": refused},
             "today": {
                 "came": len(orders),
@@ -505,6 +637,38 @@ class OnlineOrders:
             "trouble": self._trouble(now, start, pushed_ms, by_push=by_push, by_poll=by_poll),
         }
 
+    def _store(self, account: str) -> dict[str, Any]:
+        """What is said of the account an order came from beside the order: its name, where the restaurant
+        gave one, and that it is the one for testing."""
+        known = self.account(account)
+        if known is None:
+            return {}
+        return {**({"store": known.name} if known.name else {}), **({"test": True} if known.test else {})}
+
+    def _accounts(self, orders: Sequence[Arrival]) -> list[dict[str, Any]]:
+        """Every account by itself, the first account first: its name and whether it is for testing,
+        whether the hub asks it (`configured`: it has the key), when it was last asked and last answered and
+        why it did not, and how many of today's orders it brought."""
+        asking = {_account(source) for source in self.sources}
+        ids = list(dict.fromkeys([*self.accounts, *(_account(source) for source in self.sources)]))
+        out = []
+        for account in ids:
+            known = self.accounts.get(account) or Account(account)
+            asked = self._asked.get(account, _Asked())
+            out.append(
+                {
+                    **known.about(),
+                    "configured": account in asking,
+                    "asked_ms": asked.asked_ms,
+                    "answered_ms": asked.answered_ms,
+                    "last_failure": None
+                    if asked.failure is None
+                    else {"at_ms": asked.failure[0], "reason": asked.failure[1]},
+                    "came": sum(row.account == account for row in orders),
+                }
+            )
+        return out
+
     def _news(self, row: Arrival, seen_ms: int) -> bool:
         """Whether one to look at is news to a person: it is as it is since after somebody last looked. Not
         one the hub is still trying to put on (it may go on yet), and not a push that could not be read on a
@@ -522,23 +686,32 @@ class OnlineOrders:
 
         - `not_answering`: the hub has asked GloriaFood for `STALE_MS` and got no orders once. It is urgent
           unless pushes are known to get in (one came since the hub started or today, and none was turned
-          away after it): then the orders still arrive, and only the net under them is gone.
+          away after it): then the orders still arrive, and only the net under them is gone. One for each
+          account that does not answer, with which (`account`, and `store`, its name); never urgent for
+          the account the restaurant only tests with.
         - `pushes_refused`: today's orders came only by the asking, and a push was turned away after the
           last one that got in. The orders arrive, a minute later than they could: never urgent."""
         said: list[dict[str, Any]] = []
         # a push was turned away today, and none got in after it
         turned_away = self._refused is not None and self._refused[0] >= start and self._refused[0] > (pushed_ms or 0)
-        if self.configured and self._failure is not None and self._failing_ms is not None:
-            if now - self._failing_ms >= STALE_MS:
-                pushes_get_in = self.pushable and pushed_ms is not None and not turned_away
-                said.append(
-                    {
-                        "code": "not_answering",
-                        "since_ms": self._failing_ms,
-                        "reason": self._failure[1],
-                        "urgent": not pushes_get_in,
-                    }
-                )
+        several = len(self.sources) > 1
+        for source in self.sources:
+            account = _account(source)
+            asked = self._asked.get(account, _Asked())
+            if asked.failure is None or asked.failing_ms is None or now - asked.failing_ms < STALE_MS:
+                continue
+            pushes_get_in = self.pushable and pushed_ms is not None and not turned_away
+            known = self.account(account)
+            said.append(
+                {
+                    "code": "not_answering",
+                    "since_ms": asked.failing_ms,
+                    "reason": asked.failure[1],
+                    "urgent": not pushes_get_in and not (known is not None and known.test),
+                    # which account, where there are several: with one, it is the online orders altogether
+                    **({"account": account, **self._store(account)} if several else {}),
+                }
+            )
         if self._refused is not None and turned_away and by_push == 0 and by_poll > 0:
             said.append(
                 {

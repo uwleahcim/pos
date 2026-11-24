@@ -674,9 +674,26 @@ class Hub {
   /// in the app by Mike at [keysAtMs], keeping its last four characters (and for Apple's its ids) and never
   /// the key: what was typed is in [keysTyped]. [refuseHubKey] answers 422 with these words instead.
   /// `DELETE` removes it ([keysRemoved]). [hubKeysKept] false is a hub with nowhere to keep one.
+  ///
+  /// The restaurant's accounts with GloriaFood ("Several accounts", docs/online-orders.md): the first one
+  /// is always there, called [firstAccountName] and for testing when [firstAccountTest], with the key
+  /// `online`. [onlineAccounts] are the further ones (`{id, name, test}`), each with the key `online:<id>`
+  /// kept in [accountKeys]; null is a hub from before there could be several, which lists none and knows
+  /// none of the calls. `POST /hub/online/accounts` adds one ([accountsAdded] keeps what was typed, the key
+  /// too), `PUT` names it or says it is for testing ([accountsChanged]) and `DELETE` removes it with its key
+  /// ([accountsRemoved]). [refuseAccount] answers 422 with these words instead.
   Map<String, Map<String, dynamic>>? hubKeys = {
     for (final name in ['maps', 'maps_google', 'online', 'push_apple']) name: noKey(name),
   };
+  List<Map<String, dynamic>>? onlineAccounts = [];
+  String firstAccountName = '';
+  bool firstAccountTest = false;
+  final accountKeys = <String, Map<String, dynamic>>{};
+  final accountsAdded = <Map<String, dynamic>>[];
+  final accountsChanged = <(String, Map<String, dynamic>)>[];
+  final accountsRemoved = <String>[];
+  String? refuseAccount;
+  int _accountIds = 0;
   bool hubKeysKept = true;
   String? hubKeysAuth;
   String? refuseHubKey;
@@ -711,8 +728,13 @@ class Hub {
         'detail': {'error': 'not_allowed', 'power': 'settings'},
       }, hubKeysAuth == null ? 401 : 403);
     }
+    if (request.url.path.startsWith('/hub/online/accounts')) return _accounts(request);
     final name = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
-    if (name != null && !hubKeys!.containsKey(name)) {
+    // an account's own key: `online:<id>`, of an account this hub has
+    final further = name != null && name.startsWith('online:') ? name.substring(7) : null;
+    final ofAccount = further != null && (onlineAccounts ?? const []).any((account) => account['id'] == further);
+    final held = ofAccount ? accountKeys : hubKeys!;
+    if (name != null && !ofAccount && !hubKeys!.containsKey(name)) {
       return json({
         'detail': {'error': 'unknown_key', 'message': 'this hub holds no key of that name'},
       }, 404);
@@ -726,7 +748,7 @@ class Hub {
         }, 422);
       }
       final key = typed['key'] as String;
-      hubKeys![name] = {
+      held[name] = {
         ...noKey(name),
         'set': true,
         'source': 'app',
@@ -744,9 +766,80 @@ class Hub {
     }
     if (request.method == 'DELETE' && name != null) {
       keysRemoved.add(name);
-      hubKeys![name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
+      held[name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
     }
-    return json({'keys': hubKeys!.values.toList(), 'kept': hubKeysKept});
+    return json(hubKeysSaid());
+  }
+
+  /// What `GET /hub/keys` answers, and every call that changes a key or an account after it.
+  Map<String, dynamic> hubKeysSaid() => {
+    'keys': hubKeys!.values.toList(),
+    'kept': hubKeysKept,
+    if (onlineAccounts != null)
+      'online_accounts': [
+        {'id': 'main', 'name': firstAccountName, 'test': firstAccountTest, 'key': hubKeys!['online']},
+        for (final account in onlineAccounts!)
+          {...account, 'key': accountKeys['online:${account['id']}'] ?? noKey('online:${account['id']}')},
+      ],
+  };
+
+  http.Response _accounts(http.Request request) {
+    final accounts = onlineAccounts;
+    if (accounts == null) return json({'detail': 'Not Found'}, 404);
+    final id = request.url.pathSegments.length > 3 ? request.url.pathSegments[3] : null;
+    final typed = request.body.isEmpty ? <String, dynamic>{} : jsonDecode(request.body) as Map<String, dynamic>;
+    http.Response refused() => json({
+      'detail': {'error': 'bad_value', 'message': refuseAccount},
+    }, 422);
+    if (request.method == 'POST' && id == null) {
+      accountsAdded.add(typed);
+      if (refuseAccount != null) return refused();
+      final made = 'a${_accountIds += 1}';
+      final key = typed['key'] as String;
+      accounts.add({'id': made, 'name': typed['name'], 'test': typed['test'] == true});
+      accountKeys['online:$made'] = {
+        ...noKey('online:$made'),
+        'set': true,
+        'source': 'app',
+        'ending': key.length < 16 ? '' : key.substring(key.length - 4),
+        'by': 'Mike',
+        'at_ms': keysAtMs,
+      };
+      return json({...hubKeysSaid(), 'added': made});
+    }
+    final at = accounts.indexWhere((account) => account['id'] == id);
+    if (id != 'main' && at < 0) {
+      return json({
+        'detail': {'error': 'unknown_account', 'message': 'this hub has no such account'},
+      }, 404);
+    }
+    if (request.method == 'PUT') {
+      accountsChanged.add((id!, typed));
+      if (refuseAccount != null) return refused();
+      if (id == 'main') {
+        if (typed['name'] != null) firstAccountName = typed['name'] as String;
+        if (typed['test'] != null) firstAccountTest = typed['test'] == true;
+      } else {
+        accounts[at] = {
+          ...accounts[at],
+          if (typed['name'] != null) 'name': typed['name'],
+          if (typed['test'] != null) 'test': typed['test'] == true,
+        };
+      }
+      return json(hubKeysSaid());
+    }
+    if (request.method == 'DELETE') {
+      if (id == 'main') {
+        return json({
+          'detail': {'error': 'first_account', 'message': 'the first account stays: remove its key instead'},
+        }, 409);
+      }
+      accountsRemoved.add(id!);
+      accounts.removeAt(at);
+      accountKeys.remove('online:$id');
+      return json(hubKeysSaid());
+    }
+    return json({'detail': 'Method Not Allowed'}, 405);
   }
 
   /// The push relay as the keys page tries it: [pushDevices] are the screens that registered for
@@ -1294,7 +1387,9 @@ class Hub {
     int waiting = 0,
     List<Map<String, dynamic>> look = const [],
     List<Map<String, dynamic>> trouble = const [],
+    List<Map<String, dynamic>>? accounts,
   }) => {
+    'accounts': ?accounts,
     'configured': asks,
     'source': asks ? 'gloriafood' : null,
     'running': asks && running,
@@ -1320,7 +1415,29 @@ class Hub {
     'trouble': trouble,
   };
 
+  /// One of the restaurant's accounts as the status lists it: whether the hub has its key, when GloriaFood
+  /// last answered for it, why it does not ([reason]) and how many orders it brought today.
+  static Map<String, dynamic> onlineAccount(
+    String id, {
+    String name = '',
+    bool test = false,
+    bool configured = true,
+    int? answeredMs,
+    String? reason,
+    int came = 0,
+  }) => {
+    'id': id,
+    'name': name,
+    'test': test,
+    'configured': configured,
+    'asked_ms': answeredMs,
+    'answered_ms': answeredMs,
+    'last_failure': reason == null ? null : {'at_ms': answeredMs ?? 0, 'reason': reason},
+    'came': came,
+  };
+
   /// One to look at, by the website's number: what became of it ([state]), since when, and what the hub says.
+  /// [store] and [test] say which of several accounts brought it.
   static Map<String, dynamic> onlineLook(
     String id, {
     required int atMs,
@@ -1329,7 +1446,11 @@ class Hub {
     String? orderId,
     String said = '',
     bool isNew = true,
+    String? store,
+    bool test = false,
   }) => {
+    'store': ?store,
+    if (test) 'test': true,
     'source': 'gloriafood',
     'id': id,
     'kind': kind,
@@ -2754,7 +2875,9 @@ class Hub {
       });
     }
     if (path == '/notes' || path.startsWith('/notes/')) return _notes(request);
-    if (path == '/hub/keys' || path.startsWith('/hub/keys/')) return _keys(request);
+    if (path == '/hub/keys' || path.startsWith('/hub/keys/') || path.startsWith('/hub/online/accounts')) {
+      return _keys(request);
+    }
     if (path == '/push/status' || path == '/push/test') return _push(request);
     if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;
     if (path.startsWith('/online/')) return _online(request);

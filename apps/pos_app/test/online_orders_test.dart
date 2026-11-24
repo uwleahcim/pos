@@ -32,6 +32,8 @@ Map<String, dynamic> website(
   bool recorded = true,
   bool delivery = false,
   String note = '',
+  String? store,
+  bool test = false,
   Map<String, dynamic>? payments,
 }) {
   final order = takeout(
@@ -54,6 +56,8 @@ Map<String, dynamic> website(
         'type': delivery ? 'delivery' : 'pickup',
         'payment': payment,
         'total': '10.71',
+        // which of the restaurant's accounts brought it, on a hub that asks several
+        if (store != null || test) ...{'account': 'a1', 'store': store ?? '', 'test': test},
       },
     },
   };
@@ -88,6 +92,24 @@ void main() {
       const bare = OnlineOrder(source: 'gloriafood');
       expect(onlineFacts(bare), ['on GloriaFood']);
       expect(onlineFacts(const OnlineOrder()), isEmpty);
+    });
+
+    test('an order of one of several websites says which, and one from the account for testing says so', () {
+      final sushi = read(website('o1', store: 'Sushi site')).online!;
+      expect((sushi.store, sushi.test), ('Sushi site', false));
+      expect(fromWhere(sushi), 'From the website · Sushi site');
+      expect(onlineFacts(sushi), ['Order 101 on GloriaFood (Sushi site) · pickup', 'Charged on the website: \$10.71']);
+
+      final trial = read(website('o2', store: 'Testing', test: true)).online!;
+      expect((trial.store, trial.test), ('Testing', true));
+      expect(onlineFacts(trial).first, startsWith('A test order, from the account for testing. Do not make it.'));
+
+      // a hub that asks one account says neither, and the words are as they were
+      final one = read(website('o3')).online!;
+      expect((one.store, one.test), ('', false));
+      expect(fromWhere(one), 'From the website');
+      // a test account nobody named
+      expect(fromWhere(read(website('o4', test: true)).online!), 'From the website');
     });
 
     test('its money is said as the customer chose it on the website', () {
@@ -161,6 +183,26 @@ void main() {
       expect(find.textContaining('pay at pickup'), findsOneWidget); // Sam's, as before
       await stop(tester);
     });
+
+    testWidgets('says which website to whoever cannot see the globe, and that one is a test', (tester) async {
+      await pumpOrders(tester, [
+        website('o1', store: 'Sushi site'),
+        website('o2', no: 22, name: 'Trial', store: 'Testing', test: true),
+      ]);
+      expect(
+        tester.widget<Icon>(find.byKey(const ValueKey('online-o1'))).semanticLabel,
+        'From the website · Sushi site',
+      );
+      expect(
+        tester.widget<Icon>(find.byKey(const ValueKey('online-o2'))).semanticLabel,
+        'TEST ORDER, From the website · Testing',
+      );
+      // white on black for the test, as its tickets print
+      final scheme = Theme.of(tester.element(find.byKey(const ValueKey('online-o2')))).colorScheme;
+      expect(tester.widget<Icon>(find.byKey(const ValueKey('online-o2'))).color, scheme.onInverseSurface);
+      expect(tester.widget<Icon>(find.byKey(const ValueKey('online-o1'))).color, scheme.onSurfaceVariant);
+      await stop(tester);
+    });
   });
 
   group('the order\'s own screen', () {
@@ -197,6 +239,43 @@ void main() {
       await pumpOrder(tester, website('o1', payment: 'CASH'));
       expect(find.text('From the website · pays cash at pickup'), findsOneWidget);
       expect(find.byKey(const ValueKey('order-note')), findsNothing); // the customer wrote nothing
+      await stop(tester);
+    });
+
+    testWidgets('one of several websites says which, on the strip and behind it', (tester) async {
+      await pumpOrder(tester, website('o1', store: 'Sushi site'), paid: true);
+      expect(find.text('From the website · Sushi site · paid online'), findsOneWidget);
+      expect(find.byKey(const ValueKey('online-test')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('online-strip')));
+      await tester.pumpAndSettle();
+      Finder shown(String text) =>
+          find.descendant(of: find.byKey(const ValueKey('online-about')), matching: find.text(text));
+      expect(shown('From the website · Sushi site'), findsOneWidget);
+      expect(shown('Order 101 on GloriaFood (Sushi site) · pickup'), findsOneWidget);
+      expect(find.byKey(const ValueKey('online-about-test')), findsNothing);
+      await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+      await tester.pumpAndSettle();
+      await stop(tester);
+    });
+
+    testWidgets('an order from the account for testing says TEST ORDER, on a phone too', (tester) async {
+      await pumpOrder(tester, website('o1', payment: 'CASH', store: 'Testing', test: true, note: noOnions));
+      tester.view.physicalSize = const Size(360, 740);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final mark = find.byKey(const ValueKey('online-test'));
+      expect(mark, findsOneWidget);
+      expect(find.descendant(of: mark, matching: find.text('TEST ORDER · DO NOT MAKE')), findsOneWidget);
+      expect(find.text('From the website · Testing · pays cash at pickup'), findsOneWidget);
+      expect(tester.getRect(mark).right, lessThanOrEqualTo(360));
+
+      await tester.tap(find.byKey(const ValueKey('online-strip')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('online-about-test')), findsOneWidget);
+      expect(find.textContaining('A test order, from the account for testing. Do not make it.'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+      await tester.pumpAndSettle();
       await stop(tester);
     });
 
@@ -279,6 +358,44 @@ void main() {
       await tester.pump();
       expect(kitchen.marks(t.hub), ['o9 wok a made']);
       expect(bar('o9'), findsOneWidget);
+      await kitchen.away(tester);
+    });
+
+    testWidgets('heads a ticket from the account for testing with TEST ORDER, before anything else', (tester) async {
+      await kitchen.pumpScreen(
+        tester,
+        kitchen: [
+          {...noted(noOnions), 'store': 'Testing', 'test': true},
+          {
+            ...kitchen.ticket(
+              'o8',
+              3,
+              [kitchen.dish('a', 'Tuna Roll')],
+              orderNo: 22,
+              customer: 'Wei',
+              channel: 'online',
+            ),
+            'store': 'Sushi site',
+          },
+          kitchen.ticket('o1', 2, [kitchen.dish('a', 'Soup')], table: '12'),
+        ],
+      );
+      Finder band(String orderId) => find.byWidgetPredicate((w) => '${w.key}'.contains('kitchen-test:$orderId:'));
+      expect(band('o9'), findsOneWidget);
+      expect(band('o8'), findsNothing);
+      expect(band('o1'), findsNothing);
+      expect(kitchen.words(tester, 'o9'), [
+        '#21 Linda',
+        'Online · Testing',
+        '4 min',
+        'TEST ORDER · DO NOT MAKE',
+        'Customer\'s note · $noOnions',
+        '1 × Beef Lo Mein',
+        '1 × Kung Pao Shrimp',
+        'Done',
+      ]);
+      // a customer's order from the second website says which, and no more
+      expect(kitchen.words(tester, 'o8').take(2), ['#22 Wei', 'Online · Sushi site']);
       await kitchen.away(tester);
     });
 

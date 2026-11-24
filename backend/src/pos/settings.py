@@ -142,6 +142,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # When somebody last looked at the online orders that need looking at, and who (docs/online-orders.md,
     # "On the screens"): what came up after that is new, on every screen.
     "online_seen": {"at_ms": 0, "by": ""},
+    # The restaurant's accounts with GloriaFood beyond the first, with the name each was given and which
+    # one is for testing (`pos.online.accounts`). No key is here: those are sealed in `pos.keys`.
+    "online_accounts": {"accounts": []},
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},

@@ -21,6 +21,10 @@ Which key is in force (`HubKeys.data`, `HubKeys.environ`): the one typed in the 
 it, else the one in the hub's own file. `hubctl` deletes the app's row when it is told a key from the
 terminal, so of the two ways the one used last wins.
 
+**GloriaFood's key comes in several**: a restaurant with more than one website there, or an account it
+tests with, has a key for each (`pos.online.accounts`). The first is the slot `online`, as it always was;
+every other account's is kept under `online:<id>`, typed in the app only, and gone with its account.
+
 Nothing here is written to a log but who set or removed which key. No message of this module carries what
 was typed.
 """
@@ -49,6 +53,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from .online.accounts import MAIN, account_of_slot
 from .sync.pgstore import ReadOnlyError
 
 log = logging.getLogger(__name__)
@@ -204,6 +209,18 @@ SLOTS: dict[str, Slot] = {
 }
 
 
+def slot_for(name: str) -> Slot | None:
+    """The key of that name: one of `SLOTS`, or the key of a further GloriaFood account (`online:<id>`), which
+    is GloriaFood's key like the first and is in nobody's file. None for a name that is no key's."""
+    slot = SLOTS.get(name)
+    if slot is not None:
+        return slot
+    if account_of_slot(name) in (None, MAIN):
+        return None
+    first = SLOTS[ONLINE]
+    return Slot(name, (), first.clean, lambda env: None)
+
+
 def ending_of(key: str) -> str:
     """The last characters of a key, for a screen to tell one key from another by; none of a short one."""
     return key[-ENDING:] if len(key) >= ENDING_FROM else ""
@@ -321,6 +338,10 @@ class KeyStore:
     def put(self, kept: Kept) -> None:
         self._rows[kept.name] = kept
 
+    def drop(self, name: str) -> None:
+        """Forgets a key altogether, as if the app had never been told one: for a key whose account is gone."""
+        self._rows.pop(name, None)
+
     def mark(self) -> str:
         """Changes whenever a row does: how a hub notices what was typed on another one."""
         rows = sorted(self.all().values(), key=_name)
@@ -380,6 +401,13 @@ class PgKeyStore(KeyStore):
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
 
+    def drop(self, name: str) -> None:
+        try:
+            with self._pool.connection() as conn:
+                conn.execute("DELETE FROM hub_key WHERE name = %s", (name,))
+        except errors.ReadOnlySqlTransaction as err:
+            raise ReadOnlyError("this database is a standby") from err
+
 
 def default_key_store() -> KeyStore:
     """PostgreSQL when DATABASE_URL is set (every hub and the cloud), memory otherwise."""
@@ -412,7 +440,7 @@ class HubKeys:
         self._now = now
 
     def _slot(self, name: str) -> Slot:
-        slot = SLOTS.get(name)
+        slot = slot_for(name)
         if slot is None:
             raise UnknownKey(name)
         return slot
@@ -510,6 +538,14 @@ class HubKeys:
         log.warning("hub keys: %s was removed in the app by %s", name, by or "a manager")
         return self._view(slot, row)
 
+    def forget(self, name: str, *, by: str) -> None:
+        """A further GloriaFood account is gone, and its key with it: nothing of it stays. Not for a key of
+        `SLOTS`: the hub's own file may name one of those, so the app's word on it is kept (`remove`)."""
+        if name in SLOTS or slot_for(name) is None:
+            raise UnknownKey(name)
+        self.store.drop(name)
+        log.warning("hub keys: %s was removed with its account by %s", name, by or "a manager")
+
     def mark(self) -> str:
         return self.store.mark()
 
@@ -537,5 +573,6 @@ __all__ = [
     "default_key_store",
     "ending_of",
     "keys_from_env",
+    "slot_for",
     "vault_from_env",
 ]

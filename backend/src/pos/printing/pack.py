@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .escpos import Builder
-from .ticket import DIALECTS, Money, TicketLine
+from .ticket import DIALECTS, TEST_WORDS, Money, TicketLine
 
 HANDOVER_WORDS = {"pickup": "PICKUP", "delivery": "DELIVERY"}
 
@@ -45,6 +45,8 @@ class PackSheet:
     bag: tuple[str, ...] | None = None  # as on the takeout station's ticket
     at: datetime = field(default_factory=datetime.now)
     reprinted_from: str | None = None  # the printer this was for, on the copy a fallback printer gets
+    store: str = ""  # which of the restaurant's websites the order came from, where it has several
+    test: bool = False  # it came from the account the restaurant tests with: nobody's food
 
 
 def _many(count: int, one: str, many: str | None = None) -> str:
@@ -71,6 +73,9 @@ def render_pack(sheet: PackSheet, *, dots: int = 576, font: str | None = None, d
     if sheet.reprinted_from:
         b.line(f"{sheet.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
     b.line("PACK SHEET", big=True, bold=True, center=True)
+    if sheet.test:
+        for said in TEST_WORDS:
+            b.line(said, big=True, bold=True, center=True, invert=True)
     number = f"#{sheet.order_no}  " if sheet.order_no is not None else ""
     if number or sheet.customer:
         b.line(f"{number}{sheet.customer}".strip().upper(), big=True, bold=True)
@@ -82,7 +87,8 @@ def render_pack(sheet: PackSheet, *, dots: int = 576, font: str | None = None, d
         b.line(how, big=True, bold=True)
     if sheet.address:
         b.line(sheet.address, bold=True)
-    said = [sheet.channel.replace("_", " ").capitalize()] if sheet.channel else []
+    said = [sheet.channel.replace("_", " ").capitalize() + (f": {sheet.store}" if sheet.store else "")]
+    said = said if sheet.channel else []
     if sheet.guests:
         said.append(_many(sheet.guests, "guest"))
     if sheet.phone:

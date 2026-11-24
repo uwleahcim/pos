@@ -80,6 +80,15 @@ class Ticket:
     note: str = ""
     # A `notice`: its headline, printed white on black, and what there is to say under it, a line each.
     words: tuple[str, ...] = ()
+    # An order from one of the restaurant's websites, where it has several: what the restaurant calls that
+    # one ("Sushi site"), said beside the channel. And `test`: the order came from the account the restaurant
+    # only tests with, so nobody is to make it (docs/online-orders.md, "Several accounts").
+    store: str = ""
+    test: bool = False
+
+
+TEST_WORDS = ("TEST ORDER", "DO NOT MAKE")
+"""What heads every paper of an order that came from the account the restaurant tests with."""
 
 
 NOTED = frozenset({"new", "modify", "reprint", "allergy"})
@@ -129,6 +138,10 @@ def render(
         b.feed(2).cut()
         return bytes(b)
     b.columns(f"#{ticket.ticket_no}  {ticket.order_type}", ticket.at.strftime("%H:%M"))
+    if ticket.test:
+        # Before anything a cook reads of it: this is nobody's food.
+        for said in TEST_WORDS:
+            b.line(said, big=True, bold=True, center=True, invert=True)
     if ticket.tab:
         # A bar tab has no table: the name on it is where its drinks go, so it is the biggest thing on it.
         b.line(f"TAB {ticket.customer}".strip().upper(), big=True, bold=True)
@@ -153,7 +166,8 @@ def render(
         b.line(f"Table {ticket.table}{guests}", bold=True)
     elif ticket.channel:
         how = "  DELIVERY" if ticket.order_type == "delivery" else ""
-        b.line(f"{ticket.channel.replace('_', ' ').capitalize()}{how}", bold=True)
+        store = f": {ticket.store}" if ticket.store else ""
+        b.line(f"{ticket.channel.replace('_', ' ').capitalize()}{store}{how}", bold=True)
     elif not ticket.tab:
         b.line("No table", bold=True)
     if ticket.server:

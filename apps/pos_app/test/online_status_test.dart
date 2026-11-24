@@ -114,6 +114,80 @@ void main() {
       expect(status.summary, 'Online orders: 1 to look at');
     });
 
+    test('a restaurant with several accounts reads each by itself', () {
+      final status = OnlineStatus.fromJson(
+        Hub.onlineStatus(
+          answeredMs: ago(1),
+          came: 4,
+          placed: 4,
+          accounts: [
+            Hub.onlineAccount('main', name: 'China Sky', answeredMs: ago(1), came: 3),
+            Hub.onlineAccount('su01', name: 'Sushi site', answeredMs: ago(9), reason: 'GloriaFood refused the key'),
+            Hub.onlineAccount('te01', name: 'Testing', test: true, configured: false),
+          ],
+          look: [
+            {...short(), 'store': 'Sushi site'},
+            {...lost(), 'store': 'Testing', 'test': true},
+            lost(isNew: false),
+          ],
+          trouble: [
+            {...silent(urgent: false), 'account': 'su01', 'store': 'Sushi site', 'test': false},
+          ],
+        ),
+      );
+      expect([for (final account in status.severalAccounts) account.called], ['China Sky', 'Sushi site', 'Testing']);
+      expect(
+        [for (final account in status.accounts) account.words],
+        ['answered ${clockTime(ago(1))}', 'GloriaFood refused the key', 'no key'],
+      );
+      expect([for (final account in status.accounts) account.came], [3, 0, 0]);
+      expect([for (final row in status.look) row.from], ['Sushi site', 'Testing (test)', '']);
+      final trouble = status.trouble.single;
+      expect(trouble.headline, 'GloriaFood does not answer the hub for Sushi site');
+      expect(trouble.words, startsWith('The hub\'s asking for Sushi site has had no answer since '));
+      expect(trouble.words, endsWith('nothing catches one that gets lost on the way.'));
+
+      // none of its orders reaching the POS: red, and the other accounts are said to be well
+      final urgent = OnlineTrouble.fromJson({...silent(), 'account': 'main', 'store': '', 'test': false});
+      expect(urgent.headline, 'Online orders of the first account are not reaching the POS');
+      expect(urgent.words, endsWith('ring them in by hand. The other accounts are not affected.'));
+      // the account for testing holds up no customer
+      final trial = OnlineTrouble.fromJson({
+        ...silent(urgent: false),
+        'account': 'te01',
+        'store': 'Testing',
+        'test': true,
+      });
+      expect(trial.words, contains('Testing, the account for testing'));
+      expect(trial.words, endsWith('No customer\'s order is held up by it.'));
+
+      // one account: no line each, and the words are the old ones
+      final one = OnlineStatus.fromJson(Hub.onlineStatus(accounts: [Hub.onlineAccount('main')], trouble: [silent()]));
+      expect(one.severalAccounts, isEmpty);
+      expect(one.trouble.single.headline, 'Online orders are not reaching the POS');
+      expect(OnlineStatus.fromJson(Hub.onlineStatus()).accounts, isEmpty); // an older hub lists none
+    });
+
+    test('an asking out of turn says what each account answered', () {
+      final asked = OnlineAsked.fromJson({
+        'asked': true,
+        'answered': false,
+        'reason': 'Sushi site: GloriaFood refused the key',
+        'came': 2,
+        'accounts': [
+          {'id': 'main', 'name': 'China Sky', 'answered': true, 'reason': null, 'came': 2},
+          {'id': 'su01', 'name': 'Sushi site', 'answered': false, 'reason': 'GloriaFood refused the key', 'came': 0},
+          {'id': 'te01', 'name': 'Testing', 'answered': true, 'reason': null, 'came': 1},
+        ],
+      });
+      expect(asked.wordsFor('main'), 'GloriaFood answered: 2 orders came. The key works.');
+      expect(asked.wordsFor('te01'), 'GloriaFood answered: 1 order came. The key works.');
+      expect((asked.wordsFor('su01'), asked.answeredFor('su01')), ('GloriaFood refused the key.', false));
+      expect((asked.wordsFor('gone'), asked.answeredFor('gone')), (null, null));
+      // a hub that asks one account says nothing of each
+      expect(OnlineAsked.fromJson(const {'asked': true, 'answered': true}).wordsFor('main'), isNull);
+    });
+
     test('a row says what it is when it has no number of the website\'s', () {
       OnlineLook row(String kind, String state) =>
           OnlineLook.fromJson(Hub.onlineLook('x-1', atMs: 5, kind: kind, state: state));
@@ -510,6 +584,65 @@ void main() {
       ]);
       expect(key('online-nothing'), findsOneWidget);
       expect(t.hub.onlineSeenBy, isEmpty);
+      await stop(tester);
+    });
+
+    testWidgets('several accounts: how the asking goes for each, and which one a row came from, on a phone', (
+      tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        Hub.onlineStatus(
+          answeredMs: ago(1),
+          pushedMs: ago(3),
+          came: 4,
+          byPush: 1,
+          placed: 3,
+          failed: 1,
+          accounts: [
+            Hub.onlineAccount('main', name: 'China Sky', answeredMs: ago(1), came: 3),
+            Hub.onlineAccount('su01', name: 'Sushi site', answeredMs: ago(9), reason: 'GloriaFood refused the key'),
+            Hub.onlineAccount('te01', name: 'Testing', test: true, configured: false),
+          ],
+          look: [
+            {...lost(), 'store': 'Sushi site'},
+            {...short(), 'store': 'Testing', 'test': true},
+          ],
+          trouble: [
+            {...silent(urgent: false), 'account': 'su01', 'store': 'Sushi site', 'test': false},
+            {...silent(urgent: false), 'account': 'te01', 'store': 'Testing', 'test': true},
+          ],
+        ),
+        size: const Size(360, 780),
+      );
+      expect(tester.takeException(), isNull); // nothing overflows, and no two boxes share a key
+      String line(String id) => tester.widget<Text>(key('online-account:$id')).data!;
+      expect(line('main'), 'China Sky · answered ${clockTime(ago(1))} · 3 today');
+      expect(line('su01'), 'Sushi site · GloriaFood refused the key');
+      expect(line('te01'), 'Testing (for testing) · no key');
+      final scheme = Theme.of(tester.element(key('online-account:su01'))).colorScheme;
+      expect(tester.widget<Text>(key('online-account:su01')).style?.color, scheme.error);
+      expect(tester.widget<Text>(key('online-account:main')).style?.color, scheme.onSurfaceVariant);
+      // each account that does not answer has its own box
+      expect((shown('online-trouble:not_answering:su01'), shown('online-trouble:not_answering:te01')), (1, 1));
+      expect(find.text('GloriaFood does not answer the hub for Sushi site'), findsOneWidget);
+      await tester.scrollUntilVisible(key('online-look:7790'), 200, scrollable: find.byType(Scrollable).first);
+      expect(rowWords(tester, 'online-look:7781'), startsWith('Sushi site · NOT ON THE POS: it could not be put on'));
+      expect(rowWords(tester, 'online-look:7790'), startsWith('Testing (test) · On the POS: the website charged'));
+      await stop(tester);
+    });
+
+    testWidgets('one account has no line of its own', (tester) async {
+      await pumpScreen(
+        tester,
+        Hub.onlineStatus(
+          answeredMs: ago(1),
+          accounts: [Hub.onlineAccount('main', answeredMs: ago(1))],
+          look: [lost()],
+        ),
+      );
+      expect(shown('online-account:main'), 0);
+      expect(rowWords(tester, 'online-look:7781'), startsWith('NOT ON THE POS'));
       await stop(tester);
     });
 
