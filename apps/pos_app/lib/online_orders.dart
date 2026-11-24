@@ -17,7 +17,15 @@ const paidOnlineNote = 'Paid online';
 /// number for it, whether it is picked up or delivered, how the customer chose to pay there, and what they
 /// were charged.
 class OnlineOrder {
-  const OnlineOrder({this.source = '', this.id = '', this.type = '', this.payment = '', this.total = ''});
+  const OnlineOrder({
+    this.source = '',
+    this.id = '',
+    this.type = '',
+    this.payment = '',
+    this.total = '',
+    this.store = '',
+    this.test = false,
+  });
 
   /// As an order carries it; null for an order that was rung in on a screen, whatever its channel says.
   static OnlineOrder? of(Map<String, dynamic> fields) {
@@ -29,10 +37,19 @@ class OnlineOrder {
       type: oneLine(about['type']),
       payment: oneLine(about['payment']).toUpperCase(),
       total: oneLine(about['total']),
+      store: oneLine(about['store']),
+      test: about['test'] == true,
     );
   }
 
   final String source;
+
+  /// Which of the restaurant's websites it came from, in the restaurant's own word for it ("Sushi site"),
+  /// where it has several and named them; empty otherwise.
+  final String store;
+
+  /// It came from the account the restaurant only tests with: nobody is to make it, and it is no sale.
+  final bool test;
 
   /// The website's own number for the order: what to look it up by in GloriaFood's app.
   final String id;
@@ -75,12 +92,21 @@ String? paysHow(Order order) {
   };
 }
 
-/// What the order's own screen lists of an order from the website, a line each: what to find it by on the
-/// website, and what the customer was charged there.
+/// What an order from the account for testing says of itself, wherever it shows.
+const testOrder = 'TEST ORDER';
+
+/// What a screen says of where such an order came from: "From the website", and which website where the
+/// restaurant has several ("From the website · Sushi site").
+String fromWhere(OnlineOrder online) => online.store.isEmpty ? fromTheWebsite : '$fromTheWebsite · ${online.store}';
+
+/// What the order's own screen lists of an order from the website, a line each: that it is a test, what to
+/// find it by on the website and on which of the restaurant's websites, and what the customer was charged.
 List<String> onlineFacts(OnlineOrder online) => [
+  if (online.test) 'A test order, from the account for testing. Do not make it. Void it when you are done.',
   [
     if (online.id.isNotEmpty) 'Order ${online.id}',
     if (online.sourceName.isNotEmpty) 'on ${online.sourceName}',
+    if (online.store.isNotEmpty) '(${online.store})',
     if (online.type.isNotEmpty) '· ${online.type}',
   ].join(' '),
   if (online.total.isNotEmpty) 'Charged on the website: ${dollars(online.total)}',
@@ -104,6 +130,8 @@ class OnlineLook {
     this.said = '',
     this.atMs = 0,
     this.isNew = false,
+    this.store = '',
+    this.test = false,
   });
 
   factory OnlineLook.fromJson(Map<String, dynamic> json) => OnlineLook(
@@ -114,6 +142,8 @@ class OnlineLook {
     said: oneLine(json['said']),
     atMs: _whole(json['at_ms']) ?? _whole(json['fetched_ms']) ?? 0,
     isNew: json['new'] == true,
+    store: oneLine(json['store']),
+    test: json['test'] == true,
   );
 
   /// The website's own number for the order: what to look it up by in GloriaFood's app.
@@ -131,6 +161,16 @@ class OnlineLook {
 
   /// Nobody has looked since.
   final bool isNew;
+
+  /// Which of the restaurant's accounts it came from, by the name the restaurant gave it; empty when it has
+  /// one account, or gave this one no name.
+  final String store;
+
+  /// It came from the account for testing.
+  final bool test;
+
+  /// Which account, for the row: "Sushi site", "Testing (test)"; empty when there is nothing to say.
+  String get from => store.isEmpty ? (test ? 'test' : '') : (test ? '$store (test)' : store);
 
   /// It is a check on the POS, and what is said of it is about that check.
   bool get onThePos => state == 'placed' && orderId.isNotEmpty;
@@ -167,7 +207,16 @@ class OnlineLook {
 
 /// Something that is wrong with the online orders right now, and stays so until it is mended.
 class OnlineTrouble {
-  const OnlineTrouble({this.code = '', this.sinceMs = 0, this.reason = '', this.urgent = false, this.count = 0});
+  const OnlineTrouble({
+    this.code = '',
+    this.sinceMs = 0,
+    this.reason = '',
+    this.urgent = false,
+    this.count = 0,
+    this.account = '',
+    this.store = '',
+    this.test = false,
+  });
 
   factory OnlineTrouble.fromJson(Map<String, dynamic> json) => OnlineTrouble(
     code: oneLine(json['code']),
@@ -175,7 +224,20 @@ class OnlineTrouble {
     reason: oneLine(json['reason']),
     urgent: json['urgent'] == true,
     count: _whole(json['count']) ?? 0,
+    account: oneLine(json['account']),
+    store: oneLine(json['store']),
+    test: json['test'] == true,
   );
+
+  /// Which of the restaurant's accounts does not answer, where it has several: its id, the name the
+  /// restaurant gave it, and whether it is the one for testing. Empty where the hub asks one account.
+  final String account;
+  final String store;
+  final bool test;
+
+  /// The account in a few words, for a sentence: "Sushi site", "the first account"; null where the hub
+  /// asks one account only and the trouble is of the online orders altogether.
+  String? get _whose => account.isEmpty ? null : (store.isEmpty ? 'the first account' : store);
 
   final String code; // not_answering | pushes_refused
   final int sinceMs;
@@ -191,7 +253,9 @@ class OnlineTrouble {
 
   /// What is wrong, in a few words: the alert's line and the head of its box.
   String get headline => switch (code) {
+    'not_answering' when urgent && _whose != null => 'Online orders of $_whose are not reaching the POS',
     'not_answering' when urgent => 'Online orders are not reaching the POS',
+    'not_answering' when _whose != null => 'GloriaFood does not answer the hub for $_whose',
     'not_answering' => 'GloriaFood does not answer the hub',
     'pushes_refused' => 'Online orders arrive a minute late',
     _ => 'Online orders: something is wrong',
@@ -201,10 +265,20 @@ class OnlineTrouble {
   String get words {
     final since = sinceMs > 0 ? ' since ${clockTime(sinceMs)}' : '';
     final why = reason.isEmpty ? '' : ' ($reason)';
+    final whose = _whose;
     return switch (code) {
+      'not_answering' when urgent && whose != null =>
+        'GloriaFood has not answered the hub for $whose$since$why. Until it does, look for that account\'s new '
+            'orders in GloriaFood\'s own app and ring them in by hand. The other accounts are not affected.',
       'not_answering' when urgent =>
         'GloriaFood has not answered the hub$since$why. Until it does, look for new orders in GloriaFood\'s own '
             'app and ring them in by hand.',
+      'not_answering' when whose != null && test =>
+        'GloriaFood has not answered the hub for $whose, the account for testing,$since$why. No customer\'s '
+            'order is held up by it.',
+      'not_answering' when whose != null =>
+        'The hub\'s asking for $whose has had no answer$since$why. Its orders still arrive, sent by GloriaFood, '
+            'but nothing catches one that gets lost on the way.',
       'not_answering' =>
         'The hub\'s asking has had no answer$since$why. Orders still arrive, sent by GloriaFood, but nothing '
             'catches one that gets lost on the way.',
@@ -213,6 +287,73 @@ class OnlineTrouble {
             'turned away$why. The key in GloriaFood\'s admin is probably not the one on the hub.',
       _ => reason.isEmpty ? 'The hub says something is wrong with the online orders.' : reason,
     };
+  }
+}
+
+/// One of the restaurant's accounts with GloriaFood, as the hub says how its asking goes (`accounts` of
+/// `GET /online/status`, and of what `POST /online/fetch` answers).
+class OnlineAccountAsked {
+  const OnlineAccountAsked({
+    this.id = '',
+    this.name = '',
+    this.test = false,
+    this.asks = false,
+    this.answered = false,
+    this.answeredMs,
+    this.reason = '',
+    this.came = 0,
+  });
+
+  /// As the status lists it: whether the hub has its key, when it last answered and why it does not.
+  factory OnlineAccountAsked.ofStatus(Map<String, dynamic> json) {
+    final failure = json['last_failure'] is Map ? json['last_failure'] as Map : null;
+    return OnlineAccountAsked(
+      id: oneLine(json['id']),
+      name: oneLine(json['name']),
+      test: json['test'] == true,
+      asks: json['configured'] == true,
+      answered: failure == null && _whole(json['answered_ms']) != null,
+      answeredMs: _whole(json['answered_ms']),
+      reason: oneLine(failure?['reason']),
+      came: _whole(json['came']) ?? 0,
+    );
+  }
+
+  /// As an asking out of turn says it: whether it answered just now, why not, and how many orders it gave.
+  factory OnlineAccountAsked.ofAsking(Map<String, dynamic> json) => OnlineAccountAsked(
+    id: oneLine(json['id']),
+    name: oneLine(json['name']),
+    asks: true,
+    answered: json['answered'] == true,
+    reason: oneLine(json['reason']),
+    came: _whole(json['came']) ?? 0,
+  );
+
+  final String id;
+
+  /// What the restaurant calls it; the first account may have no name.
+  final String name;
+  final bool test;
+
+  /// The hub has its key and asks it every minute.
+  final bool asks;
+
+  /// It answered the last asking; [reason] is why it did not.
+  final bool answered;
+  final int? answeredMs;
+  final String reason;
+
+  /// How many orders it brought: today, or in this asking.
+  final int came;
+
+  String get called => name.isNotEmpty ? name : 'First account';
+
+  /// How its asking stands, for a line under "Asked for by the hub".
+  String get words {
+    if (!asks) return 'no key';
+    if (reason.isNotEmpty) return reason;
+    final at = answeredMs;
+    return at == null ? 'not asked yet' : 'answered ${clockTime(at)}';
   }
 }
 
@@ -231,6 +372,7 @@ class OnlineAsked {
     this.kept = 0,
     this.failed = 0,
     this.status,
+    this.accounts = const [],
   });
 
   factory OnlineAsked.fromJson(Map<String, dynamic> json) {
@@ -252,8 +394,30 @@ class OnlineAsked {
       kept: count(json['kept']),
       failed: count(json['failed']),
       status: status == null ? null : OnlineStatus.fromJson(status),
+      accounts: [
+        for (final row in json['accounts'] is List ? json['accounts'] as List : const [])
+          if (row is Map) OnlineAccountAsked.ofAsking(row.cast<String, dynamic>()),
+      ],
     );
   }
+
+  /// Each of the restaurant's accounts by itself, where the hub asks several: whether it answered, why not,
+  /// and how many orders it gave. Empty where the hub asks one.
+  final List<OnlineAccountAsked> accounts;
+
+  /// What this asking came to for one account, as a sentence: for trying that account's key. Null where
+  /// the hub did not say each account by itself.
+  String? wordsFor(String id) {
+    final account = accounts.where((row) => row.id == id).firstOrNull;
+    if (account == null) return null;
+    if (!account.answered) return account.reason.isEmpty ? 'GloriaFood did not answer.' : '${account.reason}.';
+    return account.came == 0
+        ? 'GloriaFood answered: no new order. The key works.'
+        : 'GloriaFood answered: ${account.came == 1 ? '1 order came' : '${account.came} orders came'}. The key works.';
+  }
+
+  /// Whether one account answered this asking; null where the hub did not say each by itself.
+  bool? answeredFor(String id) => accounts.where((row) => row.id == id).firstOrNull?.answered;
 
   /// The website was asked. Not when it was asked a few seconds ago ([soon]), and not by a hub that cannot
   /// write orders down.
@@ -332,6 +496,7 @@ class OnlineStatus {
     this.look = const [],
     this.news = 0,
     this.trouble = const [],
+    this.accounts = const [],
   });
 
   factory OnlineStatus.fromJson(Map<String, dynamic> json) {
@@ -366,8 +531,19 @@ class OnlineStatus {
         for (final row in rows(json['trouble']))
           if (row is Map) OnlineTrouble.fromJson(row.cast<String, dynamic>()),
       ],
+      accounts: [
+        for (final row in rows(json['accounts']))
+          if (row is Map) OnlineAccountAsked.ofStatus(row.cast<String, dynamic>()),
+      ],
     );
   }
+
+  /// The restaurant's accounts with GloriaFood, the first account first, each with how its asking goes;
+  /// empty on a hub from before there could be several.
+  final List<OnlineAccountAsked> accounts;
+
+  /// The accounts worth a line each: there are several, so "GloriaFood answered" needs saying of each.
+  List<OnlineAccountAsked> get severalAccounts => accounts.length > 1 ? accounts : const [];
 
   /// The hub asks the website for orders every minute (it has the key for that).
   final bool asks;

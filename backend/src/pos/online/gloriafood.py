@@ -17,8 +17,13 @@ Either way the hub writes down every order it is given before it does anything e
 What leaves the building: the key the hub asks with, in the `Authorization` header. No order, no customer,
 nothing of the POS. Both keys are this restaurant's own integrations in GloriaFood's admin ("Poll Accepted
 Order v2" and "Push Accepted Order"); they live in `/opt/pos/.env` (`POS_GLORIAFOOD_KEY`, put there by
-`hubctl online key`, and `POS_GLORIAFOOD_PUSH_KEY`, by `hubctl online push key`) and are never written to a
-log.
+`hubctl online key`, and `POS_GLORIAFOOD_PUSH_KEY`, by `hubctl online push key`) or, typed in the app, sealed
+in the hub's database (`pos.keys`), and are never written to a log.
+
+**A restaurant with several accounts** (`pos.online.accounts`) has a key for asking each, and the hub asks
+each with its own (`GloriaFood.account`). A push does not say in so many words which account it is from,
+but every order carries the key of the restaurant it was placed with (`restaurant_key`): before that key is
+dropped it is held against the keys the hub asks with (`GloriaFood.owns`, `pushed_by`).
 """
 
 from __future__ import annotations
@@ -27,10 +32,12 @@ import hmac
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import httpx
+
+from .accounts import MAIN
 
 NAME = "gloriafood"
 POP_URL = "https://pos.globalfoodsoft.com/pos/order/pop"
@@ -60,14 +67,29 @@ class FetchFailed(Exception):
 
 
 class GloriaFood:
-    """The accepted orders of one restaurant on GloriaFood, asked for with that restaurant's key."""
+    """The accepted orders of one restaurant on GloriaFood, asked for with that restaurant's key. `account`
+    says which of the restaurant's accounts it is, where it has several."""
 
     name = NAME
 
-    def __init__(self, key: str, *, url: str = POP_URL, client: httpx.Client | None = None) -> None:
+    def __init__(
+        self, key: str, *, account: str = MAIN, url: str = POP_URL, client: httpx.Client | None = None
+    ) -> None:
         self._key = key
+        self.account = account
         self._url = url
         self._client = client if client is not None else httpx.Client(timeout=TIMEOUT_SECONDS)
+
+    def owns(self, order: Mapping[str, Any]) -> bool:
+        """Whether an order as GloriaFood sent it is this account's: it carries the key this account is
+        asked with. Compared in the same time whatever it carries."""
+        told = order.get("restaurant_key")
+        return isinstance(told, str) and bool(told) and _same(told, self._key)
+
+    def same_as(self, other: object) -> bool:
+        """Whether another source asks the same account with the same key: then what is known of how the
+        asking goes still holds."""
+        return isinstance(other, GloriaFood) and other.account == self.account and _same(other._key, self._key)
 
     def pop(self) -> list[dict[str, Any]]:
         """The orders accepted since the last time this was asked, as GloriaFood sends them. They are not
@@ -91,11 +113,25 @@ class GloriaFood:
         return read(response.text)
 
 
+def _same(one: str, other: str) -> bool:
+    return hmac.compare_digest(one.strip().encode("utf-8"), other.encode("utf-8"))
+
+
 def read(text: str, *, alone: bool = False) -> list[dict[str, Any]]:
     """The orders in what GloriaFood sent: `{"count": 1, "orders": [...]}`. Nothing at all, or a count of
     none, is no orders. `alone` is for a push, whose wrapping GloriaFood's pages do not spell out: one order
     by itself and a bare list of orders are read too, and what cannot be read is told of with its shape.
     `FetchFailed` for anything else, with what came."""
+    return [_without_keys(order) for order in _orders(text, alone=alone)]
+
+
+def _without_keys(order: Mapping[str, Any]) -> dict[str, Any]:
+    return {name: value for name, value in order.items() if name not in SECRETS}
+
+
+def _orders(text: str, *, alone: bool = False) -> list[Mapping[str, Any]]:
+    """The orders in what GloriaFood sent, still as it sent them: the restaurant's own keys are on them.
+    Nothing outside this module is handed these."""
     if not text.strip():
         return []
 
@@ -119,7 +155,7 @@ def read(text: str, *, alone: bool = False) -> list[dict[str, Any]]:
         orders = data
     if not isinstance(orders, list) or not all(isinstance(order, Mapping) for order in orders):
         raise unread(_shape(data))
-    return [{name: value for name, value in order.items() if name not in SECRETS} for order in orders]
+    return orders
 
 
 def _shape(data: Any) -> str:
@@ -133,11 +169,18 @@ def _shape(data: Any) -> str:
 
 def pushed(body: bytes) -> list[dict[str, Any]]:
     """The orders in a push, the restaurant's own keys left out. `FetchFailed` for one that cannot be read."""
+    return [order for _, order in pushed_by(body, lambda order: "")]
+
+
+def pushed_by(body: bytes, whose: Callable[[Mapping[str, Any]], str]) -> list[tuple[str, dict[str, Any]]]:
+    """The orders in a push, each with the account it is from. `whose` is shown every order as GloriaFood
+    sent it, the restaurant's own key still on it, and says the account (nothing when it cannot tell); the
+    order is handed on without its keys, as always. `FetchFailed` for a push that cannot be read."""
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         raise FetchFailed("GloriaFood's push could not be read (it is not text)") from None
-    return read(text, alone=True)
+    return [(whose(order), _without_keys(order)) for order in _orders(text, alone=True)]
 
 
 def allowed(given: str | None, key: str | None) -> bool:
@@ -146,7 +189,7 @@ def allowed(given: str | None, key: str | None) -> bool:
     same time whatever was sent, so the key cannot be felt out a letter at a time."""
     if not key or not given:
         return False
-    return hmac.compare_digest(given.strip().encode("utf-8"), key.encode("utf-8"))
+    return _same(given, key)
 
 
 def _kept(text: str) -> str:

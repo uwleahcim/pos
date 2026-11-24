@@ -3,6 +3,9 @@
 /// iPhone. A manager types them under Location, Keys and connections; the hub keeps them sealed and uses
 /// them at once. What the hub tells a screen about a key (`GET /hub/keys`) is never the key: whether one is
 /// in force, where it came from, its last characters, and who typed it and when.
+///
+/// GloriaFood's key comes in several: a restaurant with more than one website there, or an account it only
+/// tests with, has a key for each ([OnlineAccount]; docs/online-orders.md, "Several accounts").
 library;
 
 /// One key as the hub describes it.
@@ -34,7 +37,7 @@ class HubKey {
     unreadable: json['unreadable'] == true,
   );
 
-  /// `maps`, `maps_google`, `online` or `push_apple`.
+  /// `maps`, `maps_google`, `online` or `push_apple`; `online:<id>` for a further account of GloriaFood's.
   final String name;
 
   /// A key is in force on the hub.
@@ -90,9 +93,49 @@ String keyDay(DateTime at, DateTime now) {
   return '${months[at.month - 1]} ${at.day}${at.year == now.year ? '' : ', ${at.year}'}';
 }
 
+/// One of the restaurant's accounts with GloriaFood: a website of its own there, or the account it tries
+/// things out with. Each has its own key for asking, and its orders say which account brought them.
+class OnlineAccount {
+  const OnlineAccount({required this.id, this.name = '', this.test = false, required this.key});
+
+  factory OnlineAccount.fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String? ?? '';
+    final key = json['key'];
+    return OnlineAccount(
+      id: id,
+      name: json['name'] as String? ?? '',
+      test: json['test'] == true,
+      key: key is Map ? HubKey.fromJson(key.cast<String, dynamic>()) : HubKey(name: slotOf(id)),
+    );
+  }
+
+  /// The first account: the one a hub had before there could be several. It is always there.
+  static const first = 'main';
+
+  /// The name an account's key is kept under on the hub.
+  static String slotOf(String id) => id == first ? 'online' : 'online:$id';
+
+  /// The hub's own name for it, never shown.
+  final String id;
+
+  /// What the restaurant calls it ("Sushi site"); the first account may have none.
+  final String name;
+
+  /// It is the account the restaurant only tests with: its orders say TEST wherever they show.
+  final bool test;
+
+  /// Its key for asking, as the hub describes it.
+  final HubKey key;
+
+  bool get isFirst => id == first;
+
+  /// What to call it where it has to be told from the others.
+  String get called => name.isNotEmpty ? name : 'First account';
+}
+
 /// Every key the hub holds, as it stands.
 class HubKeys {
-  const HubKeys({required this.keys, this.kept = true});
+  const HubKeys({required this.keys, this.kept = true, this.onlineAccounts, this.added});
 
   factory HubKeys.fromJson(Map<String, dynamic> json) => HubKeys(
     keys: [
@@ -100,12 +143,34 @@ class HubKeys {
         if (key is Map) HubKey.fromJson(key.cast<String, dynamic>()),
     ],
     kept: json['kept'] != false,
+    onlineAccounts: json['online_accounts'] is List
+        ? [
+            for (final account in json['online_accounts'] as List)
+              if (account is Map && account['id'] is String) OnlineAccount.fromJson(account.cast<String, dynamic>()),
+          ]
+        : null,
+    added: json['added'] as String?,
   );
+
+  /// The account that was just added, in the answer to adding one.
+  final String? added;
 
   final List<HubKey> keys;
 
   /// False on a hub that has nowhere to keep a typed key over a restart.
   final bool kept;
+
+  /// The restaurant's accounts with GloriaFood, the first account first; null on a hub from before there
+  /// could be several, which has the one key `online` and nothing to add.
+  final List<OnlineAccount>? onlineAccounts;
+
+  /// The accounts as the page lists them: the hub's own list, or, on a hub that knows of one only, that one.
+  List<OnlineAccount> get accounts {
+    final listed = onlineAccounts;
+    if (listed != null && listed.isNotEmpty) return listed;
+    final only = named('online');
+    return [if (only != null) OnlineAccount(id: OnlineAccount.first, key: only)];
+  }
 
   HubKey? named(String name) {
     for (final key in keys) {
@@ -121,11 +186,30 @@ class HubKeys {
         if (hubKeyInfo[key.name] != null) key,
     ];
     if (known.isEmpty) return 'This hub holds no keys the app knows';
-    String list(Iterable<HubKey> some) => [for (final key in some) hubKeyInfo[key.name]!.short].join(', ');
-    final on = known.where((key) => key.set), off = known.where((key) => !key.set);
-    if (off.isEmpty) return 'All set: ${list(on)}';
-    if (on.isEmpty) return 'None set yet: ${list(off)}';
-    return 'Set: ${list(on)} · Not set: ${list(off)}';
+    // GloriaFood with several accounts: set as far as its accounts are, and the ones without a key by name
+    final several = accounts.length > 1;
+    final asked = accounts.where((account) => account.key.set).length;
+    String word(HubKey key, {required bool set}) {
+      final short = hubKeyInfo[key.name]!.short;
+      if (key.name != 'online' || !several) return short;
+      if (set) return '$short ($asked ${asked == 1 ? 'account' : 'accounts'})';
+      return '$short (${[for (final account in accounts)
+        if (!account.key.set) account.called].join(', ')})';
+    }
+
+    bool isOn(HubKey key) => key.name == 'online' && several ? asked > 0 : key.set;
+    bool isOff(HubKey key) => key.name == 'online' && several ? asked < accounts.length : !key.set;
+    final on = [
+      for (final key in known)
+        if (isOn(key)) word(key, set: true),
+    ];
+    final off = [
+      for (final key in known)
+        if (isOff(key)) word(key, set: false),
+    ];
+    if (off.isEmpty) return 'All set: ${on.join(', ')}';
+    if (on.isEmpty) return 'None set yet: ${off.join(', ')}';
+    return 'Set: ${on.join(', ')} · Not set: ${off.join(', ')}';
   }
 }
 
@@ -139,6 +223,10 @@ class HubKeyInfo {
     required this.where,
     required this.removing,
   });
+
+  /// The same words under another title: one of several accounts of the same service.
+  HubKeyInfo titled(String title) =>
+      HubKeyInfo(title: title, short: short, about: about, without: without, where: where, removing: removing);
 
   /// The card's title, and the name in the dialogs.
   final String title;

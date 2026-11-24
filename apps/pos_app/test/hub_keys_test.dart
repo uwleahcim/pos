@@ -41,7 +41,7 @@ Future<Terminal> pumpKeys(
   final t = await terminal(tester);
   hub?.call(t.hub);
   tester.view.physicalSize = size;
-  final keys = HubKeys.fromJson({'keys': t.hub.hubKeys!.values.toList(), 'kept': t.hub.hubKeysKept});
+  final keys = HubKeys.fromJson(t.hub.hubKeysSaid());
   await tester.pumpWidget(
     MaterialApp(
       builder: (context, child) => MediaQuery(
@@ -398,6 +398,237 @@ void main() {
         scrollable: find.descendant(of: find.byType(HubKeysScreen), matching: find.byType(Scrollable)).first,
       );
       await tapKey(tester, 'key-push_apple-type');
+      expect(tester.takeException(), isNull);
+      final save = tester.getRect(find.byKey(const ValueKey('key-save')));
+      expect(save.right <= 320 && save.bottom <= 568, isTrue);
+    });
+  });
+
+  group('several GloriaFood accounts', () {
+    const sushiKey = 'sushi-site-key-000000009876';
+
+    /// A hub that asks two storefronts and an account for testing, the first one set in its terminal.
+    void three(Hub hub) {
+      hub
+        ..firstAccountName = 'China Sky'
+        ..hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz')
+        ..onlineAccounts = [
+          {'id': 'su01', 'name': 'Sushi site', 'test': false},
+          {'id': 'te01', 'name': 'Testing', 'test': true},
+        ]
+        ..accountKeys['online:su01'] = {...Hub.hubKey('online:su01', ending: '9876'), 'source': 'app', 'by': 'Mike'}
+        ..accountKeys['online:te01'] = Hub.noKey('online:te01');
+    }
+
+    test('the hub lists them, the first account first, each with how its key stands', () {
+      final hub = Hub();
+      three(hub);
+      final keys = HubKeys.fromJson(hub.hubKeysSaid());
+      expect([for (final account in keys.accounts) account.id], ['main', 'su01', 'te01']);
+      expect([for (final account in keys.accounts) account.called], ['China Sky', 'Sushi site', 'Testing']);
+      expect([for (final account in keys.accounts) account.key.name], ['online', 'online:su01', 'online:te01']);
+      expect([for (final account in keys.accounts) account.key.set], [true, true, false]);
+      expect(keys.accounts.last.test, isTrue);
+      // the four keys of the page are still four: an account's key is not one of them
+      expect([for (final key in keys.keys) key.name], ['maps', 'maps_google', 'online', 'push_apple']);
+      expect(
+        keys.summary,
+        'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, GloriaFood (Testing), Apple push',
+      );
+    });
+
+    test('a hub from before there could be several has the one account, by the key online', () {
+      final hub = Hub()
+        ..onlineAccounts = null
+        ..hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz');
+      final keys = HubKeys.fromJson(hub.hubKeysSaid());
+      expect(keys.onlineAccounts, isNull);
+      expect(keys.accounts.single.id, 'main');
+      expect(keys.accounts.single.key.ending, 'wxyz');
+      expect(keys.summary, 'Set: GloriaFood · Not set: map service, Google Maps, Apple push');
+    });
+
+    testWidgets('one account looks as it did, with the way to add another under it', (tester) async {
+      await pumpKeys(tester);
+      expect(find.text('GloriaFood (online orders)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-add')), findsOneWidget);
+      expect(find.text('Add another GloriaFood account'), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-main-edit')), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-first-unnamed')), findsNothing);
+    });
+
+    testWidgets('an older hub offers no second account', (tester) async {
+      await pumpKeys(tester, hub: (hub) => hub.onlineAccounts = null);
+      expect(find.text('GloriaFood (online orders)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-add')), findsNothing);
+      expect(find.byKey(const ValueKey('account-main-edit')), findsNothing);
+    });
+
+    testWidgets('each account is a card by its name, and the one for testing says so', (tester) async {
+      await pumpKeys(tester, hub: three);
+      for (final title in ['GloriaFood · China Sky', 'GloriaFood · Sushi site', 'GloriaFood · Testing']) {
+        expect(find.text(title), findsOneWidget, reason: title);
+      }
+      expect(find.text('GloriaFood (online orders)'), findsNothing);
+      expect(textOf(tester, 'key-online-state'), "Set in the hub's terminal · ends in wxyz");
+      expect(textOf(tester, 'key-online:su01-state'), startsWith('Set · ends in 9876 · typed here by Mike'));
+      expect(textOf(tester, 'key-online:te01-state'), 'Not set');
+      expect(find.byKey(const ValueKey('account-te01-test')), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-su01-test')), findsNothing);
+      expect(find.textContaining('Its orders say TEST ORDER on every ticket and screen.'), findsOneWidget);
+      // a further account can be taken away whole, with or without a key; the first one only loses its key
+      for (final key in ['key-online-remove', 'key-online:su01-remove', 'key-online:te01-remove']) {
+        expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
+      }
+      expect(find.byKey(const ValueKey('key-online:te01-try')), findsNothing);
+      expect(find.byKey(const ValueKey('account-first-unnamed')), findsNothing);
+    });
+
+    testWidgets('another account is added with its name and its key, which is nowhere on the page', (tester) async {
+      final told = <HubKeys>[];
+      final t = await pumpKeys(
+        tester,
+        told: told,
+        hub: (hub) => hub.hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz'),
+      );
+      await tapKey(tester, 'account-add');
+      expect(find.text('Add a GloriaFood account'), findsOneWidget);
+      // nothing typed: nothing is sent, and the dialog says what is missing
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), startsWith('Give the account a name'));
+      await tester.enterText(find.byKey(const ValueKey('account-name')), ' Sushi site ');
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Type or paste the key first.');
+      expect(t.hub.accountsAdded, isEmpty);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-field'))).obscureText, isTrue);
+      await tester.enterText(find.byKey(const ValueKey('key-field')), ' $sushiKey ');
+      await tapKey(tester, 'key-save');
+      expect(find.byType(OnlineAccountDialog), findsNothing);
+      expect(t.hub.accountsAdded.single, {'name': 'Sushi site', 'key': sushiKey, 'test': false});
+      expect(find.text('GloriaFood · Sushi site'), findsOneWidget);
+      expect(textOf(tester, 'key-online:a1-state'), 'Set · ends in 9876 · typed here by Mike, today');
+      expect(textOf(tester, 'key-online:a1-said'), 'Added. The hub asks it every minute from now on.');
+      expect(find.textContaining(sushiKey), findsNothing);
+      // the first account is now one of two, and still has no name
+      expect(find.text('GloriaFood · First account'), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-first-unnamed')), findsOneWidget);
+      expect(told.last.accounts.length, 2);
+    });
+
+    testWidgets('an account for testing is added with the switch on', (tester) async {
+      final t = await pumpKeys(tester);
+      await tapKey(tester, 'account-add');
+      await tester.enterText(find.byKey(const ValueKey('account-name')), 'Testing');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), sushiKey);
+      await tapKey(tester, 'account-test');
+      await tapKey(tester, 'key-save');
+      expect(t.hub.accountsAdded.single['test'], isTrue);
+      expect(find.byKey(const ValueKey('account-a1-test')), findsOneWidget);
+    });
+
+    testWidgets('what the hub refuses of an account is said in the dialog, with the boxes as typed', (tester) async {
+      final t = await pumpKeys(tester, hub: (hub) => hub.refuseAccount = 'another account is called that already');
+      await tapKey(tester, 'account-add');
+      await tester.enterText(find.byKey(const ValueKey('account-name')), 'Sushi site');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), sushiKey);
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Another account is called that already.');
+      expect(find.byType(OnlineAccountDialog), findsOneWidget);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('account-name'))).controller!.text, 'Sushi site');
+      expect(t.hub.onlineAccounts, isEmpty);
+    });
+
+    testWidgets('an account is named and marked for testing without its key being touched', (tester) async {
+      final t = await pumpKeys(tester, hub: three);
+      // the first account gets its name here too
+      await tapKey(tester, 'account-main-edit');
+      expect(find.text('GloriaFood account'), findsOneWidget);
+      expect(find.byKey(const ValueKey('key-field')), findsNothing);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('account-name'))).controller!.text, 'China Sky');
+      await tester.enterText(find.byKey(const ValueKey('account-name')), 'Chinese site');
+      await tapKey(tester, 'key-save');
+      expect(t.hub.accountsChanged.single.$1, 'main');
+      expect(t.hub.accountsChanged.single.$2, {'name': 'Chinese site', 'test': false});
+      expect(find.text('GloriaFood · Chinese site'), findsOneWidget);
+      expect(textOf(tester, 'key-online-said'), 'Saved. Orders that come from now on say so.');
+      expect(textOf(tester, 'key-online-state'), "Set in the hub's terminal · ends in wxyz");
+      // and the sushi site becomes one for testing
+      await tapKey(tester, 'account-su01-edit');
+      await tapKey(tester, 'account-test');
+      await tapKey(tester, 'key-save');
+      expect(t.hub.accountsChanged.last.$1, 'su01');
+      expect(t.hub.accountsChanged.last.$2, {'name': 'Sushi site', 'test': true});
+      expect(find.byKey(const ValueKey('account-su01-test')), findsOneWidget);
+      expect(t.hub.keysTyped, isEmpty);
+    });
+
+    testWidgets('an account\'s own key is typed, replaced and tried under its own name', (tester) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          three(hub);
+          hub.online = Hub.onlineStatus();
+        },
+      );
+      await tapKey(tester, 'key-online:te01-type');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), 'testing-key-00000001111');
+      await tapKey(tester, 'key-save');
+      expect(t.hub.keysTyped.single.$1, 'online:te01');
+      expect(t.hub.keysTyped.single.$2, {'key': 'testing-key-00000001111'});
+      expect(textOf(tester, 'key-online:te01-state'), 'Set · ends in 1111 · typed here by Mike, today');
+      // trying one account asks them all, and says what this one answered
+      t.hub.onlineFetched = {
+        ...t.hub.onlineFetched,
+        'answered': false,
+        'reason': 'Sushi site: GloriaFood refused the key',
+        'accounts': [
+          {'id': 'main', 'name': 'China Sky', 'answered': true, 'reason': null, 'came': 2},
+          {'id': 'su01', 'name': 'Sushi site', 'answered': false, 'reason': 'GloriaFood refused the key', 'came': 0},
+          {'id': 'te01', 'name': 'Testing', 'answered': true, 'reason': null, 'came': 0},
+        ],
+      };
+      await tapKey(tester, 'key-online:te01-try');
+      expect(t.hub.onlineFetches, 1);
+      expect(textOf(tester, 'key-online:te01-said'), 'GloriaFood answered: no new order. The key works.');
+      await tapKey(tester, 'key-online:su01-try');
+      expect(textOf(tester, 'key-online:su01-said'), 'GloriaFood refused the key.');
+      await tapKey(tester, 'key-online-try');
+      expect(textOf(tester, 'key-online-said'), 'GloriaFood answered: 2 orders came. The key works.');
+    });
+
+    testWidgets('removing a further account asks first, and takes its key with it', (tester) async {
+      final t = await pumpKeys(tester, hub: three);
+      await tapKey(tester, 'key-online:su01-remove');
+      expect(find.text('Remove this account?'), findsOneWidget);
+      expect(find.textContaining('Sushi site. The hub stops asking GloriaFood for its orders'), findsOneWidget);
+      await tester.tap(find.text('Keep it'));
+      await tester.pumpAndSettle();
+      expect(t.hub.accountsRemoved, isEmpty);
+      await tapKey(tester, 'key-online:su01-remove');
+      await tapKey(tester, 'key-remove-sure');
+      expect(t.hub.accountsRemoved, ['su01']);
+      expect(t.hub.keysRemoved, isEmpty);
+      expect(find.text('GloriaFood · Sushi site'), findsNothing);
+      expect(textOf(tester, 'accounts-said'), 'Removed Sushi site. The hub no longer asks it.');
+      // the first account only loses its key: it stays on the page
+      await tapKey(tester, 'key-online-remove');
+      expect(find.text('Remove this key?'), findsOneWidget);
+      await tapKey(tester, 'key-remove-sure');
+      expect(t.hub.keysRemoved, ['online']);
+      expect(find.text('GloriaFood · China Sky'), findsOneWidget);
+    });
+
+    testWidgets('three accounts fit a 320-wide phone with large text, and so does the dialog', (tester) async {
+      await pumpKeys(tester, size: const Size(320, 568), textScale: 1.3, hub: three);
+      expect(tester.takeException(), isNull);
+      final scrollable = find.descendant(of: find.byType(HubKeysScreen), matching: find.byType(Scrollable)).first;
+      for (final key in ['key-online:su01-type', 'account-su01-edit', 'key-online:su01-remove', 'account-add']) {
+        await tester.scrollUntilVisible(find.byKey(ValueKey(key)), 200, scrollable: scrollable);
+        final button = tester.getRect(find.byKey(ValueKey(key)));
+        expect(button.left >= 0 && button.right <= 320, isTrue, reason: key);
+        expect(tester.takeException(), isNull, reason: key);
+      }
+      await tapKey(tester, 'account-add');
       expect(tester.takeException(), isNull);
       final save = tester.getRect(find.byKey(const ValueKey('key-save')));
       expect(save.right <= 320 && save.bottom <= 568, isTrue);

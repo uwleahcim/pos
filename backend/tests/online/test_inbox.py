@@ -104,6 +104,7 @@ def test_what_is_said_of_an_order_names_no_customer(inbox):
         "fetched_ms": 1000,
         "settled_ms": None,
         "via": "poll",
+        "account": "",
     }
     assert "Pat" not in str(about)
 
@@ -160,6 +161,62 @@ CREATE TABLE online_order (
     UNIQUE (source, ext_id)
 )
 """
+
+
+def test_the_account_that_brought_an_order_is_written_beside_it(inbox):
+    inbox.add(came("1"))
+    inbox.add(came("2", account="s1", raw={**RAW, "restaurant_id": 2}))
+    inbox.add(came("3", account="t1", raw={**RAW, "restaurant_id": "3"}))
+    assert [row.account for row in inbox.since(0)] == ["", "s1", "t1"]
+    assert inbox.get("gloriafood", "2").about()["account"] == "s1"
+    inbox.settle(replace(inbox.get("gloriafood", "2"), state="placed", order_id="gf-2", settled_ms=2000))
+    assert inbox.get("gloriafood", "2").account == "s1"
+    # GloriaFood's number for a restaurant says whose a later order is
+    assert (inbox.account_of("2"), inbox.account_of("3"), inbox.account_of("9")) == ("s1", "t1", None)
+    inbox.add(came("4", account="s2", raw={**RAW, "restaurant_id": 2}))  # the newest word on a number stands
+    assert inbox.account_of("2") == "s2"
+    inbox.add(came("5", raw={**RAW, "restaurant_id": 2}))  # one that was put to no account says nothing
+    assert inbox.account_of("2") == "s2"
+
+
+def test_an_order_that_is_here_without_an_account_learns_it_and_nothing_else_of_it_changes(inbox):
+    assert inbox.add(came("1", raw={**RAW, "restaurant_id": 7})) is True  # pushed, and no account could be told
+    inbox.settle(replace(inbox.get("gloriafood", "1"), state="placed", order_id="gf-1", settled_ms=2000))
+    assert inbox.account_of("7") is None
+    # the asking brings it for an account: it is the same order, and it learns whose it is
+    assert inbox.add(replace(came("1", account="t1", raw={**RAW, "restaurant_id": 7}), fetched_ms=9000)) is False
+    row = inbox.get("gloriafood", "1")
+    assert (row.account, row.state, row.order_id, row.fetched_ms) == ("t1", "placed", "gf-1", came("1").fetched_ms)
+    assert inbox.account_of("7") == "t1"
+    # one that has its account keeps it, whoever brings it again
+    assert inbox.add(came("1", account="s1")) is False and inbox.add(came("1")) is False
+    assert inbox.get("gloriafood", "1").account == "t1"
+    assert len(inbox.since(0)) == 1
+
+
+@pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")
+def test_a_hub_that_wrote_orders_down_before_there_were_accounts_keeps_them_and_learns_the_account():
+    import psycopg
+
+    from pos.online.inbox import PgInbox
+
+    with psycopg.connect(DSN) as conn:
+        conn.execute("DROP TABLE IF EXISTS online_order")
+        conn.execute(OLD_TABLE)
+        conn.execute("ALTER TABLE online_order ADD COLUMN via TEXT NOT NULL DEFAULT 'poll'")  # as #134 left it
+        conn.execute(
+            "INSERT INTO online_order (source, ext_id, fetched_ms, kind, state, order_id, via) "
+            "VALUES ('gloriafood', '1', 1000, 'pickup', 'placed', 'gf-1', 'push')"
+        )
+    box = PgInbox(DSN)  # the hub after `hubctl update`
+    try:
+        assert box.writable() and box.writable()
+        old = box.get("gloriafood", "1")
+        assert (old.state, old.via, old.account) == ("placed", "push", "")
+        assert box.add(came("2", account="s1", raw={**RAW, "restaurant_id": 2})) is True
+        assert [row.account for row in box.since(0)] == ["", "s1"] and box.account_of("2") == "s1"
+    finally:
+        box.close()
 
 
 @pytest.mark.skipif(not DSN, reason="set POS_TEST_DATABASE_URL to run against PostgreSQL")

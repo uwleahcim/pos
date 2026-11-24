@@ -13,6 +13,7 @@ from pos import localtime
 from pos.api.app import create_app
 from pos.menu.gloriafood import load_restaurant_menu
 from pos.menu.service import MenuService
+from pos.online.accounts import MAIN, Account
 from pos.online.gloriafood import NAME, FetchFailed
 from pos.online.inbox import Inbox
 from pos.online.service import OnlineOrders
@@ -35,14 +36,21 @@ PUSH_KEY = "made-up-key-for-pushes-0123456789"
 
 
 class FakeFood:
-    """GloriaFood as the hub sees it: `queue` is what was accepted since it was last asked."""
+    """GloriaFood as the hub sees it: `queue` is what was accepted since it was last asked. `account` says
+    which of the restaurant's accounts it is, and `key` the key that account is asked with, which
+    GloriaFood writes on every order of that restaurant."""
 
     name = NAME
 
-    def __init__(self) -> None:
+    def __init__(self, account: str = MAIN, key: str | None = None) -> None:
         self.queue: list[dict[str, Any]] = []
         self.asked = 0
         self.fail: FetchFailed | None = None
+        self.account = account
+        self.key = key
+
+    def owns(self, order: dict[str, Any]) -> bool:
+        return self.key is not None and order.get("restaurant_key") == self.key
 
     def pop(self) -> list[dict[str, Any]]:
         self.asked += 1
@@ -62,6 +70,8 @@ class Hub:
         key: bool = True,
         push: bool = False,
         printers: bool = True,
+        more: tuple[FakeFood, ...] = (),
+        accounts: tuple[Account, ...] = (),
     ) -> None:
         self.clock = NOW
         self.food = source if source is not None else FakeFood()
@@ -78,8 +88,13 @@ class Hub:
         )
         self.menu = MenuService(load_restaurant_menu()[0])
         self.book = Reservations(now_ms=lambda: self.clock)
+        # `more` are the restaurant's further accounts with GloriaFood, and `accounts` what it calls them all
         self.online = OnlineOrders(
-            self.food if key else None, self.inbox, push_key=PUSH_KEY if push else None, now=lambda: self.clock
+            [*([self.food] if key else []), *more],
+            self.inbox,
+            push_key=PUSH_KEY if push else None,
+            accounts=accounts,
+            now=lambda: self.clock,
         )
         self.client = TestClient(
             create_app(

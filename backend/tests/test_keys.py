@@ -450,6 +450,197 @@ def test_a_hub_notices_keys_that_changed_under_it():
     assert app.state.lookups.names == ["geocodio", "google"]
 
 
+# --- GloriaFood's accounts -----------------------------------------------------------------------------------------
+
+SUSHI_KEY = "made-up-key-of-the-sushi-site-5555"
+TEST_KEY = "made-up-key-to-test-with-7777"
+
+
+def account(answer: dict, name: str) -> dict:
+    return next(a for a in answer["online_accounts"] if a["name"] == name)
+
+
+def test_a_manager_adds_a_second_gloriafood_account_and_the_hub_asks_both():
+    api, keys = wired(hub({"POS_GLORIAFOOD_KEY": FOOD_KEY}))
+    asyncio.run(use_keys(api.app))  # as the hub starts
+    auth = token(api)
+    before = api.get("/hub/keys", headers=auth).json()
+    assert [(a["id"], a["name"], a["test"], a["key"]["source"]) for a in before["online_accounts"]] == [
+        ("main", "", False, "hub")
+    ]
+    added = api.post("/hub/online/accounts", json={"name": " Sushi  site ", "key": SUSHI_KEY}, headers=auth)
+    assert added.status_code == 200 and SUSHI_KEY not in added.text
+    sushi = account(added.json(), "Sushi site")
+    assert sushi["id"] == added.json()["added"] and sushi["id"] != "main" and sushi["test"] is False
+    assert (sushi["key"]["name"], sushi["key"]["set"], sushi["key"]["source"], sushi["key"]["ending"]) == (
+        f"online:{sushi['id']}",
+        True,
+        "app",
+        "5555",
+    )
+    assert sushi["key"]["by"] == "Mike"
+    assert [key["name"] for key in added.json()["keys"]] == [MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE], (
+        "as an older app reads it"
+    )
+    online: OnlineOrders = api.app.state.online
+    assert [(source.account, type(source)) for source in online.sources] == [
+        ("main", GloriaFood),
+        (sushi["id"], GloriaFood),
+    ]
+    status = api.get("/online/status").json()
+    assert [(a["id"], a["name"], a["configured"]) for a in status["accounts"]] == [
+        ("main", "", True),
+        (sushi["id"], "Sushi site", True),
+    ]
+    # a third, to test with
+    test = account(
+        api.post("/hub/online/accounts", json={"name": "Testing", "key": TEST_KEY, "test": True}, headers=auth).json(),
+        "Testing",
+    )
+    assert test["test"] is True and len(online.sources) == 3 and online.accounts[test["id"]].test is True
+    assert keys.data(f"online:{test['id']}") == {"key": TEST_KEY} and keys.data(ONLINE) == {"key": FOOD_KEY}
+
+
+def test_an_account_is_named_and_marked_for_testing_without_its_key_being_touched():
+    api, keys = wired()
+    auth = token(api)
+    sushi = api.post("/hub/online/accounts", json={"name": "Sushi site", "key": SUSHI_KEY}, headers=auth).json()[
+        "added"
+    ]
+    sealed = keys.store.all()[f"online:{sushi}"]
+    changed = api.put(f"/hub/online/accounts/{sushi}", json={"name": "Sushi bar", "test": True}, headers=auth)
+    assert changed.status_code == 200
+    assert (account(changed.json(), "Sushi bar")["test"], account(changed.json(), "Sushi bar")["key"]["set"]) == (
+        True,
+        True,
+    )
+    assert keys.store.all()[f"online:{sushi}"] == sealed, "the key is as it was typed"
+    online: OnlineOrders = api.app.state.online
+    assert (online.accounts[sushi].name, online.accounts[sushi].test) == ("Sushi bar", True)
+    # one of the two left out keeps it
+    again = api.put(f"/hub/online/accounts/{sushi}", json={"test": False}, headers=auth).json()
+    assert account(again, "Sushi bar")["test"] is False
+    # the first account is named here too, whether it has a key or not
+    first = api.put("/hub/online/accounts/main", json={"name": "Main site"}, headers=auth).json()
+    assert [a["name"] for a in first["online_accounts"]] == ["Main site", "Sushi bar"]
+    assert api.put("/hub/online/accounts/nobody", json={"name": "x"}, headers=auth).status_code == 404
+
+
+def test_an_account_s_key_is_replaced_and_removed_like_any_key():
+    api, keys = wired()
+    auth = token(api)
+    sushi = api.post("/hub/online/accounts", json={"name": "Sushi site", "key": SUSHI_KEY}, headers=auth).json()[
+        "added"
+    ]
+    replaced = api.put(f"/hub/keys/online:{sushi}", json={"key": TEST_KEY}, headers=auth)
+    assert replaced.status_code == 200 and account(replaced.json(), "Sushi site")["key"]["ending"] == "7777"
+    assert keys.data(f"online:{sushi}") == {"key": TEST_KEY}
+    removed = api.delete(f"/hub/keys/online:{sushi}", headers=auth).json()
+    assert account(removed, "Sushi site")["key"]["set"] is False, "the account stays, with no key"
+    assert api.app.state.online.sources == []
+    assert api.get("/online/status").json()["accounts"][1]["configured"] is False
+    # a key for an account that there is not is nobody's
+    assert api.put("/hub/keys/online:zzzz", json={"key": TEST_KEY}, headers=auth).status_code == 404
+    assert api.put("/hub/keys/online:main", json={"key": TEST_KEY}, headers=auth).status_code == 404
+    assert "online:zzzz" not in keys.store.all()
+
+
+def test_an_account_that_is_removed_takes_its_key_with_it_and_the_first_stays():
+    api, keys = wired(hub({"POS_GLORIAFOOD_KEY": FOOD_KEY}))
+    auth = token(api)
+    sushi = api.post("/hub/online/accounts", json={"name": "Sushi site", "key": SUSHI_KEY}, headers=auth).json()[
+        "added"
+    ]
+    assert len(api.app.state.online.sources) == 2
+    gone = api.delete(f"/hub/online/accounts/{sushi}", headers=auth)
+    assert gone.status_code == 200 and [a["id"] for a in gone.json()["online_accounts"]] == ["main"]
+    assert f"online:{sushi}" not in keys.store.all()
+    assert [source.account for source in api.app.state.online.sources] == ["main"]
+    first = api.delete("/hub/online/accounts/main", headers=auth)
+    assert first.status_code == 409 and first.json()["detail"]["error"] == "first_account"
+    assert api.delete(f"/hub/online/accounts/{sushi}", headers=auth).status_code == 404
+    assert keys.data(ONLINE) == {"key": FOOD_KEY}
+
+
+def test_what_is_wrong_with_an_account_is_said_without_its_key_and_nothing_is_made():
+    api, keys = wired()
+    auth = token(api)
+
+    def refused(body: dict, words: str) -> None:
+        bad = api.post("/hub/online/accounts", json=body, headers=auth)
+        assert bad.status_code == 422 and bad.json()["detail"]["error"] == "bad_value", bad.text
+        assert words in bad.json()["detail"]["message"] and str(body.get("key") or "~")[:6] not in bad.text
+
+    refused({"name": "Sushi site", "key": "no key"}, "does not look like a key")
+    refused({"name": "Sushi site"}, "no key was typed")
+    refused({"name": "", "key": SUSHI_KEY}, "give the account a name")
+    refused({"name": "x" * 31, "key": SUSHI_KEY}, "too long")
+    refused({"name": "Sushi site", "key": "k" * 20_000}, "far too long")
+    assert keys.store.all() == {} and [
+        a["id"] for a in api.get("/hub/keys", headers=auth).json()["online_accounts"]
+    ] == ["main"]
+    api.post("/hub/online/accounts", json={"name": "Sushi site", "key": SUSHI_KEY}, headers=auth)
+    refused({"name": "sushi SITE", "key": TEST_KEY}, "two accounts are named")
+    assert len(keys.store.all()) == 1
+
+
+def test_gloriafood_s_accounts_are_a_manager_s_and_nobody_else_s():
+    api, keys = wired()
+    body = {"name": "Sushi site", "key": SUSHI_KEY}
+    assert api.post("/hub/online/accounts", json=body).status_code == 401
+    assert api.put("/hub/online/accounts/main", json={"name": "x"}).status_code == 401
+    assert api.delete("/hub/online/accounts/main").status_code == 401
+    session = api.post("/admin/session", json={"device": "t1", "pin": "1111", "power": "take_tables"})
+    server = {"authorization": f"Bearer {session.json()['token']}"}
+    assert api.post("/hub/online/accounts", json=body, headers=server).status_code == 403
+    assert api.put("/hub/online/accounts/main", json={"name": "x"}, headers=server).status_code == 403
+    assert api.delete("/hub/online/accounts/main", headers=server).status_code == 403
+    assert keys.store.all() == {} and api.app.state.settings.get("online_accounts") == {"accounts": []}
+
+
+def test_nothing_of_an_account_s_key_is_written_to_the_log(caplog):
+    api, _ = wired()
+    auth = token(api)
+    with caplog.at_level(logging.DEBUG):
+        sushi = api.post("/hub/online/accounts", json={"name": "Sushi site", "key": SUSHI_KEY}, headers=auth).json()[
+            "added"
+        ]
+        api.put(f"/hub/keys/online:{sushi}", json={"key": TEST_KEY}, headers=auth)
+        api.post("/hub/online/accounts", json={"name": "Other", "key": "not a key at all"}, headers=auth)
+        api.delete(f"/hub/online/accounts/{sushi}", headers=auth)
+    assert SUSHI_KEY not in caplog.text and TEST_KEY not in caplog.text and "not a key at all" not in caplog.text
+    assert f"online:{sushi} was set in the app by Mike" in caplog.text
+    assert f"online:{sushi} was removed with its account by Mike" in caplog.text
+
+
+def test_a_hub_notices_an_account_that_was_added_or_named_on_the_other_hub():
+    store, settings = KeyStore(), SettingStore()
+    relay = PushRelay(PushDevices(), None)
+    keys = hub({"POS_GLORIAFOOD_KEY": FOOD_KEY}, store)
+    app = create_app(
+        staff=staff(), settings=settings, keys=keys, lookups=Lookups(), online=OnlineOrders(None), relay=relay
+    )
+
+    async def one_look() -> None:
+        looking = asyncio.create_task(watch_keys(app, every=0.01))
+        await asyncio.sleep(0.1)
+        looking.cancel()
+
+    asyncio.run(use_keys(app))
+    online: OnlineOrders = app.state.online
+    assert [source.account for source in online.sources] == ["main"]
+    # the other hub of the location: the same database, another process
+    settings.put("online_accounts", {"accounts": [{"id": "s1", "name": "Sushi site", "test": False}]})
+    HubKeys(store, vault(), now=lambda: 1_800_000_060_000).set("online:s1", {"key": SUSHI_KEY}, by="Mike")
+    asyncio.run(one_look())
+    assert [source.account for source in online.sources] == ["main", "s1"] and online.accounts[
+        "s1"
+    ].name == "Sushi site"
+    settings.put("online_accounts", {"accounts": [{"id": "s1", "name": "Sushi bar", "test": True}]})
+    asyncio.run(one_look())
+    assert (online.accounts["s1"].name, online.accounts["s1"].test) == ("Sushi bar", True)
+
+
 # --- in PostgreSQL -------------------------------------------------------------------------------------------------
 
 
@@ -477,6 +668,15 @@ def test_keys_survive_in_postgres_sealed():
             restarted.set(MAPS, {"key": GOOGLE_KEY}, by="Amy")
             assert restarted.mark() != mark and isinstance(again.all()[MAPS], Kept)
             assert keys.view(MAPS)["by"] == "Amy" and keys.view(MAPS)["ending"] == "wxyz"
+            # a further account of GloriaFood's: its key is a row like the others, and gone with the account
+            keys.set("online:s1", {"key": SUSHI_KEY}, by="Mike")
+            assert restarted.data("online:s1") == {"key": SUSHI_KEY}
+            with store._pool.connection() as conn:  # noqa: SLF001
+                dumped = conn.execute("SELECT string_agg(hub_key::text, ' ') FROM hub_key").fetchone()[0]
+            assert SUSHI_KEY not in dumped and "online:s1" in dumped
+            mark = restarted.mark()
+            keys.forget("online:s1", by="Mike")
+            assert restarted.data("online:s1") is None and "online:s1" not in again.all() and restarted.mark() != mark
         finally:
             again.close()
     finally:

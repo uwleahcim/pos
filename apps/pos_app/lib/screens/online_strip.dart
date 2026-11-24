@@ -9,6 +9,10 @@ import '../to_go_stages.dart';
 /// in anything" (docs/online-orders.md, "On the screens"). The note is the one that heads the kitchen's
 /// tickets. An order rung in on a screen has no such strip, unless it carries a note for the whole order.
 /// A tap shows the whole of it ([showOnlineAbout]): a phone has room for two lines of a note, not for ten.
+///
+/// A restaurant with several websites reads which one beside it ("From the website · Sushi site"), and an
+/// order from its account for testing wears TEST ORDER in the kitchen's own white on black, so that nobody
+/// takes it for a customer's (docs/online-orders.md, "Several accounts").
 class OnlineStrip extends StatelessWidget {
   const OnlineStrip({super.key, required this.order});
 
@@ -44,9 +48,14 @@ class OnlineStrip extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (online != null && online.test)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: TestOrderMark(key: const ValueKey('online-test')),
+                      ),
                     if (online != null)
                       Text(
-                        '$fromTheWebsite · ${moneyWords(order)}',
+                        '${fromWhere(online)} · ${moneyWords(order)}',
                         key: const ValueKey('online-words'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -84,13 +93,18 @@ Future<void> showOnlineAbout(BuildContext context, Order order) {
       final theme = Theme.of(context);
       return AlertDialog(
         key: const ValueKey('online-about'),
-        title: Text(online != null ? fromTheWebsite : 'Customer\'s note'),
+        title: Text(online != null ? fromWhere(online) : 'Customer\'s note'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (online != null) ...[
+                if (online.test)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: TestOrderMark(key: ValueKey('online-about-test')),
+                  ),
                 for (final fact in onlineFacts(online)) Text(fact),
                 Text('${money[0].toUpperCase()}${money.substring(1)}'),
               ],
@@ -108,4 +122,32 @@ Future<void> showOnlineAbout(BuildContext context, Order order) {
       );
     },
   );
+}
+
+/// TEST ORDER, white on black as the kitchen's tickets print it: an order from the restaurant's GloriaFood
+/// account for testing, which nobody is to make. The words go with it, so it reads without the colours.
+class TestOrderMark extends StatelessWidget {
+  const TestOrderMark({super.key, this.words = '$testOrder · DO NOT MAKE'});
+
+  final String words;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(color: scheme.inverseSurface, borderRadius: BorderRadius.circular(4)),
+      child: Text(
+        words,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: scheme.onInverseSurface,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
 }

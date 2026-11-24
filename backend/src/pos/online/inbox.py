@@ -53,6 +53,9 @@ class Arrival:
     tries: int = 0
     settled_ms: int | None = None
     via: str = POLL  # how it reached the hub first: asked for (`POLL`) or sent to it (`PUSH`)
+    # Which of the restaurant's accounts brought it (`pos.online.accounts`); nothing for one that came before
+    # there could be several, and for a push the hub could not put to an account.
+    account: str = ""
 
     @property
     def waiting(self) -> bool:
@@ -72,6 +75,7 @@ class Arrival:
             "fetched_ms": self.fetched_ms,
             "settled_ms": self.settled_ms,
             "via": self.via,
+            "account": self.account,
         }
 
 
@@ -89,10 +93,14 @@ class Inbox:
 
     def add(self, arrival: Arrival) -> bool:
         """Writes down an order that just came. False when it is already here: the service may send the same
-        order twice, and the first one stands."""
+        order twice, and the first one stands. One that is here without an account learns it from the one
+        that comes with one (a push that named none, then the asking for an account): nothing else of it
+        changes, and `account_of` knows that restaurant from then on."""
         with self._lock:
             key = (arrival.source, arrival.ext_id)
             if key in self._rows:
+                if arrival.account and not self._rows[key].account:
+                    self._rows[key] = replace(self._rows[key], account=arrival.account)
                 return False
             self._rows[key] = arrival
             return True
@@ -115,6 +123,16 @@ class Inbox:
     def get(self, source: str, ext_id: str) -> Arrival | None:
         with self._lock:
             return self._rows.get((source, ext_id))
+
+    def account_of(self, restaurant: str) -> str | None:
+        """The account whose orders carry this number of GloriaFood's for the restaurant (`restaurant_id`
+        on every order): the account of the newest order written down with it. None when no order with
+        that number was ever put to an account."""
+        with self._lock:
+            for row in reversed(self._rows.values()):
+                if row.account and row.raw is not None and _restaurant(row.raw) == restaurant:
+                    return row.account
+        return None
 
     def waiting(self, limit: int = 50) -> list[Arrival]:
         """The orders still to be put on the POS, the oldest first."""
@@ -144,6 +162,19 @@ class Inbox:
         return dropped
 
 
+def _restaurant(raw: Mapping[str, Any]) -> str:
+    return restaurant_of(raw) or ""
+
+
+def restaurant_of(order: Mapping[str, Any]) -> str | None:
+    """GloriaFood's own number for the restaurant an order was placed with, as text; None when the order
+    has none."""
+    value = order.get("restaurant_id")
+    if isinstance(value, bool) or not isinstance(value, int | str) or not str(value).strip():
+        return None
+    return str(value).strip()
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS online_order (
     seq        BIGSERIAL PRIMARY KEY,
@@ -158,6 +189,7 @@ CREATE TABLE IF NOT EXISTS online_order (
     tries      INTEGER NOT NULL DEFAULT 0,
     settled_ms BIGINT,
     via        TEXT NOT NULL DEFAULT 'poll',
+    account    TEXT NOT NULL DEFAULT '',
     UNIQUE (source, ext_id)
 );
 CREATE INDEX IF NOT EXISTS online_order_fetched ON online_order (fetched_ms);
@@ -169,8 +201,11 @@ HAS_VIA = (
     "WHERE table_schema = current_schema() AND table_name = 'online_order' AND column_name = 'via'"
 )
 ADD_VIA = "ALTER TABLE online_order ADD COLUMN IF NOT EXISTS via TEXT NOT NULL DEFAULT 'poll'"
+# The same for `account`, on a hub that wrote orders down before a restaurant could have several.
+HAS_ACCOUNT = HAS_VIA.replace("'via'", "'account'")
+ADD_ACCOUNT = "ALTER TABLE online_order ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT ''"
 
-_COLUMNS = "source, ext_id, fetched_ms, raw, kind, state, order_id, said, tries, settled_ms, via"
+_COLUMNS = "source, ext_id, fetched_ms, raw, kind, state, order_id, said, tries, settled_ms, via, account"
 
 
 def _prepare(conn: Any) -> None:
@@ -178,6 +213,8 @@ def _prepare(conn: Any) -> None:
     conn.execute(SCHEMA)
     if conn.execute(HAS_VIA).fetchone() is None:
         conn.execute(ADD_VIA)
+    if conn.execute(HAS_ACCOUNT).fetchone() is None:
+        conn.execute(ADD_ACCOUNT)
 
 
 def _arrival_of(row: Sequence[Any]) -> Arrival:
@@ -193,6 +230,7 @@ def _arrival_of(row: Sequence[Any]) -> Arrival:
         tries=int(row[8]),
         settled_ms=None if row[9] is None else int(row[9]),
         via=row[10],
+        account=row[11],
     )
 
 
@@ -241,8 +279,12 @@ class PgInbox(Inbox):
         try:
             with self._pool.connection() as conn:
                 done = conn.execute(
-                    f"INSERT INTO online_order ({_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (source, ext_id) DO NOTHING",
+                    f"INSERT INTO online_order ({_COLUMNS}) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    # one that is here without an account learns it; whether the row is new is its xmax
+                    "ON CONFLICT (source, ext_id) DO UPDATE SET account = EXCLUDED.account "
+                    "WHERE online_order.account = '' AND EXCLUDED.account <> '' "
+                    "RETURNING (xmax = 0)",
                     (
                         arrival.source,
                         arrival.ext_id,
@@ -255,9 +297,11 @@ class PgInbox(Inbox):
                         arrival.tries,
                         arrival.settled_ms,
                         arrival.via,
+                        arrival.account,
                     ),
                 )
-                return done.rowcount == 1
+                row = done.fetchone()
+                return row is not None and bool(row[0])
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
 
@@ -285,6 +329,14 @@ class PgInbox(Inbox):
     def get(self, source: str, ext_id: str) -> Arrival | None:
         rows = self._read(f"SELECT {_COLUMNS} FROM online_order WHERE source = %s AND ext_id = %s", (source, ext_id))
         return _arrival_of(rows[0]) if rows else None
+
+    def account_of(self, restaurant: str) -> str | None:
+        rows = self._read(
+            "SELECT account FROM online_order WHERE account <> '' AND raw ->> 'restaurant_id' = %s "
+            "ORDER BY seq DESC LIMIT 1",
+            (restaurant,),
+        )
+        return rows[0][0] if rows else None
 
     def waiting(self, limit: int = 50) -> list[Arrival]:
         rows = self._read(

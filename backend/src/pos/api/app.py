@@ -54,7 +54,7 @@ from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
-from ..online.gloriafood import push_key_from_env, source_from_env
+from ..online.gloriafood import push_key_from_env
 from ..online.inbox import default_inbox
 from ..online.place import own_word
 from ..online.service import OnlineOrders
@@ -120,7 +120,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list, names_by_check, seated_by_check
 from .history import add_history
-from .keys import add_hub_keys, sender_for, watch_keys
+from .keys import add_hub_keys, keys_mark, online_setup, sender_for, watch_keys
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
@@ -941,7 +941,7 @@ def create_app(
     # (`pos.keys`, docs/hub-keys.md). `outside` is the hub's environment as it reads with them in it.
     app.state.keys = keys if keys is not None else keys_from_env()
     outside = app.state.keys.environ()
-    app.state.keys_mark = app.state.keys.mark()
+    app.state.keys_mark = keys_mark(app.state.keys, app.state.settings)
     app.state.asks_online = False
     # how far a delivery goes, asked of a map service when the hub has a key for one (docs/delivery.md)
     app.state.lookups = lookups if lookups is not None else lookups_from_env(outside)
@@ -990,11 +990,12 @@ def create_app(
     app.state.reservations = reservations if reservations is not None else Reservations(default_book_store())
     # Online orders: asked of GloriaFood every minute when the hub has its key, and put on the POS.
     # Sent by GloriaFood itself too, the moment one is accepted, when the hub has the key its pushes carry.
-    app.state.online = (
-        online
-        if online is not None
-        else OnlineOrders(source_from_env(outside), default_inbox(), push_key=push_key_from_env())
-    )
+    # A restaurant with several accounts there has a key for each, and every one is asked (`online_setup`).
+    if online is not None:
+        app.state.online = online
+    else:
+        sources, accounts = online_setup(app.state.keys, app.state.settings)
+        app.state.online = OnlineOrders(sources, default_inbox(), push_key=push_key_from_env(), accounts=accounts)
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(

@@ -52,6 +52,9 @@ class HubKeysScreen extends StatefulWidget {
   State<HubKeysScreen> createState() => _HubKeysScreenState();
 }
 
+/// Where the page says what came of adding or removing an account: under the button that adds one.
+const _accountsSaid = 'online-accounts';
+
 class _HubKeysScreenState extends State<HubKeysScreen> {
   late HubKeys _keys = widget.keys;
   String? _busy; // the key being tried or removed
@@ -73,6 +76,70 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     );
     if (saved == null || !mounted) return;
     _stand(saved, key.name, 'Saved. The hub uses it from now on.');
+  }
+
+  /// Another account with GloriaFood: its name, its key and whether it is for testing, typed in one dialog.
+  Future<void> _addAccount() async {
+    final saved = await showDialog<HubKeys>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => OnlineAccountDialog(api: widget.api, token: widget.token),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _said.remove(_accountsSaid));
+    final added = saved.added;
+    _stand(
+      saved,
+      added == null ? _accountsSaid : OnlineAccount.slotOf(added),
+      'Added. The hub asks it every minute from now on.',
+    );
+  }
+
+  /// An account's name, and whether it is the one for testing.
+  Future<void> _editAccount(OnlineAccount account) async {
+    final saved = await showDialog<HubKeys>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => OnlineAccountDialog(api: widget.api, token: widget.token, was: account),
+    );
+    if (saved == null || !mounted) return;
+    _stand(saved, account.key.name, 'Saved. Orders that come from now on say so.');
+  }
+
+  /// A further account is taken away whole, its key with it.
+  Future<void> _removeAccount(OnlineAccount account) async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove this account?'),
+        content: Text(
+          '${account.called}. The hub stops asking GloriaFood for its orders, and its key is forgotten. The orders '
+          'already on the POS stay as they are. It can be added again at any time.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+          FilledButton(
+            key: const ValueKey('key-remove-sure'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    final name = account.key.name;
+    setState(() {
+      _busy = name;
+      _said.remove(name);
+    });
+    try {
+      final saved = await widget.api.removeOnlineAccount(widget.token, account.id);
+      if (mounted) _stand(saved, _accountsSaid, 'Removed ${account.called}. The hub no longer asks it.');
+    } on ApiException catch (err) {
+      if (mounted) setState(() => _said[name] = (words: 'Not removed. ${_refusal(err)}', bad: true));
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
   }
 
   Future<void> _remove(HubKey key, HubKeyInfo info) async {
@@ -152,9 +219,12 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     });
   }
 
-  /// GloriaFood is asked for orders now, as the button "Ask now" does.
-  Future<void> _tryOnline(String name) => _trying(name, () async {
+  /// GloriaFood is asked for orders now, as the button "Ask now" does. Where the hub asks several accounts
+  /// it asks them all, and what is said here is what [account] answered.
+  Future<void> _tryOnline(String name, OnlineAccount? account) => _trying(name, () async {
     final asked = await widget.api.onlineFetch();
+    final mine = account == null || !asked.asked ? null : asked.wordsFor(account.id);
+    if (mine != null) return (words: mine, bad: asked.answeredFor(account!.id) == false);
     final works = asked.asked && asked.answered ? ' The key works.' : '';
     return (words: '${asked.words}$works', bad: asked.bad || (!asked.asked && !asked.soon));
   });
@@ -216,55 +286,99 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     });
   }
 
-  void _try(HubKey key) {
+  void _try(HubKey key, OnlineAccount? account) {
     switch (key.name) {
       case 'maps':
         _tryMaps(key.name, 'geocodio', 'Geocodio');
       case 'maps_google':
         _tryMaps(key.name, 'google', 'Google Maps');
-      case 'online':
-        _tryOnline(key.name);
       case 'push_apple':
         _tryApple(key.name);
+      case _ when account != null || key.name == 'online':
+        _tryOnline(key.name, account);
     }
   }
 
-  Widget _card(BuildContext context, HubKey key, HubKeyInfo info) {
+  /// One key's card. [account] is the account of GloriaFood's the key belongs to, on a hub that knows of
+  /// accounts: its card can also be named, marked for testing and, but for the first, taken away whole.
+  Widget _card(BuildContext context, HubKey key, HubKeyInfo info, {OnlineAccount? account}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
     final busy = _busy == key.name;
     final said = _said[key.name];
+    // a further account goes with its key: there is no hub's file behind it to fall back on
+    final whole = account != null && !account.isFirst;
     return Card(
       key: ValueKey('key-${key.name}'),
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+        // an account's card has a pencil at the end of its title, which is taller than the title: the room
+        // for it comes out of the card's own edge, so the title stands where every card's does
+        padding: EdgeInsets.fromLTRB(16, account != null ? 4 : 12, account != null ? 8 : 16, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: account != null ? CrossAxisAlignment.center : CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(top: 2, right: 8),
+                  padding: EdgeInsets.only(top: account != null ? 0 : 2, right: 8),
                   child: Icon(
                     key.set ? Icons.check_circle : Icons.radio_button_unchecked,
                     size: 20,
                     color: key.set ? scheme.primary : scheme.outline,
                   ),
                 ),
-                Expanded(child: Text(info.title, style: theme.textTheme.titleMedium)),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: account != null ? 8 : 0),
+                    child: Text(info.title, style: theme.textTheme.titleMedium),
+                  ),
+                ),
+                if (account != null && account.test)
+                  Container(
+                    key: ValueKey('account-${account.id}-test'),
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(color: scheme.inverseSurface, borderRadius: BorderRadius.circular(4)),
+                    child: Text(
+                      'For testing',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onInverseSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                // its name and whether it is for testing: at the title it changes, and off the row of
+                // buttons, which a fourth one would push onto a second line on a phone
+                if (account != null)
+                  IconButton(
+                    key: ValueKey('account-${account.id}-edit'),
+                    tooltip: 'Name, and whether it is for testing',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    iconSize: 20,
+                    onPressed: _busy != null ? null : () => _editAccount(account),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
               ],
             ),
-            const SizedBox(height: 4),
+            if (account == null) const SizedBox(height: 4),
             Text(
               key.words(widget.clock()),
               key: ValueKey('key-${key.name}-state'),
               style: theme.textTheme.bodyMedium?.copyWith(color: key.unreadable ? scheme.error : null),
             ),
             const SizedBox(height: 4),
-            Text(key.set ? info.about : '${info.about} ${info.without}', style: quiet),
+            Text(
+              [
+                info.about,
+                if (!key.set) info.without,
+                if (account != null && account.test) 'Its orders say TEST ORDER on every ticket and screen.',
+              ].join(' '),
+              style: quiet,
+            ),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
@@ -278,49 +392,117 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
                 if (key.set)
                   OutlinedButton(
                     key: ValueKey('key-${key.name}-try'),
-                    onPressed: _busy != null ? null : () => _try(key),
+                    onPressed: _busy != null ? null : () => _try(key, account),
                     child: const Text('Try it'),
                   ),
-                if (key.set || key.unreadable)
+                if (key.set || key.unreadable || whole)
                   TextButton(
                     key: ValueKey('key-${key.name}-remove'),
-                    onPressed: _busy != null ? null : () => _remove(key, info),
+                    onPressed: _busy != null ? null : () => whole ? _removeAccount(account) : _remove(key, info),
                     child: const Text('Remove'),
                   ),
                 if (busy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
               ],
             ),
-            if (said != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 1, right: 6),
-                      child: Icon(
-                        said.bad ? Icons.error_outline : Icons.check,
-                        size: 16,
-                        color: said.bad ? scheme.error : scheme.onSurface,
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        said.words,
-                        key: ValueKey('key-${key.name}-said'),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: said.bad ? scheme.error : scheme.onSurface,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            if (said != null) _saidLine(context, said, ValueKey('key-${key.name}-said')),
           ],
         ),
       ),
     );
+  }
+
+  /// What a try or a change came to, under the buttons it belongs to.
+  Widget _saidLine(BuildContext context, _Said said, Key key) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1, right: 6),
+            child: Icon(
+              said.bad ? Icons.error_outline : Icons.check,
+              size: 16,
+              color: said.bad ? scheme.error : scheme.onSurface,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              said.words,
+              key: key,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: said.bad ? scheme.error : scheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// GloriaFood's part of the page: a card for each of the restaurant's accounts there, and, on a hub that
+  /// can hold several, the way to add another.
+  List<Widget> _online(BuildContext context, HubKeyInfo info) {
+    final theme = Theme.of(context);
+    final accounts = _keys.accounts;
+    final several = accounts.length > 1;
+    final can = _keys.onlineAccounts != null; // a hub from before there could be several has the one key
+    final said = _said[_accountsSaid];
+    return [
+      for (final account in accounts) ...[
+        const SizedBox(height: 12),
+        _card(
+          context,
+          account.key,
+          several || account.name.isNotEmpty ? info.titled('GloriaFood · ${account.called}') : info,
+          account: can ? account : null,
+        ),
+      ],
+      if (can)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const ValueKey('account-add'),
+                  onPressed: _busy != null ? null : _addAccount,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add another GloriaFood account'),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'For a second website, or an account you only test with. Each has its own key.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+              // several accounts and the first one still nameless: its orders would say no website
+              if (several && accounts.first.name.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                  child: Text(
+                    'The first account has no name yet. Tap the pencil on its card, so that its orders say which '
+                    'website they came from too.',
+                    key: const ValueKey('account-first-unnamed'),
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              if (said != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: _saidLine(context, said, const ValueKey('accounts-said')),
+                ),
+            ],
+          ),
+        ),
+    ];
   }
 
   @override
@@ -358,7 +540,13 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
                   padding: const EdgeInsets.only(top: 16),
                   child: Text(_keys.summary, key: const ValueKey('keys-none')),
                 ),
-              for (final key in known) ...[const SizedBox(height: 12), _card(context, key, hubKeyInfo[key.name]!)],
+              for (final key in known)
+                if (key.name == 'online')
+                  ..._online(context, hubKeyInfo[key.name]!)
+                else ...[
+                  const SizedBox(height: 12),
+                  _card(context, key, hubKeyInfo[key.name]!),
+                ],
             ],
           ),
         ),
@@ -558,6 +746,164 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
       actions: [
         TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(key: const ValueKey('key-save'), onPressed: _busy ? null : _save, child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+/// One of the restaurant's accounts with GloriaFood, typed by a manager: a new one ([was] is null) with its
+/// name, its key and whether it is for testing, or the name and the testing of one that is there. The
+/// dialog sends it to the hub itself, so what the hub says of it shows here with everything still in the
+/// boxes. Pops with how the keys stand once the hub took it.
+class OnlineAccountDialog extends StatefulWidget {
+  const OnlineAccountDialog({super.key, required this.api, required this.token, this.was});
+
+  final PosApi api;
+  final String token;
+
+  /// The account that is changed; null to add one.
+  final OnlineAccount? was;
+
+  @override
+  State<OnlineAccountDialog> createState() => _OnlineAccountDialogState();
+}
+
+class _OnlineAccountDialogState extends State<OnlineAccountDialog> {
+  late final _name = TextEditingController(text: widget.was?.name ?? '');
+  final _key = TextEditingController();
+  late bool _test = widget.was?.test ?? false;
+  bool _hidden = true;
+  bool _busy = false;
+  String? _message;
+
+  bool get _adding => widget.was == null;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _key.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    final key = _key.text.trim();
+    final was = widget.was;
+    // the first account may go without a name: with one account nothing needs telling apart
+    if (name.isEmpty && !(was?.isFirst ?? false)) {
+      setState(() => _message = 'Give the account a name: it is how its orders are told from the others\'.');
+      return;
+    }
+    if (_adding && key.isEmpty) {
+      setState(() => _message = 'Type or paste the key first.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final saved = was == null
+          ? await widget.api.addOnlineAccount(widget.token, name: name, key: key, test: _test)
+          : await widget.api.changeOnlineAccount(widget.token, was.id, name: name, test: _test);
+      if (mounted) Navigator.of(context).pop(saved);
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = _refusal(err);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    return AlertDialog(
+      title: Text(_adding ? 'Add a GloriaFood account' : 'GloriaFood account'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const ValueKey('account-name'),
+                controller: _name,
+                autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
+                inputFormatters: [LengthLimitingTextInputFormatter(30)],
+                onSubmitted: (_) => _busy || _adding ? null : _save(),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Name',
+                  hintText: 'Sushi site',
+                  helperText: 'Yours to choose. It is said on the account\'s orders and their tickets',
+                  helperMaxLines: 2,
+                ),
+              ),
+              if (_adding) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  key: const ValueKey('key-field'),
+                  controller: _key,
+                  obscureText: _hidden,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  onSubmitted: (_) => _busy ? null : _save(),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: 'The key',
+                    helperText:
+                        'In that account\'s GloriaFood admin: Others, Third party integrations, the key of the '
+                        'integration Poll Accepted Order v2',
+                    helperMaxLines: 3,
+                    suffixIcon: IconButton(
+                      key: const ValueKey('key-show'),
+                      tooltip: _hidden ? 'Show what is typed' : 'Hide what is typed',
+                      icon: Icon(_hidden ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                      onPressed: () => setState(() => _hidden = !_hidden),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 4),
+              SwitchListTile(
+                key: const ValueKey('account-test'),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: _test,
+                onChanged: _busy ? null : (value) => setState(() => _test = value),
+                title: const Text('For testing'),
+                subtitle: const Text(
+                  'Its orders go on the POS and print, with TEST ORDER, DO NOT MAKE on every ticket and screen. '
+                  'Void them when you are done.',
+                ),
+              ),
+              if (_adding) Text('The hub asks it at once, and every minute. The hub is not restarted.', style: quiet),
+              if (_message != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _message!,
+                    key: const ValueKey('key-problem'),
+                    style: TextStyle(color: scheme.error),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          key: const ValueKey('key-save'),
+          onPressed: _busy ? null : _save,
+          child: Text(_adding ? 'Add' : 'Save'),
+        ),
       ],
     );
   }

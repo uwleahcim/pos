@@ -231,6 +231,16 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
                   title: const Text('Asked for every minute'),
                   subtitle: Text(_askWords(status, now)),
                 ),
+                // A restaurant with several accounts reads how the asking goes for each: one that has no
+                // key, or whose key GloriaFood refuses, is not hidden behind the others' answers.
+                if (status.severalAccounts.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(start: 56, end: 16, bottom: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [for (final account in status.severalAccounts) _account(context, account)],
+                    ),
+                  ),
                 // Only a hub that has the key for asking can ask. Under the row and not beside it: on a
                 // phone a button at the end of the row leaves its words a column a few letters wide.
                 if (status.asks)
@@ -374,6 +384,26 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
     return last == null ? 'On · GloriaFood has not answered yet' : 'On · GloriaFood last answered ${_at(last, now)}';
   }
 
+  /// One of the restaurant's accounts under "Asked for every minute": its name, how its asking stands and
+  /// how many orders it brought today ("Sushi site · answered 18:06 · 3 today").
+  Widget _account(BuildContext context, OnlineAccountAsked account) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final bad = account.asks && account.reason.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Text(
+        [
+          account.test ? '${account.called} (for testing)' : account.called,
+          account.words,
+          if (account.came > 0) '${account.came} today',
+        ].join(' · '),
+        key: ValueKey('online-account:${account.id}'),
+        style: theme.textTheme.bodySmall?.copyWith(color: bad ? scheme.error : scheme.onSurfaceVariant),
+      ),
+    );
+  }
+
   Widget _figure(BuildContext context, String figure, String words, {bool bad = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -401,7 +431,11 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
         ? (scheme.errorContainer, scheme.onErrorContainer)
         : (scheme.tertiaryContainer, scheme.onTertiaryContainer);
     return Card(
-      key: ValueKey('online-trouble:${trouble.code}'),
+      key: ValueKey(
+        trouble.account.isEmpty
+            ? 'online-trouble:${trouble.code}'
+            : 'online-trouble:${trouble.code}:${trouble.account}',
+      ),
       color: back,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -475,6 +509,9 @@ class _OnlineOrdersScreenState extends State<OnlineOrdersScreen> {
       subtitle: Text.rich(
         TextSpan(
           children: [
+            // Which of the restaurant's accounts it came from, where the hub says so: the number is found
+            // in that account's GloriaFood app, not in the others'.
+            if (row.from.isNotEmpty) TextSpan(text: '${row.from} · '),
             TextSpan(
               text: row.stateWords,
               style: TextStyle(fontWeight: FontWeight.w700, color: lost ? scheme.error : null),

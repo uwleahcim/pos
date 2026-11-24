@@ -179,6 +179,10 @@ order while the asking is on.
   depends on it: the asking brings the order within the minute.
 - **Whether an order that was pushed is also handed over when asked.** If it is, the hub sees it twice and
   it is one order. If it is not, the asking brings only what the push missed, which is all it is for.
+- **Whether a pushed order carries the restaurant's key.** It matters only with
+  [several accounts](#several-accounts): it is how the hub tells which account a pushed order is from. If
+  it does not, the hub goes by GloriaFood's number for the restaurant, which it learns from the first order
+  it asked that account for.
 - **Whether GloriaFood sends anything a second time when an order changes** after it was accepted. The
   first arrival stands; a later one with the same number changes nothing on the POS.
 - **How a booked table reads.** GloriaFood's pages say `persons` is how many sit down. They do not say in so
@@ -188,6 +192,77 @@ order while the asking is on.
 - **Whether GloriaFood tells the hub when a guest changes or cancels a table.** Its pages do not say that
   it does. Until a real one shows otherwise, a change or a cancellation made on the website does not reach
   the book.
+
+## Several accounts
+
+A restaurant can have more than one account with GloriaFood: a second website (the sushi bar's own, say),
+and an account it only tests with. The hub asks **every** account, each with its own key, and every order
+goes on the same POS.
+
+**Adding one.** In the app: Location › **Keys and connections**. Under the GloriaFood card is **Add another
+GloriaFood account**. It asks for:
+
+- **A name**, yours to choose ("Sushi site"). It is how that account's orders are told from the others'.
+- **The key**, made in *that* account's GloriaFood admin exactly as the first one was
+  ([Turning it on](#turning-it-on), step 1).
+- **For testing**, a switch: on for the account you only test with.
+
+The hub asks the new account at once and every minute after, and is not restarted. Each account then has
+its own card: **Replace** its key, **Try it**, **Remove**, and a pencil beside its name for the name and the
+switch. The account that was there first is the **first account**; give it a name too (the pencil on its
+card) once there are several, or its orders say no website. Its key is the one `sudo hubctl online key` sets. A further account's key is
+typed in the app only, and removing the account forgets its key; the orders it brought stay. A hub asks up
+to eight accounts.
+
+**What tells them apart.** With a name on each account:
+
+- The order's strip reads "From the website · Sushi site", and so does what a tap shows.
+- The takeout counter's copy and each station's ticket print `Online: Sushi site` where they print the
+  channel, and a kitchen screen says "Online · Sushi site".
+- The screen **Online orders** has a line for each account under "Asked for every minute" (when GloriaFood
+  last answered it, how many orders it brought today, or why it does not answer), and each order to look at
+  says which account brought it: its number is found in *that* account's GloriaFood app.
+- An account whose key is refused does not hide behind the others: it has a box of its own, by name, and
+  the others go on arriving. `sudo hubctl online status` lists each account the same way.
+
+**The account for testing.** Its orders go the whole way a customer's does, which is the point of a test:
+on the POS, numbered, sent to the kitchen, printed. So that nobody cooks one:
+
+- Every ticket and the takeout counter's copy print **TEST ORDER** and **DO NOT MAKE**, large, white on
+  black, under the first line.
+- A kitchen screen heads the ticket with a black bar, "TEST ORDER · DO NOT MAKE".
+- The order's strip carries the same mark, and its globe in the list of checks is white on black.
+
+A test order is **an order like any other in the reports** until it is voided: void it when you are done,
+as you would any order rung in by mistake (`voids.md`). If the testing account stops answering, no screen
+turns red for it: no customer's order is held up.
+
+**The same order twice.** GloriaFood's number for an order is what the hub knows it by, across all the
+accounts: an order is one order however often and by whichever way it comes.
+
+**Push with several accounts.** The push door has **one key** for the whole hub: put the same push key into
+each account's integration, and each sends to the same address ([Push](#push)). The hub tells which account
+a pushed order belongs to by the restaurant's key the order carries, and when it carries none, by the
+restaurant's number that account's earlier orders had. An order it cannot put to an account is taken all the
+same, as one from no named website: nothing is lost, it only does not say "Sushi site".
+
+That leaves **one gap, and it is worth a look on the first day**: an account's very first order, if GloriaFood
+pushes it and it carries no key the hub knows, names no account. For the testing account that is a test
+order **without** its TEST mark. The cure is simple: **place each account's first order while its
+integration does not push yet** (add the account's key, test it, then turn its push on). That order comes by
+the asking, the hub notes GloriaFood's number for that restaurant, and every later order of the account is
+told right, pushed or asked for, also after the hub restarts. (When the asking brings an order a push
+brought first without an account, the hub notes whose it is then too; the order on the POS is not changed.)
+Whether GloriaFood's pushed orders carry the restaurant's key at all is not known until a real one comes
+([What is not known yet](#what-is-not-known-yet)).
+
+**The dishes of a second website.** The menu import (`menus.md`) keeps GloriaFood's numbers for the dishes
+of **one** menu, the first account's. Another account numbers its dishes by itself, so the hub finds them
+**by name**: a dish called exactly what one dish on the POS is called goes on as that dish, at its station.
+One whose name matches nothing, or matches two, goes on **as written** ([The dishes](#the-dishes)), which
+still prints. Its sizes and choices are found by GloriaFood's numbers alone, so on a second website a dish
+with a size or a choice the POS does not know by that number goes on as written too. Importing a second
+website's menu is not built.
 
 ## Two things to change once it is on
 
@@ -212,6 +287,9 @@ dish had been rung in at a screen: the kitchen's own name for it, at its own sta
 
 - **The price is the website's**, always. The customer was shown it and agreed to it, and the dining
   room's price can differ.
+- **A dish whose number the POS does not know** is looked for by its **name**: when exactly one dish on the
+  POS is called that, it is that dish. That is how the dishes of a second website are found
+  ([Several accounts](#several-accounts)).
 - **A dish the POS's menu cannot make** goes on **as written**: under GloriaFood's own name for it, with its
   size and choices as words, at the price it was sold for. That happens for a dish that is on the website
   and not on the POS, or a choice the POS's menu does not take. It still prints: where the dish is cooked
@@ -328,6 +406,9 @@ long it is: it may say an allergy. It is on every station's ticket for the order
 
 The note is what the customer typed. It is not the allergy block: nobody at the restaurant has read it and
 picked the allergens, so it does not turn any dish red. Read it.
+
+A restaurant with several websites reads **which one** in each of these places, and an order from its
+account for testing wears **TEST ORDER**: see [Several accounts](#several-accounts).
 
 ## Under Location, and the alert
 
@@ -470,6 +551,11 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - With two hubs, sending pushes to whichever hub is taking the orders: a push to the hub in waiting is
   answered with an error, and the asking brings the order.
 - An order from an earlier day is not put into that day's sales automatically.
+- For several accounts ([Several accounts](#several-accounts)): a push key for each account (one opens the
+  door for all of them); importing a second website's menu, so its dishes are found by number; keeping the
+  testing account's orders out of the sales by themselves (they count until voided); a testing account's
+  order on the pickup board and in a "ready" text reads as any order does; and a second account's key typed
+  in the hub's terminal (it is typed in the app).
 
 ## For developers
 
@@ -496,6 +582,36 @@ how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
   `booking-online:<id>` in `reservations_screen.dart`. Tests: `backend/tests/online/test_book.py`,
   `test_service.py` ("Tables booked on the website"), `backend/tests/test_reservations.py` (`take`),
   `apps/pos_app/test/online_status_test.dart`, `reservations_test.dart`.
+
+- **Several accounts.** `pos.online.accounts`: the location setting `online_accounts`
+  (`{"accounts": [{"id", "name", "test"}]}`, cleaned by `clean_accounts`; `accounts_of` always gives the
+  first account, `main`, first), `slot_of`/`account_of_slot` between an account and the name its key is
+  sealed under in `hub_key` (`online` for `main`, `online:<id>` for another; `pos.keys.slot_for`,
+  `HubKeys.forget`). `pos.api.keys.online_setup(keys, settings)` gives a `GloriaFood(key, account=)` for
+  every account that has a key, and `OnlineOrders(sources, inbox, accounts=)` asks each in `_round`, keeping
+  when each was asked and answered (`_Asked`) and saying each in `accounts` of a round's answer and of the
+  status (`id, name, test, configured, asked_ms, answered_ms, last_failure, came`). `use(sources, accounts)`
+  exchanges them in place and keeps what is known of an account whose key did not change. An arrival keeps
+  its `account` (column `account` of `online_order`, added on the fly); `(source, ext_id)` stays the one key,
+  so an order two accounts hand over is one. A push is put to an account by `gloriafood.pushed_by(body,
+  online.whose)`: `GloriaFood.owns(order)` compares the order's `restaurant_key` with the account's key in
+  constant time (before the keys are taken out of what is written down), else `Inbox.account_of(restaurant
+  id)` says which account an earlier order of that restaurant came from, else a hub with one account takes
+  it for that one, else it names none (`""`). `Inbox.add` of an order that is here without an account and
+  comes again with one (the asking, after such a push) writes the account beside it and changes nothing
+  else, so `account_of` knows that restaurant from then on. `place.ops_for(..., origin=)` writes `account`, `store` and
+  `test` into the order's `online` field, and `_Matcher` finds a dish by `gloriafood_id`, then by its exact
+  name when one dish has it. `printing.service.online_store(state)` gives `(store, test)` for `Ticket`,
+  `PackSheet` and the kitchen screen's ticket (`store`, `test`); `ticket.TEST_WORDS` are the two lines.
+  `not_answering` in `trouble` is per account (`account`, `store`, `test`) when there are several, and never
+  urgent for a testing account. Calls: `pos.api.keys` (`GET /hub/keys` lists `online_accounts`, `POST`,
+  `PUT`, `DELETE /hub/online/accounts`). In the app: `OnlineAccount`, `HubKeys.accounts`
+  (`lib/hub_keys.dart`), `OnlineAccountDialog` and the cards (`lib/screens/hub_keys_screen.dart`),
+  `OnlineOrder.store`/`test`, `fromWhere`, `OnlineAccountAsked`, `OnlineStatus.severalAccounts`,
+  `OnlineAsked.wordsFor` (`lib/online_orders.dart`), `TestOrderMark` (`lib/screens/online_strip.dart`),
+  `KitchenTicket.store`/`test`. Tests: `backend/tests/online/test_accounts.py`, `backend/tests/test_keys.py`,
+  `apps/pos_app/test/hub_keys_test.dart` ("several GloriaFood accounts"), `online_orders_test.dart`,
+  `online_status_test.dart`.
 
 - **The screens** read what the hub already sends and write nothing. `apps/pos_app/lib/online_orders.dart`:
   `OnlineOrder.of(fields)` is the order's `online` field (`Order.online`; null for an order rung in on a
