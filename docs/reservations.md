@@ -175,6 +175,9 @@ shown, everything stays in the book, and nothing is written onto the check (`gue
 table"). A note that names an allergy tells the kitchen nothing: the server marks it with the **Allergy**
 chip on the check (`allergies.md`). **Put back** takes the party off the check again.
 
+**On the floor map the table then says whose it is**: the party's name, with a small star before it when
+the guest carries a tag (`guest-list.md`, "On the floor map").
+
 Two screens seating the same party: the first table counts. The second screen says "Chen was already
 seated at B5. The book keeps that table."
 
@@ -194,6 +197,8 @@ seated at B5. The book keeps that table."
 - Under the map, **Booked** joins the legend on a day with a table booked, on tablets and Macs. A phone's
   legend is full, and the calendar on the table says it there.
 - The booking is drawn smaller sooner than it makes the table's own name smaller.
+- **Once the party sits**, their table says their name, with a star for a guest who carries a tag
+  (`guest-list.md`, "On the floor map"). That is the party at the table, not a booking still to come.
 
 The mark goes when the party is seated (at this table or another), when the reservation is cancelled or
 marked a no-show, and by itself an hour and a half after its time. The book still lists a reservation nobody
@@ -257,8 +262,9 @@ and what the guest wrote as the note.
   booked. How many they were, the time and how it ended stay.
 - **Nothing is sent to the guest.** The book sends no text and no e-mail, and nothing in it leaves the hub.
 - **The floor map is told little.** For each table held today: the name, how many and the time. Not the
-  phone number, not the note and not the guest's tags, which stay in the book. With the hub away the map shows the booked tables
-  as it last read them.
+  phone number, not the note and not the guest's tags, which stay in the book. Once a party is seated,
+  and for as long as its check is open, the map is told its name and its tags, and still not the number
+  and not the note. With the hub away the map shows the booked tables as it last read them.
 - **The book is kept on the hub.** With the hub away the screen shows today's book as it was last read and
   says so; booking and changing wait for the hub. Seating still opens the check at the table, and the
   screen says the book could not be told: take the reservation out when the hub is back.
@@ -277,8 +283,8 @@ and what the guest wrote as the note.
 - On a call: Book a table on the strip of the call itself and on an order that is already open, the
   customer's past reservations and no-shows, and a table booked by somebody whose number the phone company
   hides.
-- On the map: the name on a table that is seated, the booked tables in the list beside the map while Mine
-  is on, a count of late reservations in the bar over the map, and a table that says "booked" while a
+- On the map: the name of the next booking on a table that is seated, the booked tables in the list beside
+  the map while Mine is on, a count of late reservations in the bar over the map, and a table that says "booked" while a
   reservation is being made. How long a table is kept (an hour and a half each way) is fixed, not a setting.
 - A **text or e-mail to confirm or remind**: it needs an outside service the hub does not have. (Guests
   book for themselves on the website, where online orders are on: [From the website](#from-the-website).
@@ -289,8 +295,8 @@ and what the guest wrote as the note.
 - A reservation going onto the guest list by itself (a guest who was tagged from one is listed; one who
   was not is not), or showing what the guest had last time. Tags from a reservation that ended, or from
   one with no phone number.
-- The guest's tags on a table held on the floor map, and on the waitlist's row of booked tables. The
-  reservation's name or note on the check of the table (the guest's tags are on it).
+- The guest's tags on a table held on the floor map (a table says a star once its party is seated), and
+  on the waitlist's row of booked tables. The reservation's note on the floor map.
 - A report of reservations, no-shows and covers over many days.
 
 ## For developers

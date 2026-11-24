@@ -4,6 +4,9 @@ Every busy table on the floor map says who serves it: a small name tag under the
 table's own colour. It is the server's first name, with an initial when there is more to the name ("Amy",
 "Mike W"). A free table has no tag: nobody has it until a party sits.
 
+Under the server's tag, a table whose party the host seated from a reservation or the waitlist also says
+the party's name, with a small star for a guest who carries a tag (`guest-list.md`, "On the floor map").
+
 A table gets its server in one of two ways (Mike, 2026-11-13).
 
 ## A server opens their own table
@@ -100,6 +103,9 @@ A tap turns it on:
   tablet held upright keep the whole width for the map.
 - A table whose food the kitchen has made says so in green on its row ("2 dishes ready"), as its badge on
   the map does (`kitchen-screens.md`, "What the servers see").
+- A table whose party was seated from a reservation or the waitlist has a line with the party's name and
+  the tags that guest carries ("Linda P." `VIP`), so you know whose table you walk up to
+  (`guest-list.md`, "On the floor map").
 
 A second tap shows every table the same again.
 

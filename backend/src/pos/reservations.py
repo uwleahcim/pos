@@ -615,11 +615,14 @@ class Reservations:
         """The reservations whose party sat down on this check, the first to sit first: the one the check was
         opened for and any that joined its table after. Today's and yesterday's are looked at, so a check
         still open after the night is found too; one put back in the book is on no check."""
-        if not order_id:
-            return []
+        return [booking for booking in self.seated() if booking.order_id == order_id] if order_id else []
+
+    def seated(self) -> list[Booking]:
+        """Every reservation whose party sat down on a check, the first to sit first, among today's and
+        yesterday's: who is at the tables now, for the floor map, and whoever of last night is still there."""
         today = self.today()
         since, until = localtime.service_day(today - timedelta(days=1))[0], localtime.service_day(today)[1]
-        sat = [b for b in self.store.between(since, until) if b.seated_ms is not None and b.order_id == order_id]
+        sat = [b for b in self.store.between(since, until) if b.seated_ms is not None and b.order_id]
         return sorted(sat, key=lambda b: b.seated_ms or 0)
 
     def of_phone(self, phone: object) -> list[Booking]:

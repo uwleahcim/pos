@@ -116,7 +116,7 @@ from .contests import add_contests
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
-from .guests import add_guest_list
+from .guests import add_guest_list, seated_by_check
 from .history import add_history
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
@@ -1323,8 +1323,13 @@ def create_app(
         against (`pos.reservations.Booking.as_hold`); a table nobody booked is not in it.
         `turn` is tonight's turn for a table (`pos.floor.turn`): the staff ids of the people in it, whose
         turn it is first; nobody until a host says who is on, or the time clock does.
+        `seated` is who sits at the tables: under the id of each open check the host seated a party on, from
+        its reservation or the waitlist, its parties, the first to sit first, each by its `name` with the
+        `tags` its number carries (`pos.api.guests.seated_by_check`); a walk-in's check is not in it. The
+        number and the note are not told, and nothing of it is on the check.
         Nothing here moves with the clock: an answer stays the same until an order, a setting, the
-        reservation book or who is on the time clock changes (and when a new day of service begins)."""
+        reservation book, the waitlist, a guest's tags or who is on the time clock changes (and when a new
+        day of service begins)."""
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
@@ -1344,6 +1349,7 @@ def create_app(
                 "moves": True,  # a table's check can move and merge here (pos.orders.moves)
                 "holds": app.state.reservations.holds(),
                 "turn": turn_now(),
+                "seated": seated_by_check(app.state, (state.order_id for state in open_states)),
                 "cursor": store.cursor,
             }
         )

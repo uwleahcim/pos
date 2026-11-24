@@ -857,6 +857,77 @@ def test_saying_who_sits_at_a_table_reads_no_order_and_goes_on_no_order_and_no_b
     assert lines and not any("Linda" in line or "Window" in line or "VIP" in line for line in lines)
 
 
+# --- on the floor map: whose table it is ---------------------------------------------------------------------
+
+
+def on_the_map(h: Hub) -> dict:
+    """Who sits at the tables, as the floor map is told with the floor (no token)."""
+    answer = h.c.get("/floor")
+    assert answer.status_code == 200, answer.text
+    return answer.json()["seated"]
+
+
+def test_the_floor_map_is_told_who_sits_at_a_table_by_name_and_tags_and_no_more():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP", "Catering client"], note="no MSG")
+    linda = book_table(h, "Linda P.", "+1 (781) 555-0101", note="Window table, birthday")["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.table("t-2", h.now - 60_000, table="A8")  # a walk-in: nobody was seated on it from the book or the list
+    assert on_the_map(h) == {}  # she has not sat down yet
+    seat(h, linda, "t-1")
+    assert on_the_map(h) == {"t-1": [{"name": "Linda P.", "tags": ["Catering client", "VIP"]}]}
+    # the name and the tags: not the number, not the reservation's note, not the line kept about the customer
+    told = h.c.get("/floor").text
+    assert "555" not in told and "Window" not in told and "no MSG" not in told
+    # a tag taken off shows the next time the map asks; nothing was copied
+    kept(h, LINDA, tags=["VIP"])
+    assert on_the_map(h) == {"t-1": [{"name": "Linda P.", "tags": ["VIP"]}]}
+    # the check is closed: the table is free on the map, and nobody sits there
+    h.op("t-1", "close", h.now)
+    assert on_the_map(h) == {}
+
+
+def test_the_map_names_every_party_at_a_table_in_the_order_they_sat_and_one_with_no_number_too():
+    h = host_stand()
+    kept(h, OMAR, tags=["Regular"])
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.table("t-2", h.now - 60_000, table="A8")
+    omar = wait(h, "Omar", OMAR)["party"]
+    seat(h, omar, "t-1", book="waitlist")
+    h.now += 60_000
+    seat(h, book_table(h, "Wu", "", note="High chair")["booking"], "t-1")  # joins his table: the same check
+    seat(h, wait(h, "Tess")["party"], "t-2", table="A8", book="waitlist")
+    assert on_the_map(h) == {
+        "t-1": [{"name": "Omar", "tags": ["Regular"]}, {"name": "Wu", "tags": []}],
+        "t-2": [{"name": "Tess", "tags": []}],
+    }
+    # put back on the list, he is at no table; the others stay
+    assert h.c.post(f"/waitlist/{omar['id']}/back", json=HOLLY).status_code == 200
+    assert on_the_map(h) == {"t-1": [{"name": "Wu", "tags": []}], "t-2": [{"name": "Tess", "tags": []}]}
+    # a party seated with a check the hub never heard of is on no table of the map
+    seat(h, book_table(h, "Lee", "", time="21:45")["booking"], "t-9", table="B1")
+    assert "t-9" not in on_the_map(h)
+
+
+def test_telling_the_map_who_sits_changes_no_order_no_bill_and_no_figure():
+    h = host_stand()
+    kept(h, LINDA, tags=["VIP"])
+    made = book_table(h, "Linda P.", LINDA, note="Window table")["booking"]
+    h.table("t-1", h.now - 60_000, table="A7")
+    h.ring("t-1", "L1", GTC, h.now - 30_000)
+    seat(h, made, "t-1")
+    before = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    floor = h.c.get("/floor").json()
+    assert floor["seated"] == {"t-1": [{"name": "Linda P.", "tags": ["VIP"]}]}
+    # the check on the map is the check it was: nothing of the guest is among what it says of the table
+    (check,) = floor["status"]["A7"]
+    assert "Linda" not in str(check) and "VIP" not in str(check)
+    after = (h.c.get("/orders/t-1").json(), h.check("t-1"), guests(h)["totals"], h.report()["sales"], the_book(h))
+    assert after == before
+    for words in (h.c.get("/orders/t-1").text, str(h.check("t-1"))):
+        assert "Linda" not in words and "VIP" not in words and LINDA not in words
+
+
 # --- a tagged guest with no order, in the guest list ---------------------------------------------------------
 
 ZED = "7815550188"
