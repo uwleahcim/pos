@@ -155,6 +155,7 @@ Order withLocalOps(Order order, List<Map<String, dynamic>> ops) {
     discounts: order.discounts,
     openedMs: order.openedMs,
     due: due,
+    seated: order.seated,
   );
 }
 

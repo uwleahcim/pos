@@ -39,7 +39,8 @@ merges after any disconnect.
   kept; with live traffic turned on, a delivery for now is promised the kitchen's minutes and the drive as
   the roads are at that minute, and the fee never goes by it): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
-  and closed; another day's checks for a manager): `docs/finding-checks.md`
+  and closed; another day's checks for a manager; the check of a table whose party the host seated from
+  the book or the waitlist says the party's name in the list and is found by it): `docs/finding-checks.md`
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
   note line, the tags a manager put on them, their past orders with Same again at today's menu):
   `docs/customers.md`

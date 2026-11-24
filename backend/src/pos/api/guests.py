@@ -46,6 +46,8 @@
   goes onto the check.
 - The floor map is told the same people, by name and tags alone, with the floor (`GET /floor`, `seated`:
   `seated_by_check` below), so a table says whose it is and whether that guest carries a tag.
+- The list of checks is told their names and no more (`GET /orders?brief=true`, `seated` on a check:
+  `names_by_check` below), so a table's check says whose it is and is found by that name.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -79,18 +81,36 @@ def seated_by_check(state: Any, order_ids: Iterable[str]) -> dict[str, list[dict
     its reservation or its line of the waitlist and the `tags` its number carries. A check nobody was seated
     on (a walk-in's) is not in it. The name and the tags and no more: not the number, not the note. It reads
     the book, the waitlist and the tags, and no order."""
-    wanted = set(order_ids)
-    if not wanted:
-        return {}
-    seated = sorted(
-        [row for row in (*state.reservations.seated(), *state.waitlist.seated()) if row.order_id in wanted],
-        key=lambda row: row.seated_ms or 0,
-    )
+    seated = _seated_on(state, order_ids)
     carried = state.guest_tags.all() if any(row.phone for row in seated) else {}
     by_check: dict[str, list[dict[str, Any]]] = {}
     for row in seated:
         by_check.setdefault(row.order_id, []).append({"name": row.name, "tags": tags_together([row.phone], carried)})
     return by_check
+
+
+def names_by_check(state: Any, order_ids: Iterable[str]) -> dict[str, list[str]]:
+    """Whose check it is, for the list of checks (`GET /orders?brief=true`, `seated` on a check): under the
+    id of each of these checks that the host seated somebody on, the names of its parties, the first to sit
+    first, each name once. A check nobody was seated on (a walk-in's, a to-go order) is not in it, and
+    neither is one whose parties gave no name. The names and no more: not the number, not the note, not a
+    tag. Today's and yesterday's parties are looked at, as for the floor map, so a check closed earlier in
+    the day still says whose it was. It reads the book and the waitlist, and no order."""
+    by_check: dict[str, list[str]] = {}
+    for row in _seated_on(state, order_ids):
+        name = " ".join(str(row.name or "").split())
+        if name and name not in by_check.get(row.order_id, ()):
+            by_check.setdefault(row.order_id, []).append(name)
+    return by_check
+
+
+def _seated_on(state: Any, order_ids: Iterable[str]) -> list[Any]:
+    """The reservations and the waitlist parties the host sat down on these checks, the first to sit first."""
+    wanted = set(order_ids)
+    if not wanted:
+        return []
+    rows = [row for row in (*state.reservations.seated(), *state.waitlist.seated()) if row.order_id in wanted]
+    return sorted(rows, key=lambda row: row.seated_ms or 0)
 
 
 class GuestIn(BaseModel):

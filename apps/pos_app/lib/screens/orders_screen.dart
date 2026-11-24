@@ -217,7 +217,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (change.waitlist || change.everything) _waitStale = true;
       if (change.reservations || change.everything) _bookStale = true;
       if (change.online || change.everything) _onlineStale = true;
-      if (_inFront && change.anyOrder) _reader();
+      // a party seated from the book or the waitlist, or put back: its check says whose it is
+      if (_inFront && (change.anyOrder || change.reservations || change.waitlist)) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
       if (_inFront && change.waitlist) unawaited(_readWait());
       if (_inFront && change.reservations) unawaited(_readBook());
@@ -2111,7 +2112,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                         if (order.customerName.trim().isNotEmpty) order.customerName.trim(),
                                         'tab',
                                       ].join(' · ')
-                                    : 'Table ${order.table}',
+                                    // whose table it is, where the check or the host says: "Table A7 · Chen"
+                                    : ['Table ${order.table}', ?_whose(order)].join(' · '),
                                 style: theme.textTheme.titleMedium,
                               ),
                               subtitle: Wrap(
@@ -2262,6 +2264,15 @@ Widget _marked(Widget number, Order order, ColorScheme scheme) => order.online =
 String _opened(int ms, DateTime now) {
   final day = dayLabel(ms, now);
   return day == 'today' ? clockTime(ms) : '$day ${clockTime(ms)}';
+}
+
+/// Whose table a check is, for its row in the list: the name the check carries (a tab that sat down) and
+/// the parties the host seated on it, the first two by name and the rest as a count ("Chen, Wu +1"). Null
+/// for a walk-in's check, whose row says the table alone.
+String? _whose(Order order) {
+  final names = order.tableNames;
+  if (names.isEmpty) return null;
+  return [names.take(2).join(', '), if (names.length > 2) '+${names.length - 2}'].join(' ');
 }
 
 /// The first tap of a to-go order: name and phone, the channel, the language for texts, and whether it is
