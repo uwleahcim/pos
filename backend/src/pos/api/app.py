@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
-from ..addresses import Suggester, default_asked, suggester_from_env
+from ..addresses import Suggester, default_asked, order_of, suggester_from_env
 from ..check_guests import CheckGuests, default_check_guests
 from ..customers import (
     NOTE_MAX,
@@ -1010,6 +1010,9 @@ def create_app(
     # Maps when Google gives no answer; how often each was asked this month is counted in the database
     # (pos.addresses)
     app.state.suggester = suggester if suggester is not None else suggester_from_env(outside, asked=default_asked())
+    # Mapbox may not be asked where the restaurant stands (nothing of its answers may be kept): it is told what
+    # Geocodio says, whose answers may be kept and used with anybody's map
+    app.state.suggester.place_with(app.state.lookups.locate)
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
@@ -1931,8 +1934,9 @@ def create_app(
         status = lookups.status()
         if status["traffic"] is not None:
             status["traffic"]["enabled"] = settings.get("live_drive").get("enabled") is True
-        listings = app.state.suggester.statuses()
         turned_on = settings.get("address_list")
+        order = order_of(turned_on)
+        listings = sorted(app.state.suggester.statuses(), key=lambda listing: order.index(listing["service"]))
         for listing in listings:
             listing["enabled"] = turned_on.get(listing["service"]) is True
         return {

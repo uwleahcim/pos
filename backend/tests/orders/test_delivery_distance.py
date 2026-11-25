@@ -1020,6 +1020,82 @@ def test_the_service_is_sent_the_two_addresses_and_the_key_in_a_header(caplog):
     assert "Elm" not in caplog.text and "Restaurant Row" not in caplog.text and "key-123" not in caplog.text
 
 
+def test_where_an_address_stands_is_asked_with_the_address_alone_and_the_key_in_a_header(caplog):
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        found = {"formatted_address": HOME, "location": {"lat": 42.4523, "lng": -71.137}, "accuracy": 1}
+        return httpx.Response(200, json={"input": {}, "results": [found, {"location": {"lat": 1, "lng": 2}}]})
+
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        assert geocodio(answer).locate(HOME) == (42.4523, -71.137)  # the first place it reads it as
+    (request,) = seen
+    assert (request.method, request.url.path) == ("GET", "/v2.1/geocode")
+    assert dict(request.url.params) == {"q": HOME, "limit": "1"}
+    assert request.headers["authorization"] == "Bearer key-123" and "key-123" not in str(request.url)
+    assert "Restaurant Row" not in caplog.text and "key-123" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(200, json={"results": []}),
+        httpx.Response(200, json={"results": [{"location": {"lat": "north", "lng": -71.1}}]}),
+        httpx.Response(200, json={"results": [{"location": {"lat": 142.0, "lng": -71.1}}]}),
+        httpx.Response(200, json={"results": [{"formatted_address": "somewhere"}]}),
+        httpx.Response(200, json=["not", "an", "answer"]),
+        httpx.Response(422, json={"error": "Could not geocode address"}),
+    ],
+)
+def test_an_address_read_as_no_place_stands_nowhere(answer):
+    assert geocodio(lambda _: answer).locate("nowhere at all") is None
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        (httpx.Response(401, json={"error": "Invalid API key"}), "refused"),
+        (httpx.Response(403, json={"error": "This API key does not have permission"}), "refused"),
+        (httpx.Response(402, json={"error": "Payment required"}), "limit"),
+        (httpx.Response(429, json={"error": "Too many requests"}), "limit"),
+        (httpx.Response(500, text="oops"), "unreachable"),
+        (httpx.Response(200, text="not json"), "unreachable"),
+    ],
+)
+def test_a_service_that_does_not_say_where_an_address_stands_says_why(answer, reason):
+    with pytest.raises(LookupFailed) as failed:
+        geocodio(lambda _: answer).locate(HOME)
+    assert failed.value.reason == reason
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route", request=request)
+
+    with pytest.raises(LookupFailed) as failed:
+        geocodio(down).locate(HOME)
+    assert failed.value.reason == "unreachable"
+
+
+def test_where_the_restaurant_stands_is_one_of_the_days_askings_and_is_asked_of_geocodio_alone():
+    found = {"results": [{"location": {"lat": 42.4523, "lng": -71.137}}]}
+    lookups = Lookups(geocodio(lambda _: httpx.Response(200, json=found)), daily=2)
+    assert lookups.locate(HOME) == (42.4523, -71.137) and lookups.status()["asked_today"] == 1
+    assert lookups.locate(HOME) == (42.4523, -71.137)
+    with pytest.raises(LookupFailed) as failed:  # the day's most stands for it as well
+        lookups.locate(HOME)
+    assert failed.value.reason == "limit" and lookups.status()["asked_today"] == 2
+    # one that fails is counted as one that gave nothing
+    refusing = Lookups(geocodio(lambda _: httpx.Response(401, json={})))
+    with pytest.raises(LookupFailed):
+        refusing.locate(HOME)
+    assert (refusing.status()["failed_today"], refusing.status()["last_failure"]) == (1, "refused")
+    # Google's answers may not be kept, so it is never asked this; and with nobody there is nobody to ask
+    for nobody in (Lookups(), Lookups(fallback=google(lambda _: httpx.Response(200, json={})))):
+        with pytest.raises(LookupFailed) as failed:
+            nobody.locate(HOME)
+        assert failed.value.reason == "unreachable"
+
+
 def test_an_answer_with_the_numbers_at_the_top_is_read_too():
     trip = geocodio(lambda _: httpx.Response(200, json={"distance_miles": "28.4", "duration_seconds": 3060})).trip(
         HOME, ELM

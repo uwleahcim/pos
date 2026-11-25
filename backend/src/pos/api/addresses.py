@@ -6,8 +6,10 @@
   request, which a log could show.
 - `GET /settings/address_list`, `PUT /settings/address_list` (manager token): which map services are asked as
   well as the restaurant's own deliveries (`google`, `mapbox`, `azure`, each off until a manager turns it
-  on), and under `services` how each stands: whether the hub has a key for it, and how many askings it has
-  left for the month.
+  on), the order they are asked in (`order`, their names; Google, Mapbox, Azure Maps unless a manager put
+  them in another), how far around the restaurant their addresses come first (`near_miles`, 4 unless set),
+  and under `services` how each stands, in that order: whether the hub has a key for it, and how many
+  askings it has left for the month.
 - `POST /settings/address_list/try` `{service}` (manager token): asks one map service once, about the
   restaurant's own address, and says whether it answered: how a manager finds out that a key works before
   turning the list's use of it on.
@@ -25,6 +27,8 @@ from pydantic import BaseModel, Field
 from ..addresses import (
     CREDIT,
     LIST_MOST,
+    METERS_A_MILE,
+    NEAR_METERS,
     ORDER,
     OWN_MOST,
     SERVICE,
@@ -34,6 +38,7 @@ from ..addresses import (
     Suggestion,
     credit_of,
     known,
+    order_of,
     own_addresses,
     said,
     worth_asking,
@@ -47,6 +52,15 @@ log = logging.getLogger("pos.addresses")
 
 TRY_WITH = "1 Main St"
 """What a service is tried with where the restaurant's own address is not set yet: no customer's address."""
+
+
+def reach_of(setting: Mapping[str, Any]) -> float:
+    """How far around the restaurant addresses come first, in meters, as the list's setting says it in
+    miles."""
+    miles = setting.get("near_miles")
+    if isinstance(miles, bool) or not isinstance(miles, int | float) or not miles > 0:
+        return NEAR_METERS
+    return float(miles) * METERS_A_MILE
 
 
 class TypedIn(BaseModel):
@@ -69,6 +83,14 @@ class AddressListIn(BaseModel):
     google: bool | None = None
     mapbox: bool | None = None
     azure: bool | None = None
+    near_miles: float | None = Field(
+        None, description="how far around the restaurant addresses come first, 0.25 to 30; left as it is when left out"
+    )
+    order: list[str] | None = Field(
+        None,
+        max_length=8,
+        description="the services' names in the order they are asked, each once; left as it is when left out",
+    )
 
 
 class TryIn(BaseModel):
@@ -83,10 +105,13 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
 
     def now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """The list's setting as a screen is told it. Under `services`, every map service in the order they
-        are asked: `name`, `title` (what a screen calls it), `credit` (the words under a list with one of
-        its answers), `on` (a manager turned it on), `key` (this hub has a key for it), `asks` (both),
+        are asked (`order` names them in it): `name`, `title` (what a screen calls it), `credit` (the words
+        under a list with one of its answers), `on` (a manager turned it on), `key` (this hub has a key for
+        it), `asks` (both),
         `left` and `monthly_most` (how many askings it has left for the month, of how many), `used_up`,
-        and `resting` (it gave no answer a moment ago, and the next one is asked meanwhile).
+        and `resting` (it gave no answer a moment ago, and the next one is asked meanwhile). `near_miles` is
+        how far around the restaurant their addresses come first, and `origin_set` whether the restaurant's
+        own address is known (Location, Delivery fee): without it nothing is near anything.
 
         For an app from before there were several: `service`, whether this hub has a key for Google;
         `asks`, whether Google is asked; and `credit`, Google's name."""
@@ -94,8 +119,9 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
         suggester: Suggester = app.state.suggester
         told = dict(setting if setting is not None else settings.get("address_list"))
         stands = {status["service"]: status for status in suggester.statuses()}
+        order = order_of(told)
         services = []
-        for name in ORDER:
+        for name in order:
             status = stands.get(name)
             on = told.get(name) is True
             most = status["monthly_most"] if status else suggester.most(name)
@@ -115,6 +141,9 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
             )
         return {
             **{name: told.get(name) is True for name in ORDER},
+            "near_miles": round(reach_of(told) / METERS_A_MILE, 2),
+            "order": order,
+            "origin_set": bool(str(settings.get("delivery_fee").get("origin") or "").strip()),
             "service": SERVICE in stands,
             "asks": told.get(SERVICE) is True and SERVICE in stands,
             "credit": CREDIT[SERVICE],
@@ -124,14 +153,17 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
     @app.get("/settings/address_list")
     def read_address_list() -> dict[str, Any]:
         """The list of addresses under a box that is being typed in: which map services a manager turned on
-        for it (`google`, `mapbox`, `azure`), and under `services` how each stands, in the order they are
-        asked. The restaurant's own earlier deliveries are listed either way."""
+        for it (`google`, `mapbox`, `azure`), `order` (their names in the order they are asked),
+        `near_miles` (how far around the restaurant a service's addresses come first), and under `services`
+        how each stands, in that order. The restaurant's own earlier deliveries are listed either way."""
         return now()
 
     @app.put("/settings/address_list")
     def write_address_list(body: AddressListIn, authorization: str | None = Header(None)) -> dict[str, Any]:
-        """A manager turns a map service on or off for the list. From then on what is typed in an address
-        box is sent to it when its turn comes, or is not. A service that is not named stays as it is."""
+        """A manager turns a map service on or off for the list, or puts the services in another order
+        (`order`: their names, each once, the first asked first). From then on what is typed in an address
+        box is sent to a service when its turn comes, or is not. A service that is not named stays as it is,
+        and so do `near_miles` and `order` where they are left out."""
         manager_from(app.state.tokens, authorization)
         settings: SettingStore = app.state.settings
         wanted = {**settings.get("address_list"), **body.model_dump(exclude_none=True)}
@@ -200,10 +232,10 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
 
         The restaurant's own deliveries come first and ask nobody. The map services are asked only where a
         manager turned them on, from the fourth letter, and not about an address the restaurant already
-        knows in full: the first one, and the next only when the one before it gave no answer (its month is
-        used up, or it is down). Whichever is asked is sent the letters typed and nothing else: no name, no
-        phone number, nothing of an order. The number is used on the hub alone. What a service answers is
-        not kept.
+        knows in full: the first one in the location's order, and the next only when the one before it gave
+        no answer (its month is used up, or it is down). Whichever is asked is sent the letters typed and
+        nothing else: no name, no phone number, nothing of an order. The number is used on the hub alone.
+        What a service answers is not kept.
 
         A list is a help: when no service answers, the list is shorter and there is no error. With `own`
         false (the restaurant's own address) no delivery is listed and the services alone are asked."""
@@ -219,11 +251,12 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
             whole = any(same_address(typed, address) for address in (*theirs, *others))
             outside: list[Suggestion] = []
             setting = settings.get("address_list")
-            on = [name for name in suggester.names if setting.get(name) is True]
+            has = suggester.names
+            on = [name for name in order_of(setting) if name in has and setting.get(name) is True]
             if on and not whole and worth_asking(typed):
                 origin = str(settings.get("delivery_fee").get("origin") or "") if body.own else ""
                 try:
-                    outside = suggester.suggest(typed, origin, among=on)
+                    outside = suggester.suggest(typed, origin, among=on, reach=reach_of(setting))
                 except LookupFailed:
                     outside = []  # counted by the suggester; a form is told nothing
             if outside:

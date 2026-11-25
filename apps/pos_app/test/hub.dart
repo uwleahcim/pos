@@ -290,6 +290,9 @@ class Hub {
   int addressTries = 0;
   final addressTried = <String?>[];
 
+  /// What each save of the list's setting sent, on a hub that knows the services.
+  final addressSaved = <Map<String, dynamic>>[];
+
   /// What each map service is called, and the words under a list with one of its answers.
   static const addressTitles = {'google': 'Google Maps', 'mapbox': 'Mapbox', 'azure': 'Azure Maps'};
   static const addressCredits = {
@@ -328,10 +331,21 @@ class Hub {
       addressListOf([addressService('google'), addressService('mapbox'), addressService('azure', key: false)]);
 
   /// The setting of these services, with what an app from before there were several reads beside them.
-  static Map<String, dynamic> addressListOf(List<Map<String, dynamic>> services) {
+  /// [near] is how far around the restaurant addresses come first (null: a hub that does not say), and
+  /// [origin] whether the hub knows the restaurant's own address. The services stand in the order they are
+  /// asked, which the hub says under `order` unless it is one from before the order was the location's
+  /// own ([ordered] false).
+  static Map<String, dynamic> addressListOf(
+    List<Map<String, dynamic>> services, {
+    double? near = 4.0,
+    bool origin = true,
+    bool ordered = true,
+  }) {
     final google = services.firstWhere((one) => one['name'] == 'google');
     return {
       for (final one in services) one['name'] as String: one['on'],
+      if (near != null) ...{'near_miles': near, 'origin_set': origin},
+      if (ordered) 'order': [for (final one in services) one['name']],
       'service': google['key'],
       'asks': google['asks'],
       'credit': 'Google Maps',
@@ -4112,15 +4126,27 @@ class Hub {
             final google = body['google'] == true;
             addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
           } else {
-            // one that is not named stays as it is
-            addressList = addressListOf([
-              for (final one in services.cast<Map<String, dynamic>>())
-                {
-                  ...one,
-                  'on': body[one['name']] is bool ? body[one['name']] : one['on'],
-                  'asks': (body[one['name']] is bool ? body[one['name']] : one['on']) == true && one['key'] == true,
-                },
-            ]);
+            // one that is not named stays as it is, and so do how far nearby reaches and the order
+            addressSaved.add(body);
+            final ordered = had['order'] is List;
+            final asked = ordered && body['order'] is List ? (body['order'] as List).cast<String>() : const <String>[];
+            final all = services.cast<Map<String, dynamic>>();
+            addressList = addressListOf(
+              [
+                for (final one in [
+                  for (final name in asked) ...all.where((one) => one['name'] == name),
+                  ...all.where((one) => !asked.contains(one['name'])),
+                ])
+                  {
+                    ...one,
+                    'on': body[one['name']] is bool ? body[one['name']] : one['on'],
+                    'asks': (body[one['name']] is bool ? body[one['name']] : one['on']) == true && one['key'] == true,
+                  },
+              ],
+              near: had['near_miles'] == null ? null : ((body['near_miles'] ?? had['near_miles']) as num).toDouble(),
+              origin: had['origin_set'] != false,
+              ordered: ordered,
+            );
           }
         }
         return json(addressList!);
