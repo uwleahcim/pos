@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../printers.dart';
+import 'save_bar.dart';
 
 /// The kitchen printers, for a manager: each prints for one station of the menu or several, by its address
 /// (typed, or picked from the printers the hub finds on the LAN: the magnifier), in the language the printer
@@ -11,7 +13,8 @@ import '../printers.dart';
 /// in order (never round in a loop). A printer for several stations prints a send on one ticket or on a
 /// ticket for each station, with the stations grouped on its card sharing one. The screen says which stations the menu prints at and have no printer yet (one tap adds it)
 /// and sets the station a to-go order prints whole at. The hub keeps it all and routes the next ticket by
-/// it. Behind the manager PIN, from Location settings.
+/// it. Behind the manager PIN, from Location settings. Nothing is kept as it is changed: a bar with Save
+/// comes up at the bottom of the screen with the first change ([SaveBarScaffold]).
 class PrintersScreen extends StatefulWidget {
   const PrintersScreen({super.key, required this.api, required this.token, this.addresses});
 
@@ -96,6 +99,22 @@ class _PrintersScreenState extends State<PrintersScreen> {
   bool _listShown = false;
   String? _scanMessage;
   bool _apart = true; // the hub can print a ticket for each station of a printer (one older than that cannot)
+  String _kept = ''; // the printers as the hub keeps them, written as [_edited] writes the screen's
+
+  /// What Save would send, with a station still being typed: against [_kept] it says whether anything waits
+  /// to be saved. The language a printer said it speaks counts only on a printer set to Auto, which prints
+  /// in it; on one set by hand it changes nothing.
+  String get _edited => jsonEncode({
+    'printers': [
+      for (final row in _rows)
+        {
+          ...row.config.toJson()..remove('detected'),
+          if (row.dialect == autoDialect) 'detected': row.detected,
+          'typing': row.stationCode.text.trim(),
+        },
+    ],
+    'takeout': _takeout,
+  });
 
   @override
   void initState() {
@@ -119,6 +138,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
       setState(() {
         _settings = settings;
         _apply(settings);
+        _kept = _edited;
       });
     } on ApiException catch (err) {
       if (mounted) setState(() => _loadError = err.message);
@@ -279,6 +299,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
         for (final row in _rows) {
           row.identity = known[row.id];
         }
+        _kept = _edited;
       });
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Printers saved')));
       await _loadStations();
@@ -476,6 +497,9 @@ class _PrintersScreenState extends State<PrintersScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final waits = _settings != null && _edited != _kept;
+    // printers the hub was handed in its own settings are kept in the app by a Save, changed or not
+    final fromHub = _settings?.source == 'env' && _rows.isNotEmpty;
     final Widget body;
     if (_loadError != null) {
       body = Center(
@@ -492,6 +516,8 @@ class _PrintersScreenState extends State<PrintersScreen> {
       body = const Center(child: CircularProgressIndicator());
     } else {
       final missing = _missing;
+      // what a test print or a printer said, when no Save bar is up to say it
+      final aside = waits || fromHub ? null : _message;
       body = ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -547,30 +573,24 @@ class _PrintersScreenState extends State<PrintersScreen> {
           if (_listShown && _found != null && _found!.isNotEmpty) ...[const SizedBox(height: 12), _foundCard(context)],
           const SizedBox(height: 12),
           _takeoutCard(context),
-          if (_message != null)
+          if (aside != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 12, 4, 0),
-              child: Text(_message!, style: TextStyle(color: scheme.error)),
+              child: Text(aside, style: TextStyle(color: scheme.error)),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(0, 16, 0, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                FilledButton(
-                  key: const ValueKey('printers-save'),
-                  onPressed: _busy ? null : _save,
-                  child: const Text('Save'),
-                ),
-              ],
-            ),
-          ),
         ],
       );
     }
-    return Scaffold(
+    return SaveBarScaffold(
       appBar: AppBar(title: const Text('Printers')),
-      body: Center(
+      changed: waits,
+      always: fromHub,
+      onSave: _busy ? null : _save,
+      saveKey: const ValueKey('printers-save'),
+      waiting: waits ? 'Changes not saved' : 'Not kept in the app yet',
+      problems: [if (_message != null) (about: null, text: _message!)],
+      unsaved: 'Your changes to the printers are not saved.',
+      child: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
       ),
     );
@@ -937,6 +957,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
                     onPressed: () => setState(() => _commitStation(row)),
                   ),
                 ),
+                onChanged: (_) => setState(() {}), // a station being typed waits to be saved too
                 onSubmitted: (_) => setState(() => _commitStation(row)),
               ),
             ),

@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'counter_test.dart';
 import 'coursing_test.dart' show pumpLocation;
-import 'location_rows.dart' show wholeLocation;
+import 'location_rows.dart';
 import 'phone_test.dart' show active;
 
 /// Desk phones linked to screens: a call taken on a desk phone opens the caller's order on the linked screen
@@ -340,7 +340,7 @@ void main() {
       await tester.pumpAndSettle();
       await pick(tester, 'desk-ext-pick:1', '201 (offline)');
       await pick(tester, 'desk-dev-pick:1', 'ipad1');
-      await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
+      await tester.tap(find.byKey(const ValueKey('location-save')));
       await tester.pumpAndSettle();
       expect(t.hub.deskPhones, {
         'links': [
@@ -376,7 +376,7 @@ void main() {
       expect(focused(tester, 'desk-dev:0'), isTrue);
       expect(focused(tester, 'desk-ext:0'), isFalse);
       await tester.enterText(find.byKey(const ValueKey('desk-dev:0')), 'kiosk');
-      await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
+      await tester.tap(find.byKey(const ValueKey('location-save')));
       await tester.pumpAndSettle();
       expect(t.hub.deskPhones, {
         'links': [
@@ -426,9 +426,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(pullDown(tester, 'desk-ext-pick:0').value, '201');
       t.hub.refuseDeskPhones = 'extension 201 is linked twice';
-      await tester.tap(find.byKey(const ValueKey('desk-phones-save')));
+      await tester.tap(find.byKey(const ValueKey('location-save')));
       await tester.pumpAndSettle();
-      expect(find.text('extension 201 is linked twice'), findsOneWidget);
+      expect(saveProblem(tester), 'Desk phones: extension 201 is linked twice');
+      expect(saveWaiting(tester), 'Not saved: desk phones', reason: 'refused, so it still waits');
       await stop(tester);
     });
   });

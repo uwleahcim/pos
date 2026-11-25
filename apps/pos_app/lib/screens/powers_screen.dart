@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../powers.dart';
+import 'save_bar.dart';
 
 /// Who may do what (docs/roles.md): each power with the roles it is handed to, as buttons. A manager or an
-/// owner taps a role to hand it a power or to take it back, and saves; the hub holds it from then on, for
-/// every screen. Managers and owners hold every power always and have no buttons: nothing here can leave
-/// the location with nobody who may void a dish or open this screen.
+/// owner taps a role to hand it a power or to take it back, and saves with the bar that comes up at the
+/// bottom of the screen ([SaveBarScaffold]); the hub holds it from then on, for every screen. Managers and
+/// owners hold every power always and have no buttons: nothing here can leave the location with nobody who
+/// may void a dish or open this screen.
 class PowersScreen extends StatefulWidget {
   const PowersScreen({super.key, required this.api, required this.token, required this.powers});
 
@@ -61,114 +63,65 @@ class _PowersScreenState extends State<PowersScreen> {
     }
   }
 
-  Future<bool> _confirmLeave() async {
-    final leave = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Leave without saving?'),
-        content: const Text('Your changes to who may do what are not saved.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep editing')),
-          FilledButton(
-            key: const ValueKey('powers-discard'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Discard changes'),
-          ),
-        ],
-      ),
-    );
-    return leave ?? false;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final changes = _changes;
     final started = _now == _asItStarted;
-    return PopScope(
-      canPop: changes == 0,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        final navigator = Navigator.of(context);
-        if (await _confirmLeave()) navigator.pop();
-      },
-      child: Scaffold(
-        appBar: AppBar(title: const Text('Who may do what')),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              children: [
-                Text(
-                  'Managers and owners may do all of this, always. Tap a role to hand it a power, or to '
-                  'take it back.',
-                  key: const ValueKey('powers-intro'),
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+    return SaveBarScaffold(
+      appBar: AppBar(title: const Text('Who may do what')),
+      changed: changes > 0,
+      onSave: _busy ? null : _save,
+      saveKey: const ValueKey('powers-save'),
+      waiting: '$changes ${changes == 1 ? 'change' : 'changes'} not saved',
+      problems: [if (_message != null) (about: null, text: _message!)],
+      unsaved: 'Your changes to who may do what are not saved.',
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            children: [
+              Text(
+                'Managers and owners may do all of this, always. Tap a role to hand it a power, or to '
+                'take it back.',
+                key: const ValueKey('powers-intro'),
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              // a power this hub has never heard of (it is older than the app) has no row
+              for (final group in powerGroups.where((g) => g.powers.any((p) => _now.knows(p.id)))) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
+                  child: Text(group.name, style: theme.textTheme.titleSmall?.copyWith(color: scheme.primary)),
                 ),
-                // a power this hub has never heard of (it is older than the app) has no row
-                for (final group in powerGroups.where((g) => g.powers.any((p) => _now.knows(p.id)))) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
-                    child: Text(group.name, style: theme.textTheme.titleSmall?.copyWith(color: scheme.primary)),
-                  ),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (final (index, power) in group.powers.where((p) => _now.knows(p.id)).indexed) ...[
-                          if (index > 0) const Divider(height: 1),
-                          _row(context, power),
-                        ],
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final (index, power) in group.powers.where((p) => _now.knows(p.id)).indexed) ...[
+                        if (index > 0) const Divider(height: 1),
+                        _row(context, power),
                       ],
-                    ),
-                  ),
-                ],
-                // at the foot of the list, out of the way: it undoes every hand-out at once
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: TextButton.icon(
-                      key: const ValueKey('powers-reset'),
-                      onPressed: _busy || started ? null : () => setState(() => _now = _asItStarted),
-                      icon: const Icon(Icons.restart_alt),
-                      label: const Text('Put it back as it started'),
-                    ),
+                    ],
                   ),
                 ),
               ],
-            ),
-          ),
-        ),
-        bottomNavigationBar: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_message != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(
-                      _message!,
-                      key: const ValueKey('powers-message'),
-                      style: TextStyle(color: scheme.error),
-                    ),
-                  ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    key: const ValueKey('powers-save'),
-                    onPressed: _busy || changes == 0 ? null : _save,
-                    child: Text(changes == 0 ? 'Save' : 'Save $changes ${changes == 1 ? 'change' : 'changes'}'),
+              // at the foot of the list, out of the way: it undoes every hand-out at once
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: TextButton.icon(
+                    key: const ValueKey('powers-reset'),
+                    onPressed: _busy || started ? null : () => setState(() => _now = _asItStarted),
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Put it back as it started'),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

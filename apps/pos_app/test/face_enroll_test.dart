@@ -105,10 +105,19 @@ void main() {
     expect(find.byKey(const ValueKey('forget:s2')), findsNothing);
     expect(t.hub.faceAuth, 'Bearer tok-admin');
 
+    // the switch waits for Save like every setting of the screen: flipped, nothing is sent yet
     await tester.tap(find.byKey(const ValueKey('faces-enabled')));
     await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('faces-enabled'))).value, isTrue);
+    expect(t.hub.facesSetting, {'enabled': false});
+    expect(saveWaiting(tester), 'Not saved: face sign-in');
+    await saveLocation(tester);
     expect(t.hub.facesSetting, {'enabled': true});
     expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('faces-enabled'))).value, isTrue);
+    expect(find.text('Face sign-in saved'), findsOneWidget);
+    expect(saveWaiting(tester), isNull);
+    await tester.pump(const Duration(seconds: 5)); // the word that it is saved has its time and goes
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('forget:s1')));
     await tester.pumpAndSettle();
@@ -180,15 +189,29 @@ void main() {
     await bringUp(tester, 'hands-free-switch');
     await tester.tap(find.byKey(const ValueKey('hands-free-switch')));
     await tester.pumpAndSettle();
-    expect(t.hub.handsFree, {'switch': false, 'away_seconds': 60});
-    expect(t.hub.faceAuth, 'Bearer tok-admin');
     expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('hands-free-switch'))).value, isFalse);
+    expect(t.hub.handsFree, {'switch': true, 'away_seconds': 60}, reason: 'nothing is sent before Save');
+    expect(saveWaiting(tester), 'Not saved: hands-free switching');
     await bringUp(tester, 'hands-free-away');
     await tester.tap(find.byKey(const ValueKey('hands-free-away')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('5 minutes').last);
     await tester.pumpAndSettle();
+    // the switch and the away time are one thing to save, and one Save keeps both
+    await saveLocation(tester);
     expect(t.hub.handsFree, {'switch': false, 'away_seconds': 300});
+    expect(t.hub.faceAuth, 'Bearer tok-admin');
+    expect(find.text('Hands-free switching saved'), findsOneWidget);
+    expect(saveWaiting(tester), isNull);
+
+    // put back as it was, it waits no longer and the bar goes
+    await bringUp(tester, 'hands-free-switch');
+    await tester.tap(find.byKey(const ValueKey('hands-free-switch')));
+    await tester.pumpAndSettle();
+    expect(saveWaiting(tester), 'Not saved: hands-free switching');
+    await tester.tap(find.byKey(const ValueKey('hands-free-switch')));
+    await tester.pumpAndSettle();
+    expect(saveWaiting(tester), isNull);
   });
 
   testWidgets('a tag held to the reader is given to the person; one that is someone else\'s is refused', (

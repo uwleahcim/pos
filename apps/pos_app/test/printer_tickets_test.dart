@@ -251,6 +251,8 @@ void main() {
     }
     final t = await pumpPrinters(tester, old);
     expect(find.text('Tickets'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('printer-dialect-star:line'))); // a change, so there is a Save
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('printers-save')));
     await tester.pumpAndSettle();
     expect(((t.hub.printers['printers'] as List).first as Map).containsKey('tickets'), isFalse);

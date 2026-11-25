@@ -127,7 +127,7 @@ void main() {
       expect(tester.widget<SwitchListTile>(tile).value, isTrue);
       expect(find.textContaining('leaving that check signs out'), findsOneWidget);
       expect(settings.signOutAfterSend, isFalse); // not until Save
-      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle(); // the Save bar comes up with the change
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect((settings.signOutAfterSend, prefs.getBool('sign_out_after_send')), (true, true));

@@ -18,7 +18,8 @@ Orders screen › **Location** (manager PIN) › **Time clock**:
   the hours.
 - **Hours**: the manager's screen, below.
 
-Each saves as it is changed, and every screen follows within seconds.
+Like every setting on that screen, each waits for **Save**: the bar that comes up at the bottom of the
+screen with the first change (see `location-settings.md`). Once saved, every screen follows within seconds.
 
 ## Clocking in and out
 

@@ -32,6 +32,16 @@ class ClockSetting {
   );
 
   Map<String, dynamic> toJson() => {'enabled': enabled, 'breaks_paid': breaksPaid, 'week_starts': weekStarts};
+
+  @override
+  bool operator ==(Object other) =>
+      other is ClockSetting &&
+      other.enabled == enabled &&
+      other.breaksPaid == breaksPaid &&
+      other.weekStarts == weekStarts;
+
+  @override
+  int get hashCode => Object.hash(enabled, breaksPaid, weekStarts);
 }
 
 /// A break of a shift; [endMs] is null while it runs.

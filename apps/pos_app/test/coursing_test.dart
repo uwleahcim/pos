@@ -106,8 +106,7 @@ void main() {
     await tester.drag(find.byKey(const ValueKey('course-handle:new-1')), const Offset(0, -400));
     await tester.pumpAndSettle();
 
-    await bringUp(tester, 'coursing-save');
-    await tester.tap(find.byKey(const ValueKey('coursing-save')));
+    await tester.tap(find.byKey(const ValueKey('location-save')));
     await tester.pumpAndSettle();
     expect(t.hub.coursingAuth, 'Bearer tok-admin');
     expect(t.hub.coursing['enabled'], isTrue);
@@ -129,7 +128,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('coursing-enabled')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('course-name:1')), findsNothing); // the list folds away while off
-    await tester.tap(find.byKey(const ValueKey('coursing-save')));
+    await tester.tap(find.byKey(const ValueKey('location-save')));
     await tester.pumpAndSettle();
     expect(t.hub.coursing['enabled'], isFalse);
     expect((t.hub.coursing['courses'] as List).length, 4); // kept for when it comes back
@@ -140,21 +139,21 @@ void main() {
       await tester.tap(find.byKey(ValueKey('course-delete:$key')));
       await tester.pumpAndSettle();
     }
-    await tester.tap(find.byKey(const ValueKey('coursing-save')));
+    await tester.tap(find.byKey(const ValueKey('location-save')));
     await tester.pumpAndSettle();
-    expect(find.text('Coursing needs at least one course, or turn it off.'), findsOneWidget);
+    expect(saveProblem(tester), 'Courses: Coursing needs at least one course, or turn it off.');
     expect(t.hub.coursing['enabled'], isFalse); // nothing was sent
 
     await tester.tap(find.byKey(const ValueKey('course-add')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('coursing-save')));
+    await tester.tap(find.byKey(const ValueKey('location-save')));
     await tester.pumpAndSettle();
-    expect(find.text('Every course needs a name.'), findsOneWidget);
+    expect(saveProblem(tester), 'Courses: Every course needs a name.');
     await tester.enterText(find.byKey(const ValueKey('course-name:new-1')), 'Only');
     t.hub.refuse = 'the course id is listed twice';
-    await tester.tap(find.byKey(const ValueKey('coursing-save')));
+    await tester.tap(find.byKey(const ValueKey('location-save')));
     await tester.pumpAndSettle();
-    expect(find.text('the course id is listed twice'), findsOneWidget); // what the hub said, as it said it
+    expect(saveProblem(tester), 'Courses: the course id is listed twice'); // what the hub said, as it said it
     await stop(tester);
   });
 

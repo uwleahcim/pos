@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -13,10 +14,13 @@ import '../print_relay.dart';
 import '../printers.dart';
 import '../push.dart';
 import '../settings.dart';
+import 'save_bar.dart';
 import 'smoothness_card.dart';
 
 /// Device name, backend addresses and the phone. Shown on first start, and from the orders screen afterwards.
 /// With an [api] it also says how face sign-in stands, so a terminal that is not looking for faces says why.
+/// Nothing is kept as it is changed: a bar with Save comes up at the bottom of the screen with the first
+/// change ([SaveBarScaffold]), and on first start it is there from the beginning.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -76,10 +80,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   FaceStatus? _faceStatus;
   String? _faceError;
   Map<String, bool> _readiness = const {};
+  bool _saving = false;
+  bool _waits = false; // what the Save bar was last built for: something differs from what the device keeps
+
+  /// The fields that are typed: the Save bar follows them as they are.
+  List<TextEditingController> get _typedFields => [_device, _endpoints, _pbx, _extension, _secret];
 
   @override
   void initState() {
     super.initState();
+    for (final field in _typedFields) {
+      field.addListener(_typed);
+    }
     widget.camera?.addListener(_changed);
     unawaited(_askFaces());
     unawaited(_askStations());
@@ -88,6 +100,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  /// A letter was typed: the bar comes up, or goes once the field reads as it is kept. (Not a rebuild a
+  /// letter.)
+  void _typed() {
+    if (mounted && _differs != _waits) setState(() {});
+  }
+
+  /// Something on the screen is not what the device keeps.
+  bool get _differs {
+    final kept = widget.settings;
+    return _device.text.trim() != kept.device ||
+        _endpoints.text.trim() != kept.endpoints.join('\n') ||
+        _relay != kept.printRelay ||
+        _lockMinutes != kept.lockMinutes ||
+        _signOutAfterSend != kept.signOutAfterSend ||
+        _opensOn != kept.opensOn ||
+        _pickupBoard != kept.pickupBoard ||
+        !setEquals(_kitchen.toSet(), kept.kitchenStations.toSet()) ||
+        _pass != kept.kitchenPass ||
+        _sound != kept.kitchenSound ||
+        _phoneOn != kept.phone.enabled ||
+        _pbx.text.trim() != kept.phone.server ||
+        _extension.text.trim() != kept.phone.extension ||
+        _secret.text != kept.phone.secret;
   }
 
   Future<void> _checkReadiness() async {
@@ -124,6 +161,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
     await widget.settings.save(device: _device.text, endpoints: _endpoints.text.split('\n'), printRelay: _relay);
     await widget.settings.saveLockMinutes(_lockMinutes);
     await widget.settings.saveSignOutAfterSend(_signOutAfterSend);
@@ -140,6 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (!mounted) return;
+    setState(() => _saving = false);
     if (widget.firstRun) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
     } else {
@@ -220,9 +260,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Scaffold(
+    _waits = _differs;
+    return SaveBarScaffold(
       appBar: AppBar(title: Text(widget.firstRun ? 'Set up this terminal' : 'Settings')),
-      body: Center(
+      // On first start nothing is kept yet and there is no screen to go back to: Save is there from the
+      // beginning, and nothing asks about leaving.
+      changed: _waits && !widget.firstRun,
+      always: widget.firstRun,
+      onSave: _saving ? null : _save,
+      saveKey: const ValueKey('settings-save'),
+      waiting: widget.firstRun ? 'Not saved yet' : 'Changes not saved',
+      unsaved: 'Your changes to this terminal\'s settings are not saved.',
+      child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
           child: ListView(
@@ -653,8 +702,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 16),
                 SmoothnessCard(frames: widget.frames ?? FrameWatch.shared),
               ],
-              const SizedBox(height: 24),
-              FilledButton(onPressed: _save, child: const Text('Save')),
             ],
           ),
         ),

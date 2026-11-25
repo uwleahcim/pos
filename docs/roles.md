@@ -27,9 +27,10 @@ says what is handed out beyond how it started ("Approve a void: Bartenders").
 
 Each power is a row: what it is, one line on what it lets a person do, and six buttons: **Servers,
 Bartenders, Hosts, Cashiers, Kitchen, Drivers**. A lit button is filled and ticked, and means everybody of that role
-holds it. Tap to hand it out or to take it back, then **Save** at the foot, which counts the changes ("Save
-2 changes"). **Put it back as it started**, below the last row, puts every button back the way the table
-began; that too holds only once it is saved. Leaving with changes not saved asks first.
+holds it. Tap to hand it out or to take it back, then **Save**, in the bar that comes up at the bottom of
+the screen with the first change and counts the changes ("2 changes not saved"). **Put it back as it
+started**, below the last row, puts every button back the way the table began; that too holds only once it
+is saved. Leaving with changes not saved asks first.
 
 A change holds on every screen from the moment it is saved.
 

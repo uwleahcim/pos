@@ -644,17 +644,35 @@ void main() {
       expect(find.text('Off: nobody is asked to clock in'), findsOneWidget);
       expect(find.byKey(const ValueKey('time-clock-breaks-paid')), findsNothing);
 
+      // on, and how it counts, all set before anything is sent: the three wait for one Save
       await tapKey(tester, 'time-clock-enabled');
-      expect((t.hub.timeClock!['enabled'], t.hub.timeClockAuth), (true, 'Bearer tok-admin'));
       expect(find.text('Off: a break is taken out of the hours'), findsOneWidget);
-
       await tapKey(tester, 'time-clock-breaks-paid');
-      expect(t.hub.timeClock!['breaks_paid'], isTrue);
       expect(find.text('A break stays in the hours'), findsOneWidget);
-
       await tester.tap(find.text('Sunday'));
       await tester.pumpAndSettle();
+      expect(t.hub.timeClock, {'enabled': false, 'breaks_paid': false, 'week_starts': 'mon'});
+      expect(t.hub.timeClockAuth, isNull, reason: 'nothing is sent before Save');
+      expect(saveWaiting(tester), 'Not saved: time clock');
+
+      await saveLocation(tester);
       expect(t.hub.timeClock, {'enabled': true, 'breaks_paid': true, 'week_starts': 'sun'});
+      expect(t.hub.timeClockAuth, 'Bearer tok-admin');
+      expect(find.text('Time clock saved'), findsOneWidget);
+      expect(saveWaiting(tester), isNull);
+      expect(find.text('A break stays in the hours'), findsOneWidget);
+    });
+
+    testWidgets('what the hub refuses about the clock is said by the Save bar, and the switch keeps waiting', (
+      tester,
+    ) async {
+      final t = await pumpLocation(tester, {'enabled': false, 'breaks_paid': false, 'week_starts': 'mon'});
+      await tapKey(tester, 'time-clock-enabled');
+      t.hub.timeClock = null; // the hub was put back to one older than the clock: it does not take the setting
+      await saveLocation(tester);
+      expect(saveProblems(tester).single, startsWith('Time clock: '));
+      expect(saveWaiting(tester), 'Not saved: time clock');
+      expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('time-clock-enabled'))).value, isTrue);
     });
 
     testWidgets('Hours opens the hours with the manager\'s token', (tester) async {
