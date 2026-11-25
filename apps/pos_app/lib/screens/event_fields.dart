@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../address_list.dart';
 import '../delivery_fee.dart';
 import '../takeout.dart';
+import 'address_box.dart';
 import 'fee_lookup.dart';
 import 'fee_picker.dart';
 
@@ -102,6 +104,7 @@ class EventFields extends StatelessWidget {
     this.asker,
     this.onAddressDone,
     this.onLookUp,
+    this.addresses,
   });
 
   /// The guests of a catering order's event; null on any other order.
@@ -129,6 +132,10 @@ class EventFields extends StatelessWidget {
   final DistanceAsker? asker;
   final VoidCallback? onAddressDone;
   final LookUp? onLookUp;
+
+  /// How the hub is asked what the letters typed in the address could become (`PosApi.suggestAddresses`):
+  /// the list under the box. Null where there is none.
+  final AddressSource? addresses;
 
   /// What the boxes hold, as an order carries it. With no [guests] box it is no catering order: the note is
   /// the driver's, and an order the customer comes for has none.
@@ -183,27 +190,22 @@ class EventFields extends StatelessWidget {
         ),
         if (handover == 'delivery') ...[
           const SizedBox(height: 8),
-          Focus(
-            canRequestFocus: false,
-            skipTraversal: true,
-            onFocusChange: (has) {
-              // a form that is closing takes the focus away too: that is nobody done with the address
-              if (!has && context.mounted && (ModalRoute.of(context)?.isCurrent ?? true)) onAddressDone?.call();
-            },
-            child: TextField(
-              key: const ValueKey('event-address'),
-              controller: address,
-              maxLength: eventTextMax,
-              textCapitalization: TextCapitalization.words,
-              keyboardType: TextInputType.streetAddress,
-              decoration: const InputDecoration(
-                labelText: 'Deliver to',
-                prefixIcon: Icon(Icons.place_outlined),
-                counterText: '',
-              ),
-              onChanged: (_) => onChanged?.call(),
-              onSubmitted: (_) => onAddressDone?.call(),
+          AddressBox(
+            fieldKey: const ValueKey('event-address'),
+            controller: address,
+            source: addresses,
+            maxLength: eventTextMax,
+            decoration: const InputDecoration(
+              labelText: 'Deliver to',
+              prefixIcon: Icon(Icons.place_outlined),
+              counterText: '',
             ),
+            onChanged: onChanged,
+            onDone: onAddressDone,
+            onLeft: () {
+              // a form that is closing takes the focus away too: that is nobody done with the address
+              if (context.mounted && (ModalRoute.of(context)?.isCurrent ?? true)) onAddressDone?.call();
+            },
           ),
         ],
         if (catering || handover == 'delivery') ...[
@@ -262,6 +264,7 @@ class WhenDialog extends StatefulWidget {
     this.fee,
     this.distance,
     this.live = false,
+    this.addresses,
   });
 
   /// The time an order for later is for; null on an order for now, whose time is not the customer's.
@@ -287,6 +290,9 @@ class WhenDialog extends StatefulWidget {
   /// A pickup for now that is promised by the roads as they are if it becomes a delivery (docs/
   /// delivery.md, "Live traffic"): the hub is then also asked how long the drive is at this minute.
   final bool live;
+
+  /// How the hub is asked for the list under the address box (`PosApi.suggestAddresses`); null for none.
+  final AddressSource? addresses;
 
   @override
   State<WhenDialog> createState() => _WhenDialogState();
@@ -411,6 +417,7 @@ class _WhenDialogState extends State<WhenDialog> {
                   asker: _asker,
                   onAddressDone: _lookUp,
                   onLookUp: ({fresh = false}) => _lookUp(again: true, fresh: fresh),
+                  addresses: widget.addresses,
                 ),
               ],
               if (!nowhere && unpriced)

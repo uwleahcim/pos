@@ -77,6 +77,12 @@ services:
       # Live traffic for a delivery's promised time ("Live traffic" in the same guide), turned on in the app.
       # POS_MAPS_TRAFFIC_DAILY is the most Google is asked about the roads in a day (150 unless set).
       POS_MAPS_TRAFFIC_DAILY: ${POS_MAPS_TRAFFIC_DAILY:-}
+      # The list of addresses under a box that is being typed in ("A list of addresses while typing" in the
+      # same guide), which asks Google with the key above where a manager turned that on in the app.
+      # POS_MAPS_SUGGEST_DAILY is the most it asks in a day (300 unless set); POS_MAPS_SUGGEST_TYPES names
+      # what Google lists (addresses and streets unless set; `all` for shops and towns too).
+      POS_MAPS_SUGGEST_DAILY: ${POS_MAPS_SUGGEST_DAILY:-}
+      POS_MAPS_SUGGEST_TYPES: ${POS_MAPS_SUGGEST_TYPES:-}
       # Online orders (docs/online-orders.md): GloriaFood's key for this restaurant, written by
       # `hubctl online key`. Empty: nobody is asked and nothing arrives.
       POS_GLORIAFOOD_KEY: ${POS_GLORIAFOOD_KEY:-}

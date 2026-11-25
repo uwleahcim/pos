@@ -69,6 +69,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from ..addresses import places_from_env
 from ..keys import (
     MAPS,
     MAPS_GOOGLE,
@@ -218,6 +219,7 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
     if wanted & {MAPS, MAPS_GOOGLE}:
         lookups: Lookups = app.state.lookups
         lookups.use(maps_from_env(env), fallback_from_env(env))
+        app.state.suggester.use(places_from_env(env))  # the list of addresses asks with Google's key too
         app.state.feed.changed("settings")  # the delivery fee and live traffic say what the hub can look up
     if ONLINE in wanted:
         online: OnlineOrders = app.state.online

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'address_list.dart';
 import 'allergies.dart';
 import 'bag.dart';
 import 'cache.dart';
@@ -1251,6 +1252,59 @@ class PosApi {
         body: jsonEncode(setting.toJson()),
       ),
     ),
+  );
+
+  /// Until when the list of addresses is not asked for: a hub older than the list said it has none.
+  DateTime? _noAddressListUntil;
+
+  /// What the letters typed in an address box could become (docs/delivery.md, "A list of addresses while
+  /// typing"): the restaurant's own earlier deliveries first, with the ones of the customer at [phone] at
+  /// the head, and a map service's answers where a manager turned that on. The number goes no further than
+  /// the hub. With [own] false (the restaurant's own address) no delivery is listed.
+  ///
+  /// A list is a help and no more: null when the hub gave none, whatever the reason, and never a reason
+  /// to turn away from a hub. A hub older than the list is left alone for ten minutes.
+  Future<AddressSuggestions?> suggestAddresses(String typed, {String phone = '', bool own = true}) async {
+    final until = _noAddressListUntil;
+    if (until != null && DateTime.now().isBefore(until)) return null;
+    final digits = phoneDigits(phone);
+    final (status, answer) = await _aside('/addresses/suggest', {
+      'typed': typed,
+      if (digits.isNotEmpty) 'phone': digits,
+      if (!own) 'own': false,
+    });
+    if (status == 404 || status == 405) _noAddressListUntil = DateTime.now().add(const Duration(minutes: 10));
+    return answer == null ? null : AddressSuggestions.fromJson(answer);
+  }
+
+  /// Whether the list of addresses asks a map service as well as the restaurant's own deliveries, as the
+  /// location has it. Null from a hub older than the list.
+  Future<AddressListSetting?> addressList() async {
+    try {
+      return AddressListSetting.fromJson(await _get('/settings/address_list'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) turns the map service on or off for the list of addresses.
+  Future<AddressListSetting> saveAddressList(String token, AddressListSetting setting) async =>
+      AddressListSetting.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/settings/address_list'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode(setting.toJson()),
+          ),
+        ),
+      );
+
+  /// Has the hub ask the map service once, about the restaurant's own address, and says how it went: how a
+  /// manager finds out whether the hub's Google key may list addresses. Throws [ApiException] 409 on a hub
+  /// with no such key.
+  Future<AddressListTry> tryAddressList(String token) async => AddressListTry.fromJson(
+    await _post('/settings/address_list/try', const <String, dynamic>{}, headers: _bearer(token)),
   );
 
   /// The one-tap notes as this terminal last read them, for a dish's sheet opened before the hub answers
@@ -2550,6 +2604,30 @@ class PosApi {
         ),
         timeout: timeout,
       );
+
+  /// A request that is a help and no more (the list of addresses while typing): asked of the hub this
+  /// terminal talks to, waited for briefly, and never a reason to turn away from a hub or to say that none
+  /// answers. The status the hub answered with, and what it said when that was an answer; (null, null)
+  /// when nothing came.
+  Future<(int?, Map<String, dynamic>?)> _aside(
+    String path,
+    Object body, {
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final endpoints = settings.endpoints;
+    final base = connection.value.endpoint ?? (endpoints.isEmpty ? null : endpoints.first);
+    if (base == null) return (null, null);
+    try {
+      final response = await _client
+          .post(Uri.parse('$base$path'), headers: {'content-type': 'application/json'}, body: jsonEncode(body))
+          .timeout(timeout);
+      if (response.statusCode >= 400 || response.body.isEmpty) return (response.statusCode, null);
+      final decoded = jsonDecode(response.body);
+      return (response.statusCode, decoded is Map<String, dynamic> ? decoded : null);
+    } on Object {
+      return (null, null);
+    }
+  }
 
   Future<Map<String, dynamic>> _put(String path, Object body) => _withFailover(
     (base) =>

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../address_list.dart';
 import '../api.dart';
 import '../camera.dart';
 import '../coursing.dart';
@@ -2403,6 +2404,10 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// Something was typed on the form: what the map said of another address is gone.
   void _addressTyped() => setState(() => _asker.typed(_address.text));
 
+  /// What the letters typed in the address could become, asked of the hub with the number in the box: the
+  /// customer's own earlier deliveries lead the list (docs/delivery.md, "A list of addresses while typing").
+  Future<AddressSuggestions?> _addresses(String typed) => widget.api.suggestAddresses(typed, phone: _phone.text);
+
   void _leaves(String way) {
     setState(() => _handover = way);
     unawaited(_askDistance());
@@ -2804,6 +2809,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   asker: _asker,
                   onAddressDone: _askDistance,
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
+                  addresses: _addresses,
                 ),
                 if (_nowhere)
                   Padding(
@@ -2881,6 +2887,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   asker: _asker,
                   onAddressDone: _askDistance,
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
+                  addresses: _addresses,
                 ),
               ],
             ],
