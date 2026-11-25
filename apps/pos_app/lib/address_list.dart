@@ -207,9 +207,10 @@ class AddressService {
 
 /// Which map services the list asks as well as the restaurant's own deliveries, as the location has it
 /// (`/settings/address_list`): every service the hub knows, in the order they are asked. The first that is
-/// turned on and has a key is asked, and the next only when the one before it gave no answer.
+/// turned on and has a key is asked, and the next only when the one before it gave no answer. The order is
+/// the location's own where the hub keeps one ([ordered]).
 class AddressListSetting {
-  const AddressListSetting({this.services = const [], this.nearMiles, this.originSet});
+  const AddressListSetting({this.services = const [], this.nearMiles, this.originSet, this.ordered = false});
 
   factory AddressListSetting.fromJson(Map<String, dynamic> json) {
     final listed = json['services'];
@@ -221,6 +222,7 @@ class AddressListSetting {
         services: [for (final one in listed) ?AddressService.of(one)],
         nearMiles: nearMiles,
         originSet: originSet,
+        ordered: json['order'] is List,
       );
     }
     // a hub from before there were several: Google alone, and no count of what is left
@@ -250,6 +252,10 @@ class AddressListSetting {
   /// Whether the hub knows the restaurant's own address (Location, Delivery fee), which "near" is near to;
   /// null on a hub that does not say.
   final bool? originSet;
+
+  /// The hub keeps the order the services are asked in as the location's own, and a manager may change it
+  /// ([services] stand in it). False on a hub older than that, which asks them in its own order.
+  final bool ordered;
 
   /// The distances the slider for [nearMiles] stops at, each stop as wide as the next: a quarter of a mile
   /// apart up to three miles, half a mile up to six, a mile up to twelve, and two miles up to twenty. So
@@ -309,15 +315,32 @@ class AddressListSetting {
   bool get asks => asking.isNotEmpty;
 
   /// The same with these services turned on or off; one that is not named stays as it is. With [near],
-  /// what is near reaches that far.
-  AddressListSetting turned(Map<String, bool> on, {double? near}) => AddressListSetting(
-    services: [for (final service in services) service.turned(on: on[service.name] ?? service.on)],
-    nearMiles: nearMiles == null ? null : near ?? nearMiles, // a hub that does not say is sent none
-    originSet: originSet,
-  );
+  /// what is near reaches that far. With [order], the services' names in the order they are to be asked:
+  /// one it leaves out keeps its place after those it names, and a hub that keeps no order keeps its own.
+  AddressListSetting turned(Map<String, bool> on, {double? near, List<String>? order}) {
+    final first = [
+      if (ordered && order != null)
+        for (final name in order.toSet()) ?named(name),
+    ];
+    return AddressListSetting(
+      services: [
+        for (final service in first) service.turned(on: on[service.name] ?? service.on),
+        for (final service in services)
+          if (!first.contains(service)) service.turned(on: on[service.name] ?? service.on),
+      ],
+      nearMiles: nearMiles == null ? null : near ?? nearMiles, // a hub that does not say is sent none
+      originSet: originSet,
+      ordered: ordered,
+    );
+  }
 
-  /// As a manager saves it. What the hub has is the hub's to say, and is not sent.
-  Map<String, dynamic> toJson() => {for (final service in services) service.name: service.on, 'near_miles': ?nearMiles};
+  /// As a manager saves it. What the hub has is the hub's to say, and is not sent; the order goes only to a
+  /// hub that keeps one.
+  Map<String, dynamic> toJson() => {
+    for (final service in services) service.name: service.on,
+    'near_miles': ?nearMiles,
+    if (ordered) 'order': [for (final service in services) service.name],
+  };
 }
 
 /// How one try of a map service went (`POST /settings/address_list/try`).

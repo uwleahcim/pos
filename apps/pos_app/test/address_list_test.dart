@@ -221,19 +221,59 @@ void main() {
       );
       // whether there is a key is the hub's to say: a save sends the switches, every one of them, and how far
       // nearby reaches
-      expect((setting.nearMiles, setting.originSet), (4.0, true));
-      expect(setting.toJson(), {'google': true, 'mapbox': true, 'azure': false, 'near_miles': 4.0});
+      // nearby reaches, and the order they stand in
+      expect((setting.nearMiles, setting.originSet, setting.ordered), (4.0, true, true));
+      const usual = ['google', 'mapbox', 'azure'];
+      expect(setting.toJson(), {'google': true, 'mapbox': true, 'azure': false, 'near_miles': 4.0, 'order': usual});
       expect(setting.turned({'google': false}).toJson(), {
         'google': false,
         'mapbox': true,
         'azure': false,
         'near_miles': 4.0,
+        'order': usual,
       });
       expect(setting.turned(const {}, near: 2).toJson()['near_miles'], 2.0);
       expect(setting.turned(const {}, near: 2).originSet, isTrue);
       // what names no service is none
       expect(AddressService.of(const {'title': 'Bing'}), isNull);
       expect(AddressService.of('google'), isNull);
+    });
+
+    test('the order the services are asked in is the location\'s own where the hub keeps one', () {
+      final setting = AddressListSetting.fromJson(
+        Hub.addressListOf([
+          Hub.addressService('google', on: true),
+          Hub.addressService('mapbox', on: true),
+          Hub.addressService('azure', key: false),
+        ]),
+      );
+      List<String> names(AddressListSetting of) => [for (final one in of.services) one.name];
+      final moved = setting.turned(const {'google': false}, order: ['mapbox', 'google', 'azure']);
+      expect(moved.ordered, isTrue);
+      expect(names(moved), ['mapbox', 'google', 'azure']);
+      expect(moved.toJson(), {
+        'mapbox': true,
+        'google': false,
+        'azure': false,
+        'near_miles': 4.0,
+        'order': ['mapbox', 'google', 'azure'],
+      });
+      expect([for (final one in moved.asking) one.name], ['mapbox']); // and the first that is on is asked first
+      // one the order leaves out keeps its place after those it names; a name twice, or of no service, is passed over
+      expect(names(setting.turned(const {}, order: ['azure'])), ['azure', 'google', 'mapbox']);
+      expect(names(setting.turned(const {}, order: ['mapbox', 'bing', 'mapbox'])), ['mapbox', 'google', 'azure']);
+      expect(names(setting.turned(const {})), ['google', 'mapbox', 'azure']);
+      // a hub from before the order was the location's own asks in its own order, and is sent none
+      final fixed = AddressListSetting.fromJson(
+        Hub.addressListOf([Hub.addressService('google'), Hub.addressService('mapbox')], ordered: false),
+      );
+      expect(fixed.ordered, isFalse);
+      final same = fixed.turned(const {}, order: ['mapbox', 'google']);
+      expect(names(same), ['google', 'mapbox']);
+      expect(same.ordered, isFalse);
+      expect(same.toJson(), {'google': false, 'mapbox': false, 'near_miles': 4.0});
+      // what is no order is none
+      expect(AddressListSetting.fromJson({'services': const [], 'order': 'google'}).ordered, isFalse);
     });
 
     test('how far nearby reaches, in words, and a hub that does not say is sent none', () {
@@ -244,7 +284,9 @@ void main() {
       expect(AddressListSetting.miles(1), '1 mile');
       expect(AddressListSetting.miles(10), '10 miles');
       expect(AddressListSetting.miles(20), '20 miles');
-      final silent = AddressListSetting.fromJson(Hub.addressListOf([Hub.addressService('google')], near: null));
+      final silent = AddressListSetting.fromJson(
+        Hub.addressListOf([Hub.addressService('google')], near: null, ordered: false),
+      );
       expect((silent.nearMiles, silent.originSet), (null, null));
       expect(silent.toJson(), {'google': false});
       expect(silent.turned(const {'google': true}, near: 6).toJson(), {'google': true}); // none to send
@@ -953,6 +995,126 @@ void main() {
       await stop(tester);
     });
 
+    List<String> placed(WidgetTester tester) {
+      final names = ['google', 'mapbox', 'azure'].where((name) => key('address-list-$name').evaluate().isNotEmpty);
+      return names.toList()..sort(
+        (one, other) =>
+            tester.getTopLeft(key('address-list-$one')).dy.compareTo(tester.getTopLeft(key('address-list-$other')).dy),
+      );
+    }
+
+    /// Drags a service by its handle past this many of the rows under it (above it, when fewer than none), as
+    /// a finger does: a little at a time, since the list looks at where the row is at each move.
+    Future<void> dragPast(WidgetTester tester, String service, int rows) async {
+      final order = placed(tester), at = order.indexOf(service);
+      final passed = rows > 0 ? order.sublist(at + 1, at + 1 + rows) : order.sublist(at + rows, at);
+      final far = [for (final other in passed) tester.getSize(key('address-list-row:$other')).height]
+          .fold(0.0, (sum, high) => sum + high);
+      await tester.ensureVisible(key('address-list-handle:$service'));
+      await tester.pumpAndSettle();
+      final finger = await tester.startGesture(tester.getCenter(key('address-list-handle:$service')));
+      const step = 8.0;
+      for (var moved = 0.0; moved < far; moved += step) {
+        await finger.moveBy(Offset(0, (rows > 0 ? 1 : -1) * (far - moved < step ? far - moved : step)));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await finger.up();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a drag by its handle puts a service earlier or later, and a save keeps the order', (tester) async {
+      final t = await pumpLocation(
+        tester,
+        list: Hub.addressListOf([
+          Hub.addressService('google', on: true),
+          Hub.addressService('mapbox', on: true),
+          Hub.addressService('azure', key: false),
+        ]),
+      );
+      expect(rowWords(tester), contains('then Google Maps, are listed'));
+      await tapKey(tester, 'address-list');
+      expect(placed(tester), ['google', 'mapbox', 'azure']);
+      expect(said(tester, 'address-list-order'), endsWith('Drag one by its handle to put it earlier or later.'));
+      for (final service in ['google', 'mapbox', 'azure']) {
+        // each handle stands before its badge, at the left edge of the words above it
+        final handle = tester.getRect(key('address-list-handle:$service'));
+        expect(handle.left, tester.getRect(key('address-list-order')).left);
+        expect(handle.right, lessThanOrEqualTo(tester.getRect(key('address-list-badge:$service')).left));
+        expect((handle.width >= 34, handle.height >= 44), (true, true));
+      }
+      // Mapbox above Google: it is the first one asked now
+      await dragPast(tester, 'mapbox', -1);
+      expect(placed(tester), ['mapbox', 'google', 'azure']);
+      expect(
+        [for (final service in placed(tester)) said(tester, 'address-list-name:$service')],
+        ['1. Mapbox', '2. Google Maps', '3. Azure Maps'],
+      );
+      expect((switched(tester, 'google'), switched(tester, 'mapbox'), switched(tester, 'azure')), (true, true, false));
+      expect(t.hub.addressSaved, isEmpty); // nothing is saved by a drag alone
+      // and Mapbox to the end
+      await dragPast(tester, 'mapbox', 2);
+      expect(placed(tester), ['google', 'azure', 'mapbox']);
+      expect(said(tester, 'address-list-name:mapbox'), '3. Mapbox');
+      // back to the front, and saved
+      await dragPast(tester, 'mapbox', -2);
+      expect(placed(tester), ['mapbox', 'google', 'azure']);
+      expect(tester.takeException(), isNull);
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single['order'], ['mapbox', 'google', 'azure']);
+      expect(
+        [for (final one in t.hub.addressList!['services'] as List) (one as Map)['name']],
+        ['mapbox', 'google', 'azure'],
+      );
+      expect(
+        rowWords(tester),
+        'Your own earlier deliveries, then Mapbox, are listed while an address is typed. Google Maps takes over '
+        'when it gives no list',
+      );
+      // opened again, it stands as it was saved
+      await tapKey(tester, 'address-list');
+      expect(placed(tester), ['mapbox', 'google', 'azure']);
+      expect(said(tester, 'address-list-name:mapbox'), '1. Mapbox');
+      await stop(tester);
+    });
+
+    testWidgets('a save that moved nothing says the order as it stands, and Cancel forgets a drag', (tester) async {
+      final t = await pumpLocation(tester, list: Hub.addressListOff);
+      await tapKey(tester, 'address-list');
+      await dragPast(tester, 'azure', -2);
+      expect(placed(tester), ['azure', 'google', 'mapbox']);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.addressSaved, isEmpty);
+      await tapKey(tester, 'address-list');
+      expect(placed(tester), ['google', 'mapbox', 'azure']);
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single['order'], ['google', 'mapbox', 'azure']);
+      await stop(tester);
+    });
+
+    testWidgets('a hub that keeps no order of its own offers no handle and is sent none', (tester) async {
+      final t = await pumpLocation(
+        tester,
+        list: Hub.addressListOf([
+          Hub.addressService('google'),
+          Hub.addressService('mapbox'),
+          Hub.addressService('azure', key: false),
+        ], ordered: false),
+      );
+      await tapKey(tester, 'address-list');
+      expect(placed(tester), ['google', 'mapbox', 'azure']);
+      expect(find.text('1. Google Maps'), findsOneWidget);
+      for (final service in ['google', 'mapbox', 'azure']) {
+        expect(key('address-list-handle:$service'), findsNothing);
+      }
+      expect(said(tester, 'address-list-order'), isNot(contains('Drag')));
+      await tapKey(tester, 'address-list-mapbox');
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single.containsKey('order'), isFalse);
+      expect(t.hub.addressList?['mapbox'], isTrue);
+      await stop(tester);
+    });
+
     testWidgets('Try it asks that one service, before anything is turned on, and says what it has left', (
       tester,
     ) async {
@@ -1128,7 +1290,13 @@ void main() {
       expect(said(tester, 'address-list-near-says'), startsWith('Addresses within 2 miles of the restaurant'));
       expect(t.hub.addressSaved, isEmpty); // nothing is saved by moving it alone
       await tapKey(tester, 'address-list-save');
-      expect(t.hub.addressSaved.single, {'google': false, 'mapbox': false, 'azure': false, 'near_miles': 2.0});
+      expect(t.hub.addressSaved.single, {
+        'google': false,
+        'mapbox': false,
+        'azure': false,
+        'near_miles': 2.0,
+        'order': ['google', 'mapbox', 'azure'],
+      });
       expect(t.hub.addressList?['near_miles'], 2.0);
       // and it is what the dialog opens on the next time
       await tapKey(tester, 'address-list');
@@ -1249,7 +1417,11 @@ void main() {
     testWidgets('a hub that does not say how far nearby reaches is offered no choice and sent none', (tester) async {
       final t = await pumpLocation(
         tester,
-        list: Hub.addressListOf([Hub.addressService('google'), Hub.addressService('mapbox')], near: null),
+        list: Hub.addressListOf(
+          [Hub.addressService('google'), Hub.addressService('mapbox')],
+          near: null,
+          ordered: false, // nearby first came before the order did
+        ),
       );
       await tapKey(tester, 'address-list');
       expect(find.text('Nearby first'), findsNothing);
@@ -1263,6 +1435,19 @@ void main() {
     testWidgets('on a small phone with large type the dialog is whole', (tester) async {
       await pumpLocation(tester, list: Hub.addressListOff, size: const Size(320, 640), type: 1.3);
       await tapKey(tester, 'address-list');
+      // the dialog keeps the phone's width, so a handle before each badge leaves the name its room
+      expect(tester.getSize(find.byType(AlertDialog)).width, 320);
+      for (final service in ['google', 'mapbox', 'azure']) {
+        final handle = tester.getRect(key('address-list-handle:$service'));
+        final name = tester.getRect(key('address-list-name:$service'));
+        expect((handle.left >= 16, handle.width >= 34, name.width >= 80), (true, true, true));
+        expect(name.right, lessThanOrEqualTo(tester.getRect(find.byType(Switch).at(0)).left));
+      }
+      await dragPast(tester, 'azure', -2);
+      expect(placed(tester), ['azure', 'google', 'mapbox']);
+      await dragPast(tester, 'azure', 2);
+      expect(placed(tester), ['google', 'mapbox', 'azure']);
+      expect(tester.takeException(), isNull);
       await tapKey(tester, 'address-list-google');
       await tapKey(tester, 'address-list-try:mapbox');
       expect(said(tester, 'address-list-tried:mapbox'), startsWith('Mapbox answered'));

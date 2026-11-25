@@ -11,7 +11,10 @@ import 'service_badge.dart';
 /// The services stand in the order they are asked: the first that is turned on and has a key, and the next
 /// one only once the one before it has used up its free lookups for the month, or is not answering. Each
 /// has its own switch, a line on how it stands (what it has left free this month, or that the hub has no
-/// key for it) and, where the hub has a key, a button that tries it before it is turned on.
+/// key for it) and, where the hub has a key, a button that tries it before it is turned on. Where the hub
+/// keeps the order as the location's own, each also has a handle, and a drag by it puts the service earlier
+/// or later (the owner's words, 2026-11-25: "dragging provider arrangements/order to determine the priority
+/// of which service is used first").
 class AddressListDialog extends StatefulWidget {
   const AddressListDialog({super.key, required this.api, required this.token, required this.setting});
 
@@ -43,6 +46,12 @@ class AddressListDialog extends StatefulWidget {
 class _AddressListDialogState extends State<AddressListDialog> {
   late final Map<String, bool> _on = {for (final service in widget.setting.services) service.name: service.on};
 
+  /// The services' names in the order they are asked, as a drag left it.
+  late final List<String> _order = [for (final service in widget.setting.services) service.name];
+
+  /// A drag changes the order: the hub keeps one, and there is more than one service to put in it.
+  bool get _drags => widget.setting.ordered && widget.setting.services.length > 1;
+
   /// How far around the restaurant addresses come first; null on a hub that does not say, which is offered
   /// no choice.
   late double? _near = widget.setting.nearMiles;
@@ -59,7 +68,10 @@ class _AddressListDialogState extends State<AddressListDialog> {
       _message = null;
     });
     try {
-      final saved = await widget.api.saveAddressList(widget.token, widget.setting.turned(_on, near: _near));
+      final saved = await widget.api.saveAddressList(
+        widget.token,
+        widget.setting.turned(_on, near: _near, order: _order),
+      );
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (err) {
       if (mounted) {
@@ -105,8 +117,9 @@ class _AddressListDialogState extends State<AddressListDialog> {
   }
 
   /// One service: its place in the order and its name with the switch, how it stands, and the button that
-  /// tries it where the hub has a key for it.
-  Widget _service(BuildContext context, int place, AddressService service) {
+  /// tries it where the hub has a key for it. [index] is where it stands in the order, from 0. With
+  /// [handle], a handle before its badge moves it in the order.
+  Widget _service(BuildContext context, int index, AddressService service, {bool handle = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final on = _on[service.name] ?? false;
@@ -123,34 +136,55 @@ class _AddressListDialogState extends State<AddressListDialog> {
       resting: service.resting && !(_tried[service.name]?.well ?? false),
     );
     final tried = _tried[service.name];
+    final tile = SwitchListTile(
+      key: ValueKey('address-list-${service.name}'),
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.trailing,
+      // the badge a list shows when this service answered it, with the same ring
+      secondary: ServiceBadge(
+        key: ValueKey('address-list-badge:${service.name}'),
+        service: service.name,
+        title: service.title,
+        share: !service.key || now.left == null || now.monthlyMost == null
+            ? null
+            : (now.left! / now.monthlyMost!).clamp(0.0, 1.0),
+        words: service.key ? now.words : null,
+      ),
+      value: on,
+      onChanged: (to) => setState(() => _on[service.name] = to),
+      title: Text('${index + 1}. ${service.title}', key: ValueKey('address-list-name:${service.name}')),
+      subtitle: Text(
+        now.words,
+        key: ValueKey('address-list-state:${service.name}'),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: service.key && (now.usedUp || (on && now.resting)) ? scheme.error : scheme.onSurfaceVariant,
+        ),
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SwitchListTile(
-          key: ValueKey('address-list-${service.name}'),
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.trailing,
-          // the badge a list shows when this service answered it, with the same ring
-          secondary: ServiceBadge(
-            key: ValueKey('address-list-badge:${service.name}'),
-            service: service.name,
-            title: service.title,
-            share: !service.key || now.left == null || now.monthlyMost == null
-                ? null
-                : (now.left! / now.monthlyMost!).clamp(0.0, 1.0),
-            words: service.key ? now.words : null,
-          ),
-          value: on,
-          onChanged: (to) => setState(() => _on[service.name] = to),
-          title: Text('$place. ${service.title}'),
-          subtitle: Text(
-            now.words,
-            key: ValueKey('address-list-state:${service.name}'),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: service.key && (now.usedUp || (on && now.resting)) ? scheme.error : scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
+        if (handle)
+          Row(
+            children: [
+              // flush with the words above and below it; the room to its right and above and below is its too
+              ReorderableDragStartListener(
+                index: index,
+                enabled: _busy != 'save',
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.grab,
+                  child: Padding(
+                    key: ValueKey('address-list-handle:${service.name}'),
+                    padding: const EdgeInsets.fromLTRB(0, 10, 10, 10),
+                    child: Icon(Icons.drag_handle, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+              Expanded(child: tile),
+            ],
+          )
+        else
+          tile,
         if (service.key)
           Wrap(
             spacing: 8,
@@ -277,16 +311,33 @@ class _AddressListDialogState extends State<AddressListDialog> {
     );
   }
 
+  /// A service's row while it is dragged: lifted off the dialog, on the dialog's own ground.
+  Widget _dragged(Widget child, int index, Animation<double> animation) {
+    final theme = Theme.of(context);
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) => Material(
+        elevation: 6 * Curves.easeInOut.transform(animation.value),
+        color: theme.dialogTheme.backgroundColor ?? theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+        child: child,
+      ),
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
     final near = _near;
-    final services = widget.setting.services;
+    final services = [for (final name in _order) ?widget.setting.named(name)];
     final several = services.length > 1;
+    final drags = _drags;
     final any = _on.values.any((on) => on);
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
       title: const Text('Address list'),
       content: SizedBox(
         width: 380,
@@ -307,16 +358,34 @@ class _AddressListDialogState extends State<AddressListDialog> {
                 several
                     ? 'For new addresses a map service is asked. They are asked in this order: the next one '
                           'only once the one before it has used up its free lookups for the month, or is not '
-                          'answering.'
+                          'answering.${drags ? ' Drag one by its handle to put it earlier or later.' : ''}'
                     : 'For new addresses a map service is asked.',
                 key: const ValueKey('address-list-order'),
                 style: theme.textTheme.bodyMedium,
               ),
-              for (final (index, service) in services.indexed) ...[
-                if (index > 0) const Divider(height: 12),
-                _service(context, index + 1, service),
-              ],
-              if (near != null) ...[const Divider(height: 16), _nearby(context, near)],
+              if (drags)
+                // each with the line under it, so a row that is being dragged looks like one that is not
+                ReorderableListView.builder(
+                  key: const ValueKey('address-list-services'),
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  buildDefaultDragHandles: false,
+                  proxyDecorator: _dragged,
+                  itemCount: services.length,
+                  onReorderItem: (from, to) => setState(() => _order.insert(to, _order.removeAt(from))),
+                  itemBuilder: (context, index) => Column(
+                    key: ValueKey('address-list-row:${services[index].name}'),
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [_service(context, index, services[index], handle: true), const Divider(height: 12)],
+                  ),
+                )
+              else
+                for (final (index, service) in services.indexed) ...[
+                  if (index > 0) const Divider(height: 12),
+                  _service(context, index, service),
+                ],
+              if (near != null) ...[if (!drags) const Divider(height: 16), _nearby(context, near)],
               const SizedBox(height: 8),
               Text(
                 !any

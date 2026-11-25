@@ -332,16 +332,20 @@ class Hub {
 
   /// The setting of these services, with what an app from before there were several reads beside them.
   /// [near] is how far around the restaurant addresses come first (null: a hub that does not say), and
-  /// [origin] whether the hub knows the restaurant's own address.
+  /// [origin] whether the hub knows the restaurant's own address. The services stand in the order they are
+  /// asked, which the hub says under `order` unless it is one from before the order was the location's
+  /// own ([ordered] false).
   static Map<String, dynamic> addressListOf(
     List<Map<String, dynamic>> services, {
     double? near = 4.0,
     bool origin = true,
+    bool ordered = true,
   }) {
     final google = services.firstWhere((one) => one['name'] == 'google');
     return {
       for (final one in services) one['name'] as String: one['on'],
       if (near != null) ...{'near_miles': near, 'origin_set': origin},
+      if (ordered) 'order': [for (final one in services) one['name']],
       'service': google['key'],
       'asks': google['asks'],
       'credit': 'Google Maps',
@@ -4122,11 +4126,17 @@ class Hub {
             final google = body['google'] == true;
             addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
           } else {
-            // one that is not named stays as it is, and so does how far nearby reaches
+            // one that is not named stays as it is, and so do how far nearby reaches and the order
             addressSaved.add(body);
+            final ordered = had['order'] is List;
+            final asked = ordered && body['order'] is List ? (body['order'] as List).cast<String>() : const <String>[];
+            final all = services.cast<Map<String, dynamic>>();
             addressList = addressListOf(
               [
-                for (final one in services.cast<Map<String, dynamic>>())
+                for (final one in [
+                  for (final name in asked) ...all.where((one) => one['name'] == name),
+                  ...all.where((one) => !asked.contains(one['name'])),
+                ])
                   {
                     ...one,
                     'on': body[one['name']] is bool ? body[one['name']] : one['on'],
@@ -4135,6 +4145,7 @@ class Hub {
               ],
               near: had['near_miles'] == null ? null : ((body['near_miles'] ?? had['near_miles']) as num).toDouble(),
               origin: had['origin_set'] != false,
+              ordered: ordered,
             );
           }
         }

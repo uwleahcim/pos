@@ -451,6 +451,11 @@ Delivery fee.
   are used up, or while Google is not answering, each where it has a key and is turned on
   ([Mapbox and Azure Maps behind Google](#mapbox-and-azure-maps-behind-google)). One service answers a
   list, never two.
+- **The order is yours to change.** Under Location › **Address list** each service has a handle (two
+  short lines) before its badge. Drag one by it to put the service earlier or later, and **Save**: the
+  first one in the list that is turned on and has a key is the one asked first, and the others take over
+  in the order they stand in. Mapbox gives away ten times what Google does each month, so a restaurant
+  that wants to keep Google's for something else puts Mapbox first.
 - **Who answered stands at the top of the list**: a tiny round badge with the service's letter (G, M or A)
   and a ring around it for how much of that service's free lookups are left this month, and its name
   beside it ("Google Maps", "© Mapbox © OpenStreetMap", "Azure Maps"). The ring is whole at the start of a
@@ -557,6 +562,10 @@ The Google account and its card are the owner's. What follows is what Google's o
 The dialog lists the three services in the order they are asked, each with its own switch, its badge, a
 line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No key on this hub yet",
 "Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
+Each also has a handle before its badge: a drag by it moves the service up or down the order, the
+numbers before the names follow, and nothing is saved before Save (the owner's words, 2026-11-25:
+"dragging provider arrangements/order to determine the priority of which service is used first"). The
+steps below say "2. Mapbox" and "3. Azure Maps", which is where the two stand until somebody drags them.
 
 Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: a
 slider, with the distance in words beside its name ("4 miles"). Its steps are finer up close (the owner's
@@ -953,10 +962,14 @@ saved distances are further down):
   `POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` are the keys (`pos.keys` slots `maps_google`, `maps_mapbox`,
   `maps_azure`); `pos.api.keys.use_keys` hands a key typed in the app to it at once.
 - The setting `address_list` (`pos.settings`): `google`, `mapbox`, `azure`, each false until a manager sets
-  it, and `near_miles` (0.25 to 30, to a hundredth; 4 unless set, and kept by a PUT that leaves it out). The GET
-  also says `origin_set`, whether the restaurant's own address is known. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays as it is) answers
-  them with `services` (each `{name, title, credit, on, key, asks, left, monthly_most, used_up, resting}`)
-  and, for an older app, `service`, `asks` and `credit` of Google. `POST /settings/address_list/try`
+  it, `near_miles` (0.25 to 30, to a hundredth; 4 unless set, and kept by a PUT that leaves it out) and
+  `order`, the services' names in the order they are asked (`google`, `mapbox`, `azure` unless set; each
+  name once, one left out comes after those named, a name of no service is refused; kept by a PUT that
+  leaves it out; `pos.addresses.order_of`). The GET also says `origin_set`, whether the restaurant's own
+  address is known. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays
+  as it is) answers them with `services` in that order (each `{name, title, credit, on, key, asks, left,
+  monthly_most, used_up, resting}`) and, for an older app, `service`, `asks` and `credit` of Google. An
+  app shows the handles only where the answer has `order`, and sends none to a hub that has none. `POST /settings/address_list/try`
   `{service}` (a manager; Google unless named) asks that one service once about the restaurant's own
   address, or "1 Main St" where none is set: `{ok, found, reason, message, service, left}`, 409
   `no_service` with no key, 422 `bad_value` for a name that is no service's.
