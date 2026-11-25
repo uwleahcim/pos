@@ -14,6 +14,7 @@ import 'coursing.dart';
 import 'customers.dart';
 import 'day_report.dart';
 import 'delivery_fee.dart';
+import 'drive_lookups.dart';
 import 'dishes_report.dart';
 import 'desk_phone.dart';
 import 'dish_names.dart';
@@ -1254,6 +1255,32 @@ class PosApi {
       ),
     ),
   );
+
+  /// Which map services are asked how far a delivery goes and how long the drive is right now, in the order
+  /// they are asked, and how each stands today (docs/delivery.md, "Which service is asked first"). Null from
+  /// a hub older than the order, which asks Geocodio and then Google as it always did.
+  Future<DriveLookups?> driveLookups() async {
+    try {
+      return DriveLookups.fromJson(await _get('/settings/drive_lookups'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) puts the map services in the order they are asked and turns each
+  /// on or off: for how far a delivery goes ([distance]), for the drive right now ([traffic]), or both. The
+  /// one that is left out stays as it is.
+  Future<DriveLookups> saveDriveLookups(String token, {DriveOrder? distance, DriveOrder? traffic}) async =>
+      DriveLookups.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/settings/drive_lookups'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode({'distance': ?distance?.toJson(), 'traffic': ?traffic?.toJson()}),
+          ),
+        ),
+      );
 
   /// Until when the list of addresses is not asked for: a hub older than the list said it has none.
   DateTime? _noAddressListUntil;

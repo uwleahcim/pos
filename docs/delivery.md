@@ -164,7 +164,8 @@ has a key for the map service and the restaurant's own address is typed in** (se
   address could not be found (check the spelling, add the town); the map service is not answering, which
   is also what a restaurant without internet sees; the map service refused the hub's key; or it has been
   asked as often as it may be today. An order is never held up by the map: tap a price. (Where the hub has
-  [a second map service](#a-second-map-service), that one has been asked too by then.)
+  more than one map service, the others have been asked too by then:
+  [Which service is asked first](#which-service-is-asked-first).)
 - **An address is asked about once**, when it is done being typed, never letter by letter, and not by a
   form that is being closed. The same address again, on this order or the next, is answered by the hub from
   what it was told that day.
@@ -240,7 +241,9 @@ does anything for it, and nothing changes until Google's key is on the hub
 - **Each service is waited for 4 seconds at most**, so with both the form hears back inside 8.
 - **With Google's key alone on the hub**, Google is the one service. It works, and every delivery is then
   looked up each time, a returning customer's too, because nothing of Google's is kept.
-- **Which is first is not a setting**: Geocodio where it has a key, then Google.
+- **Which is first is a setting** since 2026-11-25, and Mapbox and Azure Maps can be asked as well:
+  [Which service is asked first](#which-service-is-asked-first). Until somebody changes it, it is
+  Geocodio where it has a key, then Google.
 
 ### Live traffic
 
@@ -249,6 +252,10 @@ is promised by the roads as they are: **the minutes the kitchen needs, and the d
 this minute**. That takes the place of the one figure set for Delivery under Quote times, which is the
 same 45 minutes for every address at every hour. It is **off until a manager turns it on**
 ([Turning live traffic on](#turning-live-traffic-on)).
+
+Mapbox and Azure Maps know the roads too, and can be asked before Google or behind it
+([Which service is asked first](#which-service-is-asked-first)). What follows says Google, which is the one
+asked until somebody changes that.
 
 - **On the form.** Tap **Delivery** and type the address, as always. Under what the map said of the
   distance there is a second line, **With traffic now: 14 min**, with the words Google Maps beside it. The
@@ -271,18 +278,118 @@ same 45 minutes for every address at every hour. It is **off until a manager tur
   way, as long as the kitchen does not have its ticket yet. A delivery whose address is changed keeps the
   time it was promised, and nobody is asked.
 - **When Google cannot say** (not answering, its key refused, the day's most used up, an address it does
-  not find), the form says nothing about it and the delivery is promised the minutes set for Delivery, as
-  with live traffic off. `sudo hubctl maps status` says how often that happened today.
+  not find), the next service in the order is asked, where there is one that is turned on. When nobody can
+  say, the form says nothing about it and the delivery is promised the minutes set for Delivery, as with
+  live traffic off. `sudo hubctl maps status` says how often that happened today.
 - **The promise is made once**, when the order is taken. Nothing asks again while the food cooks, and the
   time does not move by itself when the roads get worse.
 - **At most 150 times a day** is Google asked about the roads (`POS_MAPS_TRAFFIC_DAILY` in
   `/opt/pos/.env`), counted apart from the 100 a day for distances. Past that, deliveries are promised the
   minutes set for Delivery until the next day.
 - **It is asked about beside the distance**, not after it, so the form waits no longer than before.
-- **What it takes**: Google's key on the hub, the restaurant's own address, and a delivery fee that is
-  turned on with at least one price, because the drive is asked about together with the distance for the
-  fee. (A location that charges nothing for delivery lists one price of $0.) The dialog under Location
-  says which of these is missing.
+- **What it takes**: a service that knows the roads, turned on for them and with its key on the hub
+  (Google Maps until somebody changes it), the restaurant's own address, and a delivery fee that is turned
+  on with at least one price, because the drive is asked about together with the distance for the fee. (A
+  location that charges nothing for delivery lists one price of $0.) The dialog under Location says which
+  of these is missing.
+
+### Which service is asked first
+
+The hub can ask four map services about a delivery's drive: **Geocodio**, **Google Maps**, **Mapbox** and
+**Azure Maps**. A manager puts them in the order they are asked and turns each on or off, once for **how
+far a delivery goes** and once for **the drive right now** (the owner's words, 2026-11-25: "allow dragging
+provider arrangements/order to determine the priority of which service is used first. Apply these concepts
+to other api services like live traffic travel time look ups (also show indicators and current usage)").
+
+- **Where.** For the distance: Back office › Location › **Delivery fee**, under "Looking the distance up".
+  For the drive right now: Location › **Live traffic**, under "Who is asked about the roads". Geocodio does
+  not know the roads as they are at this minute, so that list has three services and the other four.
+- **A row for each service**: a handle (two short lines), its badge, its place and name ("1. Geocodio"),
+  a line on how it stands, and its switch.
+- **Drag a row by its handle** to put the service earlier or later. The numbers before the names follow.
+  **Nothing is saved before Save**, and Cancel leaves the order and the switches as they were.
+- **The first one that is turned on and has a key is asked. The next one only when the one before it gives
+  nothing**: it does not find the address, does not answer in time, refuses its key, or was asked as often
+  as it may be today. A service that is off, or that the hub has no key for, is passed over.
+- **Until somebody changes it, the hub asks as it did before**: Geocodio and then Google Maps for the
+  distance, Google Maps for the roads. **Mapbox and Azure Maps are off until a manager turns them on**,
+  for the distance and for the roads each by its own switch. Turning one on for the address list
+  ([below](#mapbox-and-azure-maps-behind-google)) turns it on for nothing else.
+- **A service without a key has its switch all the same.** Its line says "This hub has no key for it
+  (Keys and connections, on this screen)", and it is asked from the day the key is there.
+- **With every service turned off**, nothing is looked up and the price is tapped by hand (the Delivery
+  fee dialog says "None that is turned on has a key: the price is picked by hand."). With nobody turned on
+  for the roads, a delivery is promised the minutes set for Delivery, and the row under Location says "No
+  map service that has a key on this hub is turned on for the roads (Live traffic, on this screen)."
+
+**How each stands** is the line under its name, and the ring around its badge:
+
+- **"488 of 500 lookups left today"**: what is left of the most the hub asks that service in a day, by the
+  hub's own count. The ring is whole in the morning and unwinds counter-clockwise as lookups are used, like
+  the ring of the address list's badge; it turns amber when a fifth is left and red when nearly none is.
+- **In red, when something is wrong with it**: "Asked as often as it may be today", "Its key was refused
+  the last time it was asked", "It did not answer the last time it was asked", "Its account was at its
+  limit the last time it was asked". The words go away when the service answers again, and the next day.
+- **The count is the hub's, not the service's.** Google, Mapbox and Azure Maps do not tell the key the hub
+  has how many free lookups the account has left (their pages, 2026-11-25; Geocodio's were not read for
+  it), so the hub counts what it asked itself. The service's own page is the bill.
+- **The count is for one day and held in the hub's memory.** The hub's day turns at midnight by the world
+  clock (UTC), which is 7 in the evening in Massachusetts in winter and 8 in summer. A restart of the hub
+  (`sudo hubctl update` is one) starts the day's count again.
+
+**On a delivery's form** the badge of the service that answered stands before its figures: a tiny circle
+with the service's letter (Ge, G, M or A) and the same ring. A tap on it (or the mouse over it) says it in
+words: "Geocodio: 488 of 500 lookups left today". With live traffic on, the distance and the drive right
+now each have a line of their own with their own badge, one under the other, so the badges stand at the
+same place whatever the figures say and however long they are. Where one service gave both, its name
+stands once, with the second line. Google's name and "© Mapbox © OpenStreetMap" stand with their figures
+as their rules ask, as before.
+
+**The most each is asked in a day**, unless a number in `/opt/pos/.env` says otherwise:
+
+| Service | How far, a day | The drive right now, a day | In `/opt/pos/.env` |
+| --- | --- | --- | --- |
+| Geocodio | 500 | (does not know the roads right now) | `POS_MAPS_DAILY` |
+| Google Maps | 100 | 150 | `POS_MAPS_GOOGLE_DAILY`, `POS_MAPS_TRAFFIC_DAILY` |
+| Mapbox | 500 | 500 | `POS_MAPS_MAPBOX_ROUTES_DAILY`, `POS_MAPS_MAPBOX_TRAFFIC_DAILY` |
+| Azure Maps | 15 | 15 | `POS_MAPS_AZURE_ROUTES_DAILY`, `POS_MAPS_AZURE_TRAFFIC_DAILY` |
+
+**Mapbox and Azure Maps are asked in two steps.** Geocodio and Google are asked the drive between two
+addresses. Mapbox and Azure Maps are asked the drive between two places on the map, so each first looks up
+where the delivery's address is, with its own search, and then the drive.
+
+- **That search uses the same free lookups as the address list**: one lookup of Mapbox's month, and one
+  transaction of Azure's (which the list counts as ten lookups). It is counted before it is made. When the
+  month has no room for it, the service is passed over, nothing is counted against its day, and the next
+  one is asked.
+- **Where the restaurant itself stands is asked of Geocodio**, once in about a month, as for the address
+  list's Mapbox ([What the list sends out](#what-the-list-sends-out)). On a hub where Geocodio has not said
+  it, Mapbox and Azure Maps look the restaurant's address up as well: a second search each time.
+- **Nothing they say is kept**, like Google's figures: not on the order, not in the hub's memory for the
+  day, and not for "as last time". A customer whose distance Mapbox or Azure Maps gave is looked up again
+  the next time. Their pages on routes say nothing that lets a figure be kept (read 2026-11-25).
+- **The form waits no longer than before.** For the distance each service is waited for 4 seconds, and all
+  of them together for 8: once those are over nobody else is asked. A service that refuses or does not
+  find the address says so at once, so the ones after it still have their turn. For the drive right now
+  all of them together have the 4 seconds the one service had, and each but the last 2 of them at most.
+
+**What Mapbox and Azure Maps cost here.** What their own pages said on 2026-11-25; the pages are theirs to
+change.
+
+- **Mapbox**, Directions API: up to 100,000 requests a month are free, then $2.00 for each 1,000
+  (<https://www.mapbox.com/pricing>). The page has no line of its own for routes with traffic. The hub
+  asks at most 500 a day for the distance and 500 for the roads, about 31,000 a month.
+- **Azure Maps**, Routing: 1,000 transactions a month are free, one request is one transaction, and the
+  price past that was not shown as a number on the page (<https://azure.microsoft.com/pricing/details/azure-maps/>).
+  The hub asks at most 15 a day for the distance and 15 for the roads, 930 in a month of 31 days. That is
+  few: Azure Maps is a last one to fall back on, not one to put first on a busy night.
+- **Their rules** are the ones the address list has ([Their rules](#their-rules)): read their terms before
+  turning one on.
+
+The hub's side for Mapbox and Azure Maps was written from their own pages and **has not been tried against
+either service**: the cloud this was built in may not reach them, and there was no key. `sudo hubctl maps
+test mapbox "12 Elm St, Winchester, MA"` (or `azure`) is the first real try
+([Mapbox and Azure Maps for the drive](#mapbox-and-azure-maps-for-the-drive)).
 
 ### What leaves the building
 
@@ -303,6 +410,11 @@ same 45 minutes for every address at every hour. It is **off until a manager tur
 - **With live traffic on, Google is sent the two addresses for every delivery for now**, a returning
   customer's too, and still nothing else: no name, no number, nothing of the order. What it answers is
   used for the time promised and kept nowhere.
+- **Mapbox and Azure Maps, where a manager turned one on, are sent the delivery's address** (for where it
+  is), then the two places on the map (for the drive), and nothing else. The restaurant's own address is
+  sent to them only on a hub where Geocodio has not said where it stands. Azure's key travels in a header.
+  Mapbox takes its token and the address in the address of the request, and the hub keeps those requests
+  out of its log. Nothing either answers is kept.
 - **The customer's phone number stays on the hub.** The form sends it with the address so the hub can
   look at that customer's earlier orders. It is never sent to the map service.
 - **The map service keeps its own records.** Geocodio's pages said this on 2026-11-18: a log of requests,
@@ -341,11 +453,21 @@ Maps, can be added after it ([below](#google-maps-as-the-second-service)).
    to 4.5 miles)", or says why not in the form's own words. When every address "could not be found", the one
    to check is the restaurant's own.
 
-`sudo hubctl maps status` says whether the hub has a key, whether the address is set, how often the
-service was asked today and gave nothing, and how often it did not have to be asked because a customer's
-own earlier order said how far. Where there is a second service it says the same of that one on a line of
-its own. `sudo hubctl maps forget` takes the key off the hub: nothing is looked up and the price is tapped
-by hand again. (The key itself is deleted on the service's own page.)
+`sudo hubctl maps status` lists the services in the order they are asked, each on a line of its own:
+
+```
+how far a delivery goes, in the order the services are asked:
+  1. Geocodio: on; asked 12 times today (at most 500, 488 left), 1 gave no distance (last: not_found)
+  2. Google Maps: on; asked 3 times today (at most 100, 97 left), 0 gave no distance
+  3. Mapbox: off (in the app: Location, Delivery fee)
+  4. Azure Maps: no key on the hub (in the app: Location, Keys and connections)
+```
+
+Under them it says the same of the drive right now, then how often nobody had to be asked because a
+customer's own earlier order said how far, and whether the restaurant's address is set. `sudo hubctl maps
+forget` takes Geocodio's key off the hub: the next service in the order is asked first, and with no other
+key nothing is looked up and the price is tapped by hand again. (The key itself is deleted on the service's
+own page.)
 
 Until the hub has a key, the dialog under Location says "This hub has no map service yet, so the price is
 picked by hand (Keys and connections, on this screen)." The address can be typed all the same, and is used
@@ -394,8 +516,8 @@ settle, with a lawyer where in doubt. Nothing here is legal advice.
 (The key itself is deleted in the Google Cloud console.) `sudo hubctl maps forget` alone takes the first
 service's key off and leaves Google's: Google is then asked about every address.
 
-The dialog under Location names both once the hub has both: "the hub asks Geocodio how far a delivery is,
-and Google Maps when that gives no distance."
+The dialog under Location lists both once the hub has both, as rows in the order they are asked
+([Which service is asked first](#which-service-is-asked-first)).
 
 The hub's side was written from Google's pages and has not been tried against Google itself: the first
 `sudo hubctl maps test google` on the hub is the first real try. If it reads oddly, its words say why.
@@ -410,14 +532,18 @@ no new key and nothing new to turn on at Google: it is the same Routes API, aske
 3. Set **Before the drive**: the minutes for the cooking, and getting the order out of the door. It
    starts at 25. It is not the 45 set for Delivery: those had the drive in them, and these do not.
 4. **Save.** The row then reads "On: a delivery for now is promised 25 min and the drive as the roads
-   are". If something is still missing it says what: no Google key on the hub, no restaurant address, or
-   no delivery fee with prices.
+   are". If something is still missing it says what: no key on the hub for a service that knows the roads,
+   none of them turned on, no restaurant address, or no delivery fee with prices.
 5. **Try it** on the hub: `sudo hubctl maps test "12 Elm St, Winchester, MA"` (without the word google)
    answers like "3.2 mi, 9 min: $5.00 (up to 4.5 miles) [geocodio]; the drive right now: 14 min [Google
    Maps]". Each try is one of the day's 150.
 
-`sudo hubctl maps status` has a line for it: "live traffic for the promised time: on; google was asked
-about the roads 12 times today (at most 150), 1 gave no answer".
+The dialog also lists **Who is asked about the roads**: Google Maps, Mapbox and Azure Maps as rows, to
+drag into order and to turn on or off ([Which service is asked first](#which-service-is-asked-first)).
+
+`sudo hubctl maps status` has lines for it: "live traffic for the promised time: on; the drive right now,
+in the order the services are asked:" and under it "1. Google Maps: on; asked 12 times today (at most 150,
+138 left), 1 gave no answer".
 
 Turning it off is the same switch. Deliveries are then promised the minutes set for Delivery again, and
 orders already taken keep the time they were promised either way.
@@ -431,6 +557,27 @@ hub does.
 
 Like the rest of the hub's side for Google, this was written from Google's pages and has not been tried
 against Google itself. The first `sudo hubctl maps test "..."` with live traffic on is the first real try.
+
+#### Mapbox and Azure Maps for the drive
+
+Do this after the hub was updated and the app was rebuilt on every device. There is no new key: the hub
+asks with the key each service already has for the address list.
+
+1. **The key**, where the hub has none yet: Location › **Keys and connections** › **Mapbox** (or **Azure
+   Maps**) › **Type the key** ([the accounts and the steps](#mapbox-and-azure-maps-behind-google)). A key
+   that already serves the address list is the one used here.
+2. **Try it on the hub**, before anything is turned on: `sudo hubctl maps test mapbox "12 Elm St,
+   Winchester, MA"` (or `azure`) asks that one service alone, whether it is turned on or not, and answers
+   like "3.4 mi, 11 min: $5.00 (up to 4.5 miles) [© Mapbox © OpenStreetMap]", or says why not. Where it
+   says the service refused the hub's key, the key is not allowed this kind of request: for Mapbox, a
+   public token without restrictions from its **Tokens** page; for Azure Maps, the account's Primary Key.
+3. **For the distance**: Location › **Delivery fee**. Turn the service's switch on, drag it by its handle
+   to where it should stand, **Save**.
+4. **For the drive right now**: Location › **Live traffic**, the same under "Who is asked about the roads",
+   **Save**.
+
+Turning one off is the same switch. `sudo hubctl maps test "..."` without a service's name asks as a form
+does, in the order as it is saved, and ends with the name of the one that answered.
 
 ## A list of addresses while typing
 
@@ -586,8 +733,9 @@ Turning one off is the same switch. With all three off, nothing typed leaves the
 
 Google gives a set number of lookups away each month. Once those are used up, or while Google is not
 answering, the hub asks **Mapbox**, and after it **Azure Maps** (the owner's words, 2026-11-25: they are a
-fall back once the free Google usage is used up, or if Google is down). The order is fixed: Google, Mapbox,
-Azure Maps. A service that is off, or that the hub has no key for, is passed over.
+fall back once the free Google usage is used up, or if Google is down). They stand in that order, Google,
+Mapbox, Azure Maps, until somebody drags them into another. A service that is off, or that the hub has no
+key for, is passed over.
 
 - **The next one is asked only when the one before it gave no answer**: its month is used up, it did not
   answer within two seconds, it refused the key, or it said itself that it is asked too often. A service
@@ -847,10 +995,16 @@ it and when.
   address under Location has every customer looked up once more.)
 - **"12 Elm St" is not "12 Elm Street".** Two spellings of one address are two addresses, each looked up
   once.
-- **Two map services and no more.** Geocodio first, Google Maps when it gives nothing. Which is asked
-  first is not a setting, and another service is a small piece of the hub (`pos.maps.Maps`).
-- **Nothing of Google's is kept**, so a customer whose distance Google gave is looked up again the next
-  time, and their check's history does not say what the map said.
+- **Four map services and no more**: Geocodio, Google Maps, Mapbox and Azure Maps, in the order a manager
+  put them ([Which service is asked first](#which-service-is-asked-first)). Another service is a small
+  piece of the hub (`pos.maps.Maps`).
+- **What is left is the hub's own count for the day**, not what a service's bill says. No service is asked
+  how much of its free amount is left, a restart of the hub starts the day's count again, and two hubs
+  count each for itself.
+- **No "Try it" button for the drive's services** in the app: `sudo hubctl maps test mapbox "..."` on the
+  hub tries one.
+- **Nothing of Google's, Mapbox's or Azure Maps' is kept**, so a customer whose distance one of them gave
+  is looked up again the next time, and their check's history does not say what the map said.
 - **Nothing looked up without the internet.** The hub needs to reach the map service. The form says so and
   the price is tapped by hand.
 - **No fee by itself, and no tip.** A fee goes on a check only when somebody picked one. (The pricing
@@ -916,6 +1070,11 @@ Live traffic likewise: a hub from before it has no setting for it, and the row u
 hub has not answered about live traffic (an older hub: update it)". An app from before it on a new hub
 never says a delivery is for now, so nothing is asked about the roads and its deliveries are promised the
 minutes set for Delivery. Rebuild the apps after the hub, then turn it on.
+
+The order of the map services likewise: a hub from before it asks Geocodio and then Google, and the two
+dialogs under Location show their words as they were, with no rows. An app from before it on a new hub
+shows the figures without a badge and cannot change the order; the hub asks in the order it has. Rebuild
+the apps after the hub.
 
 The list of addresses likewise: a hub from before it has none, an app asks it once in ten minutes and
 shows a plain box, and the row under Location says "The hub has not answered about the list of addresses
@@ -992,6 +1151,51 @@ saved distances are further down):
   top. `AddressListDialog` and the row `address-list` under Location.
 - Tests: `backend/tests/orders/test_address_list.py` (all three services against `httpx.MockTransport`; none
   of them is ever called) and `apps/pos_app/test/address_list_test.dart`.
+
+Which service is asked first:
+
+- The setting `drive_lookups` (`pos.settings`, `clean_drive_lookups`): `distance` and `traffic`, each
+  `{order, <name>: bool}`. `pos.maps.ORDER` (geocodio, google, mapbox, azure) and `TRAFFIC_ORDER` (google,
+  mapbox, azure) are the orders unless set; `ON_UNLESS_SET` names the ones that are on until a manager
+  says otherwise (the ones asked before the setting was there). `order_of`, `is_on`, `turned_on(setting,
+  purpose)`. `GET/PUT /settings/drive_lookups` (the PUT needs a manager; a purpose or a service left out
+  stays as it is; a name of no service is 422) answers `{purpose: {order, services}}`, each service
+  `{name, title, credit, on, key, asks, asked_today, failed_today, daily_most, left, last_failure,
+  failing}` (`Lookups.standing`). `failing` is why its last asking gave nothing, and null once it answered
+  again and after the day turned; `last_failure` stays for `hubctl maps status`.
+- `pos.roads`: `MapboxRoads` (Geocoding v6 forward for the place, then Directions v5, `mapbox/driving` and
+  `mapbox/driving-traffic`) and `AzureRoads` (Get Geocoding, then `POST /route/directions`, api-version
+  `ROUTE_VERSION`, `optimizeRoute` `fastestWithoutTraffic` and `fastestWithTraffic`, reading
+  `durationTrafficInSeconds` for the drive right now). Each says `searches(told)`, how many searches a
+  lookup makes first, and takes `start`, where the restaurant stands. `roads_from_env`, `others_from_env`
+  and `lookups_from_env` build them from the keys the address list uses; `pos.api.keys.use_keys` hands a
+  key typed in the app to the lookups at once.
+- `pos.maps.Lookups`: `use(maps, fallback, *others)`; `trip(..., among=)` and `drive_ahead(..., among=)`
+  ask the named services in that order (`pos.api.app.asking(purpose)`: the ones turned on that the hub has
+  a key for). `trip` gives all of them `CHAIN_WAITS` (2) waits of `TIMEOUT_SECONDS` together and asks
+  nobody past that; `drive_ahead` gives all of them one wait, and each but the last half of it at most.
+  `start_of(origin)` is where the restaurant stands by Geocodio (`START_SECONDS` 25 days, asked behind the
+  request, again after `START_AGAIN` where it gave nothing). `count_with(Suggester.spend)` counts a
+  service's searches against
+  its month before they are made; a month with no room is `LookupFailed("limit")`, and the asking is taken
+  back off the day. The day's most: `OTHER_DAILY_MOST`, `OTHER_TRAFFIC_DAILY_MOST`
+  (`POS_MAPS_<NAME>_ROUTES_DAILY`, `POS_MAPS_<NAME>_TRAFFIC_DAILY`). `NOT_KEPT` holds all three but
+  Geocodio. `left(purpose, name)` is what a form is told.
+- `POST /delivery/distance` adds `title`, `left` and `daily_most` of who measured, and `drive_now` is
+  `{minutes, before, credit, service, title, left, daily_most}`. `via` asks one service whether it is
+  turned on or not. With keys on the hub and nobody turned on it answers 409 with "no map service is
+  turned on for the distance (Location, Delivery fee)". `/maps/status` adds `distance` and `drive_now`
+  (the standing rows in the location's order), `live`, `others` and `traffics`; `service` and `fallback`
+  stay as they were for an older `hubctl`.
+- App: `lib/drive_lookups.dart` (`DriveService`, `DriveOrder`, `DriveLookups`, `leftToday`, `leftShare`);
+  `PosApi.driveLookups()` (null from a hub that has none) and `saveDriveLookups(distance:, traffic:)`;
+  `lib/screens/drive_services.dart` (`DriveServicesList`, a `ReorderableListView` of rows with
+  `ReorderableDragStartListener` handles, in `DeliveryFeeDialog` and `LiveDriveDialog`, each of which saves
+  the order before its own setting); `AnsweredBy`, `FeeLookup.by` and `DriveNow.by`
+  (`lib/delivery_fee.dart`); `FeeLookupLine` leads each figure with a `ServiceBadge`, and gives each
+  figure a line of its own where there are two.
+- Tests: `backend/tests/orders/test_drive_lookups.py` (both adapters against `httpx.MockTransport`;
+  neither service is ever called) and `apps/pos_app/test/drive_lookups_test.dart`.
 
 Live traffic:
 

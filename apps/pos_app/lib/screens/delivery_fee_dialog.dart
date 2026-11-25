@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../delivery_fee.dart';
+import '../drive_lookups.dart';
 import '../takeout.dart';
 import 'address_box.dart';
+import 'drive_services.dart';
 
 /// What a delivery costs the customer, as a manager sets it for the location (docs/delivery.md, "The
 /// delivery fee"): whether a fee is charged at all, whether it goes by miles or by the minutes of the drive,
@@ -12,12 +14,22 @@ import 'address_box.dart';
 ///
 /// On a hub that can look a delivery's distance up ("Looking the distance up") the dialog also holds the
 /// restaurant's own address, where every delivery starts, and says whether the hub has a map service.
+///
+/// Where the hub says which map services it can ask and in which order ([lookups], "Which service is asked
+/// first"), they stand under that heading as rows: a drag by a row's handle puts a service earlier or
+/// later, its switch turns it on or off, and its badge and the line under its name say how many of its
+/// day's lookups are left (the owner's words, 2026-11-25: "Apply these concepts to other api services").
+/// Save keeps the order with the prices.
 class DeliveryFeeDialog extends StatefulWidget {
-  const DeliveryFeeDialog({super.key, required this.api, required this.token, required this.fees});
+  const DeliveryFeeDialog({super.key, required this.api, required this.token, required this.fees, this.lookups});
 
   final PosApi api;
   final String token;
   final DeliveryFees fees;
+
+  /// The map services the hub can ask how far a delivery goes, in the order it asks them; null from a hub
+  /// older than the order, which shows none.
+  final DriveOrder? lookups;
 
   @override
   State<DeliveryFeeDialog> createState() => _DeliveryFeeDialogState();
@@ -38,6 +50,12 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
   late String _by = widget.fees.by;
   late bool _taxed = widget.fees.taxed;
   late final _origin = TextEditingController(text: widget.fees.origin);
+
+  /// The map services' names in the order they are asked, as a drag left it, and each one's switch.
+  late final List<String> _order = [for (final service in widget.lookups?.services ?? const []) service.name];
+  late final Map<String, bool> _on = {
+    for (final service in widget.lookups?.services ?? const <DriveService>[]) service.name: service.on,
+  };
   final _bands = <_Band>[];
   final _removed = <_Band>[]; // off the list, their text boxes still leaving the screen
   int _added = 0; // rows made so far: the next row's key, never one a removed row had
@@ -99,6 +117,11 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
       _message = null;
     });
     try {
+      // the order first: the fee's answer then says who is asked now
+      final lookups = widget.lookups, wanted = lookups?.turned(_on, _order);
+      if (lookups != null && wanted != null && !wanted.sameAs(lookups)) {
+        await widget.api.saveDriveLookups(widget.token, distance: wanted);
+      }
       final saved = await widget.api.saveDeliveryFees(
         widget.token,
         DeliveryFees(
@@ -126,6 +149,10 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final unit = feeUnit(_by);
+    final lookups = widget.lookups?.turned(_on, _order);
+    // the ones that are asked the drive between two places, and so search for the address first
+    final finds = lookups?.asking.any((service) => service.name == 'mapbox' || service.name == 'azure') ?? false;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
     return AlertDialog(
       title: const Text('Delivery fee'),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24), // a phone keeps its width
@@ -229,19 +256,58 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
               if (widget.fees.maps case final maps?) ...[
                 const SizedBox(height: 8),
                 Text('Looking the distance up', style: theme.textTheme.titleSmall),
-                Text(
-                  !maps
-                      ? 'This hub has no map service yet, so the price is picked by hand (Keys and connections, on this screen). '
-                            'The address can be typed now, and is used from the day the hub has one.'
-                      : widget.fees.services.length < 2
-                      ? 'With the address below, the hub asks its map service how far a delivery is and the '
-                            'form picks the price. The service is sent the two addresses and nothing else.'
-                      : 'With the address below, the hub asks ${mapServiceName(widget.fees.services[0])} how far '
-                            'a delivery is, and ${mapServiceName(widget.fees.services[1])} when that gives no '
-                            'distance. The form picks the price. Each is sent the two addresses and nothing else.',
-                  key: const ValueKey('fee-maps'),
-                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-                ),
+                if (lookups != null && lookups.services.isNotEmpty) ...[
+                  Text(
+                    !lookups.services.any((service) => service.key)
+                        ? 'This hub has no key for a map service yet, so the price is picked by hand (Keys and '
+                              'connections, on this screen). The address can be typed now, and is used from the '
+                              'day the hub has one.'
+                        : 'With the address below, the hub asks a map service how far a delivery is and the form '
+                              'picks the price. They are asked in this order: the next one only when the one '
+                              'before it gives no distance. Drag one by its handle to put it earlier or later. '
+                              'Each is sent the two addresses and nothing else.',
+                    key: const ValueKey('fee-maps'),
+                    style: quiet,
+                  ),
+                  DriveServicesList(
+                    mark: 'fee-services',
+                    services: lookups.services,
+                    enabled: !_busy,
+                    onMoved: (from, to) => setState(() => _order.insert(to, _order.removeAt(from))),
+                    onTurned: (name, on) => setState(() => _on[name] = on),
+                  ),
+                  if (lookups.services.any((service) => service.key) && lookups.asking.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'None that is turned on has a key: the price is picked by hand.',
+                        key: const ValueKey('fee-services-none'),
+                        style: quiet?.copyWith(color: scheme.error),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'The hub counts what it asks each day and stops at each one\'s number, so a busy night '
+                      'cannot run up a bill.${finds ? ' Mapbox and Azure Maps first look up where the address is, which uses the same free lookups as the Address list.' : ''}',
+                      key: const ValueKey('fee-services-says'),
+                      style: quiet,
+                    ),
+                  ),
+                ] else
+                  Text(
+                    !maps
+                        ? 'This hub has no map service yet, so the price is picked by hand (Keys and connections, on this screen). '
+                              'The address can be typed now, and is used from the day the hub has one.'
+                        : widget.fees.services.length < 2
+                        ? 'With the address below, the hub asks its map service how far a delivery is and the '
+                              'form picks the price. The service is sent the two addresses and nothing else.'
+                        : 'With the address below, the hub asks ${mapServiceName(widget.fees.services[0])} how far '
+                              'a delivery is, and ${mapServiceName(widget.fees.services[1])} when that gives no '
+                              'distance. The form picks the price. Each is sent the two addresses and nothing else.',
+                    key: const ValueKey('fee-maps'),
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
                 const SizedBox(height: 8),
                 // the list under it holds no customer's delivery: a map service's answers, where that is on
                 AddressBox(

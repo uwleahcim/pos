@@ -32,6 +32,13 @@ that on, a delivery that is for now is promised its cooking and the drive as it 
 (`Lookups.drive_soon`): one more request to Google, of its dearer kind, at most `POS_MAPS_TRAFFIC_DAILY` a
 day (150 unless set). That figure is used for the promise and kept nowhere, and it never touches the fee,
 which goes by the usual drive.
+
+Mapbox and Azure Maps can be asked both things as well (`pos.roads`), with the keys the list of addresses
+uses, each where a manager turned it on for that ("Which service is asked first" in the guide). The order
+the services are asked in, for the distance and for the drive right now, is the location's own
+(`drive_lookups` in pos.settings, `turned_on` here): the first that is turned on and has a key, and the
+next one only when the one before it gives nothing. Each has a day's most of its own, and a form is told
+who answered and how many of its day's lookups are left, for the little badge beside the figures.
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -56,6 +63,9 @@ ADDRESS_MAX = 200
 TIMEOUT_SECONDS = 4.0
 """How long one service is waited for, in all (`_within`). Two of them, one after the other, still answer
 inside the nine seconds a form waits for the hub, and somebody is on the phone with a customer meanwhile."""
+CHAIN_WAITS = 2
+"""How many such waits all the services asked how far one address is get between them, however many a
+location turned on: the form has stopped waiting past that, so nobody else is asked."""
 KEEP_SECONDS = 24 * 3600
 KEEP_MOST = 500
 DAILY_MOST = 500
@@ -65,6 +75,18 @@ price list gave away each month when this was written (10,000 plain routes)."""
 TRAFFIC_DAILY_MOST = 150
 """The most the drive right now is asked in a day unless set: about 4,650 a month, inside what Google's
 price list gave away each month when this was written (5,000 routes with traffic)."""
+OTHER_DAILY_MOST = {"mapbox": 500, "azure": 15}
+"""The most Mapbox and Azure Maps are asked how far a delivery goes in a day unless set. Mapbox gave away
+100,000 directions a month when this was written, and Azure Maps 1,000 routes (their price lists, read
+2026-11-25); the drive right now is counted by itself (`OTHER_TRAFFIC_DAILY_MOST`), and the two together
+stay inside those."""
+OTHER_TRAFFIC_DAILY_MOST = {"mapbox": 500, "azure": 15}
+"""The most each of them is asked the drive right now in a day unless set."""
+START_SECONDS = 25 * 86400.0
+"""How long where the restaurant stands is remembered, for a service that is asked the drive between two
+places and not between two addresses. Geocodio says it, whose answers may be kept."""
+START_AGAIN = 3600.0
+"""How long after Geocodio did not say where the restaurant stands it is asked again."""
 METERS_A_MILE = Decimal("1609.344")
 TENTH = Decimal("0.1")
 MILES_MOST = Decimal(1000)
@@ -73,12 +95,25 @@ MILES_MOST = Decimal(1000)
 GEOCODIO = "https://api.geocod.io/v2.1"
 GOOGLE = "https://routes.googleapis.com"
 
-NOT_KEPT = frozenset({"google"})
+NOT_KEPT = frozenset({"google", "mapbox", "azure"})
 """The services whose terms do not let a distance or a drive time be kept. Google's (the Routes API's
 policies and the Google Maps Platform Service Specific Terms, read 2026-11-18) allow place IDs to be kept,
-and coordinates for thirty days, and nothing else of an answer."""
-CREDIT = {"google": "Google Maps"}
+and coordinates for thirty days, and nothing else of an answer. Mapbox's and Azure Maps' pages on their
+routes say nothing that lets a figure be kept (read 2026-11-25), so theirs are not kept either."""
+CREDIT = {"google": "Google Maps", "mapbox": "\u00a9 Mapbox \u00a9 OpenStreetMap", "azure": "Azure Maps"}
 """What a service's terms want shown beside its figures, in these exact words."""
+TITLE = {"geocodio": "Geocodio", "google": "Google Maps", "mapbox": "Mapbox", "azure": "Azure Maps"}
+"""What a screen calls each service."""
+ORDER = ("geocodio", "google", "mapbox", "azure")
+"""The services a hub can ask how far a delivery goes, in the order they are asked unless the location
+sets another."""
+TRAFFIC_ORDER = ("google", "mapbox", "azure")
+"""The ones that know the roads as they are right now, in the order they are asked unless set."""
+PURPOSES = {"distance": ORDER, "traffic": TRAFFIC_ORDER}
+ON_UNLESS_SET = {"distance": frozenset({"geocodio", "google"}), "traffic": frozenset({"google"})}
+"""The services that are asked wherever the hub has their key, until a manager turns one off: the ones
+that were asked before a location could say. Mapbox and Azure Maps are off until one is turned on, since
+that sends a delivery's address to a service nobody chose for it."""
 
 SAID = {
     "not_found": "The map service could not find that address. Check it, or pick the fee by hand.",
@@ -100,6 +135,14 @@ class Trip:
         return {"miles": format(self.miles, "f"), "minutes": self.minutes}
 
 
+@dataclass(frozen=True)
+class Driven:
+    """The drive as the roads are at this minute, and who said so."""
+
+    minutes: int
+    service: str
+
+
 def may_keep(service: object) -> bool:
     """Whether a distance this service measured may be kept: on the order, and in the hub's memory for the
     day. Figures that do not say who measured them may not: nobody can tell whose terms they fall under."""
@@ -109,6 +152,34 @@ def may_keep(service: object) -> bool:
 def credit_of(service: object) -> str | None:
     """The words a service's terms want beside its figures on a screen, or None."""
     return CREDIT.get(service) if isinstance(service, str) else None
+
+
+def order_of(setting: Mapping[str, Any] | None, purpose: str) -> list[str]:
+    """The order a location asks the services in for one purpose (`distance`, how far a delivery goes, or
+    `traffic`, the drive right now), as its setting has it (`drive_lookups`): the names it gives that are
+    services for that, each once, and after them any it leaves out, in the usual order."""
+    usual = PURPOSES[purpose]
+    told = setting.get(purpose) if setting is not None else None
+    given = told.get("order") if isinstance(told, Mapping) else None
+    named: list[str] = []
+    if isinstance(given, list | tuple):
+        for name in given:
+            if name in usual and name not in named:
+                named.append(name)
+    return [*named, *(name for name in usual if name not in named)]
+
+
+def is_on(setting: Mapping[str, Any] | None, purpose: str, name: str) -> bool:
+    """Whether a location has that service turned on for that purpose: what its setting says, and where it
+    says nothing, whether the service was asked before a location could say (`ON_UNLESS_SET`)."""
+    told = setting.get(purpose) if setting is not None else None
+    said = told.get(name) if isinstance(told, Mapping) else None
+    return said if isinstance(said, bool) else name in ON_UNLESS_SET[purpose]
+
+
+def turned_on(setting: Mapping[str, Any] | None, purpose: str) -> list[str]:
+    """The services a location asks for one purpose, in the order it asks them."""
+    return [name for name in order_of(setting, purpose) if is_on(setting, purpose, name)]
 
 
 class LookupFailed(Exception):
@@ -399,6 +470,8 @@ class _Asked:
     asked: int = 0
     failed: int = 0
     last_failure: str | None = None
+    failing: str | None = None  # why the last asking of it gave nothing; None once it answered again
+    other: bool = False  # one after the first two (Mapbox, Azure Maps): off until a manager turns it on
 
     def status(self) -> dict[str, Any]:
         return {
@@ -406,6 +479,7 @@ class _Asked:
             "asked_today": self.asked,
             "failed_today": self.failed,
             "daily_most": self.daily,
+            "left": max(0, self.daily - self.asked),
             "last_failure": self.last_failure,
         }
 
@@ -415,28 +489,43 @@ def _carried(asked: _Asked, was: Mapping[str, _Asked]) -> _Asked:
     before = was.get(asked.maps.name)
     if before is not None:
         asked.asked, asked.failed, asked.last_failure = before.asked, before.failed, before.last_failure
+        asked.failing = before.failing
     return asked
 
 
+def _in_turn(asked: list[_Asked], among: Sequence[str] | None) -> list[_Asked]:
+    """These services as a location asks them: the ones `among` names, in its order. All of them as they
+    stand where it names none."""
+    if among is None:
+        return list(asked)
+    by = {one.maps.name: one for one in asked}
+    return [by[name] for name in among if name in by]
+
+
 class Lookups:
-    """The hub's lookups: the service when there is one, a second one for when the first gives nothing,
-    each answer that may be kept remembered for a day, and neither asked more in a day than the owner
-    would expect to pay for."""
+    """The hub's lookups: the services it has a key for, asked in the order the location sets and the next
+    one only when the one before it gives nothing; each answer that may be kept remembered for a day; and
+    none of them asked more in a day than the owner would expect to pay for."""
 
     def __init__(
         self,
         maps: Maps | None = None,
         *,
         fallback: Maps | None = None,
+        others: Sequence[Maps | None] = (),
         daily: int = DAILY_MOST,
         fallback_daily: int = FALLBACK_DAILY_MOST,
         traffic_daily: int = TRAFFIC_DAILY_MOST,
+        other_daily: Mapping[str, int] | None = None,
+        other_traffic_daily: Mapping[str, int] | None = None,
         wait: float = TIMEOUT_SECONDS,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._daily = daily
         self._fallback_daily = fallback_daily
         self._traffic_daily = traffic_daily
+        self._other_daily = {**OTHER_DAILY_MOST, **(other_daily or {})}
+        self._other_traffic_daily = {**OTHER_TRAFFIC_DAILY_MOST, **(other_traffic_daily or {})}
         self._wait = wait
         self._clock = clock
         self._lock = threading.Lock()
@@ -444,25 +533,50 @@ class Lookups:
         self._day = 0
         self._spared = 0
         self._services: list[_Asked] = []
-        self._traffic: _Asked | None = None
-        self.use(maps, fallback)
+        self._traffics: list[_Asked] = []
+        self._stands: tuple[str, float, tuple[float, float] | None] | None = None  # which address, when, where
+        self._finding: threading.Thread | None = None
+        self._spend: Callable[[str, int], bool] | None = None
+        self.use(maps, fallback, *others)
 
-    def use(self, maps: Maps | None, fallback: Maps | None = None) -> None:
+    def use(self, maps: Maps | None, fallback: Maps | None = None, *others: Maps | None) -> None:
         """These services from now on: a key was typed, replaced or removed while the hub runs
         (`pos.keys`). What the day already counted against a service stays counted against it, so typing a
-        key again does not start the day's most over."""
+        key again does not start the day's most over. `others` are the ones after the first two (Mapbox,
+        Azure Maps), each with a day's most by its name."""
         with self._lock:
             was = {asked.maps.name: asked for asked in self._services}
-            roads = self._traffic
-            pairs = [(maps, self._daily), (fallback, self._fallback_daily)]
-            self._services = [_carried(_Asked(service, most), was) for service, most in pairs if service is not None]
-            # the one that knows the roads as they are right now, when there is one, counted by itself
-            knows = [asked.maps for asked in self._services if callable(getattr(asked.maps, "drive_now", None))]
-            self._traffic = (
-                _carried(_Asked(knows[0], self._traffic_daily), {roads.maps.name: roads} if roads is not None else {})
-                if knows
-                else None
-            )
+            roads = {asked.maps.name: asked for asked in self._traffics}
+            self._services = [
+                _carried(_Asked(service, most), was)
+                for service, most in ((maps, self._daily), (fallback, self._fallback_daily))
+                if service is not None
+            ]
+            self._services += [
+                _carried(_Asked(other, self._other_daily.get(other.name, self._fallback_daily), other=True), was)
+                for other in others
+                if other is not None
+            ]
+            # the ones that know the roads as they are right now, each counted by itself
+            self._traffics = [
+                _carried(
+                    _Asked(
+                        asked.maps,
+                        self._other_traffic_daily.get(asked.maps.name, self._traffic_daily),
+                        other=asked.other,
+                    ),
+                    roads,
+                )
+                for asked in self._services
+                if callable(getattr(asked.maps, "drive_now", None))
+            ]
+
+    def count_with(self, spend: Callable[[str, int], bool] | None) -> None:
+        """Who counts the searches a service makes before it can say a drive (Mapbox and Azure Maps are asked
+        where an address stands first): the list of addresses, against the same month's free amount as its
+        own (`Suggester.spend`). It says False where the month has no room, and the service is then not
+        asked. None for nobody, and they are not counted."""
+        self._spend = spend
 
     @property
     def ready(self) -> bool:
@@ -471,7 +585,8 @@ class Lookups:
 
     @property
     def names(self) -> list[str]:
-        """The services in the order they are asked: the first, then the one for when it gives nothing."""
+        """The services the hub has a key for, as they stand: the first, the one for when it gives nothing,
+        and the others."""
         return [service.maps.name for service in self._services]
 
     def _today(self, now: float) -> None:
@@ -479,9 +594,8 @@ class Lookups:
         day = int(now // 86400)
         if day != self._day:
             self._day, self._spared = day, 0
-            for service in (*self._services, self._traffic):
-                if service is not None:
-                    service.asked, service.failed = 0, 0
+            for service in (*self._services, *self._traffics):
+                service.asked, service.failed, service.failing = 0, 0, None
 
     def spared(self) -> None:
         """A distance was read off a customer's own earlier order, and nobody was asked: counted, so
@@ -490,13 +604,81 @@ class Lookups:
             self._today(self._clock())
             self._spared += 1
 
-    def trip(self, origin: str, destination: str, *, via: str | None = None) -> Trip:
+    def start_of(self, origin: str) -> tuple[float, float] | None:
+        """Where the restaurant stands (latitude, longitude), from memory, for a service that is asked the
+        drive between two places and not between two addresses. Geocodio says it, whose answers may be kept
+        and given to anybody (`locate`), and it is remembered for 25 days. When it is not known, the address
+        changed or the memory is old, Geocodio is asked behind this call, and after it did not say not again
+        for an hour. Nobody at a form waits for it: until it is known, such a service finds the restaurant
+        itself, each time, and keeps nothing. None also where the hub has no Geocodio."""
+        now = self._clock()
+        mark = _plain(origin)
+        with self._lock:
+            held = self._stands
+            if held is not None and held[0] == mark:
+                if now - held[1] < (START_SECONDS if held[2] is not None else START_AGAIN):
+                    return held[2]
+            if not any(
+                may_keep(one.maps.name) and callable(getattr(one.maps, "locate", None)) for one in self._services
+            ):
+                return None
+            self._stands = (mark, now, None)  # asked for: nobody else asks meanwhile
+
+            def find() -> None:
+                try:
+                    found = self.locate(origin)
+                except LookupFailed:
+                    found = None
+                except Exception:  # noqa: BLE001  a help: the service finds the restaurant itself
+                    log.warning("where the restaurant stands could not be asked")
+                    found = None
+                with self._lock:
+                    if self._stands is not None and self._stands[0] == mark:
+                        self._stands = (mark, now, found)
+
+            self._finding = threading.Thread(target=find, name="maps-start", daemon=True)
+            self._finding.start()
+        return None
+
+    def started(self, seconds: float = 5.0) -> None:
+        """Waits until the asking for where the restaurant stands is over, where one runs: for a test."""
+        finding = self._finding
+        if finding is not None:
+            finding.join(seconds)
+
+    def _ask_of(self, service: _Asked, what: str, origin: str, destination: str) -> Callable[[], Any]:
+        """The asking of one service for the drive (`trip`) or for the drive right now (`drive_now`). A
+        service that is asked the drive between two places says how many searches it makes first
+        (`searches`): it is told where the restaurant stands where the hub knows (`start_of`), and its
+        searches are counted against its month before they are made (`count_with`). Raises
+        LookupFailed("limit") where the month has no room for them."""
+        maps = service.maps
+        call = getattr(maps, what)
+        searches = getattr(maps, "searches", None)
+        if not callable(searches):
+            return lambda: call(origin, destination)
+        start = self.start_of(origin)
+        spend = self._spend
+        if spend is not None and not spend(maps.name, searches(start is not None)):
+            raise LookupFailed("limit")
+        return lambda: call(origin, destination, start=start)
+
+    def trip(
+        self, origin: str, destination: str, *, via: str | None = None, among: Sequence[str] | None = None
+    ) -> Trip:
         """The drive from the restaurant to a delivery's address, and who measured it (`Trip.service`). The
-        first service is asked, and the second only when the first gives no distance, whatever its reason.
-        `via` names the one service to ask, for trying a key out: nothing remembered answers for it.
+        services `among` names are asked in its order (the ones the location turned on, as it ordered them;
+        all of them as they stand where it names none), the next one only when the one before it gives no
+        distance, whatever its reason, and only while the form still waits (`CHAIN_WAITS`): a service that
+        refuses or finds nothing says so at once, and one that does not answer uses its whole wait up. `via`
+        names the one service to ask, for trying a key out: nothing remembered answers for it.
         Raises LookupFailed: that the address was not found when any of them said so (it is what somebody at
         the form can do something about), else what the first one said."""
-        services = [service for service in self._services if via is None or service.maps.name == via]
+        services = (
+            [service for service in self._services if service.maps.name == via]
+            if via is not None
+            else _in_turn(self._services, among)
+        )
         if not services:
             raise LookupFailed("unreachable")
         key = (_plain(origin), _plain(destination))
@@ -504,27 +686,44 @@ class Lookups:
         if via is None:
             with self._lock:
                 kept = self._kept.get(key)
-                if kept is not None and now - kept[0] < KEEP_SECONDS:
+                if (
+                    kept is not None
+                    and now - kept[0] < KEEP_SECONDS
+                    and kept[1].service in {service.maps.name for service in services}
+                ):
                     self._kept.move_to_end(key)
                     return kept[1]
         reasons: list[str] = []
+        until = time.monotonic() + CHAIN_WAITS * self._wait
         for service in services:
+            left = until - time.monotonic()
+            if left <= 0:  # the form has stopped waiting: nobody else is asked, and nothing is counted
+                break
             with self._lock:
                 self._today(now)
                 if service.asked >= service.daily:
-                    service.last_failure = "limit"
+                    service.last_failure = service.failing = "limit"
                     reasons.append("limit")
                     continue
                 service.asked += 1
             try:
-                told = _within(self._wait, lambda maps=service.maps: maps.trip(origin, destination))
-                trip = replace(told, service=service.maps.name)
+                ask = self._ask_of(service, "trip", origin, destination)
+            except LookupFailed as err:  # its month has no room for the searches: it is not asked
+                with self._lock:
+                    service.asked = max(0, service.asked - 1)
+                    service.last_failure = service.failing = err.reason
+                reasons.append(err.reason)
+                continue
+            try:
+                trip = replace(_within(min(self._wait, left), ask), service=service.maps.name)
             except LookupFailed as err:
                 with self._lock:
                     service.failed += 1
-                    service.last_failure = err.reason
+                    service.last_failure = service.failing = err.reason
                 reasons.append(err.reason)
                 continue
+            with self._lock:
+                service.failing = None
             if may_keep(trip.service):  # the others' answers are used once and are gone
                 with self._lock:
                     self._kept[key] = (now, trip)
@@ -532,7 +731,7 @@ class Lookups:
                     while len(self._kept) > KEEP_MOST:
                         self._kept.popitem(last=False)
             return trip
-        raise LookupFailed("not_found" if "not_found" in reasons else reasons[0])
+        raise LookupFailed("not_found" if "not_found" in reasons else reasons[0] if reasons else "unreachable")
 
     def locate(self, address: str) -> tuple[float, float] | None:
         """Where an address stands (latitude, longitude), as the first service says that can be asked that
@@ -553,74 +752,177 @@ class Lookups:
                 raise LookupFailed("unreachable")
             self._today(self._clock())
             if service.asked >= service.daily:
-                service.last_failure = "limit"
+                service.last_failure = service.failing = "limit"
                 raise LookupFailed("limit")
             service.asked += 1
         try:
-            return _within(self._wait, lambda: service.maps.locate(address))
+            found = _within(self._wait, lambda: service.maps.locate(address))
+            with self._lock:
+                service.failing = None
+            return found
         except LookupFailed as err:
             with self._lock:
                 service.failed += 1
-                service.last_failure = err.reason
+                service.last_failure = service.failing = err.reason
             raise
 
     @property
     def traffic(self) -> str | None:
-        """The name of the service that knows the roads as they are right now, or None where none does."""
-        return self._traffic.maps.name if self._traffic is not None else None
+        """The name of the first service that knows the roads as they are right now, as they stand, or None
+        where none does."""
+        return self._traffics[0].maps.name if self._traffics else None
 
-    def drive_soon(self, origin: str, destination: str) -> Callable[[], int | None]:
+    @property
+    def traffics(self) -> list[str]:
+        """The services the hub has a key for that know the roads as they are right now, as they stand."""
+        return [asked.maps.name for asked in self._traffics]
+
+    def drive_ahead(
+        self, origin: str, destination: str, *, among: Sequence[str] | None = None
+    ) -> Callable[[], Driven | None]:
         """Starts asking how long the drive to a delivery's address is at this minute, and hands back the
         waiting for it. The asking runs beside the looking up of the distance, so a form hears of both
-        inside the time it waits. What the waiting gives is the minutes, or None: nobody here knows the
-        roads right now, it was asked as often as it may be today, or no answer came in time. None is no
-        failure to a form: the delivery is promised its usual minutes.
+        inside the time it waits. The services `among` names are asked in its order, the next one only when
+        the one before it gives nothing; each but the last is given half the wait at most, so the next one
+        still has its turn. What the waiting gives is the minutes and who said them, or None: nobody here
+        knows the roads right now, each was asked as often as it may be today, or no answer came in time.
+        None is no failure to a form: the delivery is promised its usual minutes.
 
         The figure is never remembered and never written down: it is right for this minute alone, and the
-        service's terms do not let it be kept."""
-        asked = self._traffic
-        if asked is None:
+        services' terms do not let it be kept."""
+        turn = _in_turn(self._traffics, among)
+        if not turn:
             return lambda: None
-        with self._lock:
-            self._today(self._clock())
-            if asked.asked >= asked.daily:
-                asked.last_failure = "limit"
-                return lambda: None
-            asked.asked += 1
-        box: list[int | Exception] = []
+        box: list[Driven | Exception] = []
+        asking: list[_Asked] = []  # the one that is being asked right now
+        over: list[bool] = []  # the one who waited went away
+        until = time.monotonic() + self._wait
 
         def run() -> None:
-            try:
-                box.append(asked.maps.drive_now(origin, destination))  # type: ignore[attr-defined]
-            except Exception as err:  # noqa: BLE001  handed to the one who waits, below
-                box.append(err)
+            for place, asked in enumerate(turn):
+                left = until - time.monotonic()
+                if left <= 0:
+                    return
+                with self._lock:
+                    self._today(self._clock())
+                    if asked.asked >= asked.daily:
+                        asked.last_failure = asked.failing = "limit"
+                        continue
+                    asked.asked += 1
+                try:
+                    ask = self._ask_of(asked, "drive_now", origin, destination)
+                except LookupFailed as err:  # its month has no room for the searches: it is not asked
+                    with self._lock:
+                        asked.asked = max(0, asked.asked - 1)
+                        asked.last_failure = asked.failing = err.reason
+                    continue
+                asking[:] = [asked]
+                try:
+                    minutes = _within(left if place == len(turn) - 1 else min(left, self._wait / 2), ask)
+                except LookupFailed as err:
+                    with self._lock:
+                        if not over:
+                            asked.failed += 1
+                            asked.last_failure = asked.failing = err.reason
+                    continue
+                except Exception as err:  # noqa: BLE001  handed to the one who waits, below
+                    box.append(err)
+                    return
+                with self._lock:
+                    asked.failing = None
+                box.append(Driven(minutes, asked.maps.name))
+                return
+            asking.clear()
 
         thread = threading.Thread(target=run, name="maps-traffic", daemon=True)
         thread.start()
-        until = time.monotonic() + self._wait
 
-        def wait() -> int | None:
+        def wait() -> Driven | None:
             thread.join(max(0.0, until - time.monotonic()))
-            told = box[0] if box else LookupFailed("unreachable")
-            if isinstance(told, LookupFailed):
+            if not box:
                 with self._lock:
-                    asked.failed += 1
-                    asked.last_failure = told.reason
+                    if thread.is_alive() and not over:  # still asking: no answer came in time
+                        over.append(True)
+                        for asked in asking:
+                            asked.failed += 1
+                            asked.last_failure = asked.failing = "unreachable"
                 return None
+            told = box[0]
             if isinstance(told, Exception):
                 raise told
             return told
 
         return wait
 
+    def drive_soon(self, origin: str, destination: str) -> Callable[[], int | None]:
+        """`drive_ahead` of every service that knows the roads, as they stand, and the minutes alone."""
+        wait = self.drive_ahead(origin, destination)
+
+        def minutes() -> int | None:
+            driven = wait()
+            return driven.minutes if driven is not None else None
+
+        return minutes
+
+    def standing(self, purpose: str, setting: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Every service there is for a purpose (`distance` or `traffic`), in the order the location asks
+        them, as a screen is told it: `name`, `title`, `credit` (the words its terms want beside its
+        figures, or None), `on` (a manager has it turned on for that), `key` (the hub has a key for it),
+        `asks` (both), and how today went with it: `asked_today`, `failed_today`, `daily_most`, `left`,
+        `last_failure` and `failing` (why its last asking gave nothing, None once it answered again), the
+        last four None where the hub has no key."""
+        with self._lock:
+            self._today(self._clock())
+            have = {asked.maps.name: asked for asked in (self._traffics if purpose == "traffic" else self._services)}
+            out = []
+            for name in order_of(setting, purpose):
+                asked = have.get(name)
+                on = is_on(setting, purpose, name)
+                out.append(
+                    {
+                        "name": name,
+                        "title": TITLE.get(name, name),
+                        "credit": CREDIT.get(name),
+                        "on": on,
+                        "key": asked is not None,
+                        "asks": on and asked is not None,
+                        "asked_today": asked.asked if asked is not None else 0,
+                        "failed_today": asked.failed if asked is not None else 0,
+                        "daily_most": asked.daily if asked is not None else None,
+                        "left": max(0, asked.daily - asked.asked) if asked is not None else None,
+                        "last_failure": asked.last_failure if asked is not None else None,
+                        "failing": asked.failing if asked is not None else None,
+                    }
+                )
+            return out
+
+    def left(self, purpose: str, name: object) -> dict[str, Any]:
+        """What a form shows beside a figure of that service: `title`, and how many of its day's lookups for
+        that purpose are `left` of `daily_most`, both None where the hub has no key for it now."""
+        with self._lock:
+            self._today(self._clock())
+            asked = next(
+                (one for one in (self._traffics if purpose == "traffic" else self._services) if one.maps.name == name),
+                None,
+            )
+            return {
+                "title": TITLE.get(name, name) if isinstance(name, str) and name else None,
+                "left": max(0, asked.daily - asked.asked) if asked is not None else None,
+                "daily_most": asked.daily if asked is not None else None,
+            }
+
     def status(self) -> dict[str, Any]:
         """For `hubctl maps status`: whether there is a service, and how today went: how often it was asked,
         how often it gave no distance, and how often a customer's own earlier order spared the asking;
-        under `fallback` the same of the second service, or None where there is none, and under `traffic` how
-        often the drive right now was asked, or None where nobody here knows it. No address is in it."""
+        under `fallback` the same of the second service, or None where there is none, under `others` of the
+        ones after those two (Mapbox, Azure Maps), and under `traffics` how often the drive right now was
+        asked of each that knows it (`traffic` is the first of them, or None). No address is in it."""
         with self._lock:
             self._today(self._clock())
-            first = self._services[0].status() if self._services else None
+            usual = [asked for asked in self._services if not asked.other]
+            head = usual[0] if usual else self._services[0] if self._services else None
+            first = head.status() if head is not None else None
+            roads = [asked.status() for asked in self._traffics]
             return {
                 "configured": first is not None,
                 "service": first["service"] if first else None,
@@ -629,8 +931,10 @@ class Lookups:
                 "saved_today": self._spared,
                 "daily_most": first["daily_most"] if first else self._daily,
                 "last_failure": first["last_failure"] if first else None,
-                "fallback": self._services[1].status() if len(self._services) > 1 else None,
-                "traffic": self._traffic.status() if self._traffic is not None else None,
+                "fallback": usual[1].status() if len(usual) > 1 else None,
+                "others": [asked.status() for asked in self._services if asked.other and asked is not head],
+                "traffic": roads[0] if roads else None,
+                "traffics": roads,
             }
 
 
@@ -663,20 +967,41 @@ def _most(env: Mapping[str, str], name: str, unless_set: int) -> int:
         return unless_set
 
 
+def others_from_env(environ: Mapping[str, str] | None = None) -> list[Maps]:
+    """Mapbox and Azure Maps, each where the hub has its key (`pos.roads`): the keys the list of addresses
+    asks them with."""
+    from .roads import roads_from_env  # it reads this module
+
+    return roads_from_env(environ)
+
+
 def lookups_from_env(environ: Mapping[str, str] | None = None) -> Lookups:
     """The hub's services as its own file names them. With Google's key alone, Google is the one service."""
     env = os.environ if environ is None else environ
     return Lookups(
         maps_from_env(env),
         fallback=fallback_from_env(env),
+        others=others_from_env(env),
         daily=_most(env, "POS_MAPS_DAILY", DAILY_MOST),
         fallback_daily=_most(env, "POS_MAPS_GOOGLE_DAILY", FALLBACK_DAILY_MOST),
         traffic_daily=_most(env, "POS_MAPS_TRAFFIC_DAILY", TRAFFIC_DAILY_MOST),
+        other_daily={
+            name: _most(env, f"POS_MAPS_{name.upper()}_ROUTES_DAILY", most) for name, most in OTHER_DAILY_MOST.items()
+        },
+        other_traffic_daily={
+            name: _most(env, f"POS_MAPS_{name.upper()}_TRAFFIC_DAILY", most)
+            for name, most in OTHER_TRAFFIC_DAILY_MOST.items()
+        },
     )
 
 
 __all__ = [
     "ADDRESS_MAX",
+    "ORDER",
+    "PURPOSES",
+    "TITLE",
+    "TRAFFIC_ORDER",
+    "Driven",
     "Geocodio",
     "Google",
     "LookupFailed",
@@ -685,10 +1010,14 @@ __all__ = [
     "Trip",
     "credit_of",
     "fallback_from_env",
+    "is_on",
     "lookups_from_env",
     "maps_from_env",
     "may_keep",
+    "order_of",
     "origin_mark",
+    "others_from_env",
     "same_address",
     "trip_of",
+    "turned_on",
 ]

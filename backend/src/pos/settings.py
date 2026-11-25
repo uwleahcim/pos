@@ -68,6 +68,11 @@
   the cooking and getting it out of the door. The promise is then `before` and the drive right now, in place
   of the minutes set for Delivery. It needs a map service that knows the roads right now; the fee never
   goes by it.
+- `drive_lookups`: which map services are asked how far a delivery goes (`distance`) and how long the drive
+  is right now (`traffic`), and in which order (`pos.maps`, "Which service is asked first" in
+  docs/delivery.md): under each, the services by name, true for one that is asked, and `order`, their names
+  in the order they are asked. Geocodio and Google are asked wherever the hub has their key, as before a
+  location could say; Mapbox and Azure Maps are off until a manager turns one on.
 - `address_list`: whether the list of addresses under a box that is being typed in (`pos.addresses`, "A list
   of addresses while typing" in docs/delivery.md) asks a map service as well: `google`, `mapbox` and `azure`,
   each off until a manager turns it on. They are asked in that order, each after the first only when the
@@ -186,6 +191,19 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # Off: asking a map service about every delivery costs money, and how long the kitchen needs is the
     # owner's to say.
     "live_drive": {"enabled": False, "before": 25},
+    # Who is asked how far a delivery goes, and the drive right now, in the order they are asked. Geocodio
+    # and Google as before a location could say. Mapbox and Azure Maps off: turning one on sends a
+    # delivery's address to it, and that is the owner's to decide.
+    "drive_lookups": {
+        "distance": {
+            "order": ["geocodio", "google", "mapbox", "azure"],
+            "geocodio": True,
+            "google": True,
+            "mapbox": False,
+            "azure": False,
+        },
+        "traffic": {"order": ["google", "mapbox", "azure"], "google": True, "mapbox": False, "azure": False},
+    },
     # Off: it sends what is typed in an address box to Google, and that is the owner's to decide.
     # Four miles: as far as the restaurant this was built for usually delivers (the owner, 2026-11-25).
     "address_list": {
@@ -576,6 +594,38 @@ NEAR_MILES_LEAST = 0.25
 NEAR_MILES_MOST = 30.0
 """How near and how far "nearby" may be set for the list of addresses: Google takes no circle wider than
 50 km."""
+
+
+def clean_drive_lookups(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Who is asked how far a delivery goes (`distance`) and the drive right now (`traffic`), as the app may
+    set it, checked: under each, every service of that kind by name, whether it is asked (as it is unless
+    set, where it is left out), and `order`, their names in the order they are asked, each once (one that is
+    left out comes after the ones named). A purpose that is left out is as it is unless set. Raises
+    ValueError on a bad value."""
+    out: dict[str, Any] = {}
+    for purpose, unless_set in DEFAULTS["drive_lookups"].items():
+        told = data.get(purpose)
+        told = unless_set if told is None else told
+        if not isinstance(told, Mapping):
+            raise ValueError(f"{purpose} is its services and their order")
+        names = list(unless_set["order"])
+        cleaned: dict[str, Any] = {}
+        for name in names:
+            on = told.get(name, unless_set[name])
+            if not isinstance(on, bool):
+                raise ValueError(f"{name} is true or false")
+            cleaned[name] = on
+        order = told.get("order")
+        order = names if order is None else order
+        if not isinstance(order, list | tuple) or not all(isinstance(name, str) for name in order):
+            raise ValueError("order is a list of the services' names")
+        if any(name not in names for name in order):
+            raise ValueError("order names a service there is none of")
+        if len(set(order)) != len(order):
+            raise ValueError("order names each service once")
+        cleaned["order"] = [*order, *(name for name in names if name not in order)]
+        out[purpose] = cleaned
+    return out
 
 
 def clean_address_list(data: Mapping[str, Any]) -> dict[str, Any]:

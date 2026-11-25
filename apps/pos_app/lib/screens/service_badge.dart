@@ -15,11 +15,12 @@ import 'theme.dart';
 class ServiceBadge extends StatelessWidget {
   const ServiceBadge({super.key, required this.service, required this.title, this.share, this.words});
 
-  /// The hub's name for the service (`google`, `mapbox`, `azure`), and what a screen calls it.
+  /// The hub's name for the service (`geocodio`, `google`, `mapbox`, `azure`), and what a screen calls it.
   final String service;
   final String title;
 
-  /// How much of the month's free amount is left, from 1 (all of it) to 0; null where the hub did not say.
+  /// How much of the month's free amount is left (of the day's lookups, for a service that is asked a
+  /// delivery's drive), from 1 (all of it) to 0; null where the hub did not say.
   final double? share;
 
   /// What is left, in words, for the tooltip and for a reader ("9,412 of 9,500 free lookups left this month").
@@ -27,8 +28,9 @@ class ServiceBadge extends StatelessWidget {
 
   static const size = 20.0;
 
-  /// The letter in the circle.
+  /// The letter in the circle; two for Geocodio, which Google has the G of.
   static String letterOf(String service, String title) => switch (service) {
+    'geocodio' => 'Ge',
     'google' => 'G',
     'mapbox' => 'M',
     'azure' => 'A',
@@ -48,6 +50,7 @@ class ServiceBadge extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final said = words == null ? title : '$title: $words';
     final left = share?.clamp(0.0, 1.0);
+    final letter = letterOf(service, title);
     return Tooltip(
       message: said,
       triggerMode: TooltipTriggerMode.tap,
@@ -66,9 +69,15 @@ class ServiceBadge extends StatelessWidget {
             ),
             child: Center(
               child: Text(
-                letterOf(service, title),
+                letter,
                 textScaler: TextScaler.noScaling, // a picture, not words: it keeps its size
-                style: TextStyle(fontSize: 10, height: 1, fontWeight: FontWeight.w700, color: scheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: letter.length > 1 ? 8 : 10,
+                  height: 1,
+                  letterSpacing: letter.length > 1 ? -0.3 : null,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           ),

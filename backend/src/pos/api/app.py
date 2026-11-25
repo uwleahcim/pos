@@ -54,7 +54,18 @@ from ..identity.staff_list import StaffList, default_staff_store
 from ..identity.tags import TagStore, default_tag_store, sign_in_by_tag
 from ..identity.tokens import Grant, Tokens
 from ..keys import HubKeys, keys_from_env
-from ..maps import ADDRESS_MAX, LookupFailed, Lookups, Trip, credit_of, lookups_from_env, may_keep, origin_mark
+from ..maps import (
+    ADDRESS_MAX,
+    PURPOSES,
+    LookupFailed,
+    Lookups,
+    Trip,
+    credit_of,
+    lookups_from_env,
+    may_keep,
+    origin_mark,
+    turned_on,
+)
 from ..menu.service import MenuService
 from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
 from ..notes import ShiftNotes, default_note_store
@@ -97,6 +108,7 @@ from ..settings import (
     clean_coursing,
     clean_delivery_fee,
     clean_desk_phones,
+    clean_drive_lookups,
     clean_kitchen_notes,
     clean_live_drive,
     clean_printers,
@@ -467,6 +479,26 @@ class LiveDriveIn(BaseModel):
 
     enabled: bool = False
     before: int = Field(25, description="minutes for the cooking and getting the order out of the door")
+
+
+class LookupServicesIn(BaseModel):
+    """The map services asked one thing: which of them, and in which order. One that is left out stays as it
+    is, and so does the order."""
+
+    geocodio: bool | None = None
+    google: bool | None = None
+    mapbox: bool | None = None
+    azure: bool | None = None
+    order: list[str] | None = Field(
+        None, max_length=8, description="the services' names in the order they are asked, each once"
+    )
+
+
+class DriveLookupsIn(BaseModel):
+    """Who is asked how far a delivery goes, and who the drive right now. One that is left out stays as it is."""
+
+    distance: LookupServicesIn | None = None
+    traffic: LookupServicesIn | None = None
 
 
 class VoidsIn(BaseModel):
@@ -1013,6 +1045,9 @@ def create_app(
     # Mapbox may not be asked where the restaurant stands (nothing of its answers may be kept): it is told what
     # Geocodio says, whose answers may be kept and used with anybody's map
     app.state.suggester.place_with(app.state.lookups.locate)
+    # Mapbox and Azure Maps search for where a delivery's address stands before they can say the drive to it:
+    # counted against the same month's free amount as the list's own askings
+    app.state.lookups.count_with(app.state.suggester.spend)
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
@@ -1773,15 +1808,63 @@ def create_app(
         `lookup`, whether a delivery's distance is looked up (a service, and the restaurant's own address
         to start from), and `services`, the names of the hub's map services in the order they are asked."""
         settings: SettingStore = app.state.settings
-        lookups: Lookups = app.state.lookups
         told = dict(setting if setting is not None else settings.get("delivery_fee"))
+        asked = asking("distance")
         return {
             **told,
-            "maps": lookups.ready,
-            "lookup": lookups.ready and bool(told.get("origin")),
-            "services": lookups.names,
-            "live": live_drive_now()["live"] and lookups.ready,
+            "maps": bool(asked),
+            "lookup": bool(asked) and bool(told.get("origin")),
+            "services": asked,
+            "live": live_drive_now()["live"] and bool(asked),
         }
+
+    def asking(purpose: str) -> list[str]:
+        """The map services this hub asks for a purpose (`distance` or `traffic`), in the order it asks them:
+        the ones the location has turned on that the hub has a key for, as the location ordered them. One the
+        setting has no name for (a hub set up with another service) is asked where it stands among them."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        has = lookups.traffics if purpose == "traffic" else lookups.names
+        named = iter([name for name in turned_on(settings.get("drive_lookups"), purpose) if name in has])
+        places = [name if name not in PURPOSES[purpose] else next(named, None) for name in has]
+        return [name for name in places if name is not None]
+
+    def drive_lookups_now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Who is asked how far a delivery goes and who the drive right now, as a screen is told it: under
+        `distance` and under `traffic`, `order` and `services`, every service of that kind in the order they
+        are asked, each with whether it is turned on, whether the hub has its key, and how many of its
+        day's lookups are left (`Lookups.standing`)."""
+        settings: SettingStore = app.state.settings
+        lookups: Lookups = app.state.lookups
+        told = setting if setting is not None else settings.get("drive_lookups")
+        return {
+            purpose: {
+                "order": [one["name"] for one in standing],
+                "services": standing,
+            }
+            for purpose in PURPOSES
+            for standing in [lookups.standing(purpose, told)]
+        }
+
+    @app.get("/settings/drive_lookups")
+    def read_drive_lookups() -> dict[str, Any]:
+        """Which map services are asked how far a delivery goes (`distance`) and how long the drive is right
+        now (`traffic`), in the order they are asked: the first that is turned on and has a key, and the next
+        one only when the one before it gives nothing. Each service says `on`, `key`, `asks` (both), and how
+        today went: `asked_today`, `daily_most` and `left`. The hub counts by the day, on its own; a service
+        does not say what its account has left."""
+        return drive_lookups_now()
+
+    @app.put("/settings/drive_lookups")
+    def write_drive_lookups(body: DriveLookupsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns a service on or off for the distance or for the drive right now, and puts them in
+        the order they are asked. One that is left out stays as it is. The next delivery is looked up by it."""
+        manager_from(app.state.tokens, authorization)
+        settings: SettingStore = app.state.settings
+        had = settings.get("drive_lookups")
+        sent = body.model_dump(exclude_none=True)
+        wanted = {purpose: {**(had.get(purpose) or {}), **(sent.get(purpose) or {})} for purpose in PURPOSES}
+        return drive_lookups_now(write_setting("drive_lookups", wanted, clean_drive_lookups))
 
     def live_drive_now(setting: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Live traffic's setting as a screen is told it: with `traffic`, whether this hub has a map service
@@ -1789,9 +1872,8 @@ def create_app(
         setting holds it), and `live`, whether a delivery for now is promised by the roads as they are:
         turned on, with both."""
         settings: SettingStore = app.state.settings
-        lookups: Lookups = app.state.lookups
         told = dict(setting if setting is not None else settings.get("live_drive"))
-        traffic = lookups.traffic is not None
+        traffic = bool(asking("traffic"))
         origin = bool(settings.get("delivery_fee").get("origin"))
         return {
             **told,
@@ -1859,47 +1941,61 @@ def create_app(
         them and does not send them back, and they are not put on the order whatever a screen sends. `via`
         names the one service to ask, for `hubctl maps test`.
 
+        The services are asked in the order the location set (`/settings/drive_lookups`), the ones it has
+        turned on. `title` is what a screen calls the one that measured it, and `left` of `daily_most` how
+        many of its day's lookups it has left by the hub's own count, for the badge beside the figures
+        (both null where the hub has no key for it now).
+
         `now` says the delivery is for now. Where live traffic is turned on (`/settings/live_drive`), the
-        answer then carries `drive_now`: `{minutes, before, credit}`, the drive as the roads are at this
-        minute, the minutes the kitchen needs before it, and the name to show beside the figure; or null
+        answer then carries `drive_now`: `{minutes, before, credit, service, title, left, daily_most}`, the
+        drive as the roads are at this minute, the minutes the kitchen needs before it, the name to show
+        beside the figure, and who said it with what it has left today; or null
         when nobody could say, which is no failure: the delivery is promised its usual minutes. It is asked
         beside the distance, never remembered, and never kept. The band and the fee do not go by it.
 
         Only the two addresses go to the service: no name, no phone number, nothing of the order. The
-        number is used on the hub alone. 409 `no_lookup` when this hub has no map service or no address of
-        its own to start from; 424 `lookup_failed`, with a `reason` and words for the form, when the service
-        gave no distance. Not a 5xx: the hub itself is well, and a terminal reads a 5xx as a hub to turn
-        away from."""
+        number is used on the hub alone. 409 `no_lookup` when this hub has no map service that is turned on
+        or no address of its own to start from; 424 `lookup_failed`, with a `reason` and words for the form,
+        when the service gave no distance. Not a 5xx: the hub itself is well, and a terminal reads a 5xx as
+        a hub to turn away from."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         setting = settings.get("delivery_fee")
         origin = str(setting.get("origin") or "")
-        if not lookups.ready or not origin:
+        asked = asking("distance")
+        via = body.via.strip().lower() or None
+        # a key is tried out whether its service is turned on or not
+        if not (asked or via in lookups.names) or not origin:
             raise HTTPException(
                 409,
                 {
                     "error": "no_lookup",
-                    "message": "this hub has no map service to ask"
-                    if not lookups.ready
-                    else "the restaurant's own address is not set (Location, Delivery fee)",
+                    "message": "the restaurant's own address is not set (Location, Delivery fee)"
+                    if asked or via in lookups.names
+                    else "no map service is turned on for the distance (Location, Delivery fee)"
+                    if lookups.ready
+                    else "this hub has no map service to ask",
                 },
             )
         address = " ".join(body.address.split())
         if not address or len(address) > ADDRESS_MAX:
             raise HTTPException(422, {"error": "bad_value", "message": "an address of at most 200 letters"})
-        via = body.via.strip().lower() or None
         if via is not None and via not in lookups.names:
             raise HTTPException(422, {"error": "bad_value", "message": f"this hub has no map service {via!r}"})
         mark = origin_mark(origin)
         live = settings.get("live_drive")
-        waiting = lookups.drive_soon(origin, address) if body.now and live.get("enabled") is True and not via else None
+        waiting = (
+            lookups.drive_ahead(origin, address, among=asking("traffic"))
+            if body.now and live.get("enabled") is True and not via
+            else None
+        )
         kept = None if body.fresh or via else saved_trip(app.state.store, body.phone, address, mark)
         if kept is not None:
             trip = Trip(Decimal(kept["miles"]), kept["minutes"], kept["service"])
             lookups.spared()
         else:
             try:
-                trip = lookups.trip(origin, address, via=via)
+                trip = lookups.trip(origin, address, via=via, among=asked)
             except LookupFailed as err:
                 raise HTTPException(424, {"error": "lookup_failed", "reason": err.reason, "message": str(err)}) from err
         band = band_for(setting, trip.miles, trip.minutes)
@@ -1915,9 +2011,18 @@ def create_app(
             "keep": may_keep(trip.service),
             "from": mark,
             "saved": kept is not None,
+            # for the badge beside the figures: what a screen calls who measured it, and how many of its day's
+            # lookups are left
+            **lookups.left("distance", trip.service),
             "drive_now": None
             if drive is None
-            else {"minutes": drive, "before": live.get("before"), "credit": credit_of(lookups.traffic)},
+            else {
+                "minutes": drive.minutes,
+                "before": live.get("before"),
+                "credit": credit_of(drive.service),
+                "service": drive.service,
+                **lookups.left("traffic", drive.service),
+            },
         }
 
     @app.get("/maps/status")
@@ -1932,8 +2037,14 @@ def create_app(
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         status = lookups.status()
-        if status["traffic"] is not None:
-            status["traffic"]["enabled"] = settings.get("live_drive").get("enabled") is True
+        live = settings.get("live_drive").get("enabled") is True
+        for roads in status["traffics"]:  # `traffic` is the first of them
+            roads["enabled"] = live
+        looked = settings.get("drive_lookups")
+        # every service there is for each, in the order the location asks them, with whether it is turned on
+        status["distance"] = lookups.standing("distance", looked)
+        status["drive_now"] = lookups.standing("traffic", looked)
+        status["live"] = live
         turned_on = settings.get("address_list")
         order = order_of(turned_on)
         listings = sorted(app.state.suggester.statuses(), key=lambda listing: order.index(listing["service"]))
