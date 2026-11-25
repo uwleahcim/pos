@@ -181,15 +181,20 @@ class _AddressListDialogState extends State<AddressListDialog> {
     );
   }
 
-  /// How far "nearby" reaches: a slider in whole miles, the distance in words beside its name, and a line on
-  /// what it does. What is saved is said as it is even where the slider has no such stop (a distance set
-  /// some other way, like 2.5 or 25 miles): the slider then stands at its nearest stop, and a save keeps what
-  /// was saved until somebody moves it.
+  /// How much room the slider keeps on either side of its track, for its thumb.
+  static const _trackSide = 16.0;
+
+  /// How far "nearby" reaches: a slider, the distance in words beside its name, and a line on what it does.
+  /// Its stops are not evenly far apart in miles (`AddressListSetting.nearStops`): a quarter of a mile up
+  /// close, then half a mile, a mile and two, so what is close by takes most of it; a few distances are named
+  /// under it. What is saved is said as it is even where the slider has no such stop (a distance set some
+  /// other way, like 2.6 or 25 miles): the slider then stands at its nearest stop, and a save keeps what was
+  /// saved until somebody moves it.
   Widget _nearby(BuildContext context, double near) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
-    const least = AddressListSetting.nearLeast, most = AddressListSetting.nearMost;
+    final last = AddressListSetting.nearStops.length - 1.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -205,16 +210,21 @@ class _AddressListDialogState extends State<AddressListDialog> {
             ),
           ],
         ),
-        Slider(
-          key: const ValueKey('address-list-near'),
-          value: near.clamp(least, most).toDouble(),
-          min: least,
-          max: most,
-          divisions: (most - least).round(),
-          label: AddressListSetting.miles(near),
-          semanticFormatterCallback: AddressListSetting.miles,
-          onChanged: _busy == 'save' ? null : (to) => setState(() => _near = to.roundToDouble()),
+        SliderTheme(
+          data: SliderTheme.of(context)
+              .copyWith(overlayShape: const RoundSliderOverlayShape(overlayRadius: _trackSide)),
+          child: Slider(
+            key: const ValueKey('address-list-near'),
+            value: AddressListSetting.nearPlace(near),
+            max: last,
+            divisions: last.round(),
+            label: AddressListSetting.miles(near),
+            semanticFormatterCallback: (place) => AddressListSetting.miles(AddressListSetting.nearAt(place)),
+            onChanged: _busy == 'save' ? null : (to) => setState(() => _near = AddressListSetting.nearAt(to)),
+          ),
         ),
+        _scale(context, last),
+        const SizedBox(height: 4),
         Text(
           widget.setting.originSet == false
               ? 'Addresses within ${AddressListSetting.miles(near)} of the restaurant come first, once its own '
@@ -226,6 +236,44 @@ class _AddressListDialogState extends State<AddressListDialog> {
           style: widget.setting.originSet == false ? quiet?.copyWith(color: scheme.error) : quiet,
         ),
       ],
+    );
+  }
+
+  /// The slider's scale: a few distances in miles, each under its stop, which shows how much of the slider
+  /// the first miles take.
+  Widget _scale(BuildContext context, double last) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    final high = MediaQuery.textScalerOf(context).scale(style?.fontSize ?? 11) * 1.4;
+    const wide = 36.0;
+    return ExcludeSemantics(
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final track = box.maxWidth - 2 * _trackSide;
+          return SizedBox(
+            height: high,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (final miles in AddressListSetting.nearMarks)
+                  Positioned(
+                    left: _trackSide + track * AddressListSetting.nearPlace(miles) / last - wide / 2,
+                    width: wide,
+                    top: 0,
+                    child: Text(
+                      '${miles.round()}',
+                      key: ValueKey('address-list-near-mark:${miles.round()}'),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: style,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 

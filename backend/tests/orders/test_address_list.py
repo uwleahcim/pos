@@ -23,6 +23,7 @@ from pos.addresses import (
     KINDS,
     MONTHLY_MOST,
     NEAR_METERS,
+    ORDER,
     REST,
     US_BOX,
     AddressBook,
@@ -38,6 +39,7 @@ from pos.addresses import (
     known,
     mapbox_from_env,
     month_of,
+    order_of,
     own_addresses,
     places_from_env,
     said,
@@ -1116,14 +1118,20 @@ def test_what_is_within_four_miles_comes_first_unless_a_manager_sets_another_dis
     # an app from before this names the switches alone, and the distance stays
     told = h.c.put("/settings/address_list", json={"google": True}, headers=h.manager()).json()
     assert told["near_miles"] == 2.5 and h.c.get("/settings/address_list").json()["near_miles"] == 2.5
-    # from half a mile to thirty, to a tenth; only a manager sets it
-    for bad in (0, 0.4, 30.1, -4, "far"):
+    # from a quarter of a mile to thirty, to a hundredth; only a manager sets it
+    for bad in (0, 0.2, 30.1, -4, "far"):
         refused = h.c.put("/settings/address_list", json={"near_miles": bad}, headers=h.manager())
         assert refused.status_code == 422, bad
     assert h.c.put("/settings/address_list", json={"near_miles": 6}).status_code == 401
     assert h.c.get("/settings/address_list").json()["near_miles"] == 2.5
-    assert h.c.put("/settings/address_list", json={"near_miles": 7.26}, headers=h.manager()).json()["near_miles"] == 7.3
-    assert h.c.put("/settings/address_list", json={"near_miles": 30}, headers=h.manager()).json()["near_miles"] == 30.0
+    for sent, kept in ((7.256, 7.26), (30, 30.0), (0.25, 0.25)):
+        told = h.c.put("/settings/address_list", json={"near_miles": sent}, headers=h.manager()).json()
+        assert told["near_miles"] == kept
+    # a quarter of a mile is a distance the app's slider stops at, and it is kept as it is
+    told = h.c.put("/settings/address_list", json={"near_miles": 2.25}, headers=h.manager()).json()
+    assert told["near_miles"] == 2.25 and h.c.get("/settings/address_list").json()["near_miles"] == 2.25
+    listed(h, "9 Birch Lan")
+    assert world.lists[-1]["locationBias"]["circle"]["radius"] == 3621.0
 
 
 def place(lat: float = 42.4523, lng: float = -71.137) -> dict:
@@ -1221,6 +1229,7 @@ def test_the_setting_says_how_each_service_stands_in_the_order_they_are_asked():
         "mapbox": False,
         "azure": False,
         "near_miles": 4.0,
+        "order": ["google", "mapbox", "azure"],
         "origin_set": False,
         "service": True,
         "asks": True,
@@ -1280,6 +1289,71 @@ def test_an_app_from_before_there_were_several_turns_google_on_and_leaves_the_ot
     assert put(azure=False) == (False, True, False) and put() == (False, True, False)
     assert h.c.put("/settings/address_list", json={"mapbox": "perhaps"}, headers=h.manager()).status_code == 422
     assert h.c.put("/settings/address_list", json={"mapbox": False}).status_code == 401
+
+
+def test_a_manager_puts_the_services_in_another_order_and_the_first_in_it_is_asked_first():
+    h = delivered()
+    google, mapbox, azure = three()
+    chain(h, google.places(), mapbox.mapbox(), azure.azure())
+    assert h.c.get("/settings/address_list").json()["order"] == ["google", "mapbox", "azure"]
+    assert typed(h, "12 Elm")["service"] == "google"
+    saved = h.c.put("/settings/address_list", json={"order": ["mapbox", "azure", "google"]}, headers=h.manager())
+    assert saved.status_code == 200, saved.text
+    told = saved.json()
+    assert told["order"] == ["mapbox", "azure", "google"]
+    assert [one["name"] for one in told["services"]] == ["mapbox", "azure", "google"]
+    # the switches and how far nearby reaches stay as they were
+    assert (told["google"], told["mapbox"], told["azure"], told["near_miles"]) == (True, True, True, 4.0)
+    assert h.c.get("/settings/address_list").json() == told
+    # Mapbox answers now, and Google is not asked at all
+    asked = len(google.seen)
+    assert typed(h, "12 Elmw")["service"] == "mapbox" and len(google.seen) == asked
+    # when Mapbox gives no answer, the next one in that order is Azure Maps
+    mapbox.status = 500
+    assert typed(h, "12 Elmwo")["service"] == "azure" and len(google.seen) == asked
+    # and Google is the last
+    azure.status = 500
+    assert typed(h, "12 Elmwoo")["service"] == "google"
+    # `hubctl maps status` lists them in that order too
+    status = h.c.get("/maps/status").json()
+    assert [one["service"] for one in status["suggests"]] == ["mapbox", "azure", "google"]
+    assert status["suggest"]["service"] == "mapbox"
+    # a service that is turned off keeps its place and is passed over
+    mapbox.status = azure.status = 200
+    h.c.put("/settings/address_list", json={"mapbox": False}, headers=h.manager())
+    h.c.app.state.suggester.use(google.places(), mapbox.mapbox(), azure.azure())  # their rest is over
+    assert h.c.get("/settings/address_list").json()["order"] == ["mapbox", "azure", "google"]
+    assert typed(h, "12 Elmwood")["service"] == "azure"
+
+
+def test_an_order_names_services_each_once_and_one_it_leaves_out_comes_last():
+    h = Hub(now=at(16))
+
+    def put(order: object):
+        return h.c.put("/settings/address_list", json={"order": order}, headers=h.manager())
+
+    assert put(["bing", "google"]).status_code == 422  # no such service
+    assert put(["google", "google", "mapbox"]).status_code == 422  # twice
+    assert put("mapbox").status_code == 422 and put([1, 2]).status_code == 422
+    assert h.c.get("/settings/address_list").json()["order"] == ["google", "mapbox", "azure"]
+    assert put(["azure"]).json()["order"] == ["azure", "google", "mapbox"]
+    # an app from before the order names the switches alone, and the order stays
+    older = h.c.put("/settings/address_list", json={"google": True, "near_miles": 6}, headers=h.manager())
+    assert (older.json()["order"], older.json()["near_miles"]) == (["azure", "google", "mapbox"], 6.0)
+    assert h.c.put("/settings/address_list", json={"order": ["google"]}).status_code == 401
+    # what a setting holds that is no order is the usual one
+    assert order_of(None) == order_of({}) == order_of({"order": "mapbox"}) == list(ORDER)
+    assert order_of({"order": ["azure", "bing", "azure", 7]}) == ["azure", "google", "mapbox"]
+
+
+def test_asked_among_a_list_the_services_go_in_its_order_and_among_a_set_in_the_usual_one():
+    google, mapbox, azure = three()
+    suggester = Suggester(google.places(), mapbox.mapbox(), azure.azure())
+    assert suggester.suggest("12 Elm", among=["azure", "google"])[0].source == "azure"
+    assert suggester.suggest("12 Elm", among={"azure", "mapbox"})[0].source == "mapbox"
+    assert suggester.suggest("12 Elm")[0].source == "google"
+    assert (len(google.seen), len(mapbox.seen), len(azure.seen)) == (1, 1, 1)
+    assert suggester.names == ["google", "mapbox", "azure"]  # what the hub has, in the usual order
 
 
 def test_each_service_is_tried_by_itself_whatever_the_others_do():

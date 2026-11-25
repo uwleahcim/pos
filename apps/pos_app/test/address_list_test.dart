@@ -239,8 +239,11 @@ void main() {
     test('how far nearby reaches, in words, and a hub that does not say is sent none', () {
       expect(AddressListSetting.miles(4), '4 miles');
       expect(AddressListSetting.miles(2.5), '2.5 miles');
+      expect(AddressListSetting.miles(2.25), '2.25 miles');
+      expect(AddressListSetting.miles(0.25), '0.25 miles');
       expect(AddressListSetting.miles(1), '1 mile');
-      expect((AddressListSetting.nearLeast, AddressListSetting.nearMost), (1.0, 20.0)); // the slider's ends
+      expect(AddressListSetting.miles(10), '10 miles');
+      expect(AddressListSetting.miles(20), '20 miles');
       final silent = AddressListSetting.fromJson(Hub.addressListOf([Hub.addressService('google')], near: null));
       expect((silent.nearMiles, silent.originSet), (null, null));
       expect(silent.toJson(), {'google': false});
@@ -250,6 +253,56 @@ void main() {
       // what is no distance is none
       for (final odd in [0, -3, 'far', true]) {
         expect(AddressListSetting.fromJson({'services': const [], 'near_miles': odd}).nearMiles, isNull);
+      }
+    });
+
+    test('the slider stops a quarter of a mile apart up close, and further apart further out', () {
+      final stops = AddressListSetting.nearStops;
+      double step(double from) => stops[stops.indexOf(from) + 1] - from;
+      expect((stops.first, stops.last, stops.length), (0.25, 20.0, 28));
+      expect(
+        [
+          for (final miles in <double>[0.25, 1, 2.75]) step(miles),
+        ],
+        [0.25, 0.25, 0.25],
+      ); // up to three miles
+      expect(
+        [
+          for (final miles in <double>[3, 5.5]) step(miles),
+        ],
+        [0.5, 0.5],
+      ); // up to six
+      expect(
+        [
+          for (final miles in <double>[6, 11]) step(miles),
+        ],
+        [1.0, 1.0],
+      ); // up to twelve
+      expect(
+        [
+          for (final miles in <double>[12, 18]) step(miles),
+        ],
+        [2.0, 2.0],
+      ); // up to twenty
+      expect(stops, containsAll(<double>[0.5, 1, 2, 4, 6, 10, 20])); // the usual distances are all stops
+      // every stop is as wide as the next, so what is close by takes most of the slider: three miles are
+      // two fifths of the way along it, and six miles more than three fifths
+      double along(double miles) => AddressListSetting.nearPlace(miles) / (stops.length - 1);
+      expect((along(0.25), along(20)), (0.0, 1.0));
+      expect((along(3) > 0.4, along(6) > 0.6, along(12) > 0.8), (true, true, true));
+      expect((AddressListSetting.nearPlace(4), AddressListSetting.nearAt(13)), (13.0, 4.0));
+      // a distance that is no stop stands between its two, and one past an end at that end
+      expect(AddressListSetting.nearPlace(2.6), closeTo(9.4, 1e-9));
+      expect((AddressListSetting.nearPlace(0.1), AddressListSetting.nearPlace(25)), (0.0, 27.0));
+      // a place between two stops is the nearer one, and past an end the end
+      expect(
+        [
+          for (final place in <double>[9.4, 9.6, -3, 99]) AddressListSetting.nearAt(place),
+        ],
+        [2.5, 2.75, 0.25, 20.0],
+      );
+      for (final miles in AddressListSetting.nearMarks) {
+        expect(stops, contains(miles));
       }
     });
 
@@ -1024,12 +1077,12 @@ void main() {
 
     Slider slider(WidgetTester tester) => tester.widget<Slider>(key('address-list-near'));
 
-    /// Where a number of miles stands on the slider: its track keeps the room of the thumb's halo on either
-    /// side.
+    /// Where a number of miles stands on the slider: its stops are evenly wide, and its track keeps a little
+    /// room on either side for the thumb.
     Offset milesAt(WidgetTester tester, double miles) {
       final box = tester.getRect(key('address-list-near'));
-      const side = 24.0;
-      return Offset(box.left + side + (miles - 1) / 19 * (box.width - 2 * side), box.center.dy);
+      const side = 16.0;
+      return Offset(box.left + side + AddressListSetting.nearPlace(miles) / 27 * (box.width - 2 * side), box.center.dy);
     }
 
     /// A touch on the slider where a number of miles stands.
@@ -1044,10 +1097,10 @@ void main() {
       final t = await pumpLocation(tester, list: Hub.addressListOff);
       await tapKey(tester, 'address-list');
       expect(find.text('Nearby first'), findsOneWidget);
-      // a slider in whole miles, from one to twenty, and no buttons
+      // a slider with a stop for each distance, at the stop of four miles, and no buttons
       expect(
         (slider(tester).value, slider(tester).min, slider(tester).max, slider(tester).divisions),
-        (4.0, 1.0, 20.0, 19),
+        (13.0, 0.0, 27.0, 27),
       );
       expect(find.byType(ChoiceChip), findsNothing);
       expect(said(tester, 'address-list-near-miles'), '4 miles');
@@ -1071,7 +1124,7 @@ void main() {
         greaterThan(tester.getTopLeft(find.text('Nearby first')).dy),
       );
       await slideTo(tester, 2);
-      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (2.0, '2 miles'));
+      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (7.0, '2 miles'));
       expect(said(tester, 'address-list-near-says'), startsWith('Addresses within 2 miles of the restaurant'));
       expect(t.hub.addressSaved, isEmpty); // nothing is saved by moving it alone
       await tapKey(tester, 'address-list-save');
@@ -1079,7 +1132,7 @@ void main() {
       expect(t.hub.addressList?['near_miles'], 2.0);
       // and it is what the dialog opens on the next time
       await tapKey(tester, 'address-list');
-      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (2.0, '2 miles'));
+      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (7.0, '2 miles'));
       // Cancel keeps it
       await slideTo(tester, 10);
       expect(said(tester, 'address-list-near-miles'), '10 miles');
@@ -1089,44 +1142,80 @@ void main() {
       await stop(tester);
     });
 
-    testWidgets('the slider is dragged a mile at a time, to either end and no further', (tester) async {
+    testWidgets('the slider moves a quarter of a mile at a time up close, and in wider steps further out', (
+      tester,
+    ) async {
       final t = await pumpLocation(tester, list: Hub.addressListOff);
       await tapKey(tester, 'address-list');
       await tester.ensureVisible(key('address-list-near'));
       await tester.pumpAndSettle();
-      // a finger on the thumb at four miles, drawn to where thirteen stands
-      final from = milesAt(tester, 4), to = milesAt(tester, 13);
+      // the next stop under four miles is three and a half, and under three it is two and three quarters
+      for (final (miles, words) in [
+        (3.5, '3.5 miles'),
+        (2.75, '2.75 miles'),
+        (2.25, '2.25 miles'),
+        (0.5, '0.5 miles'),
+      ]) {
+        await tester.tapAt(milesAt(tester, miles));
+        await tester.pumpAndSettle();
+        expect(said(tester, 'address-list-near-miles'), words);
+      }
+      // a finger on the thumb, drawn to where fourteen miles stands
+      final from = milesAt(tester, 0.5), to = milesAt(tester, 14);
       await tester.dragFrom(from, to - from);
       await tester.pumpAndSettle();
-      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (13.0, '13 miles'));
-      // between two miles it stands on the nearer one: there is no half mile
-      await tester.tapAt(milesAt(tester, 6.4));
+      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (24.0, '14 miles'));
+      // between two stops it stands on the nearer one: past twelve miles there is no odd mile
+      await tester.tapAt(Offset((milesAt(tester, 12).dx * 2 + milesAt(tester, 14).dx) / 3, milesAt(tester, 12).dy));
       await tester.pumpAndSettle();
-      expect(said(tester, 'address-list-near-miles'), '6 miles');
+      expect(said(tester, 'address-list-near-miles'), '12 miles');
+      // what is close by takes most of the slider: three miles stand two fifths of the way along it
+      final box = tester.getRect(key('address-list-near'));
+      expect((milesAt(tester, 3).dx - box.left) / box.width, greaterThan(0.4));
       // past either end is the end
-      await tester.dragFrom(milesAt(tester, 6), const Offset(-500, 0));
+      await tester.dragFrom(milesAt(tester, 12), const Offset(-900, 0));
       await tester.pumpAndSettle();
-      expect(said(tester, 'address-list-near-miles'), '1 mile');
-      await tester.dragFrom(milesAt(tester, 1), const Offset(900, 0));
+      expect(said(tester, 'address-list-near-miles'), '0.25 miles');
+      await tester.dragFrom(milesAt(tester, 0.25), const Offset(900, 0));
       await tester.pumpAndSettle();
-      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (20.0, '20 miles'));
+      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (27.0, '20 miles'));
+      await slideTo(tester, 2.25);
       await tapKey(tester, 'address-list-save');
-      expect(t.hub.addressSaved.single['near_miles'], 20.0);
+      expect(t.hub.addressSaved.single['near_miles'], 2.25);
+      await stop(tester);
+    });
+
+    testWidgets('a few distances are named under the slider, each under its stop', (tester) async {
+      await pumpLocation(tester, list: Hub.addressListOff);
+      await tapKey(tester, 'address-list');
+      await tester.ensureVisible(key('address-list-near-says'));
+      await tester.pumpAndSettle();
+      final under = tester.getRect(key('address-list-near')).bottom;
+      for (final miles in [1, 3, 6, 10, 20]) {
+        final mark = tester.getRect(key('address-list-near-mark:$miles'));
+        expect(said(tester, 'address-list-near-mark:$miles'), '$miles');
+        expect(mark.center.dx, closeTo(milesAt(tester, miles.toDouble()).dx, 0.6));
+        expect(mark.top, greaterThanOrEqualTo(under - 14)); // under the track, in the room the slider keeps
+        expect(mark.bottom, lessThanOrEqualTo(tester.getRect(key('address-list-near-says')).top));
+      }
       await stop(tester);
     });
 
     testWidgets('a distance the slider has no stop for is said as it is, and kept by a save', (tester) async {
       final t = await pumpLocation(
         tester,
-        list: Hub.addressListOf([Hub.addressService('google', on: true)], near: 2.5),
+        list: Hub.addressListOf([Hub.addressService('google', on: true)], near: 2.6),
       );
       await tapKey(tester, 'address-list');
-      expect(said(tester, 'address-list-near-miles'), '2.5 miles');
-      expect(said(tester, 'address-list-near-says'), startsWith('Addresses within 2.5 miles of the restaurant'));
-      expect(slider(tester).value, 2.5);
+      expect(said(tester, 'address-list-near-miles'), '2.6 miles');
+      expect(said(tester, 'address-list-near-says'), startsWith('Addresses within 2.6 miles of the restaurant'));
+      expect(
+        slider(tester).value,
+        closeTo(9.4, 1e-9),
+      ); // between the stops of two and a half and two and three quarters
       await tapKey(tester, 'address-list-save');
-      expect(t.hub.addressSaved.single['near_miles'], 2.5); // not rounded by a save that did not move it
-      // moved, it is whole miles
+      expect(t.hub.addressSaved.single['near_miles'], 2.6); // not moved to a stop by a save that did not move it
+      // moved, it is at a stop
       await tapKey(tester, 'address-list');
       await slideTo(tester, 3);
       expect(said(tester, 'address-list-near-miles'), '3 miles');
@@ -1140,7 +1229,7 @@ void main() {
     ) async {
       final t = await pumpLocation(tester, list: Hub.addressListOf([Hub.addressService('google', on: true)], near: 25));
       await tapKey(tester, 'address-list');
-      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (20.0, '25 miles'));
+      expect((slider(tester).value, said(tester, 'address-list-near-miles')), (27.0, '25 miles'));
       await tapKey(tester, 'address-list-save');
       expect(t.hub.addressSaved.single['near_miles'], 25.0);
       await stop(tester);
@@ -1183,7 +1272,7 @@ void main() {
       await tapKey(tester, 'address-list-azure');
       expect(tester.takeException(), isNull);
       // the slider is whole on the screen, and every mile of it can be reached
-      for (final miles in [1.0, 4.0, 9.0, 20.0]) {
+      for (final miles in [0.25, 1.0, 4.0, 9.0, 20.0]) {
         await slideTo(tester, miles);
         expect(said(tester, 'address-list-near-miles'), AddressListSetting.miles(miles));
         final box = tester.getRect(key('address-list-near'));
@@ -1191,6 +1280,20 @@ void main() {
       }
       final name = tester.getRect(find.text('Nearby first')), words = tester.getRect(key('address-list-near-miles'));
       expect(words.left, greaterThanOrEqualTo(name.right)); // "20 miles" beside the name, not over it
+      // the scale's distances stay apart from each other and on the screen
+      final marks = [
+        for (final miles in [1, 3, 6, 10, 20]) tester.getRect(key('address-list-near-mark:$miles')),
+      ];
+      final painted = [
+        for (final miles in [1, 3, 6, 10, 20])
+          tester
+              .renderObject<RenderParagraph>(key('address-list-near-mark:$miles'))
+              .getMaxIntrinsicWidth(double.infinity),
+      ];
+      for (var at = 1; at < marks.length; at++) {
+        expect(marks[at].center.dx - painted[at] / 2, greaterThan(marks[at - 1].center.dx + painted[at - 1] / 2));
+      }
+      expect(marks.last.center.dx + painted.last / 2, lessThanOrEqualTo(320));
       expect(tester.takeException(), isNull);
       await tapKey(tester, 'address-list-save');
       expect(find.byType(AddressListDialog), findsNothing);

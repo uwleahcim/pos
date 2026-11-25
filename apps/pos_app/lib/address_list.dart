@@ -251,14 +251,38 @@ class AddressListSetting {
   /// null on a hub that does not say.
   final bool? originSet;
 
-  /// What the slider for [nearMiles] reaches from and to, in whole miles: a few streets, to further out than
-  /// most deliveries go. A hub starts on four, a delivery's usual reach.
-  static const nearLeast = 1.0, nearMost = 20.0;
+  /// The distances the slider for [nearMiles] stops at, each stop as wide as the next: a quarter of a mile
+  /// apart up to three miles, half a mile up to six, a mile up to twelve, and two miles up to twenty. So
+  /// what is close by takes most of the slider and is set finest (the owner's words, 2026-11-25). A hub
+  /// starts on four miles, a delivery's usual reach.
+  static final List<double> nearStops = List.unmodifiable([
+    for (var miles = 0.25; miles <= 3; miles += 0.25) miles,
+    for (var miles = 3.5; miles <= 6; miles += 0.5) miles,
+    for (var miles = 7.0; miles <= 12; miles += 1) miles,
+    for (var miles = 14.0; miles <= 20; miles += 2) miles,
+  ]);
 
-  /// A number of miles in words: "4 miles", "2.5 miles", "1 mile".
+  /// The distances the slider's scale names under it.
+  static const nearMarks = [1.0, 3.0, 6.0, 10.0, 20.0];
+
+  /// Where a distance stands on the slider, counted in stops from its start: one between two stops stands
+  /// between them, and one past either end at that end.
+  static double nearPlace(double miles) {
+    final stops = nearStops;
+    if (miles <= stops.first) return 0;
+    for (var at = 1; at < stops.length; at++) {
+      if (miles <= stops[at]) return at - 1 + (miles - stops[at - 1]) / (stops[at] - stops[at - 1]);
+    }
+    return stops.length - 1.0;
+  }
+
+  /// The distance at a place on the slider: the stop nearest to it.
+  static double nearAt(double place) => nearStops[place.round().clamp(0, nearStops.length - 1)];
+
+  /// A number of miles in words: "4 miles", "2.5 miles", "0.25 miles", "1 mile".
   static String miles(double miles) {
-    final whole = miles == miles.roundToDouble();
-    return '${whole ? miles.round() : miles.toStringAsFixed(1)} ${miles == 1 ? 'mile' : 'miles'}';
+    final said = miles.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    return '$said ${miles == 1 ? 'mile' : 'miles'}';
   }
 
   AddressService? named(String name) {

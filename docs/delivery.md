@@ -466,7 +466,8 @@ Delivery fee.
   restaurant come before the ones further out (the owner's words, 2026-11-25: deliveries go four miles as a
   rule, further for a big order). It is a preference and no wall: an address further out is still listed
   when the letters fit it. **Location › Address list › Nearby first** is a slider that sets another distance,
-  from 1 to 20 miles. It needs the restaurant's own address (Location › **Delivery fee**); the dialog says so in red
+  from a quarter of a mile to 20 miles, in finer steps up close. It needs the restaurant's own address
+  (Location › **Delivery fee**); the dialog says so in red
   where that is not set. Google takes the distance as a circle. Mapbox and Azure Maps take the place alone
   and put what is nearest to it first. Your own earlier deliveries stand above all of them either way.
 - **How the letters are read.** Every word typed in full has to be a word of the address, and the word
@@ -558,8 +559,11 @@ line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No
 "Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
 
 Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: a
-slider in whole miles from 1 to 20, with the distance in words beside its name ("4 miles"). It stands at
-four miles until somebody moves it, and nothing is saved before Save.
+slider, with the distance in words beside its name ("4 miles"). Its steps are finer up close (the owner's
+words, 2026-11-25): a quarter of a mile at a time up to 3 miles, half a mile up to 6, a mile up to 12, and
+two miles up to 20. Every step is as wide as the next, so the first three miles take two fifths of the
+slider; the numbers under it (1, 3, 6, 10, 20) show where those distances stand. It stands at four miles
+until somebody moves it, and nothing is saved before Save.
 
 The row under Location says how it stands: "Your own earlier deliveries are listed while an address is
 typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox and
@@ -949,7 +953,7 @@ saved distances are further down):
   `POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` are the keys (`pos.keys` slots `maps_google`, `maps_mapbox`,
   `maps_azure`); `pos.api.keys.use_keys` hands a key typed in the app to it at once.
 - The setting `address_list` (`pos.settings`): `google`, `mapbox`, `azure`, each false until a manager sets
-  it, and `near_miles` (0.5 to 30, to a tenth; 4 unless set, and kept by a PUT that leaves it out). The GET
+  it, and `near_miles` (0.25 to 30, to a hundredth; 4 unless set, and kept by a PUT that leaves it out). The GET
   also says `origin_set`, whether the restaurant's own address is known. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays as it is) answers
   them with `services` (each `{name, title, credit, on, key, asks, left, monthly_most, used_up, resting}`)
   and, for an older app, `service`, `asks` and `credit` of Google. `POST /settings/address_list/try`

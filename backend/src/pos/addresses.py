@@ -858,6 +858,19 @@ class _Listing:
         self.finding: threading.Thread | None = None
 
 
+def order_of(setting: Mapping[str, Any] | None) -> list[str]:
+    """The order a location asks the services in, as the list's setting has it (`order`): the names it gives
+    that are services, each once, and after them any it leaves out, in the usual order (`ORDER`). The usual
+    order where the setting gives none."""
+    given = setting.get("order") if setting is not None else None
+    named: list[str] = []
+    if isinstance(given, list | tuple):
+        for name in given:
+            if name in ORDER and name not in named:
+                named.append(name)
+    return [*named, *(name for name in ORDER if name not in named)]
+
+
 def _place_in_order(listing: _Listing) -> int:
     name = listing.service.name
     return ORDER.index(name) if name in ORDER else len(ORDER)
@@ -1063,8 +1076,10 @@ class Suggester:
         service that takes a distance. `among` names the services a manager
         turned on (all of them unless given); they are asked in their order, each after the first only
         when the one before it gave no answer: its month is used up, it rests after it did not answer, it
-        does not answer now, or it refuses the key. An empty list is an answer. `via` names the one
-        service to ask whatever the others do and whether it rests or not: for trying it out.
+        does not answer now, or it refuses the key. Given as a list, `among` is also that order (a location
+        may put them in its own, `order_of`); the usual one (`ORDER`) otherwise. An empty list is an answer.
+        `via` names the one service to ask whatever the others do and whether it rests or not: for trying
+        it out.
 
         Raises LookupFailed when none of them answered: with what the first one's reason was, or that
         there is no address like that when one of them said so."""
@@ -1075,6 +1090,8 @@ class Suggester:
                 for listing in self._listings
                 if (listing.service.name == via if via is not None else among is None or listing.service.name in among)
             ]
+        if via is None and isinstance(among, list | tuple):
+            listings.sort(key=lambda listing: among.index(listing.service.name))
         reasons: list[tuple[str, int | None]] = []
         until = time.monotonic() + self._all
         for listing in listings:
@@ -1227,6 +1244,7 @@ __all__ = [
     "known",
     "mapbox_from_env",
     "month_of",
+    "order_of",
     "own_addresses",
     "places_from_env",
     "said",

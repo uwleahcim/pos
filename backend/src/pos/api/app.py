@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
-from ..addresses import Suggester, default_asked, suggester_from_env
+from ..addresses import Suggester, default_asked, order_of, suggester_from_env
 from ..check_guests import CheckGuests, default_check_guests
 from ..customers import (
     NOTE_MAX,
@@ -1926,8 +1926,9 @@ def create_app(
         status = lookups.status()
         if status["traffic"] is not None:
             status["traffic"]["enabled"] = settings.get("live_drive").get("enabled") is True
-        listings = app.state.suggester.statuses()
         turned_on = settings.get("address_list")
+        order = order_of(turned_on)
+        listings = sorted(app.state.suggester.statuses(), key=lambda listing: order.index(listing["service"]))
         for listing in listings:
             listing["enabled"] = turned_on.get(listing["service"]) is True
         return {

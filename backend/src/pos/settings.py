@@ -188,7 +188,13 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "live_drive": {"enabled": False, "before": 25},
     # Off: it sends what is typed in an address box to Google, and that is the owner's to decide.
     # Four miles: as far as the restaurant this was built for usually delivers (the owner, 2026-11-25).
-    "address_list": {"google": False, "mapbox": False, "azure": False, "near_miles": 4.0},
+    "address_list": {
+        "google": False,
+        "mapbox": False,
+        "azure": False,
+        "near_miles": 4.0,
+        "order": ["google", "mapbox", "azure"],
+    },
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
@@ -563,7 +569,7 @@ def clean_live_drive(data: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-NEAR_MILES_LEAST = 0.5
+NEAR_MILES_LEAST = 0.25
 NEAR_MILES_MOST = 30.0
 """How near and how far "nearby" may be set for the list of addresses: Google takes no circle wider than
 50 km."""
@@ -571,25 +577,35 @@ NEAR_MILES_MOST = 30.0
 
 def clean_address_list(data: Mapping[str, Any]) -> dict[str, Any]:
     """The list of addresses as the app may set it, checked: `google`, `mapbox` and `azure`, whether each map
-    service is asked as well as the restaurant's own deliveries (false for one that is left out); and
-    `near_miles`, how far around the restaurant addresses come first, from half a mile to thirty, to a tenth
-    (four where it is left out). Raises ValueError on a bad value."""
+    service is asked as well as the restaurant's own deliveries (false for one that is left out);
+    `near_miles`, how far around the restaurant addresses come first, from a quarter of a mile to thirty, to
+    a hundredth (four where it is left out); and `order`, the services' names in the order they are asked, each once
+    (one that is left out comes after the ones named, and the usual order stands where it is left out
+    altogether). Raises ValueError on a bad value."""
     out: dict[str, Any] = {}
-    for name, unless_set in DEFAULTS["address_list"].items():
-        if not isinstance(unless_set, bool):
-            continue
+    names = [name for name, unless_set in DEFAULTS["address_list"].items() if isinstance(unless_set, bool)]
+    for name in names:
         on = data.get(name, False)
         if not isinstance(on, bool):
             raise ValueError(f"{name} is true or false")
         out[name] = on
+    order = data.get("order")
+    order = list(names) if order is None else order
+    if not isinstance(order, list | tuple) or not all(isinstance(name, str) for name in order):
+        raise ValueError("order is a list of the services' names")
+    if any(name not in names for name in order):
+        raise ValueError("order names a service there is none of")
+    if len(set(order)) != len(order):
+        raise ValueError("order names each service once")
     near = data.get("near_miles")
     near = DEFAULTS["address_list"]["near_miles"] if near is None else near
     if isinstance(near, bool) or not isinstance(near, int | float) or near != near:
         raise ValueError("near_miles is a number of miles")
-    near = round(float(near), 1)
+    near = round(float(near), 2)  # a quarter of a mile is a distance a slider stops at
     if not NEAR_MILES_LEAST <= near <= NEAR_MILES_MOST:
         raise ValueError(f"nearby is from {NEAR_MILES_LEAST:g} to {NEAR_MILES_MOST:g} miles")
     out["near_miles"] = near
+    out["order"] = [*order, *(name for name in names if name not in order)]
     return out
 
 
