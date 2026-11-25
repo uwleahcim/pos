@@ -14,6 +14,7 @@ import 'package:pos_app/outbox.dart';
 import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/powers.dart';
+import 'package:pos_app/printers.dart' show PrinterConfig;
 import 'package:pos_app/queue_store.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
@@ -4009,7 +4010,10 @@ class Hub {
           }, 404);
         }
         testPrints.add(printer);
-        return json({'job_id': 'test:$printer', 'status': 'queued'}, 202);
+        // one demo ticket for each ticket the printer prints a send on, as the hub does
+        final asked = (printers['printers'] as List).firstWhere((p) => (p as Map)['id'] == printer) as Map;
+        final tickets = PrinterConfig.fromJson(asked.cast<String, dynamic>()).sets.length;
+        return json({'job_id': 'test:$printer', 'status': 'queued', 'tickets': tickets}, 202);
       case '/phones/status':
         return json(pbxStatus);
       case '/faces/status':

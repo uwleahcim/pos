@@ -82,7 +82,9 @@ Also at: Fryer, Sushi Bar
 - **Also at** names the other stations cooking for the same send, so a cook can time a dish against them.
   It names stations, not printers: a printer that prints for Wok 1 and the Fryer is one ticket, and the
   sushi bar's ticket reads "Also at: Wok 1, Fryer" only when both have a dish. A station with no printer of
-  its own is still named, though its dishes come out of the first printer.
+  its own is still named, though its dishes come out of the first printer. A printer set to print a ticket
+  for each station (see **Tickets** under Printers) counts and names each of them like a printer of its
+  own: Wok 1's ticket reads "Ticket 1 of 2" and "Also at: Fryer" though both come out of one printer.
 
 Both count one send, not the whole order: appetizers fired earlier are not on the entrees' tickets. With
 one station cooking, neither line prints. A void ticket says the same of the other stations it reaches,
@@ -189,7 +191,18 @@ ticket lists what is picked in the group; tap it off and the dish prints there w
 - **Prints for**: the stations it prints for, each a chip with its own bin. **Add a station** lists the
   menu's stations that no printer has yet, and **A new station…** takes a code typed. Several stations may
   share one printer: their dishes come out on one ticket, headed with every station's name ("WOK 1 +
-  FRYER"; past three, "WOK 1 + 3 MORE").
+  FRYER"; past three, "WOK 1 + 3 MORE"), unless the printer is told otherwise:
+- **Tickets**, on a printer with more than one station: **One for all** (what a printer starts on, and what
+  every printer did before) or **One per station**. With one per station, a send prints a ticket for each
+  station that has a dish in it, each headed with that station alone and cut off by itself, so a ticket
+  can be torn off and handed to its cook. A line under the choice says what will come out ("A ticket for
+  each of: Wok 1 + Wok 2 · Fryer · Broiler").
+- **Print together**, under it once the printer has three stations or more: the stations that share a
+  ticket all the same. **Group stations** opens the printer's stations to tick (Wok 1 and Wok 2); they
+  then print on one ticket headed "WOK 1 + WOK 2" while the fryer keeps its own. A group is a chip: a tap
+  changes its stations, its bin sets them apart again. A station is in one group; a station taken off the
+  printer leaves its group. Groups belong to one printer, since stations on two printers cannot share a
+  ticket.
 - **IP address**, typed, with `:port` when it is not 9100. The **magnifier** turns the field into a list of
   the printers the hub finds on the network ("10.27.1.14 · EPSON TM-T88VII"), each with the stations it
   prints for already when another card has it; an office printer is listed and cannot be picked. **Look
@@ -206,7 +219,22 @@ ticket lists what is picked in the group; tap it off and the dish prints there w
   the same through a third printer): a printer that already falls back to this one is greyed out in the list
   with "would loop back here", a loop saved earlier is marked "loops back here" on its cards, and Save waits
   until one of them is taken out. The hub refuses such a save too.
-- **Test print**: the demo ticket, with the stations' names on it.
+- **Test print**: the demo ticket, with the stations' names on it. A printer set to one per station prints
+  it once for each ticket it would print, headed as they will be, so the paper shows what was set.
+
+What separate tickets change, and what they do not:
+
+- Each ticket is a job of its own: it is numbered and names the others ("Ticket 2 of 3", "Also at"), and
+  when the printer is down each goes to the fallback headed with whose it is ("FRYER PRINTER DOWN, PRINTED
+  HERE").
+- A dish that prints at two of the printer's stations (cooked at the wok and sent to the takeout counter
+  by a **Take out** choice) is on both tickets; on one ticket for all it is said once.
+- The takeout station's ticket of a to-go order is still the whole order, for the bag; the printer's other
+  stations get tickets with their own dishes.
+- The **first** printer stands in for every station with no printer. Set to one per station, it prints
+  each of those on a ticket of its own too, headed with that station's name.
+- Bills, the day's report, pack sheets, prep lists and bag labels are not kitchen tickets and print as
+  before.
 
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
 printers already set, and lists what answers: receipt printers first, each with its name and language and
@@ -265,8 +293,13 @@ still known as a Star by step 3, without its model.
 ## The API
 
 - `GET /settings/printers`, `PUT /settings/printers` (manager): `printers` as `{id, stations, address,
-  dialect, detected, fallbacks}` in order, `takeout_station`; `source` says `settings`, `env` or `none`.
-  A `PUT` whose fallbacks go round in a loop is refused with 422 and the loop in words.
+  dialect, detected, fallbacks, tickets, groups}` in order, `takeout_station`; `source` says `settings`,
+  `env` or `none`. A `PUT` whose fallbacks go round in a loop is refused with 422 and the loop in words.
+  `tickets` is `one` (a send on one ticket for all the printer's stations) or `each` (a ticket for each
+  station); `groups` is a list of lists of station codes, the stations that share a ticket when it is
+  `each`. A group keeps the stations still on the printer and is dropped under two; a station in two
+  groups is refused. Both are always in what is read, so a screen knows the hub prints either way; a
+  printer sent without them (an app not rebuilt yet) keeps what is saved for it.
   `stations` is the list of station codes the printer prints for (`station`, the first, is still sent and
   still accepted alone, for an app not yet rebuilt). `dialect` is `escpos`, `star` or `auto`; with `auto` the
   hub prints in `detected`, the language `POST /print/identify` or the scan heard, and in ESC/POS while that
@@ -287,17 +320,20 @@ still known as a Star by step 3, without its model.
   its `dialect`, `model`, `maker`, `kind` (`receipt`, `other` or null), whether the language is `guessed`
   from the name, and what was `heard`. `POST /print/identify` (manager): one address.
 - `GET /print/printers`, `POST /print/test` (by id or station) and the relay's job calls as before; a job
-  lists its `fallbacks` and how often it `moved`.
+  lists its `fallbacks` and how often it `moved`. A test print answers with `tickets`, how many it queued.
+  A send's jobs are named `<op>:<printer id>`, and `<op>:<printer id>:<first station>` for each ticket of a
+  printer that prints them apart.
 - The guest's bill is not routed by station: `GET/PUT /settings/bill`, `POST /orders/{id}/bill` and
   `POST /print/bill-sample` are in `docs/bill.md`.
 - The pack sheet and the prep list: `POST /orders/{id}/pack-sheet`, `GET /orders/ahead/prep` and
   `POST /orders/ahead/prep/print` are in `docs/catering.md`.
 - The labels of a to-go order's bags: `POST /orders/{id}/bag-labels` is in `docs/bag-labels.md`.
 
-Code: `backend/src/pos/printing/service.py` (routing; `send` and `cooking` for the two lines above; `_hold`
-and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`
+Code: `backend/src/pos/printing/service.py` (routing, with `Printer.sets` for the tickets of one printer;
+`send` and `cooking` for the two lines above; `_hold` and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`
 in the table `held_ticket`), `jobs.py` (fallbacks), `discover.py` (the scan and
 the languages), `pos/settings.py` (`clean_printers`), the engine's `routes_to` in `pos/menu/engine.py`;
 `apps/pos_app/lib/screens/printers_screen.dart`, `printers.dart`, the editor's Prints at in
-`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_other_stations.py`, `test_held.py`, `test_discover.py`,
-`apps/pos_app/test/printers_screen_test.dart`, `ticket_words_test.dart`.
+`screens/menu_editor.dart`. Tests: `backend/tests/printing/test_stations.py`, `test_other_stations.py`, `test_separate_tickets.py`,
+`test_held.py`, `test_discover.py`, `apps/pos_app/test/printers_screen_test.dart`,
+`printer_tickets_test.dart`, `ticket_words_test.dart`.

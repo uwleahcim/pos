@@ -8,12 +8,13 @@ it fails, in order. `POS_PRINTERS` (name=host[:port][/dialect], e.g.
 `kitchen=172.19.1.162/escpos,bar=172.19.1.14/star`) seeds a hub whose setting is still empty.
 
 Routing: a line prints at the printer serving its station; a printer serving several stations prints their
-lines on one ticket, headed with every station's name; the first printer also takes every station that has
-no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone, online, delivery,
-catering) prints whole at the takeout station's printer too, for the bag to be packed and checked. A
-station's ticket leaves off the choices the menu hides from it (`Group.hidden_at`: the cooks do not read the
-rice or the soup a dish comes with); the dish prints there all the same, and the bag's ticket reads what the
-takeout station reads.
+lines on one ticket, headed with every station's name, or, when it is set to (`tickets: each`), on a ticket
+for each station, the stations a manager grouped sharing one (`Printer.sets`); the first printer also takes
+every station that has no printer, so nothing fired is ever left unprinted. A to-go order (counter, phone,
+online, delivery, catering) prints whole at the takeout station's printer too, for the bag to be packed and
+checked. A station's ticket leaves off the choices the menu hides from it (`Group.hidden_at`: the cooks do
+not read the rice or the soup a dish comes with); the dish prints there all the same, and the bag's ticket
+reads what the takeout station reads.
 
 A screen can be told to print no ticket at some stations (`ticket_skips`, a manager's setting): what is sent
 or voided from it prints nothing there, because the person ringing it in is the one who makes it (the bar's
@@ -57,7 +58,7 @@ from .jobs import JobStore, PrintJob, send_raw
 from .labels import BagLabels, render_labels
 from .pack import PackSheet, render_pack
 from .prep import PrepPaper, render_prep
-from .ticket import AUTO, DIALECTS, Money, Ticket, TicketLine, render
+from .ticket import AUTO, DIALECTS, EACH, ONE, Money, Ticket, TicketLine, render
 
 LATE_AFTER_MS = 10 * 60 * 1000
 """An operation stamped this long before it arrives was queued through an outage, flagged or not."""
@@ -75,7 +76,9 @@ class Printer:
     serves several; `fallbacks` the ids of the printers that take its tickets when it does not answer, in
     order. `id` tells two printers on one station apart; it is the name unless the setting gave one.
     `dialect` is the language its tickets are rendered in; `language` is what the setting says, which may be
-    `auto` (the dialect is then the one the printer was found to speak, `detected`)."""
+    `auto` (the dialect is then the one the printer was found to speak, `detected`). `tickets` says how it
+    prints one send when it serves several stations: all their dishes on `one` ticket, or a ticket for `each`
+    station, with the stations of a group in `groups` sharing one (`sets`)."""
 
     name: str
     address: str  # host or host:port
@@ -85,6 +88,8 @@ class Printer:
     stations: tuple[str, ...] = ()
     language: str = ""
     detected: str | None = None
+    tickets: str = ONE
+    groups: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -97,6 +102,34 @@ class Printer:
     @property
     def station(self) -> str:
         return self.name
+
+    @property
+    def separate(self) -> bool:
+        """Whether a send comes out of it as a ticket for each station rather than as one for all of them."""
+        return self.tickets == EACH and len(self.stations) > 1
+
+    def sets(self) -> tuple[tuple[str, ...], ...]:
+        """The stations of each ticket it prints for one send, in the order they stand on it: all of them on
+        one ticket, or each on its own, the stations of a group together where the first of them stands."""
+        if not self.separate:
+            return (self.stations,)
+        out: list[tuple[str, ...]] = []
+        placed: set[str] = set()
+        for station in self.stations:
+            if station in placed:
+                continue
+            group = next((group for group in self.groups if station in group), (station,))
+            together = tuple(code for code in self.stations if code in group and code not in placed)
+            out.append(together)
+            placed.update(together)
+        return tuple(out)
+
+    def set_of(self, station: str | None) -> tuple[str, ...]:
+        """The stations on the ticket that `station`'s dishes print on here. None of them when it prints one
+        ticket for all its stations, or does not print for that one: such a ticket is headed with them all."""
+        if not self.separate:
+            return ()
+        return next((together for together in self.sets() if station in together), ())
 
     @classmethod
     def parse(cls, spec: str) -> Printer:
@@ -118,6 +151,8 @@ class Printer:
             "dialect": self.language,
             "detected": self.detected,
             "fallbacks": list(self.fallbacks),
+            "tickets": self.tickets,
+            "groups": [list(group) for group in self.groups],
         }
 
 
@@ -129,12 +164,14 @@ def printers_from_env(value: str | None = None) -> list[Printer]:
 def printers_from_setting(setting: Mapping[str, Any]) -> list[Printer]:
     """The printers as the `printers` setting holds them (checked by `pos.settings.clean_printers`). One set
     to `auto` prints in the language it was found to speak, and in ESC/POS, which most printers speak, until
-    it has been told."""
+    it has been told. One saved before a printer could print a ticket a station prints one for all of them,
+    as it always did."""
     out = []
     for p in setting.get("printers", ()):
         stations = tuple(str(code) for code in p.get("stations") or (p["station"],))
         language = str(p.get("dialect") or "escpos")
         detected = p.get("detected") if p.get("detected") in DIALECTS else None
+        groups = tuple(tuple(str(code) for code in group) for group in p.get("groups") or ())
         out.append(
             Printer(
                 name=stations[0],
@@ -145,6 +182,8 @@ def printers_from_setting(setting: Mapping[str, Any]) -> list[Printer]:
                 stations=stations,
                 language=language,
                 detected=detected,
+                tickets=EACH if p.get("tickets") == EACH else ONE,
+                groups=groups,
             )
         )
     return out
@@ -398,17 +437,21 @@ a day's prep list or the labels of an order's bags."""
 
 @dataclass(frozen=True)
 class Takes:
-    """What one printer prints: called with the station a kitchen line is cooked at, it says whether the line
-    belongs on this printer's ticket. `own` is the stations it serves, `first` whether it also stands in for
-    every station with no printer (`served` is the stations that have one), and `whole` the takeout station
-    when it takes this order whole for the bag. `skip` is the stations the screen that sent this prints no
-    ticket at: a line cooked there is on no printer's ticket of its own (the bag's still lists it)."""
+    """What one ticket of a printer prints: called with the station a kitchen line is cooked at, it says
+    whether the line belongs on it. `own` is the stations it is for (all the printer serves, or the ones of
+    this ticket when the printer prints a ticket a station), `first` whether it also stands in for every
+    station with no printer (`served` is the stations that have one), and `whole` the takeout station when it
+    takes this order whole for the bag. `skip` is the stations the screen that sent this prints no ticket at:
+    a line cooked there is on no printer's ticket of its own (the bag's still lists it). `named` is the
+    stations the ticket is headed with, when the printer prints more than one for a send; empty for a printer
+    that prints one, headed with every station it serves."""
 
     own: frozenset[str] = frozenset()
     first: bool = False
     served: frozenset[str] = frozenset()
     whole: str | None = None
     skip: frozenset[str] = frozenset()
+    named: tuple[str, ...] = ()
 
     def cooks(self, station: str | None) -> bool:
         if station in self.skip:
@@ -619,11 +662,18 @@ class PrintService:
         names = self.station_names() if self.station_names is not None else {}
         return names.get(code) or code
 
-    def head(self, printer: Printer) -> str:
+    def head(self, printer: Printer, stations: Sequence[str] = ()) -> str:
         """What heads the printer's tickets: its station's name, or every one's when it serves several
-        ("Wok 1 + Wok 2"; past three, "Wok 1 + 3 more")."""
-        names = [self.station_name(code) for code in printer.stations]
+        ("Wok 1 + Wok 2"; past three, "Wok 1 + 3 more"). `stations` names the ones of one ticket, for a
+        printer that prints a ticket a station (`Takes.named`)."""
+        names = [self.station_name(code) for code in stations or printer.stations]
         return " + ".join(names) if len(names) <= 3 else f"{names[0]} + {len(names) - 1} more"
+
+    @staticmethod
+    def _job_id(key: str, printer: Printer, takes: Takes) -> str:
+        """The id of the job for one ticket of a send: by its printer, and by the first station it is headed
+        with when the printer prints a ticket a station, since two jobs with one id are one job."""
+        return f"{key}:{printer.id}:{takes.named[0]}" if takes.named else f"{key}:{printer.id}"
 
     def on_ops(self, ops_of: Callable[[str], list[Op]], ops: list[Op]) -> list[PrintJob]:
         """Called after operations are stored. Each order's tickets come from comparing the order before and
@@ -963,7 +1013,8 @@ class PrintService:
         was_tab: str | None = None,
         skip: frozenset[str] = frozenset(),
     ) -> list[PrintJob]:
-        """One ticket per printer that has lines in this change. `skip` is the stations the screen that sent
+        """One ticket per printer that has lines in this change, or one per station (or group of stations) of
+        a printer set to print them apart (`Printer.sets`). `skip` is the stations the screen that sent
         it prints no ticket at: their lines are on nobody's ticket but the bag's, and such a station is neither
         counted nor named on the other tickets, since no ticket of it is on its way. The takeout station's
         copy of a to-go order also says where the money stands (`money`) and what else goes in the bag
@@ -986,13 +1037,14 @@ class PrintService:
         words = self.ticket_words() if kind is None else {}  # a notice is no send: nothing new is cooking
         money = self.money(state) if kind is None else None
         bag = self.bag(state) if kind is None else None
-        made: list[tuple[Printer, Ticket, tuple[str, ...]]] = []
-        for printer, routes in self.routing(printers, to_go=is_to_go(state), skip=skip):
+        made: list[tuple[Printer, Takes, Ticket, tuple[str, ...]]] = []
+        cooked_at = [k.get("station") for line in (*voided, *sent) for k in (line.priced or {}).get("kitchen") or ()]
+        for printer, routes in self.routing(printers, to_go=is_to_go(state), skip=skip, cooked=cooked_at):
             ticket = ticket_for(
                 state,
                 sent,
                 voided,
-                station=self.head(printer),
+                station=self.head(printer, routes.named),
                 ticket_no=ticket_no,
                 routes=routes,
                 late=late,
@@ -1009,17 +1061,17 @@ class PrintService:
             if routes.whole is not None and kind is None:
                 # the copy that goes in the bag: where the money stands, and what else the customer wants in it
                 ticket = replace(ticket, money=money, bag=bag)
-            made.append((printer, ticket, self.cooking(printer, routes, [*voided, *sent])))
-        cooks = sum(1 for _, _, cooked in made if cooked)
+            made.append((printer, routes, ticket, self.cooking(printer, routes, [*voided, *sent])))
+        cooks = sum(1 for *_, cooked in made if cooked)
         jobs, nth = [], 0
-        for printer, ticket, cooked in made:
+        for printer, routes, ticket, cooked in made:
             nth += bool(cooked)
             if words.get("numbered") and cooked and cooks > 1:
                 ticket = replace(ticket, part=(nth, cooks))
             if words.get("also_at"):
-                others = dict.fromkeys(name for _, _, there in made for name in there if name not in cooked)
+                others = dict.fromkeys(name for *_, there in made for name in there if name not in cooked)
                 ticket = replace(ticket, also_at=tuple(others))
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", printers=printers))
+            jobs.append(self.queue(ticket, printer, job_id=self._job_id(key, printer, routes), printers=printers))
         return jobs
 
     def bag(self, state: OrderState) -> tuple[str, ...] | None:
@@ -1039,11 +1091,12 @@ class PrintService:
                 continue
             with self._lock:
                 ticket_no = next(self._tickets)
-            ticket = ticket_for(state, [], station=self.head(printer), ticket_no=ticket_no, kind="bag")
+            head = self.head(printer, routes.named)
+            ticket = ticket_for(state, [], station=head, ticket_no=ticket_no, kind="bag")
             if ticket is None:
                 continue
             ticket = replace(ticket, bag=self.bag(state), allergies=())  # the dishes' business, not the bag's
-            jobs.append(self.queue(ticket, printer, job_id=f"{key}:{printer.id}", printers=printers))
+            jobs.append(self.queue(ticket, printer, job_id=self._job_id(key, printer, routes), printers=printers))
         return jobs
 
     def notice(self, words: Sequence[str], *, key: str) -> list[PrintJob]:
@@ -1059,7 +1112,7 @@ class PrintService:
         with self._lock:
             ticket_no = next(self._tickets)
         slip = Ticket(
-            station=self.head(printer),
+            station=self.head(printer, printer.set_of(takeout)),
             kind="notice",
             order_id=key,
             ticket_no=ticket_no,
@@ -1088,19 +1141,30 @@ class PrintService:
             for k in (line.priced or {}).get("kitchen") or [{}]:
                 station = k.get("station")
                 if takes.cooks(station) and (station is None or station != takeout):
-                    names.setdefault(self.station_name(station) if station else self.head(printer))
+                    names.setdefault(self.station_name(station) if station else self.head(printer, takes.named))
         return tuple(names)
 
     def routing(
-        self, printers: list[Printer], *, to_go: bool, skip: frozenset[str] = frozenset()
+        self,
+        printers: list[Printer],
+        *,
+        to_go: bool,
+        skip: frozenset[str] = frozenset(),
+        cooked: Iterable[str | None] = (),
     ) -> list[tuple[Printer, Takes]]:
-        """Which lines each printer takes, by station: a printer takes its own stations (the first printer on
-        a station, when two list one); the first printer in the list also takes every station without a
-        printer and lines with none, so nothing fired is left unprinted; and the takeout station's printer
-        takes every line of a to-go order, whole, for the bag. Each `Takes` also says for which stations a
-        line prints there, which decides the choices it lists (`Group.hidden_at`). `skip` is the stations the
-        sending screen prints no ticket at: nobody takes their lines, the first printer included, and the bag's
-        copy is left out too when the takeout station itself is skipped."""
+        """Which lines each ticket takes, by station, a printer with each of its tickets in the order they
+        print. A printer takes its own stations (the first printer on a station, when two list one), on one
+        ticket, or on one for each station or group of stations when it is set to print them apart
+        (`Printer.sets`); the first printer in the list also takes every station without a printer and lines
+        with none, so nothing fired is left unprinted; and the takeout station's ticket takes every line of a
+        to-go order, whole, for the bag. Each `Takes` also says for which stations a line prints there, which
+        decides the choices it lists (`Group.hidden_at`). `skip` is the stations the sending screen prints no
+        ticket at: nobody takes their lines, the first printer included, and the bag's copy is left out too
+        when the takeout station itself is skipped.
+
+        `cooked` is the stations of the lines being sent. A first printer that prints its stations apart does
+        the same for the ones it stands in for: each station of `cooked` that has no printer gets a ticket of
+        its own there, headed with its name, and lines with no station at all go on the printer's first."""
         served: dict[str, Printer] = {}
         for printer in printers:
             for station in printer.stations:
@@ -1108,11 +1172,21 @@ class PrintService:
         takeout = self.takeout_station() if to_go else None
         if takeout in skip:
             takeout = None
+        apart = bool(printers) and printers[0].separate
+        loose = [code for code in dict.fromkeys(cooked) if code and code not in served and code not in skip]
+        taken = frozenset(served) | frozenset(loose if apart else ())
         out = []
         for i, printer in enumerate(printers):
-            own = frozenset(station for station in printer.stations if served[station] is printer)
-            whole = takeout if takeout is not None and printer is served.get(takeout) else None
-            out.append((printer, Takes(own, first=i == 0, served=frozenset(served), whole=whole, skip=skip)))
+            for nth, stations in enumerate(printer.sets()):
+                own = frozenset(station for station in stations if served[station] is printer)
+                bagged = takeout is not None and printer is served.get(takeout) and takeout in stations
+                whole = takeout if bagged else None
+                named = stations if printer.separate else ()
+                first = i == 0 and nth == 0
+                out.append((printer, Takes(own, first=first, served=taken, whole=whole, skip=skip, named=named)))
+            if i == 0 and apart:
+                for station in loose:
+                    out.append((printer, Takes(frozenset({station}), served=taken, skip=skip, named=(station,))))
         return out
 
     def queue(

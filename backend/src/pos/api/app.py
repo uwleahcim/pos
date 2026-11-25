@@ -522,6 +522,12 @@ class PrinterIn(BaseModel):
     dialect: str = Field("escpos", description="escpos, star, or auto: the language the printer was found to speak")
     detected: str | None = Field(None, description="what /print/identify said it speaks; printed in when auto")
     fallbacks: list[str] = Field(default_factory=list, description="ids of the printers that take over, in order")
+    tickets: str | None = Field(
+        None, description="one: its stations' dishes on one ticket; each: a ticket for each station. Left out: as saved"
+    )
+    groups: list[list[str]] | None = Field(
+        None, description="with each: the stations that share a ticket all the same. Left out: as saved"
+    )
 
 
 class PrintersIn(BaseModel):
@@ -1603,12 +1609,16 @@ def create_app(
     def read_printers() -> dict[str, Any]:
         """The kitchen printers: each with its stations, address, language (`dialect`: escpos, star or auto, with
         `detected`) and fallbacks, in the order they stand, and the station a to-go order prints whole at.
+        `tickets` says whether a printer with several stations prints a send on `one` ticket or on one for
+        `each` station, and `groups` the stations that share a ticket all the same; both are always there, so
+        a screen knows this hub prints either way (a printer saved before it could reads `one`).
         `source` says where they come from: the setting, or `env` (POS_PRINTERS on a hub whose setting is
         still empty, shown so a save keeps them)."""
         settings: SettingStore = app.state.settings
         setting = settings.get("printers")
         if setting["printers"]:
-            return {**setting, "source": "settings"}
+            listed = [p.as_setting() for p in printers_from_setting(setting)]
+            return {**setting, "printers": listed, "source": "settings"}
         seeded = printers_from_env()
         return {
             "printers": [p.as_setting() for p in seeded],
@@ -1619,9 +1629,19 @@ def create_app(
     @app.put("/settings/printers")
     def write_printers(body: PrintersIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager sets the printers for the location. A printer sent without an id is new and gets one;
-        the rest keep theirs, since fallbacks name them. The next ticket prints by the new list."""
+        the rest keep theirs, since fallbacks name them. The next ticket prints by the new list. A printer sent
+        without `tickets` or `groups` (an app not rebuilt since printers could print a ticket a station) keeps
+        what is saved for it, so a save from an old screen does not put the tickets back together."""
         manager_from(app.state.tokens, authorization)
-        return {**write_setting("printers", body.model_dump(), clean_printers), "source": "settings"}
+        settings: SettingStore = app.state.settings
+        asked = body.model_dump()
+        saved = {p.get("id"): p for p in settings.get("printers")["printers"]}
+        for printer in asked["printers"]:
+            was = saved.get(printer["id"]) or {}
+            for name in ("tickets", "groups"):
+                if printer[name] is None:
+                    printer[name] = was.get(name)
+        return {**write_setting("printers", asked, clean_printers), "source": "settings"}
 
     @app.get("/settings/tickets")
     def read_tickets() -> dict[str, Any]:
@@ -2458,13 +2478,18 @@ def create_app(
 
     @app.post("/print/test", status_code=202)
     def test_print(body: TestPrintIn) -> dict[str, Any]:
-        """The demo ticket to a configured printer, by id or station: the settings screen's test button."""
+        """The demo ticket to a configured printer, by id or station: the settings screen's test button. A
+        printer that prints a ticket for each station prints the demo once for each, headed as its tickets
+        will be, so the paper shows what was set; `tickets` says how many."""
         printing: PrintService = app.state.printing
         printer = printing.printer(body.printer)
         if printer is None:
             raise HTTPException(404, {"error": "no_such_printer", "printers": [p.id for p in printing.printers]})
-        job = printing.queue(replace(DEMO, station=printing.head(printer)), printer)
-        return job_out(job)
+        jobs = [
+            printing.queue(replace(DEMO, station=printing.head(printer, stations)), printer)
+            for stations in printer.sets()
+        ]
+        return {**job_out(jobs[0]), "tickets": len(jobs)}
 
     @app.post("/print/bill-sample", status_code=202)
     def print_bill_sample(body: BillIn, authorization: str | None = Header(None)) -> dict[str, Any]:
