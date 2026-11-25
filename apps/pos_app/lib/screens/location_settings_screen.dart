@@ -10,6 +10,7 @@ import '../camera.dart';
 import '../coursing.dart';
 import '../delivery_fee.dart';
 import '../desk_phone.dart';
+import '../drive_lookups.dart';
 import '../faces.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
@@ -177,6 +178,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
   LiveDrive? _live; // live traffic for deliveries, as the hub has it; null until it answers (an older hub)
+  DriveLookups? _lookups; // which map service is asked first for a delivery's drive; null from an older hub
   AddressListSetting? _addressList; // the list of addresses while typing; null until the hub answers
   PointsRules? _points; // the rules of the points (docs/points.md); null until the hub answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
@@ -288,6 +290,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       // nothing answered about the delivery fee: the row says so
     }
     await _readLive();
+    await _readLookups();
     await _readAddressList();
     try {
       final points = await widget.api.pointsRules();
@@ -786,12 +789,25 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   Future<void> _deliveryFee() async {
     final saved = await showDialog<DeliveryFees>(
       context: context,
-      builder: (_) => DeliveryFeeDialog(api: widget.api, token: widget.token, fees: _fees!),
+      builder: (_) =>
+          DeliveryFeeDialog(api: widget.api, token: widget.token, fees: _fees!, lookups: _lookups?.distance),
     );
+    // the order of the map services was saved before the prices: read as it stands whatever came of those
+    unawaited(_readLookups());
     if (saved == null || !mounted) return;
     setState(() => _fees = saved);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery fee saved')));
     unawaited(_readLive()); // the restaurant's address is live traffic's too
+  }
+
+  /// Which map services are asked about a delivery's drive, in which order, and how each stands today.
+  Future<void> _readLookups() async {
+    try {
+      final lookups = await widget.api.driveLookups();
+      if (mounted) setState(() => _lookups = lookups);
+    } on ApiException {
+      // nothing answered about the order: the dialogs show none
+    }
   }
 
   /// Live traffic as the hub has it, with what the hub says it still takes.
@@ -813,8 +829,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         setting: _live!,
         priced: _fees?.asks ?? false,
         delivery: (_quotes ?? const Quotes()).baseFor('delivery'),
+        lookups: _lookups?.traffic,
       ),
     );
+    unawaited(_readLookups());
     if (saved == null || !mounted) return;
     setState(() => _live = saved);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Live traffic saved')));
@@ -1079,7 +1097,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     final live = _live;
     if (live == null) return 'The hub has not answered about live traffic (an older hub: update it)';
     if (!live.enabled) return 'Off: a delivery is promised the minutes set for Delivery';
-    final missing = LiveDriveDialog.missing(live, priced: _fees?.asks ?? false);
+    final missing = LiveDriveDialog.missing(live, priced: _fees?.asks ?? false, lookups: _lookups?.traffic);
     if (missing != null) return 'On, but not used yet. $missing';
     return 'On: a delivery for now is promised ${live.before} min and the drive as the roads are';
   }

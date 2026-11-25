@@ -37,7 +37,10 @@ merges after any disconnect.
   customer who orders again to the same address is not looked up a second time; Google Maps can be a
   second map service, asked when the first gives no distance, whose figures pick the price and are not
   kept; with live traffic turned on, a delivery for now is promised the kitchen's minutes and the drive as
-  the roads are at that minute, and the fee never goes by it; while an address is typed, a list under the
+  the roads are at that minute, and the fee never goes by it; Mapbox and Azure Maps can be asked both
+  things as well, a manager drags the services into the order they are asked and turns each on or off, and
+  a small badge on the form says who answered and how many of its day's lookups are left; while an address
+  is typed, a list under the
   box says what it could become, the restaurant's own earlier deliveries first and, where a manager turned
   it on, Google's answers after them): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open

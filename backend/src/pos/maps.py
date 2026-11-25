@@ -63,6 +63,9 @@ ADDRESS_MAX = 200
 TIMEOUT_SECONDS = 4.0
 """How long one service is waited for, in all (`_within`). Two of them, one after the other, still answer
 inside the nine seconds a form waits for the hub, and somebody is on the phone with a customer meanwhile."""
+CHAIN_WAITS = 2
+"""How many such waits all the services asked how far one address is get between them, however many a
+location turned on: the form has stopped waiting past that, so nobody else is asked."""
 KEEP_SECONDS = 24 * 3600
 KEEP_MOST = 500
 DAILY_MOST = 500
@@ -467,6 +470,7 @@ class _Asked:
     asked: int = 0
     failed: int = 0
     last_failure: str | None = None
+    failing: str | None = None  # why the last asking of it gave nothing; None once it answered again
     other: bool = False  # one after the first two (Mapbox, Azure Maps): off until a manager turns it on
 
     def status(self) -> dict[str, Any]:
@@ -485,6 +489,7 @@ def _carried(asked: _Asked, was: Mapping[str, _Asked]) -> _Asked:
     before = was.get(asked.maps.name)
     if before is not None:
         asked.asked, asked.failed, asked.last_failure = before.asked, before.failed, before.last_failure
+        asked.failing = before.failing
     return asked
 
 
@@ -590,7 +595,7 @@ class Lookups:
         if day != self._day:
             self._day, self._spared = day, 0
             for service in (*self._services, *self._traffics):
-                service.asked, service.failed = 0, 0
+                service.asked, service.failed, service.failing = 0, 0, None
 
     def spared(self) -> None:
         """A distance was read off a customer's own earlier order, and nobody was asked: counted, so
@@ -664,8 +669,9 @@ class Lookups:
         """The drive from the restaurant to a delivery's address, and who measured it (`Trip.service`). The
         services `among` names are asked in its order (the ones the location turned on, as it ordered them;
         all of them as they stand where it names none), the next one only when the one before it gives no
-        distance, whatever its reason. `via` names the one service to ask, for trying a key out: nothing
-        remembered answers for it.
+        distance, whatever its reason, and only while the form still waits (`CHAIN_WAITS`): a service that
+        refuses or finds nothing says so at once, and one that does not answer uses its whole wait up. `via`
+        names the one service to ask, for trying a key out: nothing remembered answers for it.
         Raises LookupFailed: that the address was not found when any of them said so (it is what somebody at
         the form can do something about), else what the first one said."""
         services = (
@@ -688,11 +694,15 @@ class Lookups:
                     self._kept.move_to_end(key)
                     return kept[1]
         reasons: list[str] = []
+        until = time.monotonic() + CHAIN_WAITS * self._wait
         for service in services:
+            left = until - time.monotonic()
+            if left <= 0:  # the form has stopped waiting: nobody else is asked, and nothing is counted
+                break
             with self._lock:
                 self._today(now)
                 if service.asked >= service.daily:
-                    service.last_failure = "limit"
+                    service.last_failure = service.failing = "limit"
                     reasons.append("limit")
                     continue
                 service.asked += 1
@@ -701,17 +711,19 @@ class Lookups:
             except LookupFailed as err:  # its month has no room for the searches: it is not asked
                 with self._lock:
                     service.asked = max(0, service.asked - 1)
-                    service.last_failure = err.reason
+                    service.last_failure = service.failing = err.reason
                 reasons.append(err.reason)
                 continue
             try:
-                trip = replace(_within(self._wait, ask), service=service.maps.name)
+                trip = replace(_within(min(self._wait, left), ask), service=service.maps.name)
             except LookupFailed as err:
                 with self._lock:
                     service.failed += 1
-                    service.last_failure = err.reason
+                    service.last_failure = service.failing = err.reason
                 reasons.append(err.reason)
                 continue
+            with self._lock:
+                service.failing = None
             if may_keep(trip.service):  # the others' answers are used once and are gone
                 with self._lock:
                     self._kept[key] = (now, trip)
@@ -719,7 +731,7 @@ class Lookups:
                     while len(self._kept) > KEEP_MOST:
                         self._kept.popitem(last=False)
             return trip
-        raise LookupFailed("not_found" if "not_found" in reasons else reasons[0])
+        raise LookupFailed("not_found" if "not_found" in reasons else reasons[0] if reasons else "unreachable")
 
     def locate(self, address: str) -> tuple[float, float] | None:
         """Where an address stands (latitude, longitude), as the first service says that can be asked that
@@ -740,15 +752,18 @@ class Lookups:
                 raise LookupFailed("unreachable")
             self._today(self._clock())
             if service.asked >= service.daily:
-                service.last_failure = "limit"
+                service.last_failure = service.failing = "limit"
                 raise LookupFailed("limit")
             service.asked += 1
         try:
-            return _within(self._wait, lambda: service.maps.locate(address))
+            found = _within(self._wait, lambda: service.maps.locate(address))
+            with self._lock:
+                service.failing = None
+            return found
         except LookupFailed as err:
             with self._lock:
                 service.failed += 1
-                service.last_failure = err.reason
+                service.last_failure = service.failing = err.reason
             raise
 
     @property
@@ -791,7 +806,7 @@ class Lookups:
                 with self._lock:
                     self._today(self._clock())
                     if asked.asked >= asked.daily:
-                        asked.last_failure = "limit"
+                        asked.last_failure = asked.failing = "limit"
                         continue
                     asked.asked += 1
                 try:
@@ -799,7 +814,7 @@ class Lookups:
                 except LookupFailed as err:  # its month has no room for the searches: it is not asked
                     with self._lock:
                         asked.asked = max(0, asked.asked - 1)
-                        asked.last_failure = err.reason
+                        asked.last_failure = asked.failing = err.reason
                     continue
                 asking[:] = [asked]
                 try:
@@ -808,11 +823,13 @@ class Lookups:
                     with self._lock:
                         if not over:
                             asked.failed += 1
-                            asked.last_failure = err.reason
+                            asked.last_failure = asked.failing = err.reason
                     continue
                 except Exception as err:  # noqa: BLE001  handed to the one who waits, below
                     box.append(err)
                     return
+                with self._lock:
+                    asked.failing = None
                 box.append(Driven(minutes, asked.maps.name))
                 return
             asking.clear()
@@ -828,7 +845,7 @@ class Lookups:
                         over.append(True)
                         for asked in asking:
                             asked.failed += 1
-                            asked.last_failure = "unreachable"
+                            asked.last_failure = asked.failing = "unreachable"
                 return None
             told = box[0]
             if isinstance(told, Exception):
@@ -851,8 +868,9 @@ class Lookups:
         """Every service there is for a purpose (`distance` or `traffic`), in the order the location asks
         them, as a screen is told it: `name`, `title`, `credit` (the words its terms want beside its
         figures, or None), `on` (a manager has it turned on for that), `key` (the hub has a key for it),
-        `asks` (both), and how today went with it: `asked_today`, `failed_today`, `daily_most`, `left` and
-        `last_failure`, the last three None where the hub has no key."""
+        `asks` (both), and how today went with it: `asked_today`, `failed_today`, `daily_most`, `left`,
+        `last_failure` and `failing` (why its last asking gave nothing, None once it answered again), the
+        last four None where the hub has no key."""
         with self._lock:
             self._today(self._clock())
             have = {asked.maps.name: asked for asked in (self._traffics if purpose == "traffic" else self._services)}
@@ -873,6 +891,7 @@ class Lookups:
                         "daily_most": asked.daily if asked is not None else None,
                         "left": max(0, asked.daily - asked.asked) if asked is not None else None,
                         "last_failure": asked.last_failure if asked is not None else None,
+                        "failing": asked.failing if asked is not None else None,
                     }
                 )
             return out

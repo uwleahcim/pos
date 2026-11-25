@@ -218,6 +218,144 @@ class Hub {
   };
   static Map<String, dynamic> get liveOff => {...liveOn, 'enabled': false, 'live': false};
 
+  /// Who is asked how far a delivery goes and who the drive right now (`GET/PUT /settings/drive_lookups`,
+  /// docs/delivery.md, "Which service is asked first"): under `distance` and `traffic`, every service of
+  /// that kind in the order they are asked, each with whether it is on, whether the hub has its key and
+  /// what it has left today. Null is a hub older than the order. [driveLookupsSaved] is what each save
+  /// sent, [driveLookupsAuth] the token of the last, and [refuseDriveLookups] a reason to refuse the next
+  /// save with. On such a hub an answer about an address says who measured it and what that one has left.
+  Map<String, dynamic>? driveLookups;
+  String? driveLookupsAuth;
+  final driveLookupsSaved = <Map<String, dynamic>>[];
+  String? refuseDriveLookups;
+
+  /// What each map service for the drive is called, and the words its terms want beside its figures.
+  static const driveTitles = {
+    'geocodio': 'Geocodio',
+    'google': 'Google Maps',
+    'mapbox': 'Mapbox',
+    'azure': 'Azure Maps',
+  };
+  static const driveCredits = {
+    'google': 'Google Maps',
+    'mapbox': '\u00a9 Mapbox \u00a9 OpenStreetMap',
+    'azure': 'Azure Maps',
+  };
+
+  /// One service as the hub says it stands: [left] of its day's [most] lookups, all of them unless said.
+  static Map<String, dynamic> driveService(
+    String name, {
+    bool on = true,
+    bool key = true,
+    int most = 500,
+    int? left,
+    String? failing,
+  }) => {
+    'name': name,
+    'title': driveTitles[name],
+    'credit': driveCredits[name],
+    'on': on,
+    'key': key,
+    'asks': on && key,
+    'asked_today': key ? most - (left ?? most) : 0,
+    'failed_today': failing == null ? 0 : 1,
+    'daily_most': key ? most : null,
+    'left': key ? left ?? most : null,
+    'last_failure': key ? failing : null,
+    'failing': key ? failing : null,
+  };
+
+  /// These services, asked one thing, in this order.
+  static Map<String, dynamic> driveOrderOf(List<Map<String, dynamic>> services) => {
+    'order': [for (final one in services) one['name']],
+    'services': services,
+  };
+
+  /// A hub with a key for all four, as it stands before anybody changed a thing: Geocodio and then Google
+  /// are asked how far, Google the roads, and Mapbox and Azure Maps wait to be turned on.
+  static Map<String, dynamic> get driveLookupsUsual => {
+    'distance': driveOrderOf([
+      driveService('geocodio', left: 488),
+      driveService('google', most: 100, left: 97),
+      driveService('mapbox', on: false),
+      driveService('azure', on: false, most: 15),
+    ]),
+    'traffic': driveOrderOf([
+      driveService('google', most: 150, left: 141),
+      driveService('mapbox', on: false),
+      driveService('azure', on: false, most: 15),
+    ]),
+  };
+
+  /// The names of the services that are asked for [purpose], in the order they are.
+  List<String> driveAsking(String purpose) => [
+    for (final one in ((driveLookups?[purpose] as Map?)?['services'] as List? ?? const []).cast<Map>())
+      if (one['asks'] == true) one['name'] as String,
+  ];
+
+  /// What an answer says of the service that gave it, for the badge beside its figure.
+  Map<String, dynamic> _driveLeft(String purpose, String name) {
+    final one = ((driveLookups?[purpose] as Map?)?['services'] as List? ?? const [])
+        .cast<Map>()
+        .where((one) => one['name'] == name)
+        .firstOrNull;
+    return {'title': driveTitles[name] ?? name, 'left': one?['left'], 'daily_most': one?['daily_most']};
+  }
+
+  Future<http.Response> _driveLookups(http.Request request) async {
+    final had = driveLookups;
+    if (had == null) return json({'detail': 'Not Found'}, 404);
+    if (request.method == 'PUT') {
+      driveLookupsAuth = request.headers['authorization'];
+      if (refuseDriveLookups != null) {
+        return json({
+          'detail': {'error': 'bad_value', 'message': refuseDriveLookups},
+        }, 422);
+      }
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      driveLookupsSaved.add(body);
+      driveLookups = {
+        for (final purpose in ['distance', 'traffic'])
+          purpose: () {
+            final all = ((had[purpose] as Map)['services'] as List).cast<Map<String, dynamic>>();
+            final sent = body[purpose] as Map<String, dynamic>?;
+            if (sent == null) return had[purpose];
+            // one that is not named stays as it is, and one the order leaves out follows as it stood
+            final asked = sent['order'] is List ? (sent['order'] as List).cast<String>() : const <String>[];
+            return driveOrderOf([
+              for (final one in [
+                for (final name in asked) ...all.where((one) => one['name'] == name),
+                ...all.where((one) => !asked.contains(one['name'])),
+              ])
+                {
+                  ...one,
+                  'on': sent[one['name']] is bool ? sent[one['name']] : one['on'],
+                  'asks': (sent[one['name']] is bool ? sent[one['name']] : one['on']) == true && one['key'] == true,
+                },
+            ]);
+          }(),
+      };
+      // the fee's setting and live traffic's say who is asked now
+      final distance = driveAsking('distance'), traffic = driveAsking('traffic');
+      final fees = deliveryFees;
+      if (fees != null && fees.containsKey('maps')) {
+        deliveryFees = {
+          ...fees,
+          'maps': distance.isNotEmpty,
+          'lookup': distance.isNotEmpty && '${fees['origin'] ?? ''}'.isNotEmpty,
+          'services': distance,
+        };
+      }
+      final live = liveDrive;
+      if (live != null) {
+        final on = live['enabled'] == true && traffic.isNotEmpty && live['origin'] == true;
+        liveDrive = {...live, 'traffic': traffic.isNotEmpty, 'live': on};
+        if (deliveryFees?.containsKey('live') ?? false) deliveryFees = {...deliveryFees!, 'live': on};
+      }
+    }
+    return json(driveLookups!);
+  }
+
   /// How far the addresses it knows are (`POST /delivery/distance`): what the map says of each, as
   /// `{'miles': '3.2', 'minutes': 9}`. An address it does not know is one the map could not find. Every
   /// body it was asked with is in [distanceAsks]; [refuseDistance] is a reason the map gives no distance
@@ -526,6 +664,16 @@ class Hub {
         }
       }
     }
+    // on a hub that knows the order: the first that is asked measured what the first knows, the next one
+    // the rest; and the first that is asked about the roads says the drive right now
+    final asking = driveAsking('distance'), roads = driveAsking('traffic').firstOrNull;
+    final who = driveLookups == null
+        ? null
+        : kept != null
+        ? 'geocodio'
+        : second != null && asking.length > 1
+        ? asking[1]
+        : asking.firstOrNull;
     return json({
       ...said,
       'by': fees['by'],
@@ -535,11 +683,22 @@ class Hub {
       // a hub that knows of second services says both of every answer
       if (fees.containsKey('services')) ...{'credit': null, 'keep': true},
       if (second != null) ...secondSays,
+      if (who != null) ...{
+        'service': who,
+        'credit': driveCredits[who],
+        'keep': who == 'geocodio',
+        ..._driveLeft('distance', who),
+      },
       'saved': kept != null,
       // a hub that knows of live traffic says the drive right now, or that nobody could say
       if (fees.containsKey('live'))
         'drive_now': fees['live'] == true && body['now'] == true && !noRoads && drivesNow[body['address']] != null
-            ? {'minutes': drivesNow[body['address']], 'before': liveDrive?['before'] ?? 25, 'credit': 'Google Maps'}
+            ? {
+                'minutes': drivesNow[body['address']],
+                'before': liveDrive?['before'] ?? 25,
+                'credit': driveLookups == null ? 'Google Maps' : driveCredits[roads],
+                if (driveLookups != null && roads != null) ...{'service': roads, ..._driveLeft('traffic', roads)},
+              }
             : null,
     });
   }
@@ -4113,6 +4272,8 @@ class Hub {
         return json(deliveryFees!);
       case '/delivery/distance':
         return _distance(request);
+      case '/settings/drive_lookups':
+        return _driveLookups(request);
       case '/addresses/suggest':
         return _suggest(request);
       case '/settings/address_list':

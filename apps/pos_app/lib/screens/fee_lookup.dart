@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../delivery_fee.dart';
+import '../drive_lookups.dart';
 import '../takeout.dart';
+import 'service_badge.dart';
 
 /// How far a form's delivery goes, asked of the hub (docs/delivery.md, "Looking the distance up"). The hub
 /// asks its map service, and is sent the address alone. A form asks when the address is done being typed,
@@ -118,6 +120,11 @@ typedef LookUp = void Function({bool fresh});
 /// Where the hub also said how long the drive is at this minute ("Live traffic"), that stands with it:
 /// "With traffic now: 14 min", and the name of the service that knows the roads. It is the one place a
 /// form shows that figure.
+///
+/// Where the hub says who gave a figure and what that service has left today ("Which service is asked
+/// first"), the service's badge stands before the figure: its letter in a ring for how many of its day's
+/// lookups are left ([ServiceBadge]). Each figure then has a line of its own, so a badge is always the
+/// first thing of its line and never moves with the length of what is written after it.
 class FeeLookupLine extends StatelessWidget {
   const FeeLookupLine({super.key, required this.asker, required this.address, required this.onLookUp});
 
@@ -169,12 +176,49 @@ class FeeLookupLine extends StatelessWidget {
         Widget credited(List<Widget> children) => children.length == 1
             ? children.single
             : Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: children);
-        if (now == null) return credited([line, if (credit != null) MapCredit(credit)]);
+        // who gave a figure, before it
+        Widget led(AnsweredBy? by, Key mark, Widget child) => by == null
+            ? child
+            : Row(
+                children: [
+                  ServiceBadge(
+                    key: mark,
+                    service: by.service,
+                    title: by.title,
+                    share: leftShare(by.left, by.dailyMost),
+                    words: leftToday(by.left, by.dailyMost),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: child),
+                ],
+              );
+        const measuredBy = ValueKey('fee-lookup-by'), saidBy = ValueKey('fee-lookup-now-by');
+        if (now == null) return led(found.by, measuredBy, credited([line, if (credit != null) MapCredit(credit)]));
         final traffic = Text(
           'With traffic now: ${now.minutes} min',
           key: const ValueKey('fee-lookup-now'),
           style: theme.textTheme.bodyMedium,
         );
+        if (found.by != null || now.by != null) {
+          // a line each, so each badge leads its own; one name serves both where one service gave both
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              led(found.by, measuredBy, credited([line, if (credit != null && !together) MapCredit(credit)])),
+              const SizedBox(height: 2),
+              led(
+                now.by,
+                saidBy,
+                credited([
+                  traffic,
+                  if (now.credit case final name?)
+                    MapCredit(name, mark: ValueKey(together ? 'fee-lookup-credit' : 'fee-lookup-now-credit')),
+                ]),
+              ),
+            ],
+          );
+        }
         if (together) return credited([line, traffic, if (credit != null) MapCredit(credit)]);
         return Column(
           mainAxisSize: MainAxisSize.min,

@@ -368,6 +368,26 @@ def test_when_the_first_gives_no_word_about_the_roads_the_next_one_is_asked():
     assert answer.status_code == 200 and answer.json()["drive_now"] is None
 
 
+def test_a_screen_is_told_while_a_service_gives_nothing_and_no_longer_once_it_answers_again():
+    c, geocodio, google, _, _ = four()
+    live(c)
+
+    def failing(purpose: str, name: str) -> str | None:
+        return {one["name"]: one for one in looked(c)[purpose]["services"]}[name]["failing"]
+
+    assert failing("distance", "geocodio") is None and failing("traffic", "google") is None
+    geocodio.fails, google.jams = "refused", "unreachable"
+    assert far(c, now=True).json()["service"] == "google"
+    assert (failing("distance", "geocodio"), failing("traffic", "google")) == ("refused", "unreachable")
+    assert failing("distance", "google") is None  # it measured the distance all the same
+    # the key is put right: the next asking answers, and nothing is said of the last one any more
+    geocodio.fails = google.jams = None
+    assert far(c, "4 Oak Rd", now=True).json()["service"] == "geocodio"
+    assert failing("distance", "geocodio") is None and failing("traffic", "google") is None
+    status = c.get("/maps/status").json()
+    assert status["last_failure"] == "refused"  # `hubctl maps status` still says what it last failed by
+
+
 def test_one_that_was_asked_as_often_as_it_may_be_today_is_passed_over():
     c, _, google, mapbox, _ = four(other_traffic_daily={"mapbox": 1})
     live(c)
@@ -391,6 +411,49 @@ def test_a_slow_service_leaves_the_next_one_its_turn_inside_the_time_a_form_wait
     assert (told["minutes"], told["service"]) == (14, "google")
     roads = {one["name"]: one for one in looked(c)["traffic"]["services"]}
     assert (roads["mapbox"]["failed_today"], roads["mapbox"]["last_failure"]) == (1, "unreachable")
+
+
+class Held(Service):
+    """One that does not answer how far it is until it is let go."""
+
+    def __init__(self, name: str, holds: threading.Event) -> None:
+        super().__init__(name)
+        self.holds = holds
+
+    def trip(self, origin: str, destination: str) -> Trip:
+        self.asked.append((origin, destination))
+        self.holds.wait(5)
+        return self.said
+
+
+def test_nobody_else_is_asked_how_far_once_the_form_has_stopped_waiting():
+    """Each service is waited for so long, and a form for two such waits. With more services turned on than
+    that, two that do not answer are the end of it: the third is not asked for a form that went away, and
+    nothing is counted against its day."""
+    holds = threading.Event()
+    mapbox = Between("mapbox")
+    c = hub(Held("geocodio", holds), Held("google", holds), mapbox, wait=0.05)
+    put(c, distance={"mapbox": True})
+    try:
+        told = far(c)
+    finally:
+        holds.set()
+    assert (told.status_code, told.json()["detail"]["reason"]) == (424, "unreachable")
+    assert mapbox.asked == []
+    stands = {one["name"]: one for one in looked(c)["distance"]["services"]}
+    assert (stands["mapbox"]["asked_today"], stands["mapbox"]["failing"]) == (0, None)
+    assert [stands[name]["failing"] for name in ("geocodio", "google")] == ["unreachable", "unreachable"]
+
+
+def test_services_that_say_no_at_once_leave_every_one_after_them_its_turn():
+    c = hub(
+        Service("geocodio", fails="refused"),
+        Knows("google", fails="limit"),
+        Between("mapbox", fails="unreachable"),
+        Between("azure", "3.5", 12, each=10),
+    )
+    put(c, distance={"mapbox": True, "azure": True})
+    assert far(c).json()["service"] == "azure"
 
 
 def test_live_traffic_needs_a_service_for_the_roads_that_is_turned_on():

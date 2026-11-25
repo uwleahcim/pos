@@ -164,6 +164,8 @@ class Measured {
 String mapServiceName(String service) => switch (service) {
   'geocodio' => 'Geocodio',
   'google' => 'Google Maps',
+  'mapbox' => 'Mapbox',
+  'azure' => 'Azure Maps',
   _ => service,
 };
 
@@ -179,7 +181,7 @@ typedef DistanceSource = Future<FeeLookup> Function(String address, {bool fresh,
 /// and it is not sent back to the hub: the order keeps the time it was promised, which is the
 /// restaurant's own.
 class DriveNow {
-  const DriveNow({required this.minutes, required this.before, this.credit});
+  const DriveNow({required this.minutes, required this.before, this.credit, this.by});
 
   /// Null for nothing, and for anything this build cannot read.
   static DriveNow? of(Object? value) {
@@ -190,6 +192,7 @@ class DriveNow {
       minutes: minutes,
       before: before,
       credit: credit is String && credit.isNotEmpty && credit.length <= FeeLookup.creditMost ? credit : null,
+      by: AnsweredBy.of(value),
     );
   }
 
@@ -205,6 +208,10 @@ class DriveNow {
   /// The name the service that knows the roads wants shown beside its figure ("Google Maps").
   final String? credit;
 
+  /// Who said it and what that service has left today, for the badge beside the figure; null from a hub
+  /// that does not say.
+  final AnsweredBy? by;
+
   /// What the delivery is promised: the cooking and the drive.
   int get promise => before + minutes;
 
@@ -214,6 +221,33 @@ class DriveNow {
 
   @override
   int get hashCode => Object.hash(minutes, before, credit);
+}
+
+/// Which map service gave a figure, for the badge beside it (docs/delivery.md, "Which service is asked
+/// first"): the hub's name for it, what a screen calls it, and how many of its day's lookups it has left
+/// by the hub's own count.
+class AnsweredBy {
+  const AnsweredBy({required this.service, required this.title, this.left, this.dailyMost});
+
+  /// Null from a hub that does not say what a screen calls the service (one older than the badge).
+  static AnsweredBy? of(Map value) {
+    final service = value['service'], title = value['title'], left = value['left'], most = value['daily_most'];
+    if (service is! String || service.isEmpty || title is! String || title.isEmpty) return null;
+    if (title.length > FeeLookup.creditMost) return null;
+    return AnsweredBy(
+      service: service,
+      title: title,
+      left: left is int && left >= 0 ? left : null,
+      dailyMost: most is int && most > 0 ? most : null,
+    );
+  }
+
+  final String service;
+  final String title;
+
+  /// Null where the hub has no key for the service any more.
+  final int? left;
+  final int? dailyMost;
 }
 
 /// Live traffic for deliveries, as a manager sets it for the location (`/settings/live_drive`, "Live
@@ -261,6 +295,7 @@ class FeeLookup {
     this.credit,
     this.keep = true,
     this.driveNow,
+    this.by,
   });
 
   /// Throws [FormatException] when the answer says no distance.
@@ -276,6 +311,7 @@ class FeeLookup {
       credit: credit is String && credit.isNotEmpty && credit.length <= creditMost ? credit : null,
       keep: json['keep'] != false,
       driveNow: DriveNow.of(json['drive_now']),
+      by: AnsweredBy.of(json),
     );
   }
 
@@ -306,6 +342,10 @@ class FeeLookup {
   /// traffic is on; null where it is off, and when nobody could say: the delivery is then promised its
   /// usual minutes.
   final DriveNow? driveNow;
+
+  /// Who measured the distance and what that service has left today, for the badge beside the figures;
+  /// null from a hub that does not say.
+  final AnsweredBy? by;
 }
 
 /// "mi" or "min": what a band's reach is counted in, short enough for a button.
