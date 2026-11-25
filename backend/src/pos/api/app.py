@@ -1010,6 +1010,9 @@ def create_app(
     # Maps when Google gives no answer; how often each was asked this month is counted in the database
     # (pos.addresses)
     app.state.suggester = suggester if suggester is not None else suggester_from_env(outside, asked=default_asked())
+    # Mapbox may not be asked where the restaurant stands (nothing of its answers may be kept): it is told what
+    # Geocodio says, whose answers may be kept and used with anybody's map
+    app.state.suggester.place_with(app.state.lookups.locate)
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today

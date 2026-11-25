@@ -209,12 +209,19 @@ class AddressService {
 /// (`/settings/address_list`): every service the hub knows, in the order they are asked. The first that is
 /// turned on and has a key is asked, and the next only when the one before it gave no answer.
 class AddressListSetting {
-  const AddressListSetting({this.services = const []});
+  const AddressListSetting({this.services = const [], this.nearMiles, this.originSet});
 
   factory AddressListSetting.fromJson(Map<String, dynamic> json) {
     final listed = json['services'];
+    final near = json['near_miles'];
+    final nearMiles = near is num && near > 0 ? near.toDouble() : null;
+    final originSet = json['origin_set'] is bool ? json['origin_set'] as bool : null;
     if (listed is List) {
-      return AddressListSetting(services: [for (final one in listed) ?AddressService.of(one)]);
+      return AddressListSetting(
+        services: [for (final one in listed) ?AddressService.of(one)],
+        nearMiles: nearMiles,
+        originSet: originSet,
+      );
     }
     // a hub from before there were several: Google alone, and no count of what is left
     final credit = json['credit'];
@@ -229,10 +236,30 @@ class AddressListSetting {
           key: json['service'] == true,
         ),
       ],
+      nearMiles: nearMiles,
+      originSet: originSet,
     );
   }
 
   final List<AddressService> services;
+
+  /// How far around the restaurant a map service's addresses come first, in miles: a preference, and
+  /// further ones are still listed. Null on a hub that does not say (an older one, with its own distance).
+  final double? nearMiles;
+
+  /// Whether the hub knows the restaurant's own address (Location, Delivery fee), which "near" is near to;
+  /// null on a hub that does not say.
+  final bool? originSet;
+
+  /// The distances a manager is offered for [nearMiles]: a town, a delivery's usual reach (four, what a hub
+  /// starts on), and further out.
+  static const nearChoices = [2.0, 4.0, 6.0, 10.0, 20.0];
+
+  /// A number of miles in words: "4 miles", "2.5 miles", "1 mile".
+  static String miles(double miles) {
+    final whole = miles == miles.roundToDouble();
+    return '${whole ? miles.round() : miles.toStringAsFixed(1)} ${miles == 1 ? 'mile' : 'miles'}';
+  }
 
   AddressService? named(String name) {
     for (final service in services) {
@@ -257,13 +284,16 @@ class AddressListSetting {
   /// What is typed in an address box is sent to a map service.
   bool get asks => asking.isNotEmpty;
 
-  /// The same with these services turned on or off; one that is not named stays as it is.
-  AddressListSetting turned(Map<String, bool> on) => AddressListSetting(
+  /// The same with these services turned on or off; one that is not named stays as it is. With [near],
+  /// what is near reaches that far.
+  AddressListSetting turned(Map<String, bool> on, {double? near}) => AddressListSetting(
     services: [for (final service in services) service.turned(on: on[service.name] ?? service.on)],
+    nearMiles: nearMiles == null ? null : near ?? nearMiles, // a hub that does not say is sent none
+    originSet: originSet,
   );
 
   /// As a manager saves it. What the hub has is the hub's to say, and is not sent.
-  Map<String, dynamic> toJson() => {for (final service in services) service.name: service.on};
+  Map<String, dynamic> toJson() => {for (final service in services) service.name: service.on, 'near_miles': ?nearMiles};
 }
 
 /// How one try of a map service went (`POST /settings/address_list/try`).

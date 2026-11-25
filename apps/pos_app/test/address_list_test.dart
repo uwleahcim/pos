@@ -219,12 +219,38 @@ void main() {
         AddressService.of(Hub.addressService('mapbox', on: true, left: 94988))!.words,
         '94,988 of 95,000 free lookups left this month',
       );
-      // whether there is a key is the hub's to say: a save sends the switches alone, every one of them
-      expect(setting.toJson(), {'google': true, 'mapbox': true, 'azure': false});
-      expect(setting.turned({'google': false}).toJson(), {'google': false, 'mapbox': true, 'azure': false});
+      // whether there is a key is the hub's to say: a save sends the switches, every one of them, and how far
+      // nearby reaches
+      expect((setting.nearMiles, setting.originSet), (4.0, true));
+      expect(setting.toJson(), {'google': true, 'mapbox': true, 'azure': false, 'near_miles': 4.0});
+      expect(setting.turned({'google': false}).toJson(), {
+        'google': false,
+        'mapbox': true,
+        'azure': false,
+        'near_miles': 4.0,
+      });
+      expect(setting.turned(const {}, near: 2).toJson()['near_miles'], 2.0);
+      expect(setting.turned(const {}, near: 2).originSet, isTrue);
       // what names no service is none
       expect(AddressService.of(const {'title': 'Bing'}), isNull);
       expect(AddressService.of('google'), isNull);
+    });
+
+    test('how far nearby reaches, in words, and a hub that does not say is sent none', () {
+      expect(AddressListSetting.miles(4), '4 miles');
+      expect(AddressListSetting.miles(2.5), '2.5 miles');
+      expect(AddressListSetting.miles(1), '1 mile');
+      expect(AddressListSetting.nearChoices, contains(4.0));
+      final silent = AddressListSetting.fromJson(Hub.addressListOf([Hub.addressService('google')], near: null));
+      expect((silent.nearMiles, silent.originSet), (null, null));
+      expect(silent.toJson(), {'google': false});
+      expect(silent.turned(const {'google': true}, near: 6).toJson(), {'google': true}); // none to send
+      final unset = AddressListSetting.fromJson(Hub.addressListOf([Hub.addressService('google')], origin: false));
+      expect((unset.nearMiles, unset.originSet), (4.0, false));
+      // what is no distance is none
+      for (final odd in [0, -3, 'far', true]) {
+        expect(AddressListSetting.fromJson({'services': const [], 'near_miles': odd}).nearMiles, isNull);
+      }
     });
 
     test('the setting of a hub from before there were several is Google alone', () {
@@ -996,6 +1022,90 @@ void main() {
       await stop(tester);
     });
 
+    bool chosen(WidgetTester tester, String miles) =>
+        tester.widget<ChoiceChip>(key('address-list-near:$miles')).selected;
+
+    testWidgets('nearby reaches four miles until a manager taps another distance', (tester) async {
+      final t = await pumpLocation(tester, list: Hub.addressListOff);
+      await tapKey(tester, 'address-list');
+      expect(find.text('Nearby first'), findsOneWidget);
+      expect(
+        [
+          for (final miles in ['2', '4', '6', '10', '20']) chosen(tester, miles),
+        ],
+        [false, true, false, false, false],
+      );
+      expect(
+        said(tester, 'address-list-near-says'),
+        'Addresses within 4 miles of the restaurant come first. Ones further out are still listed when the '
+        'letters fit them.',
+      );
+      // under the services, over the small print
+      expect(
+        tester.getTopLeft(find.text('Nearby first')).dy,
+        greaterThan(tester.getTopLeft(key('address-list-azure')).dy),
+      );
+      expect(tester.getTopLeft(find.text('Nearby first')).dy, lessThan(tester.getTopLeft(key('address-list-sent')).dy));
+      await tapKey(tester, 'address-list-near:2');
+      expect((chosen(tester, '2'), chosen(tester, '4')), (true, false));
+      expect(said(tester, 'address-list-near-says'), startsWith('Addresses within 2 miles of the restaurant'));
+      expect(t.hub.addressSaved, isEmpty); // nothing is saved by a tap alone
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single, {'google': false, 'mapbox': false, 'azure': false, 'near_miles': 2.0});
+      expect(t.hub.addressList?['near_miles'], 2.0);
+      // and it is what the dialog opens on the next time
+      await tapKey(tester, 'address-list');
+      expect((chosen(tester, '2'), chosen(tester, '4')), (true, false));
+      // Cancel keeps it
+      await tapKey(tester, 'address-list-near:10');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.addressList?['near_miles'], 2.0);
+      await stop(tester);
+    });
+
+    testWidgets('a distance that is none of the usual ones stands among them, and is kept by a save', (tester) async {
+      final t = await pumpLocation(
+        tester,
+        list: Hub.addressListOf([Hub.addressService('google', on: true)], near: 2.5),
+      );
+      await tapKey(tester, 'address-list');
+      expect(chosen(tester, '2.5'), isTrue);
+      expect(find.text('2.5 miles'), findsOneWidget);
+      final left = [
+        for (final miles in ['2', '2.5', '4']) tester.getTopLeft(key('address-list-near:$miles')),
+      ];
+      expect(left[0].dy == left[1].dy ? left[0].dx < left[1].dx : left[0].dy < left[1].dy, isTrue); // in order
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single['near_miles'], 2.5);
+      await stop(tester);
+    });
+
+    testWidgets('without the restaurant\'s own address the dialog says where it is set', (tester) async {
+      await pumpLocation(tester, list: Hub.addressListOf([Hub.addressService('google', on: true)], origin: false));
+      await tapKey(tester, 'address-list');
+      expect(
+        said(tester, 'address-list-near-says'),
+        'Addresses within 4 miles of the restaurant come first, once its own address is set under Location, '
+        'Delivery fee. Until then a service goes by where the hub\'s internet connection is.',
+      );
+      await stop(tester);
+    });
+
+    testWidgets('a hub that does not say how far nearby reaches is offered no choice and sent none', (tester) async {
+      final t = await pumpLocation(
+        tester,
+        list: Hub.addressListOf([Hub.addressService('google'), Hub.addressService('mapbox')], near: null),
+      );
+      await tapKey(tester, 'address-list');
+      expect(find.text('Nearby first'), findsNothing);
+      expect(key('address-list-near-says'), findsNothing);
+      await tapKey(tester, 'address-list-google');
+      await tapKey(tester, 'address-list-save');
+      expect(t.hub.addressSaved.single, {'google': true, 'mapbox': false});
+      await stop(tester);
+    });
+
     testWidgets('on a small phone with large type the dialog is whole', (tester) async {
       await pumpLocation(tester, list: Hub.addressListOff, size: const Size(320, 640), type: 1.3);
       await tapKey(tester, 'address-list');
@@ -1006,6 +1116,13 @@ void main() {
       await tester.ensureVisible(key('address-list-azure'));
       await tester.pumpAndSettle();
       await tapKey(tester, 'address-list-azure');
+      expect(tester.takeException(), isNull);
+      // every distance can be tapped, and none runs over the side
+      for (final miles in ['2', '4', '6', '10', '20']) {
+        await tapKey(tester, 'address-list-near:$miles');
+        expect(chosen(tester, miles), isTrue);
+        expect(tester.getRect(key('address-list-near:$miles')).right, lessThanOrEqualTo(320));
+      }
       expect(tester.takeException(), isNull);
       await tapKey(tester, 'address-list-save');
       expect(find.byType(AddressListDialog), findsNothing);

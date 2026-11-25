@@ -45,7 +45,7 @@ from pos.addresses import (
     suggester_from_env,
     worth_asking,
 )
-from pos.maps import LookupFailed
+from pos.maps import Geocodio, LookupFailed
 
 from .test_day import Hub, at
 
@@ -392,7 +392,7 @@ def test_where_the_restaurant_stands_is_asked_once_and_streets_nearby_come_first
     listed(h, "9 Birch L")
     listed(h, "9 Birch Ln")
     suggester.placed()
-    circle = {"center": STANDS, "radius": NEAR_METERS}
+    circle = {"center": STANDS, "radius": round(NEAR_METERS, 1)}
     assert [body.get("locationBias") for body in world.lists] == [None, {"circle": circle}, {"circle": circle}]
     assert len(world.seen) == 5 and suggester.status()["asked_today"] == 5 and suggester.status()["placed"] is True
     # the restaurant's own address typed over: no delivery is listed, and nothing is said of where it stood
@@ -1093,6 +1093,122 @@ def test_all_of_them_together_are_waited_for_no_longer_than_a_form_waits():
     assert typed(h, "12 Elm S")["service"] == "mapbox"
 
 
+# What is near comes first --------------------------------------------------------------------------------------
+
+
+def test_what_is_within_four_miles_comes_first_unless_a_manager_sets_another_distance():
+    h = delivered()
+    world = World(*WINCHESTER)
+    suggester = asking(h, world)
+    told = h.c.get("/settings/address_list").json()
+    assert (told["near_miles"], told["origin_set"]) == (4.0, True)  # as far as deliveries go as a rule
+    listed(h, "9 Birch")
+    suggester.placed()
+    listed(h, "9 Birch L")
+    # four miles around the restaurant, in meters: a preference and no wall (a bias, never a restriction)
+    assert world.lists[-1]["locationBias"] == {"circle": {"center": STANDS, "radius": 6437.4}}
+    assert "locationRestriction" not in world.lists[-1]
+    # a manager sets it, and the switches stay as they are
+    told = h.c.put("/settings/address_list", json={"near_miles": 2.5}, headers=h.manager()).json()
+    assert (told["near_miles"], told["google"], told["asks"]) == (2.5, True, True)
+    listed(h, "9 Birch Ln")
+    assert world.lists[-1]["locationBias"]["circle"]["radius"] == 4023.4
+    # an app from before this names the switches alone, and the distance stays
+    told = h.c.put("/settings/address_list", json={"google": True}, headers=h.manager()).json()
+    assert told["near_miles"] == 2.5 and h.c.get("/settings/address_list").json()["near_miles"] == 2.5
+    # from half a mile to thirty, to a tenth; only a manager sets it
+    for bad in (0, 0.4, 30.1, -4, "far"):
+        refused = h.c.put("/settings/address_list", json={"near_miles": bad}, headers=h.manager())
+        assert refused.status_code == 422, bad
+    assert h.c.put("/settings/address_list", json={"near_miles": 6}).status_code == 401
+    assert h.c.get("/settings/address_list").json()["near_miles"] == 2.5
+    assert h.c.put("/settings/address_list", json={"near_miles": 7.26}, headers=h.manager()).json()["near_miles"] == 7.3
+    assert h.c.put("/settings/address_list", json={"near_miles": 30}, headers=h.manager()).json()["near_miles"] == 30.0
+
+
+def place(lat: float = 42.4523, lng: float = -71.137) -> dict:
+    """One address as Geocodio reads it."""
+    return {"results": [{"formatted_address": "1 Restaurant Row", "location": {"lat": lat, "lng": lng}, "accuracy": 1}]}
+
+
+def test_mapbox_is_told_where_the_restaurant_stands_as_geocodio_reads_it():
+    h = delivered()
+    assert h.c.app.state.suggester._placer == h.c.app.state.lookups.locate  # as the hub is put together
+    asked: list[httpx.Request] = []
+
+    def geocodio(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return httpx.Response(200, json=place())
+
+    lookups = h.c.app.state.lookups
+    lookups.use(Geocodio("geo-key-1", client=httpx.Client(transport=httpx.MockTransport(geocodio))))
+    world = MapboxWorld(feature("12 Elm Street"))
+    suggester = chain(h, world.mapbox(), origin=HOME)
+    suggester.place_with(lookups.locate)
+    typed(h, "12 Elm")
+    suggester.placed()
+    typed(h, "12 Elm S")
+    typed(h, "12 Elm St")
+    # nobody typing waited for it; from then on Mapbox puts what is nearest to the restaurant first (longitude
+    # first, as it wants it), and no distance is sent: it takes a place alone
+    assert [request.url.params["proximity"] for request in world.seen] == ["ip", "-71.137,42.4523", "-71.137,42.4523"]
+    assert all(set(request.url.params) & {"bbox", "radius"} == set() for request in world.seen)
+    # Geocodio was asked once: the restaurant's own address and nothing else, its key in a header
+    (one,) = asked
+    assert (one.method, one.url.host, one.url.path) == ("GET", "api.geocod.io", "/v2.1/geocode")
+    assert dict(one.url.params) == {"q": HOME, "limit": "1"} and one.headers["authorization"] == "Bearer geo-key-1"
+    assert lookups.status()["asked_today"] == 1  # one of the day's askings of the distance's service
+    # Mapbox itself was asked for three lists and nothing more: none of its month went to it
+    assert suggester.left("mapbox") == MONTHLY_MOST["mapbox"] - 3 and len(world.seen) == 3
+    assert suggester.statuses()[0]["placed"] is True
+    # the restaurant's own address typed over is listed without it
+    typed(h, "1 Restaurant R", own=False)
+    assert world.seen[-1].url.params["proximity"] == "ip"
+
+
+def test_with_no_geocodio_mapbox_goes_by_where_the_hubs_connection_is():
+    h = delivered()
+    lookups = h.c.app.state.lookups
+    lookups.use(None)
+    world = MapboxWorld(feature("12 Elm Street"))
+    suggester = chain(h, world.mapbox(), origin=HOME)
+    suggester.place_with(lookups.locate)
+    for letters in ("12 Elm", "12 Elm S"):
+        typed(h, letters)
+        suggester.placed()
+    assert [request.url.params["proximity"] for request in world.seen] == ["ip", "ip"]
+    assert suggester.statuses()[0]["placed"] is False
+    # a Geocodio that reads the address as no place, or that is down, changes nothing either
+    for answer in (httpx.Response(200, json={"results": []}), httpx.Response(500, text="oops")):
+        lookups.use(Geocodio("geo-key-1", client=httpx.Client(transport=httpx.MockTransport(lambda _, a=answer: a))))
+        other = chain(h, world.mapbox(), origin=HOME)
+        other.place_with(lookups.locate)
+        typed(h, "12 Elm St")
+        other.placed()
+        typed(h, "12 Elm Str")
+        assert [request.url.params["proximity"] for request in world.seen[-2:]] == ["ip", "ip"]
+        assert typed(h, "12 Elm Stre")["service"] == "mapbox"  # and the list is a list all the same
+
+
+def test_google_and_azure_are_asked_where_the_restaurant_stands_themselves_whatever_geocodio_says():
+    h = delivered()
+    asked: list[httpx.Request] = []
+
+    def geocodio(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return httpx.Response(200, json=place(10.0, 10.0))
+
+    lookups = h.c.app.state.lookups
+    lookups.use(Geocodio("geo-key-1", client=httpx.Client(transport=httpx.MockTransport(geocodio))))
+    world = World(*WINCHESTER)
+    suggester = asking(h, world)
+    suggester.place_with(lookups.locate)
+    listed(h, "9 Birch")
+    suggester.placed()
+    listed(h, "9 Birch L")
+    assert world.lists[-1]["locationBias"]["circle"]["center"] == STANDS and asked == []
+
+
 # Turning them on, and trying them out --------------------------------------------------------------------------
 
 
@@ -1104,6 +1220,8 @@ def test_the_setting_says_how_each_service_stands_in_the_order_they_are_asked():
         "google": True,
         "mapbox": False,
         "azure": False,
+        "near_miles": 4.0,
+        "origin_set": False,
         "service": True,
         "asks": True,
         "credit": "Google Maps",

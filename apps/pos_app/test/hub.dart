@@ -290,6 +290,9 @@ class Hub {
   int addressTries = 0;
   final addressTried = <String?>[];
 
+  /// What each save of the list's setting sent, on a hub that knows the services.
+  final addressSaved = <Map<String, dynamic>>[];
+
   /// What each map service is called, and the words under a list with one of its answers.
   static const addressTitles = {'google': 'Google Maps', 'mapbox': 'Mapbox', 'azure': 'Azure Maps'};
   static const addressCredits = {
@@ -328,10 +331,17 @@ class Hub {
       addressListOf([addressService('google'), addressService('mapbox'), addressService('azure', key: false)]);
 
   /// The setting of these services, with what an app from before there were several reads beside them.
-  static Map<String, dynamic> addressListOf(List<Map<String, dynamic>> services) {
+  /// [near] is how far around the restaurant addresses come first (null: a hub that does not say), and
+  /// [origin] whether the hub knows the restaurant's own address.
+  static Map<String, dynamic> addressListOf(
+    List<Map<String, dynamic>> services, {
+    double? near = 4.0,
+    bool origin = true,
+  }) {
     final google = services.firstWhere((one) => one['name'] == 'google');
     return {
       for (final one in services) one['name'] as String: one['on'],
+      if (near != null) ...{'near_miles': near, 'origin_set': origin},
       'service': google['key'],
       'asks': google['asks'],
       'credit': 'Google Maps',
@@ -4015,15 +4025,20 @@ class Hub {
             final google = body['google'] == true;
             addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
           } else {
-            // one that is not named stays as it is
-            addressList = addressListOf([
-              for (final one in services.cast<Map<String, dynamic>>())
-                {
-                  ...one,
-                  'on': body[one['name']] is bool ? body[one['name']] : one['on'],
-                  'asks': (body[one['name']] is bool ? body[one['name']] : one['on']) == true && one['key'] == true,
-                },
-            ]);
+            // one that is not named stays as it is, and so does how far nearby reaches
+            addressSaved.add(body);
+            addressList = addressListOf(
+              [
+                for (final one in services.cast<Map<String, dynamic>>())
+                  {
+                    ...one,
+                    'on': body[one['name']] is bool ? body[one['name']] : one['on'],
+                    'asks': (body[one['name']] is bool ? body[one['name']] : one['on']) == true && one['key'] == true,
+                  },
+              ],
+              near: had['near_miles'] == null ? null : ((body['near_miles'] ?? had['near_miles']) as num).toDouble(),
+              origin: had['origin_set'] != false,
+            );
           }
         }
         return json(addressList!);

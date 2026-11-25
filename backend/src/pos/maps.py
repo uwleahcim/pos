@@ -157,7 +157,9 @@ class _NoAddresses(logging.Filter):
 
 
 class Geocodio:
-    """Geocodio's distance call (https://www.geocod.io/docs/): one origin, one destination, by road."""
+    """Geocodio's distance call (https://www.geocod.io/docs/): one origin, one destination, by road. And its
+    plain geocoding of one address (`locate`), for where the restaurant itself stands: its terms let an
+    answer be kept and shown or used with anybody's map, which Google's and Mapbox's do not."""
 
     name = "geocodio"
 
@@ -199,6 +201,52 @@ class Geocodio:
         if trip is None:
             raise LookupFailed("not_found")
         return trip
+
+    def locate(self, address: str) -> tuple[float, float] | None:
+        """Where an address stands, as latitude and longitude: the first place the service reads it as. None
+        when it reads it as none. Raises LookupFailed."""
+        try:
+            answer = self._client.get(
+                f"{self._base}/geocode",
+                params={"q": address, "limit": "1"},
+                headers={"Authorization": f"Bearer {self._key}"},
+            )
+        except httpx.HTTPError as err:
+            log.warning("the map service did not answer (%s)", type(err).__name__)  # its text holds the address
+            raise LookupFailed("unreachable") from None
+        status = answer.status_code
+        if status in (401, 403):
+            log.warning("the map service refused the key (%d)", status)
+            raise LookupFailed("refused")
+        if status in (402, 429):
+            log.warning("the map service says the account is at its limit (%d)", status)
+            raise LookupFailed("limit")
+        if status == 422:
+            return None
+        if status >= 400:
+            log.warning("the map service answered %d", status)
+            raise LookupFailed("unreachable")
+        try:
+            data = answer.json()
+        except ValueError:
+            log.warning("the map service's answer could not be read")
+            raise LookupFailed("unreachable") from None
+        results = data.get("results") if isinstance(data, Mapping) else None
+        first = results[0] if isinstance(results, list) and results and isinstance(results[0], Mapping) else {}
+        stands = first.get("location")
+        if not isinstance(stands, Mapping):
+            return None
+        return _point(stands.get("lat"), stands.get("lng"))
+
+
+def _point(latitude: Any, longitude: Any) -> tuple[float, float] | None:
+    """A place on the map as two numbers, or None for anything else."""
+    numbers = (latitude, longitude)
+    if any(isinstance(one, bool) or not isinstance(one, int | float) for one in numbers):
+        return None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+    return float(latitude), float(longitude)
 
 
 class Google:
@@ -319,11 +367,11 @@ def _google_minutes(took: Any) -> int | None:
     return trip.minutes if trip is not None else None
 
 
-def _within(seconds: float, ask: Callable[[], Trip]) -> Trip:
+def _within(seconds: float, ask: Callable[[], Any]) -> Any:
     """What `ask` answers, or LookupFailed("unreachable") when it has not answered in `seconds`. A request's
     own timeout bounds each of its steps, not their sum, and not the looking up of the service's name; the
     form waits only so long. The asking goes on behind, and what it answers then is dropped."""
-    box: list[Trip | Exception] = []
+    box: list[Any] = []
 
     def run() -> None:
         try:
@@ -485,6 +533,36 @@ class Lookups:
                         self._kept.popitem(last=False)
             return trip
         raise LookupFailed("not_found" if "not_found" in reasons else reasons[0])
+
+    def locate(self, address: str) -> tuple[float, float] | None:
+        """Where an address stands (latitude, longitude), as the first service says that can be asked that
+        and whose answers may be kept and given to anybody: Geocodio. For the restaurant's own address,
+        which the list of addresses puts what is near first by (`pos.addresses`). Counted as one of the
+        day's askings. None when the service reads the address as no place. Raises LookupFailed, also
+        where there is no such service."""
+        with self._lock:
+            service = next(
+                (
+                    one
+                    for one in self._services
+                    if may_keep(one.maps.name) and callable(getattr(one.maps, "locate", None))
+                ),
+                None,
+            )
+            if service is None:
+                raise LookupFailed("unreachable")
+            self._today(self._clock())
+            if service.asked >= service.daily:
+                service.last_failure = "limit"
+                raise LookupFailed("limit")
+            service.asked += 1
+        try:
+            return _within(self._wait, lambda: service.maps.locate(address))
+        except LookupFailed as err:
+            with self._lock:
+                service.failed += 1
+                service.last_failure = err.reason
+            raise
 
     @property
     def traffic(self) -> str | None:

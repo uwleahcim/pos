@@ -462,6 +462,13 @@ Delivery fee.
 - **The list comes once the typing pauses**, about a third of a second: from the second letter for your
   own deliveries, from the fourth for a map service. Six lines at most. When a map service adds its own,
   three of yours stand above them.
+- **What is near the restaurant comes first.** A map service's addresses within four miles of the
+  restaurant come before the ones further out (the owner's words, 2026-11-25: deliveries go four miles as a
+  rule, further for a big order). It is a preference and no wall: an address further out is still listed
+  when the letters fit it. **Location › Address list › Nearby first** sets another distance (2, 4, 6, 10 or
+  20 miles). It needs the restaurant's own address (Location › **Delivery fee**); the dialog says so in red
+  where that is not set. Google takes the distance as a circle. Mapbox and Azure Maps take the place alone
+  and put what is nearest to it first. Your own earlier deliveries stand above all of them either way.
 - **How the letters are read.** Every word typed in full has to be a word of the address, and the word
   still being typed has to begin one. "12 el" lists 12 Elm St and not 120 Elmwood Ave. "elm" lists every
   Elm Street the restaurant went to, whatever the number. An address that begins with what was typed comes
@@ -497,8 +504,15 @@ Delivery fee.
 - **The restaurant's own address, once, to Google and to Azure Maps**, so that streets nearby come first.
   Each answers where that is, and the hub keeps it in memory for under thirty days and writes it nowhere.
   (Until then Google goes by where the hub's internet connection is, and Azure Maps by the whole country.)
-  Mapbox is never told it: its terms let none of its answers be kept, so it always goes by where the hub's
-  internet connection is.
+- **Where the restaurant is, to Mapbox**, as a place on the map. Mapbox is never asked where the
+  restaurant's address is, because its terms let none of its answers be kept. The hub asks **Geocodio**
+  instead, the service a delivery's distance is measured with, once in about a month: Geocodio's terms let
+  an answer be kept and used with anybody's map. That is one more lookup of Geocodio's for the day, about
+  the restaurant's own address, which it is sent with every distance anyway. On a hub with no Geocodio
+  key, or with one that may not look an address up (Geocodio's page says only its lists and its distances
+  have to be turned on for a key specially), Mapbox goes by where the hub's internet connection is, which
+  can be a town or more off. `sudo hubctl maps status` says for each service whether it knows where the
+  restaurant is.
 - **What a service answers is shown and then gone.** The hub keeps none of it, and neither does the app.
   Their terms do not let a list be kept.
 - **Keys and letters.** Google's key travels in a header and the letters in the body of the request. Azure
@@ -542,6 +556,9 @@ The Google account and its card are the owner's. What follows is what Google's o
 The dialog lists the three services in the order they are asked, each with its own switch, its badge, a
 line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No key on this hub yet",
 "Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
+
+Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: four
+miles until another distance is tapped.
 
 The row under Location says how it stands: "Your own earlier deliveries are listed while an address is
 typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox and
@@ -618,7 +635,8 @@ away free, and the next one past that.
 - **The count is kept in the hub's database**, so a hub that restarts goes on counting where it stopped,
   and two hubs count as one. Where the database does not answer, the hub counts in its memory meanwhile.
 - **Finding where the restaurant stands** is two lookups of Google's and one transaction (ten lookups) of
-  Azure's, once in about a month.
+  Azure's, once in about a month. For Mapbox it is one lookup of Geocodio's, of the 2,500 a day Geocodio
+  gives away, and none of Mapbox's.
 - **The numbers in `/opt/pos/.env` change what the hub asks at most** (`sudo hubctl update` puts a changed
   file in force). A restaurant that wants more raises one and pays the service for what goes over. A limit
   set on the service's own side (Google: **Google Maps Platform › Quotas**) holds whatever the hub does.
@@ -639,6 +657,10 @@ longer read.
   says they are for use with a Mapbox map, another that they may be shown in a user interface. Read
   <https://www.mapbox.com/legal/tos> or ask Mapbox before turning it on.
 - **Azure Maps**: its name stands with its lists; the hub keeps only where the restaurant stands, in memory.
+- **Geocodio** (where the restaurant stands, for Mapbox): its terms say its results "can be stored
+  permanently without restrictions" in most cases, and its own pages that they may be used "on any map
+  platform, including OpenStreetMaps, Mapbox, or Google Maps" (<https://www.geocod.io/terms-of-use>, read
+  2026-11-25).
 - Whether and how any of this applies is the owner's to settle, with a lawyer where in doubt. Nothing here
   is legal advice.
 
@@ -900,14 +922,19 @@ saved distances are further down):
 - `pos.addresses.Places`: Places API (New). `suggest` is `POST /v1/places:autocomplete` with `input`,
   `includedRegionCodes: ["us"]`, `languageCode: en`, `includedPrimaryTypes` (`street_address`, `premise`,
   `subpremise`, `route`; `POS_MAPS_SUGGEST_TYPES` changes them, `all` asks with none) and a `locationBias`
-  circle of 20 km where the restaurant's place is known; the key in `X-Goog-Api-Key`, the mask
+  circle of the setting's `near_miles` (four; in meters, 50 km at most) where the restaurant's place is
+  known, never a `locationRestriction`; the key in `X-Goog-Api-Key`, the mask
   `suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat`. No session token: the
   hub never asks for a place's details after a pick, so each request is billed by itself. `locate` is one
   autocomplete for the place id and `GET /v1/places/{id}` with the mask `location`. 401 and 403 are
   `refused`, 429 `limit`, 404 `not_found`, anything else `unreachable` (`pos.maps.LookupFailed`).
 - `pos.addresses.Mapbox`: Geocoding API v6, `GET /search/geocode/v6/forward` with `q`, `autocomplete=true`,
-  `types=address,street`, `country=us`, `language=en`, `limit=5`, `proximity=ip` and `access_token`. The
-  state is shortened by `context.region.region_code`. 422 is `not_found` too. `locate` is never asked.
+  `types=address,street`, `country=us`, `language=en`, `limit=5`, `proximity` and `access_token`. The
+  state is shortened by `context.region.region_code`. 422 is `not_found` too. `locate` is never asked:
+  `proximity` is `longitude,latitude` as Geocodio reads the restaurant's address
+  (`Suggester.place_with(Lookups.locate)`, `pos.maps.Geocodio.locate`: `GET /v2.1/geocode?q=&limit=1`,
+  `results[0].location`, one of the day's askings of the distance's service), and `ip` until that is known
+  or where the hub has no Geocodio key.
 - `pos.addresses.Azure`: `GET /geocode:autocomplete?api-version=2026-01-01` with `query`, `countryRegion=US`,
   `resultTypeGroups=Address`, `top=5` and `coordinates` (or `bbox` of the whole country until the place is
   known); the key in `subscription-key`. `locate` is `GET /geocode` with `top=1`, counted as ten lookups.
@@ -921,7 +948,8 @@ saved distances are further down):
   `POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` are the keys (`pos.keys` slots `maps_google`, `maps_mapbox`,
   `maps_azure`); `pos.api.keys.use_keys` hands a key typed in the app to it at once.
 - The setting `address_list` (`pos.settings`): `google`, `mapbox`, `azure`, each false until a manager sets
-  it. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays as it is) answers
+  it, and `near_miles` (0.5 to 30, to a tenth; 4 unless set, and kept by a PUT that leaves it out). The GET
+  also says `origin_set`, whether the restaurant's own address is known. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays as it is) answers
   them with `services` (each `{name, title, credit, on, key, asks, left, monthly_most, used_up, resting}`)
   and, for an older app, `service`, `asks` and `credit` of Google. `POST /settings/address_list/try`
   `{service}` (a manager; Google unless named) asks that one service once about the restaurant's own

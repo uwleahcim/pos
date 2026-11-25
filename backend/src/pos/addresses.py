@@ -42,7 +42,15 @@ Where the restaurant stands is asked of Google and of Azure Maps once, each of i
 restaurant's own address as that service reads it, as coordinates, kept in the hub's memory for under thirty
 days and never written down, as their terms allow. Until it is known Google goes by where the hub's own
 internet connection is, and Azure Maps by the whole country. Mapbox's terms do not let an answer be kept at
-all, so it is never asked where the restaurant stands and always goes by the hub's internet connection.
+all, so it is never asked where the restaurant stands. It is told what Geocodio says, the service the hub
+measures a delivery's distance with, whose terms let an answer be kept and used with anybody's map
+(`Suggester.place_with`, `pos.maps.Lookups.locate`); on a hub with no key for Geocodio it goes by the hub's
+internet connection.
+
+What is near comes first (the owner's words, 2026-11-25: deliveries go four miles as a rule, further for a
+big order): `near_miles` of the setting, four unless a manager sets it. Google is told that distance as a
+circle around the restaurant, a preference and no wall; Mapbox and Azure Maps take the place alone and put
+what is nearest to it first.
 
 Each service gives so many askings away each month, and the hub asks it no more often than that
 (`MONTHLY_MOST`), so the list never costs anything and a screen gone wrong cannot run up a bill: of Google
@@ -138,9 +146,15 @@ BOOK_SECONDS = 60.0
 BOOK_BUDGET = 0.25
 """The most seconds one asking spends reading old orders. A hub that just started reads a year of them a
 part at a time, the newest first, and lists what it has read so far."""
-NEAR_METERS = 20_000.0
-"""How far around the restaurant addresses come first: further than any delivery goes, and inside the 50 km
-the service allows."""
+METERS_A_MILE = 1609.344
+CIRCLE_MOST_METERS = 50_000.0
+"""The widest circle Google takes."""
+NEAR_METERS = 4 * METERS_A_MILE
+"""How far around the restaurant addresses come first where nobody says (`reach`): four miles, as far as
+the restaurant this was built for usually delivers (the owner's words, 2026-11-25). A manager sets it under
+Location, Address list (`near_miles` of the setting). It is a preference and no wall: an address further
+out is still listed when the letters fit it. Google is told the distance as a circle (50 km is the widest
+it takes); Mapbox and Azure Maps take the place alone and put what is nearest to it first."""
 NEAR_SECONDS = 25 * 86400.0
 """How long the restaurant's coordinates stand in memory: under the thirty days the service's terms allow."""
 NEAR_AGAIN = 3600.0
@@ -449,9 +463,12 @@ class Lists(Protocol):
     locate_counts: int
     """How many askings of the month's free amount that finding is counted as."""
 
-    def suggest(self, typed: str, near: tuple[float, float] | None = None) -> list[Suggestion]:
+    def suggest(
+        self, typed: str, near: tuple[float, float] | None = None, reach: float = NEAR_METERS
+    ) -> list[Suggestion]:
         """What the letters typed could become, the likeliest first, with the streets around `near`
-        (latitude, longitude) first. Raises LookupFailed."""
+        (latitude, longitude) first: within `reach` meters of it, for a service that takes a distance.
+        Raises LookupFailed."""
         ...
 
     def locate(self, address: str) -> tuple[float, float] | None:
@@ -483,11 +500,17 @@ class Places:
         self._client = client if client is not None else httpx.Client(timeout=SUGGEST_SECONDS)
         _quiet(self._base)
 
-    def suggest(self, typed: str, near: tuple[float, float] | None = None) -> list[Suggestion]:
-        """What the letters typed could become, the likeliest first. Raises LookupFailed."""
+    def suggest(
+        self, typed: str, near: tuple[float, float] | None = None, reach: float = NEAR_METERS
+    ) -> list[Suggestion]:
+        """What the letters typed could become, the likeliest first, those within `reach` meters of `near`
+        before the others. Raises LookupFailed."""
         out: list[Suggestion] = []
         for told in self._predictions(
-            typed, near, "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat"
+            typed,
+            near,
+            "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
+            reach=reach,
         ):
             address = _here(_text(told.get("text")))
             parts = told.get("structuredFormat")
@@ -515,15 +538,25 @@ class Places:
         return {"X-Goog-Api-Key": self._key, "X-Goog-FieldMask": mask}
 
     def _predictions(
-        self, typed: str, near: tuple[float, float] | None, mask: str, *, kinds: Sequence[str] | None = None
+        self,
+        typed: str,
+        near: tuple[float, float] | None,
+        mask: str,
+        *,
+        kinds: Sequence[str] | None = None,
+        reach: float = NEAR_METERS,
     ) -> list[Mapping[str, Any]]:
         body: dict[str, Any] = {"input": typed, "includedRegionCodes": ["us"], "languageCode": "en"}
         wanted = self._kinds if kinds is None else list(kinds)
         if wanted:
             body["includedPrimaryTypes"] = wanted
         if near is not None:
+            # a preference and no wall: what is in the circle comes first, and the rest is still listed
             body["locationBias"] = {
-                "circle": {"center": {"latitude": near[0], "longitude": near[1]}, "radius": NEAR_METERS}
+                "circle": {
+                    "center": {"latitude": near[0], "longitude": near[1]},
+                    "radius": round(min(max(reach, 1.0), CIRCLE_MOST_METERS), 1),
+                }
             }
         data = _answered(
             lambda: self._client.post(f"{self._base}/v1/places:autocomplete", json=body, headers=self._headers(mask)),
@@ -562,8 +595,9 @@ class Mapbox:
     start of an address (https://docs.mapbox.com/api/search/geocoding/). It takes the letters and the token
     in the address of the request and nowhere else, so httpx's own line about each request is kept out of
     the log. Its answers are of its temporary kind, which its terms do not let anybody keep: nothing of one
-    is remembered, and it is never asked where the restaurant stands. It goes by where the hub's own
-    internet connection is (`proximity=ip`)."""
+    is remembered, and it is never asked where the restaurant stands. It is told that (`proximity`) where the
+    hub knows it from Geocodio, and goes by where the hub's own internet connection is where not
+    (`proximity=ip`)."""
 
     name = "mapbox"
     locates = 0
@@ -583,8 +617,11 @@ class Mapbox:
         self._client = client if client is not None else httpx.Client(timeout=SUGGEST_SECONDS)
         _quiet(self._base)
 
-    def suggest(self, typed: str, near: tuple[float, float] | None = None) -> list[Suggestion]:
-        """What the letters typed could become, the likeliest first. Raises LookupFailed."""
+    def suggest(
+        self, typed: str, near: tuple[float, float] | None = None, reach: float = NEAR_METERS
+    ) -> list[Suggestion]:
+        """What the letters typed could become, the likeliest first, the nearest to `near` before the others
+        (it takes a place and no distance, so `reach` is not sent). Raises LookupFailed."""
         asked = {
             "q": typed.replace(";", " "),  # a semicolon would make two askings of one
             "autocomplete": "true",
@@ -637,8 +674,11 @@ class Azure:
     def _headers(self) -> dict[str, str]:
         return {"subscription-key": self._key, "Accept-Language": "en-US"}
 
-    def suggest(self, typed: str, near: tuple[float, float] | None = None) -> list[Suggestion]:
-        """What the letters typed could become, the likeliest first. Raises LookupFailed."""
+    def suggest(
+        self, typed: str, near: tuple[float, float] | None = None, reach: float = NEAR_METERS
+    ) -> list[Suggestion]:
+        """What the letters typed could become, the likeliest first, the nearest to `near` before the others
+        (it takes a place and no distance, so `reach` is not sent). Raises LookupFailed."""
         asked = {
             "api-version": AZURE_VERSION,
             "query": typed,
@@ -836,10 +876,12 @@ class Suggester:
         wait: float = SUGGEST_SECONDS,
         within: float = CHAIN_SECONDS,
         clock: Callable[[], float] = time.time,
+        placer: Callable[[str], tuple[float, float] | None] | None = None,
     ) -> None:
         self._monthly = monthly
         self._counts = asked if asked is not None else Asked()
         self._wait, self._all, self._clock = wait, within, clock
+        self._placer = placer
         self._lock = threading.Lock()
         self._day = 0
         self._month = ""
@@ -949,13 +991,22 @@ class Suggester:
                 listing.rests_until = 0.0
         return told
 
+    def place_with(self, placer: Callable[[str], tuple[float, float] | None] | None) -> None:
+        """Who says where the restaurant stands for a service that is never asked that itself (Mapbox):
+        somebody whose answer may be kept and given to anybody (`Lookups.locate`: Geocodio). It raises
+        LookupFailed when it cannot say; None for nobody, and such a service goes by what it has."""
+        self._placer = placer
+
     def _stands(self, listing: _Listing, origin: str) -> tuple[float, float] | None:
         """Where the restaurant stands as this service reads it, from memory. When it is not known, the
         address changed or the memory is nearly a month old, the service is asked behind this call, and
         after a failure not again for an hour. Nobody typing waits for it: until it is known the service
-        goes by what it has (`Lists.suggest`). A service that is not asked that (`locates` 0) never knows."""
+        goes by what it has (`Lists.suggest`). A service that is not asked that itself (`locates` 0) is told
+        what the hub's own placer says (`place_with`), and never knows where there is none."""
         service = listing.service
-        if not origin or service.locates < 1:
+        own = service.locates > 0
+        placer = self._placer
+        if not origin or (not own and placer is None):
             return None
         now = self._clock()
         with self._lock:
@@ -967,14 +1018,20 @@ class Suggester:
 
             def find() -> None:
                 try:
-                    found = self._ask(
-                        listing,
-                        lambda service: service.locate(origin),
-                        requests=service.locates,
-                        counts=service.locate_counts,
-                        rests=False,
-                    )
+                    if own:
+                        found = self._ask(
+                            listing,
+                            lambda service: service.locate(origin),
+                            requests=service.locates,
+                            counts=service.locate_counts,
+                            rests=False,
+                        )
+                    else:  # not this service's asking: nothing of its month, and nothing about how it stands
+                        found = placer(origin) if placer is not None else None
                 except LookupFailed:
+                    found = None
+                except Exception:  # noqa: BLE001  a list is a help: it goes by what it has
+                    log.warning("where the restaurant stands could not be asked")
                     found = None
                 with self._lock:
                     if listing.near is not None and listing.near[0] == origin:
@@ -999,9 +1056,11 @@ class Suggester:
         *,
         among: Collection[str] | None = None,
         via: str | None = None,
+        reach: float = NEAR_METERS,
     ) -> list[Suggestion]:
         """What the letters typed could become, as the first service says that gives an answer, with the
-        streets near the restaurant's own address (`origin`) first. `among` names the services a manager
+        streets near the restaurant's own address (`origin`) first: within `reach` meters of it, for a
+        service that takes a distance. `among` names the services a manager
         turned on (all of them unless given); they are asked in their order, each after the first only
         when the one before it gave no answer: its month is used up, it rests after it did not answer, it
         does not answer now, or it refuses the key. An empty list is an answer. `via` names the one
@@ -1032,7 +1091,7 @@ class Suggester:
             try:
                 found = self._ask(
                     listing,
-                    lambda service, near=near: service.suggest(typed, near),
+                    lambda service, near=near: service.suggest(typed, near, reach),
                     wait=min(self._wait, left),
                 )
             except LookupFailed as err:

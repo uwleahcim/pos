@@ -43,6 +43,10 @@ class AddressListDialog extends StatefulWidget {
 class _AddressListDialogState extends State<AddressListDialog> {
   late final Map<String, bool> _on = {for (final service in widget.setting.services) service.name: service.on};
 
+  /// How far around the restaurant addresses come first; null on a hub that does not say, which is offered
+  /// no choice.
+  late double? _near = widget.setting.nearMiles;
+
   /// What the hub said the lookups left free are, where a try just told it anew.
   final Map<String, int> _left = {};
   final Map<String, ({String words, bool well})> _tried = {};
@@ -55,7 +59,7 @@ class _AddressListDialogState extends State<AddressListDialog> {
       _message = null;
     });
     try {
-      final saved = await widget.api.saveAddressList(widget.token, widget.setting.turned(_on));
+      final saved = await widget.api.saveAddressList(widget.token, widget.setting.turned(_on, near: _near));
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (err) {
       if (mounted) {
@@ -177,11 +181,55 @@ class _AddressListDialogState extends State<AddressListDialog> {
     );
   }
 
+  /// How far "nearby" reaches: a row of distances to tap, and a line on what it does. What is saved stands
+  /// among them even where it is none of the usual ones.
+  Widget _nearby(BuildContext context, double near) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final saved = widget.setting.nearMiles;
+    final choices = {...AddressListSetting.nearChoices, ?saved}.toList()..sort();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Nearby first', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final miles in choices)
+              ChoiceChip(
+                key: ValueKey('address-list-near:${miles == miles.roundToDouble() ? miles.round() : miles}'),
+                label: Text(AddressListSetting.miles(miles)),
+                selected: miles == near,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                onSelected: (_) => setState(() => _near = miles),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          widget.setting.originSet == false
+              ? 'Addresses within ${AddressListSetting.miles(near)} of the restaurant come first, once its own '
+                    'address is set under Location, Delivery fee. Until then a service goes by where the '
+                    'hub\'s internet connection is.'
+              : 'Addresses within ${AddressListSetting.miles(near)} of the restaurant come first. Ones further '
+                    'out are still listed when the letters fit them.',
+          key: const ValueKey('address-list-near-says'),
+          style: widget.setting.originSet == false ? quiet?.copyWith(color: scheme.error) : quiet,
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final near = _near;
     final services = widget.setting.services;
     final several = services.length > 1;
     final any = _on.values.any((on) => on);
@@ -215,16 +263,17 @@ class _AddressListDialogState extends State<AddressListDialog> {
                 if (index > 0) const Divider(height: 12),
                 _service(context, index + 1, service),
               ],
+              if (near != null) ...[const Divider(height: 16), _nearby(context, near)],
               const SizedBox(height: 8),
               Text(
                 !any
                     ? 'All off: nothing that is typed leaves the building.'
                     : 'Whichever is asked is sent the letters typed, from the fourth letter, and nothing else: '
-                          'no name, no phone number, nothing of the order. Google and Azure Maps are also asked '
-                          'once where the restaurant\'s own address is, so that streets nearby come first. '
-                          'Answers are shown with the service\'s name and are not kept. The hub counts what it '
-                          'asks and stops a little short of what each gives away free each month, so the list '
-                          'costs nothing. The line under a list says who answered and what it has left.',
+                          'no name, no phone number, nothing of the order. Each also learns where the '
+                          'restaurant is, so that streets nearby come first. Answers are shown with the '
+                          'service\'s name and are not kept. The hub counts what it asks and stops a little '
+                          'short of what each gives away free each month, so the list costs nothing. The '
+                          'badge at the top of a list says who answered and what it has left.',
                 key: const ValueKey('address-list-sent'),
                 style: quiet,
               ),
