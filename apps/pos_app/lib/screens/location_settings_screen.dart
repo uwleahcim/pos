@@ -50,6 +50,7 @@ import 'powers_screen.dart';
 import 'printers_screen.dart';
 import 'quotes_dialog.dart';
 import 'sales_screen.dart';
+import 'save_bar.dart';
 import 'shift_notes_screen.dart';
 import 'staff_screen.dart';
 import 'suggestions_screen.dart';
@@ -72,6 +73,12 @@ import 'waste_screen.dart';
 /// people, and the time clock: whether the location uses it and how it counts the hours. The hub keeps them;
 /// a terminal reads them when it opens an order. The report of voids and comps and the hours of the time
 /// clock open from here too. Behind the manager PIN.
+///
+/// Every setting is saved the same way. What is set on this screen itself (the courses, the time clock,
+/// what the tickets say, the desk phones, face sign-in, the hands-free switching) waits as it is changed:
+/// a bar with Save comes up at the bottom of the screen ([SaveBarScaffold]), says which of them wait, and one
+/// Save keeps them all. A row with an arrow opens a dialog or a screen that saves the same way, with its
+/// own Save.
 class LocationSettingsScreen extends StatefulWidget {
   const LocationSettingsScreen({
     super.key,
@@ -153,24 +160,23 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   List<_Row> _rows = [];
   String? _defaultKey;
   int _added = 0;
-  String? _message;
-  bool _busy = false;
   List<_PhoneRow> _phones = [];
   int _phonesAdded = 0;
-  String? _phonesMessage;
-  bool _phonesBusy = false;
+  DeskPhoneLinks _phonesKept = const DeskPhoneLinks(); // the desk phones as the hub has them
+  bool _saving = false; // Save was tapped and the hub has not answered for every part yet
+  List<SaveProblem> _problems = const []; // why the last Save did not keep a part
+  String _shown = ''; // the parts the Save bar was last built for, to tell a letter that changes them
   Map<String, dynamic>? _pbx; // how the hub stands with the PBX; null until it answers
   List<PbxExtension> _extensions = []; // the PBX's extensions, as the hub lists them
   List<String> _devices = []; // the screens the hub has heard from
   FaceStatus? _faceStatus; // how the hub stands with face sign-in; null until it answers
   bool _faceEnabled = false;
+  bool? _faceDraft; // the switch as it stands on the screen while it waits to be saved
   bool _faceKnown = false; // the hub answered about faces at all (an older hub does not)
   List<StaffEntry> _staff = [];
   String? _faceMessage;
-  bool _faceBusy = false;
   HandsFree? _handsFree; // the hands-free switching as the hub has it; null until it answers (an older hub)
-  bool _handsFreeBusy = false;
-  String? _handsFreeMessage;
+  HandsFree? _handsFreeDraft; // as it stands on the screen while it waits to be saved
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   KitchenMinutes? _kitchenMinutes; // when a station's screen turns a ticket amber and red; null likewise
@@ -188,18 +194,16 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   OnlineStatus? _online; // how the online orders are doing; null until the hub answers (an older hub)
   StationList? _stations; // the stations the menu prints at, with the ones missing a printer
   TicketWords? _ticketWords; // what the tickets of one send say about each other; null from an older hub
+  TicketWords? _ticketWordsDraft; // as the switches stand on the screen while they wait to be saved
   BillSettings? _bill; // the guest's bill as the hub has it; null from an older hub, which prints none
   TicketSkips? _ticketSkips; // the stations each screen prints no ticket at; null from an older hub
-  bool _ticketWordsBusy = false;
-  String? _ticketWordsMessage;
   ClockSetting? _clock; // the time clock as the hub has it; null from an older hub, which has none
+  ClockSetting? _clockDraft; // as it stands on the screen while it waits to be saved
   Powers? _powers; // who may do what as the hub has it; null until it answers (an older hub has no table)
   HubKeys? _hubKeys; // the hub's keys as a manager may see them; null until it answers, and from an older hub
   bool _hubKeysOlder = false; // the hub answered that it knows no keys typed in the app
   StaffList? _staffList; // the staff as a manager may change them; null until the hub answers, and from an older hub
   bool _staffOlder = false; // the hub answered that it keeps no staff a manager can change in the app
-  bool _clockBusy = false;
-  String? _clockMessage;
 
   /// Whether the PIN that opened this screen may do [power]: its rows show, the others do not.
   bool _may(String power) => widget.holds?.contains(power) ?? true;
@@ -358,28 +362,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     await _loadPrinters();
   }
 
-  /// The time clock's switches save as they are flipped: on or off, breaks counted or not, the week's first day.
-  Future<void> _saveClock(ClockSetting next) async {
-    final was = _clock;
-    setState(() {
-      _clock = next;
-      _clockBusy = true;
-      _clockMessage = null;
-    });
-    try {
-      final saved = await widget.api.saveClockSetting(widget.token, next);
-      if (mounted) setState(() => _clock = saved);
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _clock = was;
-        _clockMessage = 'Not saved: ${err.detail?['message'] ?? err.message}';
-      });
-    } finally {
-      if (mounted) setState(() => _clockBusy = false);
-    }
-  }
-
   Future<void> _loadPrinters() async {
     try {
       final printers = await widget.api.printerSettings();
@@ -450,27 +432,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved: the next send prints by it')));
   }
 
-  Future<void> _saveTicketWords(TicketWords next) async {
-    setState(() {
-      _ticketWordsBusy = true;
-      _ticketWordsMessage = null;
-    });
-    try {
-      final saved = await widget.api.saveTicketWords(widget.token, next);
-      if (!mounted) return;
-      setState(() {
-        _ticketWords = saved;
-        _ticketWordsBusy = false;
-      });
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _ticketWordsBusy = false;
-        _ticketWordsMessage = err.detail?['message'] as String? ?? err.message;
-      });
-    }
-  }
-
   Future<void> _openPrinters() async {
     await Navigator.of(context).push(
       PosPageRoute(
@@ -518,27 +479,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     }
   }
 
-  Future<void> _saveHandsFree(HandsFree next) async {
-    setState(() {
-      _handsFreeBusy = true;
-      _handsFreeMessage = null;
-    });
-    try {
-      final saved = await widget.api.saveHandsFree(widget.token, next);
-      if (!mounted) return;
-      setState(() {
-        _handsFree = saved;
-        _handsFreeBusy = false;
-      });
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _handsFreeBusy = false;
-        _handsFreeMessage = err.detail?['message'] as String? ?? err.message;
-      });
-    }
-  }
-
   Future<void> _giveTag(StaffEntry staff) async {
     final ends = await showDialog<String>(
       context: context,
@@ -567,29 +507,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${staff.name}\'s tag forgotten')));
     } on ApiException catch (err) {
       if (mounted) setState(() => _faceMessage = err.detail?['message'] as String? ?? err.message);
-    }
-  }
-
-  Future<void> _switchFaces(bool on) async {
-    setState(() {
-      _faceBusy = true;
-      _faceMessage = null;
-    });
-    try {
-      final saved = await widget.api.saveFaceSetting(widget.token, enabled: on);
-      final status = await widget.api.faceStatus();
-      if (!mounted) return;
-      setState(() {
-        _faceEnabled = saved;
-        _faceStatus = status;
-        _faceBusy = false;
-      });
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _faceBusy = false;
-        _faceMessage = err.detail?['message'] as String? ?? err.message;
-      });
     }
   }
 
@@ -647,44 +564,24 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     for (final phone in _phones) {
       phone.dispose();
     }
-    _phones = [
-      for (final link in links.links) _PhoneRow(link.extension, extension: link.extension, device: link.device),
-    ];
+    _phonesKept = links;
+    _phones = [for (final link in links.links) _phone(link.extension, extension: link.extension, device: link.device)];
   }
 
-  void _addPhone() => setState(() => _phones.add(_PhoneRow('new-${++_phonesAdded}', extension: '', device: '')));
+  /// A desk phone's row, whose typing the Save bar follows.
+  _PhoneRow _phone(String key, {required String extension, required String device}) {
+    final row = _PhoneRow(key, extension: extension, device: device);
+    row.extension.addListener(_typed);
+    row.device.addListener(_typed);
+    return row;
+  }
+
+  void _addPhone() => setState(() => _phones.add(_phone('new-${++_phonesAdded}', extension: '', device: '')));
 
   void _removePhone(_PhoneRow phone) => setState(() {
     _phones.remove(phone);
     phone.dispose();
   });
-
-  Future<void> _savePhones() async {
-    final links = [for (final phone in _phones) phone.link];
-    if (links.any((l) => l.extension.isEmpty || l.device.isEmpty)) {
-      setState(() => _phonesMessage = 'Every phone needs its extension and the name of its screen.');
-      return;
-    }
-    setState(() {
-      _phonesBusy = true;
-      _phonesMessage = null;
-    });
-    try {
-      final saved = await widget.api.saveDeskPhones(widget.token, DeskPhoneLinks(links));
-      if (!mounted) return;
-      setState(() {
-        _phonesBusy = false;
-        _applyPhones(saved);
-      });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Desk phones saved')));
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _phonesBusy = false;
-        _phonesMessage = err.detail?['message'] as String? ?? err.message;
-      });
-    }
-  }
 
   /// One line on the hub's link to the PBX, which the desk phones depend on.
   String get _pbxLine {
@@ -705,12 +602,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     }
     _coursing = coursing;
     _enabled = coursing.enabled;
-    _rows = [for (final c in coursing.courses) _Row(c.id, id: c.id, name: c.name)];
+    _rows = [for (final c in coursing.courses) _course(c.id, id: c.id, name: c.name)];
     _defaultKey = coursing.defaultCourse;
   }
 
+  /// A course's row, whose typing the Save bar follows.
+  _Row _course(String key, {String? id, required String name}) {
+    final row = _Row(key, id: id, name: name);
+    row.controller.addListener(_typed);
+    return row;
+  }
+
   void _add() => setState(() {
-    final row = _Row('new-${++_added}', name: '');
+    final row = _course('new-${++_added}', name: '');
     _rows.add(row);
     _defaultKey ??= row.key;
   });
@@ -723,16 +627,64 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   void _reorder(int from, int to) => setState(() => _rows.insert(to, _rows.removeAt(from)));
 
-  Future<void> _save() async {
-    if (_rows.any((r) => r.name.isEmpty)) {
-      setState(() => _message = 'Every course needs a name.');
-      return;
+  // What this screen sets itself, by the names the Save bar calls it. Each waits once it stands differently
+  // on the screen than the hub has it, and stops waiting when it is put back as it was.
+
+  static const _coursesPart = 'Courses';
+  static const _clockPart = 'Time clock';
+  static const _ticketsPart = 'Tickets';
+  static const _phonesPart = 'Desk phones';
+  static const _facePart = 'Face sign-in';
+  static const _handsFreePart = 'Hands-free switching';
+
+  bool get _coursesWait {
+    final kept = _coursing;
+    if (kept == null) return false;
+    if (_enabled != kept.enabled || _rows.length != kept.courses.length) return true;
+    for (final (i, row) in _rows.indexed) {
+      if (row.id != kept.courses[i].id || row.name != kept.courses[i].name) return true;
     }
-    if (_enabled && _rows.isEmpty) {
-      setState(() => _message = 'Coursing needs at least one course, or turn it off.');
-      return;
+    return _defaultKey != kept.defaultCourse;
+  }
+
+  bool get _phonesWait {
+    final kept = _phonesKept.links;
+    if (_phones.length != kept.length) return true;
+    for (final (i, phone) in _phones.indexed) {
+      final link = phone.link;
+      if (link.extension != kept[i].extension || link.device != kept[i].device) return true;
     }
-    // A course from the hub keeps its id; a new one gets one from its name, unique among the rest.
+    return false;
+  }
+
+  bool get _clockWaits => _clockDraft != null && _clock != null && _clockDraft != _clock;
+  bool get _ticketsWait => _ticketWordsDraft != null && _ticketWords != null && _ticketWordsDraft != _ticketWords;
+  bool get _faceWaits => _faceDraft != null && _faceDraft != _faceEnabled;
+  bool get _handsFreeWaits => _handsFreeDraft != null && _handsFree != null && _handsFreeDraft != _handsFree;
+
+  /// The parts that wait to be saved, in the order they stand on the screen.
+  List<String> get _waiting => [
+    if (_coursesWait) _coursesPart,
+    if (_clockWaits) _clockPart,
+    if (_ticketsWait) _ticketsPart,
+    if (_phonesWait) _phonesPart,
+    if (_faceWaits) _facePart,
+    if (_handsFreeWaits) _handsFreePart,
+  ];
+
+  /// "Courses, desk phones and face sign-in": parts by name in a sentence, the first as it is written.
+  static String _named(List<String> parts) =>
+      inSentence([...parts.take(1), for (final part in parts.skip(1)) part.toLowerCase()]);
+
+  /// A letter was typed in a course's name or a desk phone's row: the Save bar follows when that makes a
+  /// part wait, or stop waiting. (Not a rebuild a letter.)
+  void _typed() {
+    if (mounted && _waiting.join('|') != _shown) setState(() {});
+  }
+
+  /// The courses as Save sends them: a course from the hub keeps its id; a new one gets one from its name,
+  /// unique among the rest.
+  Coursing get _coursingEdited {
     final taken = {for (final r in _rows) ?r.id};
     final courses = <Course>[];
     String? defaultId;
@@ -742,27 +694,88 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       courses.add(Course(id, row.name));
       if (row.key == _defaultKey) defaultId = id;
     }
+    return Coursing(enabled: _enabled, defaultCourse: defaultId ?? courses.firstOrNull?.id, courses: courses);
+  }
+
+  /// The one Save of the screen: every part that waits is sent to the hub, each by itself. What cannot be
+  /// sent as it stands is said first and nothing is sent; what the hub refuses is said with the part's
+  /// name, and that part keeps waiting while the others are kept.
+  Future<void> _save() async {
+    if (_saving) return;
+    final waiting = _waiting;
+    final unfit = <SaveProblem>[
+      if (waiting.contains(_coursesPart) && _rows.any((r) => r.name.isEmpty))
+        (about: _coursesPart, text: 'Every course needs a name.')
+      else if (waiting.contains(_coursesPart) && _enabled && _rows.isEmpty)
+        (about: _coursesPart, text: 'Coursing needs at least one course, or turn it off.'),
+      if (waiting.contains(_phonesPart) && _phones.any((p) => p.link.extension.isEmpty || p.link.device.isEmpty))
+        (about: _phonesPart, text: 'Every phone needs its extension and the name of its screen.'),
+    ];
+    if (unfit.isNotEmpty || waiting.isEmpty) {
+      setState(() => _problems = unfit);
+      return;
+    }
     setState(() {
-      _busy = true;
-      _message = null;
+      _saving = true;
+      _problems = const [];
     });
-    try {
-      final saved = await widget.api.saveCoursing(
-        widget.token,
-        Coursing(enabled: _enabled, defaultCourse: defaultId ?? courses.firstOrNull?.id, courses: courses),
-      );
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _apply(saved);
-      });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Courses saved')));
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _message = err.detail?['message'] as String? ?? err.message;
-      });
+    final kept = <String>[];
+    final refused = <SaveProblem>[];
+    // One part: sent, and the screen made to stand as the hub answered. False once the screen is gone.
+    Future<bool> send<T>(String part, Future<T> Function() ask, void Function(T answer) stand) async {
+      if (!waiting.contains(part)) return true;
+      try {
+        final answer = await ask();
+        if (!mounted) return false;
+        setState(() => stand(answer));
+        kept.add(part);
+      } on ApiException catch (err) {
+        if (!mounted) return false;
+        refused.add((about: part, text: err.detail?['message'] as String? ?? err.message));
+      }
+      return true;
+    }
+
+    final api = widget.api;
+    final token = widget.token;
+    final all =
+        await send(_coursesPart, () => api.saveCoursing(token, _coursingEdited), _apply) &&
+        await send(_clockPart, () => api.saveClockSetting(token, _clockDraft!), (saved) {
+          _clock = saved;
+          _clockDraft = null;
+        }) &&
+        await send(_ticketsPart, () => api.saveTicketWords(token, _ticketWordsDraft!), (saved) {
+          _ticketWords = saved;
+          _ticketWordsDraft = null;
+        }) &&
+        await send(
+          _phonesPart,
+          () => api.saveDeskPhones(token, DeskPhoneLinks([for (final phone in _phones) phone.link])),
+          _applyPhones,
+        ) &&
+        await send(
+          _facePart,
+          () async {
+            final on = await api.saveFaceSetting(token, enabled: _faceDraft!);
+            return (on, await api.faceStatus());
+          },
+          (answer) {
+            _faceEnabled = answer.$1;
+            _faceStatus = answer.$2;
+            _faceDraft = null;
+          },
+        ) &&
+        await send(_handsFreePart, () => api.saveHandsFree(token, _handsFreeDraft!), (saved) {
+          _handsFree = saved;
+          _handsFreeDraft = null;
+        });
+    if (!all || !mounted) return;
+    setState(() {
+      _saving = false;
+      _problems = refused;
+    });
+    if (kept.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_named(kept)} saved')));
     }
   }
 
@@ -1144,6 +1157,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final waiting = _waiting;
+    _shown = waiting.join('|');
     final Widget body;
     if (_loadError != null) {
       body = Center(
@@ -1443,24 +1458,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                         ),
                       ),
                     ],
-                    if (_message != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                        child: Text(_message!, style: TextStyle(color: scheme.error)),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          FilledButton(
-                            key: const ValueKey('coursing-save'),
-                            onPressed: _busy ? null : _save,
-                            child: const Text('Save'),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -1632,24 +1629,6 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                         ),
                       ),
                     ),
-                    if (_phonesMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                        child: Text(_phonesMessage!, style: TextStyle(color: scheme.error)),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          FilledButton(
-                            key: const ValueKey('desk-phones-save'),
-                            onPressed: _phonesBusy ? null : _savePhones,
-                            child: const Text('Save'),
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -1662,9 +1641,19 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         ],
       );
     }
-    return Scaffold(
+    return SaveBarScaffold(
       appBar: AppBar(title: Text(_may(settingsPower) ? 'Location settings' : 'Location')),
-      body: Center(
+      changed: waiting.isNotEmpty,
+      onSave: _saving ? null : _save,
+      saveKey: const ValueKey('location-save'),
+      waiting: 'Not saved: ${waiting.join(', ').toLowerCase()}',
+      // (a part put back as it was waits no longer, and what was said about it goes with it)
+      problems: [
+        for (final problem in _problems)
+          if (waiting.contains(problem.about)) problem,
+      ],
+      unsaved: 'Not saved yet: ${_named(waiting).toLowerCase()}.',
+      child: Center(
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
       ),
     );
@@ -1701,12 +1690,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   );
 
   /// The time clock: whether the location uses it (off until a manager turns it on), whether a break counts
-  /// as time worked, the day the pay week starts on, and the way to the hours. Each saves as it is changed. A
+  /// as time worked, the day the pay week starts on, and the way to the hours. Each waits for Save. A
   /// hub older than the clock has none of it.
   Widget _clockCard(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final clock = _clock;
+    final clock = _clockDraft ?? _clock;
+    void set(ClockSetting next) => setState(() => _clockDraft = next);
     if (clock == null) {
       return const Card(
         child: ListTile(
@@ -1724,7 +1712,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             key: const ValueKey('time-clock-enabled'),
             secondary: const Icon(Icons.punch_clock_outlined),
             value: clock.enabled,
-            onChanged: _clockBusy ? null : (on) => _saveClock(clock.copyWith(enabled: on)),
+            onChanged: _saving ? null : (on) => set(clock.copyWith(enabled: on)),
             title: const Text('Time clock'),
             subtitle: Text(
               clock.enabled
@@ -1737,7 +1725,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             SwitchListTile(
               key: const ValueKey('time-clock-breaks-paid'),
               value: clock.breaksPaid,
-              onChanged: _clockBusy ? null : (on) => _saveClock(clock.copyWith(breaksPaid: on)),
+              onChanged: _saving ? null : (on) => set(clock.copyWith(breaksPaid: on)),
               title: const Text('Breaks count as time worked'),
               subtitle: Text(
                 clock.breaksPaid ? 'A break stays in the hours' : 'Off: a break is taken out of the hours',
@@ -1753,20 +1741,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   ButtonSegment(value: 'sun', label: Text('Sunday')),
                 ],
                 selected: {clock.weekStarts},
-                onSelectionChanged: _clockBusy
-                    ? null
-                    : (picked) => _saveClock(clock.copyWith(weekStarts: picked.first)),
+                onSelectionChanged: _saving ? null : (picked) => set(clock.copyWith(weekStarts: picked.first)),
               ),
             ),
           ],
-          if (_clockMessage != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(_clockMessage!, style: TextStyle(color: scheme.error)),
-              ),
-            ),
           const Divider(height: 1),
           _hoursRow(context),
         ],
@@ -1776,11 +1754,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   /// The printers (on their own screen) and, under them, what the tickets say beyond their dishes: two switches
   /// for what the tickets of one send say about each other, and one for PAID or NOT PAID on a to-go order's
-  /// takeout ticket. Each saves as it is flipped. A hub older than a switch does not show it.
+  /// takeout ticket. Each waits for Save. A hub older than a switch does not show it.
   Widget _printersCard(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final missing = _stations?.missing.isNotEmpty ?? false;
-    final words = _ticketWords;
+    final words = _ticketWordsDraft ?? _ticketWords;
+    void set(TicketWords next) => setState(() => _ticketWordsDraft = next);
     return Card(
       child: Column(
         children: [
@@ -1822,14 +1801,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             SwitchListTile(
               key: const ValueKey('tickets-numbered'),
               value: words.numbered,
-              onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(numbered: on)),
+              onChanged: _saving ? null : (on) => set(words.copyWith(numbered: on)),
               title: const Text('Number the tickets of one send'),
               subtitle: const Text('"Ticket 2 of 3", when more than one station is cooking'),
             ),
             SwitchListTile(
               key: const ValueKey('tickets-also-at'),
               value: words.alsoAt,
-              onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(alsoAt: on)),
+              onChanged: _saving ? null : (on) => set(words.copyWith(alsoAt: on)),
               title: const Text('Name the other stations on each ticket'),
               subtitle: const Text('"Also at: Wok 2, Sushi Bar", so a cook can time a dish against them'),
             ),
@@ -1837,7 +1816,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               SwitchListTile(
                 key: const ValueKey('tickets-paid'),
                 value: paid,
-                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(paid: on)),
+                onChanged: _saving ? null : (on) => set(words.copyWith(paid: on)),
                 title: const Text('Print PAID or NOT PAID on to-go orders'),
                 subtitle: const Text("On the takeout station's ticket, with what is still to collect"),
               ),
@@ -1845,7 +1824,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               SwitchListTile(
                 key: const ValueKey('tickets-moved'),
                 value: moved,
-                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(moved: on)),
+                onChanged: _saving ? null : (on) => set(words.copyWith(moved: on)),
                 title: const Text('Tell the kitchen when a table moves'),
                 subtitle: const Text('A MOVED slip at each station still cooking for it, with the new table'),
               ),
@@ -1853,18 +1832,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               SwitchListTile(
                 key: const ValueKey('tickets-pack'),
                 value: pack,
-                onChanged: _ticketWordsBusy ? null : (on) => _saveTicketWords(words.copyWith(pack: on)),
+                onChanged: _saving ? null : (on) => set(words.copyWith(pack: on)),
                 title: const Text('Print a pack sheet with a catering order'),
                 subtitle: const Text(
                   'With its first tickets, where to-go orders are packed: every dish with a box to tick',
-                ),
-              ),
-            if (_ticketWordsMessage != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(_ticketWordsMessage!, style: TextStyle(color: scheme.error)),
                 ),
               ),
           ],
@@ -1886,8 +1857,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           children: [
             SwitchListTile(
               key: const ValueKey('faces-enabled'),
-              value: _faceEnabled,
-              onChanged: _faceKnown && !_faceBusy ? _switchFaces : null,
+              value: _faceDraft ?? _faceEnabled,
+              onChanged: _faceKnown && !_saving ? (on) => setState(() => _faceDraft = on) : null,
               secondary: const Icon(Icons.face_outlined),
               title: const Text('Sign in by face'),
               subtitle: Text(
@@ -1963,9 +1934,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   /// Hands-free switching: whether a face or tag seen while someone is signed in makes the screen theirs,
   /// and how long the camera may miss the signed-in person before the screen signs them out.
   Widget _handsFreeCard(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final setting = _handsFree;
+    final setting = _handsFreeDraft ?? _handsFree;
+    void set(HandsFree next) => setState(() => _handsFreeDraft = next);
     const aways = [
       (0, 'Never'),
       (30, '30 seconds'),
@@ -1985,9 +1955,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             SwitchListTile(
               key: const ValueKey('hands-free-switch'),
               value: setting?.switching ?? true,
-              onChanged: setting == null || _handsFreeBusy
-                  ? null
-                  : (on) => _saveHandsFree(setting.copyWith(switching: on)),
+              onChanged: setting == null || _saving ? null : (on) => set(setting.copyWith(switching: on)),
               secondary: const Icon(Icons.swap_horiz),
               title: const Text('Switch to whoever steps up'),
               subtitle: Text(
@@ -2008,19 +1976,14 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               trailing: DropdownButton<int>(
                 key: const ValueKey('hands-free-away'),
                 value: away,
-                onChanged: setting == null || _handsFreeBusy
+                onChanged: setting == null || _saving
                     ? null
                     : (seconds) {
-                        if (seconds != null) _saveHandsFree(setting.copyWith(awaySeconds: seconds));
+                        if (seconds != null) set(setting.copyWith(awaySeconds: seconds));
                       },
                 items: [for (final (seconds, label) in choices) DropdownMenuItem(value: seconds, child: Text(label))],
               ),
             ),
-            if (_handsFreeMessage != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
-                child: Text(_handsFreeMessage!, style: TextStyle(color: scheme.error)),
-              ),
           ],
         ),
       ),

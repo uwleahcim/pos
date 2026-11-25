@@ -254,6 +254,9 @@ void main() {
     });
     expect(find.text('Bar printer · 10.0.0.2 · loops back here'), findsOneWidget);
     expect(find.text('Wok 1 printer · 10.0.0.1 · loops back here'), findsOneWidget);
+    expect(find.byKey(const ValueKey('printers-save')), findsNothing); // nothing changed: nothing to save
+    await tester.tap(find.byKey(const ValueKey('printer-dialect-escpos:bar')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('printers-save')));
     await tester.pumpAndSettle();
     expect(
@@ -592,6 +595,9 @@ void main() {
     expect(t.hub.testPrints, ['p1']);
 
     t.hub.refusePrinters = 'the wok1 printer falls back to \'zz\', which is not a printer';
+    expect(find.byKey(const ValueKey('printers-save')), findsNothing); // kept in the app now, nothing changed
+    await tester.tap(find.byKey(const ValueKey('printer-dialect-star:p1')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('printers-save')));
     await tester.pumpAndSettle();
     expect(find.text('the wok1 printer falls back to \'zz\', which is not a printer'), findsOneWidget);

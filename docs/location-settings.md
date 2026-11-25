@@ -5,6 +5,26 @@ settings are data on the hub, never code: a `setting` row per set in PostgreSQL 
 hub like the orders and the menu; the cloud copy comes with the cloud slice), served to every terminal
 and edited only with a manager's session token.
 
+## How a setting is saved
+
+Every setting is saved the same way, here and on the screens and dialogs this screen opens: **nothing
+takes effect as it is changed.**
+
+- **On the screen itself** (the courses, the time clock, what the tickets say, the desk phones, face
+  sign-in, the hands-free switching): flip a switch, type a name or pick from a list, and a bar comes up at
+  the bottom of the screen with **Save** on it. The bar says what is waiting ("Not saved: courses, time
+  clock") and stays at the bottom however the screen is scrolled, above the keyboard too. Scrolled all the
+  way down it rests at the end of the screen; scrolled back up it follows. One **Save** keeps everything
+  that waits. Put a thing back as it was and it waits no longer; with nothing waiting the bar goes.
+- **A row with an arrow** opens a dialog or a screen of its own. A dialog has **Cancel** and **Save** at
+  its foot, always in view. A screen (Printers, Who may do what) has the same bar as this one.
+- **What the hub refuses** is said in the bar, above Save, with the name of what it is about ("Courses:
+  Every course needs a name."). That part keeps waiting; the others are saved.
+- **Leaving with something waiting asks first**: Keep editing, or Discard changes.
+- What is not a setting does what it says at once: a test print, enrolling a face, forgetting a tag.
+
+A device's own **Settings** (the gear) work the same way: the bar with Save comes up with the first change.
+
 ## Where
 
 Orders screen › **Location** (the manager PIN again, like the menu editor). The settings are a manager's
@@ -72,7 +92,7 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   ticket, and a fourth, **Tell the kitchen when a table moves**, for the MOVED slip (see `moves.md`). A
   fifth, **Print a pack sheet with a catering order**, is for the sheet that comes with a catering
   order's first tickets, every dish with a box to tick (see `catering.md`). All
-  on to start; a flip is saved at once and the next ticket prints by it. The row **Screens that skip a
+  on to start; once a flip is saved the next ticket prints by it. The row **Screens that skip a
   station** says which stations a screen prints no ticket at (the bar's own screen and the bar printer;
   none to start; see `ticket-skips.md`).
 - **Desk phones**: which screen each desk phone is linked to, so a call taken on the phone opens the
@@ -88,9 +108,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   camera may go without seeing the signed-in person before the screen signs them out (never, 30 seconds, 1,
   2, 5 or 10 minutes; a minute to start), once it has recognised them.
 
-**Save** sends the courses to the hub, which checks them (a name on every course, no name twice, at least
-one course while coursing is on) and keeps them. Every terminal reads the setting when it opens an order,
-so a change reaches the floor on the next check anyone opens.
+**Save**, in the bar at the bottom of the screen, sends the courses to the hub, which checks them (a name
+on every course, no name twice, at least one course while coursing is on) and keeps them. Every terminal
+reads the setting when it opens an order, so a change reaches the floor on the next check anyone opens.
 
 ## Coursing on the order screen
 

@@ -140,7 +140,7 @@ void main() {
         contains('starts on the list of checks'),
       );
       expect(settings.opensOnFloor, isTrue); // not until Save
-      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle(); // the Save bar comes up with the change
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect((settings.opensOn, prefs.getString('opens_on')), ('checks', 'checks'));

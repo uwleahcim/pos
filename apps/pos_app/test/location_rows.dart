@@ -19,3 +19,25 @@ Future<void> bringUp(WidgetTester tester, String key) async {
   await tester.ensureVisible(row);
   await tester.pumpAndSettle();
 }
+
+/// What the Save bar at the bottom of a settings screen says did not get through, each in one line
+/// ("Courses: Every course needs a name.").
+List<String> saveProblems(WidgetTester tester) => [
+  for (final line in tester.widgetList<Text>(find.byKey(const ValueKey('save-problem')))) line.textSpan!.toPlainText(),
+];
+
+/// The one thing the Save bar says did not get through.
+String saveProblem(WidgetTester tester) => saveProblems(tester).single;
+
+/// What the Save bar says is waiting ("Not saved: courses, time clock"); null while there is no bar.
+String? saveWaiting(WidgetTester tester) {
+  final line = find.byKey(const ValueKey('save-waiting'));
+  return line.evaluate().isEmpty ? null : tester.widget<Text>(line).data;
+}
+
+/// Taps Save in the bar at the bottom of Location settings: the one Save for everything that screen sets
+/// itself.
+Future<void> saveLocation(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('location-save')));
+  await tester.pumpAndSettle();
+}

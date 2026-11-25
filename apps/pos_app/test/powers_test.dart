@@ -251,8 +251,8 @@ void main() {
       expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(15));
       expect(find.widgetWithText(FilterChip, 'Managers'), findsNothing);
       expect(find.widgetWithText(FilterChip, 'Owners'), findsNothing);
-      // nothing to save, and nothing to put back
-      expect(tester.widget<FilledButton>(find.byKey(const ValueKey('powers-save'))).onPressed, isNull);
+      // nothing to save, so no Save at all, and nothing to put back
+      expect(find.byKey(const ValueKey('powers-save')), findsNothing);
       expect(tester.widget<TextButton>(find.byKey(const ValueKey('powers-reset'))).onPressed, isNull);
     });
 
@@ -261,12 +261,12 @@ void main() {
       final t = await pumpPowers(tester, left: left, size: wholeTable);
       await tapKey(tester, 'power:void:bartender');
       expect(lit(tester, 'void', 'bartender'), isTrue);
-      expect(find.text('Save 1 change'), findsOneWidget);
+      expect(find.text('1 change not saved'), findsOneWidget);
       await tapKey(tester, 'power:reports:host');
       await tapKey(tester, 'power:take_tables:bartender'); // and one taken back
-      expect(find.text('Save 3 changes'), findsOneWidget);
+      expect(find.text('3 changes not saved'), findsOneWidget);
       await tapKey(tester, 'power:reports:host'); // tapped back: no change after all
-      expect(find.text('Save 2 changes'), findsOneWidget);
+      expect(find.text('2 changes not saved'), findsOneWidget);
       expect(t.hub.powersAuth, isNull, reason: 'nothing is sent before Save');
 
       await tapKey(tester, 'powers-save');
@@ -291,11 +291,11 @@ void main() {
         },
       );
       expect((lit(tester, 'void', 'server'), lit(tester, 'take_tables', 'server')), (true, false));
-      expect(find.text('Save'), findsOneWidget);
+      expect(find.text('Save'), findsNothing);
       await tapKey(tester, 'powers-reset');
       expect((lit(tester, 'void', 'server'), lit(tester, 'void', 'bartender')), (false, false));
       expect((lit(tester, 'take_tables', 'server'), lit(tester, 'take_tables', 'bartender')), (true, true));
-      expect(find.text('Save 4 changes'), findsOneWidget);
+      expect(find.text('4 changes not saved'), findsOneWidget);
       expect(tester.widget<TextButton>(find.byKey(const ValueKey('powers-reset'))).onPressed, isNull);
       await tapKey(tester, 'powers-save');
       expect(Powers(t.hub.powers!), Powers.standard);
@@ -312,7 +312,7 @@ void main() {
       await tapKey(tester, 'power:void:kitchen');
       await tapKey(tester, 'powers-save');
       expect(find.byType(PowersScreen), findsOneWidget);
-      expect(tester.widget<Text>(find.byKey(const ValueKey('powers-message'))).data, 'void: unknown role: chef');
+      expect(saveProblem(tester), 'void: unknown role: chef');
       expect(lit(tester, 'void', 'kitchen'), isTrue);
       expect(t.hub.powers!['void'], isEmpty);
       expect(left, isEmpty);
@@ -333,10 +333,7 @@ void main() {
       );
       await tapKey(tester, 'power:void:host');
       await tapKey(tester, 'powers-save');
-      expect(
-        tester.widget<Text>(find.byKey(const ValueKey('powers-message'))).data,
-        'Only a manager or an owner changes who may do what.',
-      );
+      expect(saveProblem(tester), 'Only a manager or an owner changes who may do what.');
       expect(t.hub.powers!['void'], isEmpty);
       expect(t.api.powers.value.holds('host', 'void'), isFalse);
     });
@@ -360,7 +357,7 @@ void main() {
       expect(lit(tester, 'guests', 'server'), isTrue);
       await tester.pageBack();
       await tester.pumpAndSettle();
-      await tapKey(tester, 'powers-discard');
+      await tapKey(tester, 'leave-discard');
       expect(find.byType(PowersScreen), findsNothing);
       expect(t.hub.powers!['guests'], isEmpty);
       expect(t.hub.powersAuth, isNull);
@@ -379,7 +376,7 @@ void main() {
       final chip = tester.getRect(find.byKey(const ValueKey('power:menu:kitchen')));
       expect(chip.left >= 0 && chip.right <= 320, isTrue);
       await tapKey(tester, 'power:menu:kitchen');
-      expect(find.text('Save 1 change'), findsOneWidget);
+      expect(find.text('1 change not saved'), findsOneWidget);
       final save = tester.getRect(find.byKey(const ValueKey('powers-save')));
       expect(save.right <= 320 && save.bottom <= 568, isTrue);
     });

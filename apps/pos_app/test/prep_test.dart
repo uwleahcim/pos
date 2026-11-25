@@ -6,6 +6,7 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 
 import 'catering_test.dart' show chen, deposit, platters, pumpOrder, said, tapKey, week;
 import 'hub.dart';
+import 'location_rows.dart';
 import 'ticket_words_test.dart' show show;
 
 /// The prep list and the pack sheet (docs/catering.md): a day's orders ahead added up dish by dish for each
@@ -368,6 +369,9 @@ void main() {
       expect(find.text('Print a pack sheet with a catering order'), findsOneWidget);
       await tester.tap(pack);
       await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(pack).value, isFalse);
+      expect(t.hub.ticketWords!['pack'], isTrue, reason: 'the switch waits for Save');
+      await saveLocation(tester);
       expect(t.hub.ticketWords, {'numbered': true, 'also_at': true, 'paid': true, 'moved': true, 'pack': false});
       expect(tester.widget<SwitchListTile>(pack).value, isFalse);
       await stop(tester);

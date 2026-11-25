@@ -539,7 +539,7 @@ void main() {
       expect((chip(5).selected, chip(0).selected), (true, false));
       expect(tester.widget<Text>(find.byKey(const ValueKey('lock-line'))).data, startsWith('After 5 minutes without'));
       expect(settings.lockMinutes, 0); // not until Save
-      await tester.ensureVisible(find.text('Save'));
+      await tester.pumpAndSettle(); // the Save bar comes up with the change
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect((settings.lockMinutes, prefs.getInt('lock_minutes')), (5, 5));

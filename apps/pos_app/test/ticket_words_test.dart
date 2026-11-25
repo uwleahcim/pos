@@ -4,6 +4,7 @@ import 'package:pos_app/printers.dart';
 import 'package:pos_app/screens/location_settings_screen.dart';
 
 import 'hub.dart';
+import 'location_rows.dart';
 
 /// What the kitchen tickets of one send say about each other (the Toast comparison, 2026-11-15): "Ticket 2
 /// of 3" and "Also at: Wok 2, Sushi Bar"; and PAID or NOT PAID on a to-go order's takeout ticket. The hub
@@ -38,7 +39,7 @@ void main() {
     expect(newest == newer, isFalse);
   });
 
-  testWidgets('a manager flips either line under the printers, and it is saved at once', (tester) async {
+  testWidgets('a manager flips the lines under the printers, and Save keeps them', (tester) async {
     final t = await terminal(tester);
     await tester.pumpWidget(
       MaterialApp(
@@ -53,43 +54,56 @@ void main() {
     expect(tester.widget<SwitchListTile>(alsoAt).value, isTrue);
     expect(find.text('"Ticket 2 of 3", when more than one station is cooking'), findsOneWidget);
 
+    // a flip waits for Save, like every setting of the screen: nothing is sent, and the bar says what waits
     await tester.tap(numbered);
     await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(numbered).value, isFalse);
+    expect(t.hub.ticketWords, {'numbered': true, 'also_at': true, 'paid': true, 'moved': true});
+    expect(t.hub.ticketWordsAuth, isNull);
+    expect(saveWaiting(tester), 'Not saved: tickets');
+    await saveLocation(tester);
     expect(t.hub.ticketWords, {'numbered': false, 'also_at': true, 'paid': true, 'moved': true});
     expect(t.hub.ticketWordsAuth, 'Bearer tok-admin');
     expect(tester.widget<SwitchListTile>(numbered).value, isFalse);
+    expect(find.text('Tickets saved'), findsOneWidget);
+    expect(saveWaiting(tester), isNull);
 
+    // the rest in one go: the other stations, PAID or NOT PAID on the takeout station's ticket, and the MOVED
+    // slip for the stations cooking for a table that changes tables
     await tester.tap(alsoAt);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': true, 'moved': true});
-
-    // the third switch: PAID or NOT PAID on the takeout station's ticket
     final paid = find.byKey(const ValueKey('tickets-paid'));
     await show(tester, paid);
     expect(tester.widget<SwitchListTile>(paid).value, isTrue);
     expect(find.text('Print PAID or NOT PAID on to-go orders'), findsOneWidget);
     await tester.tap(paid);
     await tester.pumpAndSettle();
-    expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false, 'moved': true});
-    expect(tester.widget<SwitchListTile>(paid).value, isFalse);
-
-    // the fourth: a MOVED slip for the stations cooking for a table that changes tables
     final moved = find.byKey(const ValueKey('tickets-moved'));
     await show(tester, moved);
     expect(tester.widget<SwitchListTile>(moved).value, isTrue);
     expect(find.text('Tell the kitchen when a table moves'), findsOneWidget);
     await tester.tap(moved);
     await tester.pumpAndSettle();
+    expect(t.hub.ticketWords, {'numbered': false, 'also_at': true, 'paid': true, 'moved': true});
+    await saveLocation(tester);
     expect(t.hub.ticketWords, {'numbered': false, 'also_at': false, 'paid': false, 'moved': false});
+    expect(tester.widget<SwitchListTile>(paid).value, isFalse);
     expect(tester.widget<SwitchListTile>(moved).value, isFalse);
     await show(tester, numbered);
 
-    // what the hub refuses is said in its words, and the switch stays where the hub has it
+    // what the hub refuses is said in its words by the bar, and the flip keeps waiting to be tried again
     t.hub.refuseTicketWords = 'numbered must be true or false';
     await tester.tap(numbered);
     await tester.pumpAndSettle();
-    expect(find.text('numbered must be true or false'), findsOneWidget);
-    expect(tester.widget<SwitchListTile>(numbered).value, isFalse);
+    await saveLocation(tester);
+    expect(saveProblem(tester), 'Tickets: numbered must be true or false');
+    expect(saveWaiting(tester), 'Not saved: tickets');
+    expect(tester.widget<SwitchListTile>(numbered).value, isTrue);
+    expect(t.hub.ticketWords!['numbered'], isFalse);
+    // flipped back to what the hub has, nothing waits and the refusal goes with the bar
+    await tester.tap(numbered);
+    await tester.pumpAndSettle();
+    expect(saveWaiting(tester), isNull);
     await stop(tester);
   });
 
@@ -128,6 +142,7 @@ void main() {
     expect(find.byKey(const ValueKey('tickets-moved')), findsNothing);
     await tester.tap(alsoAt);
     await tester.pumpAndSettle();
+    await saveLocation(tester);
     expect(t.hub.ticketWords, {'numbered': true, 'also_at': false});
     await stop(tester);
   });
@@ -148,6 +163,7 @@ void main() {
     expect(find.byKey(const ValueKey('tickets-moved')), findsNothing);
     await tester.tap(paid);
     await tester.pumpAndSettle();
+    await saveLocation(tester);
     expect(t.hub.ticketWords, {'numbered': true, 'also_at': true, 'paid': false});
     await stop(tester);
   });
