@@ -15,6 +15,8 @@ finds the check by that name. And such a party is a guest of this list: it came 
 the visit, and so has every other guest of its check ([Every guest of a check](#every-guest-of-a-check)).
 A check of several guests that nobody was said to have paid waits here, and a manager says who paid it
 afterwards ([Who paid, said afterwards](#who-paid-said-afterwards)).
+Since 25 November 2026, where the owner set a rate, the list says each guest's **points** too: what the
+guest who pays a check earns on it (`points.md`). Until a rate is set the list says nothing about points.
 It grows out of the customers the to-go form already remembers by their number (`customers.md`): nothing
 is typed in for the list itself.
 
@@ -529,7 +531,7 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   number on the check and it shows what that number carries); writing or changing the note from the
   check.
 - For the guests of a check: sharing a check's money out between its guests; who at the table ate what;
-  points or rewards for a guest (the visits and the money they would be reckoned from are here); counting
+  spending a guest's points (earning and showing them is `points.md`); counting
   a party that was seated before the hub was updated, other than today's and yesterday's; a party's visit
   in what the to-go form says of a caller ("12 orders since Mar 2025" still counts the orders that carry
   the number).
@@ -547,7 +549,7 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 - Tagging many guests at once. Putting a first tag, from this list, on a number with no order in the
   last 12 months: such a guest is tagged from their reservation or their party.
 - More notes than the one line.
-- Messages or offers to guests, points, birthdays.
+- Messages or offers to guests, birthdays.
 - A guest without a phone number, or joining two numbers into one guest.
 - Changing what "regular", "stopped coming" and "new" mean from the app. They are five numbers in the hub
   (below).

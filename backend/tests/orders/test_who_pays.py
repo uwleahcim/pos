@@ -140,6 +140,7 @@ def test_the_check_is_told_who_can_pay_and_who_does_and_never_a_number():
         "key": linda,
         "listed": True,
         "pays": False,
+        "points": None,  # no rate was ever set here (test_points.py)
     }
     assert len({party["key"] for party in told["parties"]}) == 3
     words = h.c.get("/orders/t-1/seated").text + say(h, "t-1", linda).text

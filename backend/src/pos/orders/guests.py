@@ -43,6 +43,11 @@ A number that carries a tag and has no visit in the year is listed too, apart fr
 or a guest of long ago. Its row has the shape of a guest's with no visit and nothing spent, under the name
 it was tagged by. It is counted in no total and no tag's `guests`: those are of the guests who ordered.
 
+Where the owner set a rate, the guest who pays a check earns points on it (`pos.orders.points`,
+docs/points.md): each guest's row says how many they have (`points`), the list what they all have, and a
+guest read closely what each visit earned, or why it earned nothing, and which of their points stop
+counting first. They are read off the visits, like everything here: nothing is kept for them.
+
 What one order comes to as a visit (`Visit`, from `visit_of`) is remembered in the hub's memory while its
 log stays as it was (`VisitMemo`), as the sales are: a year of orders with a number is read from the log
 once after the hub starts and from memory after that.
@@ -65,6 +70,7 @@ from ..sync.oplog import OrderEntry, OrderState, phone_digits
 from ..tax import TaxProfile
 from .adjustments import PricingRules
 from .day import ZERO
+from .points import Points, tally
 from .sales import CENT, OrderMemo, _each, _same, sale_of
 
 LOOK_BACK_DAYS = 365
@@ -97,6 +103,9 @@ class Visit(NamedTuple):
     waits: bool = False  # the check has several guests and nobody said who pays: its money is nobody's yet
     guests: int = 1  # how many guests the check has, this one among them
     table: str = ""  # the table the check is of, as its name is written; empty for an order with none
+    closed: bool = False  # the check is closed: an open one is still being rung, and earns no points yet
+    alcohol: Decimal = ZERO  # of `net`, what its alcoholic drinks come to (`pos.orders.points`)
+    catering: bool = False  # a catering order
 
 
 def visit_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one: Any = _same) -> Visit | None:
@@ -136,6 +145,9 @@ def _visit(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one
         kind=sale.kind,
         dishes=one(tuple((item, name, qty) for (item, name), qty in dishes.items())),
         table=intern(" ".join(str(state.fields.get("table") or "").split())),
+        closed=state.status == "closed",
+        alcohol=sale.alcohol,
+        catering=state.fields.get("channel") == "catering",
     )
 
 
@@ -339,6 +351,7 @@ def _row(
     defs: Definitions,
     today: date,
     favourites: int,
+    rules: Points | None = None,
 ) -> dict[str, Any]:
     visits = sorted(guest.visits, key=lambda visit: (visit.day, visit.opened_ms, visit.order_id), reverse=True)
     last = visits[0].day
@@ -364,6 +377,7 @@ def _row(
         "lapsed": lapsed,
         "new": (today - localtime.service_day_of(since_ms)).days < NEW_DAYS,
         "favourites": _favourites(guest.dishes, defs, favourites),
+        "points": tally(visits, rules, today).points if rules is not None else 0,
     }
 
 
@@ -388,6 +402,7 @@ def _tagged_row(phone: str, name: str, ever: tuple[int, int] | None, note: str, 
         "lapsed": False,
         "new": False,
         "favourites": [],
+        "points": 0,
     }
 
 
@@ -405,8 +420,10 @@ def _gather(
     return guests
 
 
-def _about(first: date, today: date, now_ms: int) -> dict[str, Any]:
+def _about(first: date, today: date, now_ms: int, rules: Points | None = None) -> dict[str, Any]:
     return {
+        # the rules of the points in force today; None from a list read without them
+        "points": rules.about(today) if rules is not None else None,
         "first": first.isoformat(),
         "last": today.isoformat(),
         "days": LOOK_BACK_DAYS,
@@ -431,6 +448,7 @@ def guests_report(
     now_ms: int,
     tags: Mapping[str, Sequence[str]] | None = None,
     names: Mapping[str, str] | None = None,
+    points: Points | None = None,
 ) -> dict[str, Any]:
     """The guest list as it stands at `now_ms`: every number with a visit in the days of `window`, the one
     that spent most first. `visits` are at least the visits of those days, `entries` every order that
@@ -439,7 +457,9 @@ def guests_report(
     guests listed carry it. `tagged` is every number that carries a tag and has no visit in those days,
     under the name it was tagged by (`names`), by that name and the nameless by their number after them.
     `waiting` is how many checks of those days have several guests and nobody who pays yet, and what they
-    come to: money that counts for no guest until somebody says who paid."""
+    come to: money that counts for no guest until somebody says who paid. With `points` (the rules, read
+    off the setting), each guest's row says the points they have, `totals` what all of them have, and the
+    list the rules in force today."""
     first, today = window(now_ms)
     ever = _ever(entries)
     carried = tags or {}
@@ -455,6 +475,7 @@ def guests_report(
             defs=defs,
             today=today,
             favourites=FAVOURITES,
+            rules=points,
         )
         for phone, guest in _gather(visits, first, today, waiting).items()
     ]
@@ -470,7 +491,7 @@ def guests_report(
     ]
     others.sort(key=lambda row: (not row["name"], row["name"].casefold(), row["phone"]))
     return {
-        **_about(first, today, now_ms),
+        **_about(first, today, now_ms, points),
         "guests": rows,
         "tagged": others,
         "tags": offered(carried, listed),
@@ -483,6 +504,7 @@ def guests_report(
             "regulars": sum(1 for row in rows if row["regular"]),
             "lapsed": sum(1 for row in rows if row["lapsed"]),
             "new": sum(1 for row in rows if row["new"]),
+            "points": sum(row["points"] for row in rows),
         },
         "waiting": {"checks": len(waiting), "net": str(sum(waiting.values(), ZERO).quantize(CENT))},
     }
@@ -498,13 +520,16 @@ def guest_report(
     now_ms: int,
     tags: Mapping[str, Any] | None = None,
     name: str = "",
+    points: Points | None = None,
 ) -> dict[str, Any] | None:
     """One guest read closely: the row of the list with more favourite dishes, their latest visits (each
     with its dishes), who wrote the note about them and when, and who last put their tags on (`tags` is
     what is kept for the number: its `tags`, `by` and `at_ms`). A number with no visit in the days of
     `window` that carries a tag is read too: the row it has among the `tagged`, under the `name` it was
     tagged by, with no visit to show. None for a number with neither. `visits` and `entries` are this
-    number's."""
+    number's. With `points` (the rules), each visit says what it earned (`points`) or why nothing
+    (`points_why`, a word of `pos.orders.points`), and `points_next` which of their points stop counting
+    first: how many, and the last day they count."""
     first, today = window(now_ms)
     guest = _gather((visit for visit in visits if visit.phone == phone), first, today).get(phone)
     words = list((tags or {}).get("tags") or ())
@@ -516,12 +541,23 @@ def guest_report(
         latest: list[Visit] = []
     else:
         row = _row(
-            phone, guest, _ever(entries).get(phone), about, words, defs=defs, today=today, favourites=MORE_FAVOURITES
+            phone,
+            guest,
+            _ever(entries).get(phone),
+            about,
+            words,
+            defs=defs,
+            today=today,
+            favourites=MORE_FAVOURITES,
+            rules=points,
         )
         latest = sorted(guest.visits, key=lambda visit: (visit.day, visit.opened_ms, visit.order_id), reverse=True)
+    earned = {visit.order_id: points.earned(visit, today) for visit in latest[:LATEST]} if points is not None else {}
     return {
-        **_about(first, today, now_ms),
+        **_about(first, today, now_ms, points),
         "guest": row,
+        # of their points, the ones that stop counting first: how many, and the last day they count
+        "points_next": tally(latest, points, today).next() if points is not None else None,
         "note_by": str((note or {}).get("by") or ""),
         "note_ms": (note or {}).get("at_ms") if (note or {}).get("note") else None,
         "tags_by": str((tags or {}).get("by") or ""),
@@ -541,6 +577,9 @@ def guest_report(
                 # how many guests the check has, and its table: more than one, and who paid can be said
                 "guests": visit.guests,
                 "table": visit.table,
+                # what the visit earned them, and why nothing where it earned nothing (`pos.orders.points`)
+                "points": earned.get(visit.order_id, (0, ""))[0],
+                "points_why": earned.get(visit.order_id, (0, ""))[1],
                 "dishes": _favourites({(item, name): qty for item, name, qty in visit.dishes}, defs, len(visit.dishes)),
             }
             for visit in latest[:LATEST]

@@ -23,6 +23,7 @@ from pos.orders.guests import (
     guests_report,
     visit_of,
 )
+from pos.orders.points import Points
 
 from .test_day import BEER, DRAGON, DSN, EGGROLL, PUPU, SODA, WINGS, Hub, at, money
 from .test_dishes import GTC, OPEN, typed_menu
@@ -329,6 +330,7 @@ def straight(h: Hub) -> dict:
         state.customers.all(),
         defs=state.menu.defs,
         now_ms=h.now,
+        points=Points.of(state.settings.get("points")),  # the rules as the hub holds them: none set here
     )
 
 
@@ -351,6 +353,7 @@ def test_what_the_hub_remembers_reads_the_same_as_reckoned_straight_from_the_ord
         None,
         defs=state.menu.defs,
         now_ms=h.now,
+        points=Points.of(state.settings.get("points")),
     )
     assert close == one(h, LINDA)
 

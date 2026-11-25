@@ -81,6 +81,16 @@
   book and the waitlist forget long before the year the list reads is over. Each of them has the visit;
   the check's money is the one's who pays (`pos.orders.guests.shared_out`): the guest a tap on the check
   said, else the number typed on it, else its only guest.
+- Points (docs/points.md, `pos.orders.points`): where the owner set a rate, the guest who pays a check
+  earns points on it. `GET /settings/points` (no token) is the rules in force today: `on`, `per_dollar`,
+  what earns (`dine_in`, `takeout`, `delivery`, `catering`, `alcohol`), how many `days` points last, since
+  when (`from`, `by`, `since`), the versions `earlier`, and what a save is held to. `PUT /settings/points`
+  (manager token) `{per_dollar, dine_in, takeout, delivery, catering, alcohol, days}`, each left out
+  staying as it is: what earns counts from today, so no point already earned moves. The list above then
+  says each guest's `points`, `totals.points` and the rules (`points`); a guest read closely says each
+  visit's `points` or `points_why`, and `points_next`. For the staff's screens, `points` on a party of
+  `GET /orders/{id}/seated` and on `GET /customers/lookup`: how many the guest has, or null where no rate
+  was ever set or the party left no number. A count and no more: nothing is taken off any check by it.
 
 Reading changes nothing and nothing is written down. What each order comes to as a visit is remembered in
 memory while its log stays as it was (`pos.orders.guests.VisitMemo`): the first reading after the hub
@@ -117,8 +127,10 @@ from ..orders.guests import (
     shared_out,
     window,
 )
+from ..orders.points import Points, tally
 from ..sync.oplog import phone_digits
-from .auth import holder_from
+from ..sync.pgstore import ReadOnlyError as SettingsReadOnly
+from .auth import holder_from, manager_from
 
 MERGES_FOLLOWED = 20
 """How many merges in a row a party is followed through: far more than a night puts tables together."""
@@ -280,6 +292,19 @@ class PaidIn(BaseModel):
     pays: bool = True
 
 
+class PointsIn(BaseModel):
+    """The rules of the points as a manager sets them (`pos.orders.points`): how many a dollar earns (0 is
+    off), what earns, and how many days points last. One left out stays as it is."""
+
+    per_dollar: str | float | None = Field(None, description="points a dollar, 0 to 100; 0 is off")
+    dine_in: bool | None = None
+    takeout: bool | None = None
+    delivery: bool | None = None
+    catering: bool | None = None
+    alcohol: bool | None = None
+    days: int | None = None
+
+
 class GuestIn(BaseModel):
     """What the restaurant keeps about a guest, written from the guest list: the note and the tags. One left
     out stays as it is; an empty one is taken off. `name` is what the guest is called where they are tagged
@@ -319,6 +344,55 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             return visits_of(entries, now_ms)
         return shared_out(visits_of(entries, now_ms), sat_on(seated, now_ms), seated)
 
+    def rules() -> Points:
+        """The rules of the points as the setting holds them now."""
+        return Points.of(app.state.settings.get("points"))
+
+    def points_of(phone: object, now_ms: int | None = None) -> int | None:
+        """How many points the guest at this number has now, for a screen of the staff's: read off their
+        visits of the year as the guest list reads them. None where no rate was ever set, or for a number
+        that is none: there is nothing to show then."""
+        digits = phone_digits(phone)
+        held = rules()
+        if not held.ever or len(digits) < SHORTEST:
+            return None
+        store = app.state.store
+        now_ms = store.now_ms() if now_ms is None else now_ms
+        mine = app.state.check_guests.of_phone(digits)
+        seated = app.state.check_guests.on({guest.order_id for guest in mine}) if mine else []
+        first, today = window(now_ms)
+        visits = everybody(store.index(phone=digits), seated, now_ms)
+        return tally((v for v in visits if v.phone == digits and first <= v.day <= today), held, today).points
+
+    app.state.points_of = points_of
+
+    @app.get("/settings/points")
+    def read_points() -> dict[str, Any]:
+        """The rules of the points in force today: whether anybody earns (`on`), how many points a dollar
+        earns, what earns, how many days points last, since when and who set them, and the versions before.
+        Until somebody sets a rate nobody earns."""
+        return rules().setting(localtime.service_day_of(app.state.store.now_ms()))
+
+    @app.put("/settings/points")
+    def write_points(body: PointsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager sets the rules of the points. What earns counts from today (the day of service that is
+        running): the checks of earlier days keep what they earned under the rules of their day. How long
+        points last is one figure for all of them. It writes the setting and nothing else: no check, bill,
+        sale or report moves by it."""
+        grant = manager_from(app.state.tokens, authorization)
+        today = localtime.service_day_of(app.state.store.now_ms())
+        try:
+            saved = rules().saved(body.model_dump(exclude_none=True), today=today, by=grant.name)
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        try:
+            app.state.settings.put("points", saved.stored())
+        except SettingsReadOnly as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        _log.info("the rules of the points were set by %s", grant.staff_id)
+        app.state.feed.changed("settings")
+        return rules().setting(today)
+
     @app.get("/reports/guests")
     def read_guests(authorization: str | None = Header(None)) -> dict[str, Any]:
         """Every customer who ordered with a phone number in the last year: how often, what they spent,
@@ -335,6 +409,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             now_ms=now_ms,
             tags=app.state.guest_tags.all(),
             names=app.state.guest_tags.names(),
+            points=rules(),
         )
 
     def began(now_ms: int) -> int:
@@ -480,6 +555,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             now_ms=now_ms,
             tags=kept_tags.get(digits) if digits else None,
             name=kept_tags.names().get(digits, "") if digits else "",
+            points=rules(),
         )
         if report is None:
             raise HTTPException(404, {"error": "no_guest", "message": "No visit from this number in the last year."})
@@ -573,7 +649,8 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
 
         Each party also says what it is known by (`key`), whether it left a number and so is a guest of the
         guest list (`listed`), and whether somebody said it `pays` the check (`POST /orders/{id}/payer`).
-        `payer` says this hub takes that word."""
+        `payer` says this hub takes that word. `points` is how many points the party's guest has
+        (docs/points.md): null where no rate was ever set, or the party left no number."""
         seated = sits_on(order_id)
         carried = app.state.guest_tags.all() if any(row.phone for _, row in seated) else {}
         try:
@@ -581,6 +658,14 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         except Exception:  # noqa: BLE001 - who sits here is told whether or not who pays can be read
             _log.exception("who pays a check could not be read")
             paying = set()
+
+        def points(row: Any) -> int | None:
+            try:
+                return points_of(row.phone)
+            except Exception:  # noqa: BLE001 - who sits here is told whether or not their points can be read
+                _log.exception("a guest's points could not be read")
+                return None
+
         return {
             "order_id": order_id,
             "parties": [
@@ -593,6 +678,7 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
                     "key": key_of(where, row),
                     "listed": len(phone_digits(row.phone)) >= SHORTEST,
                     "pays": (where, id_of(where, row)) in paying,
+                    "points": points(row),
                 }
                 for where, row in seated
             ],

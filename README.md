@@ -130,6 +130,10 @@ merges after any disconnect.
   the one who pays, said with a tap on a name on the check, or afterwards from the guest list where nobody tapped; a guest who only booked a table is tagged from the reservation or the waitlist with a
   manager's PIN, and is in the list from then on, before their first order; for a manager):
   `docs/guest-list.md`
+- Points (the guest who pays a check earns points on it, so many a dollar of what it came to before tax,
+  less comps and discounts, once the check is closed; the rate, what earns and how long points last are
+  the owner's settings under Location, and nobody earns until a rate is set; shown in the guest list, at
+  the table beside a seated guest and on the to-go form; spending points is not built): `docs/points.md`
 - Contests for the staff (a manager sets one up: the most sales, or the most of a dish or a category, over
   some days, for the roles that take part; the hub adds the board up from the checks; each person sees their
   own place and who is in front, and every number only where the manager says so; it changes no sale and no
