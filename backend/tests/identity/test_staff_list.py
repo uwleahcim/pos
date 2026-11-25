@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import replace
 
 import pytest
 
@@ -213,7 +214,9 @@ def test_a_pin_is_kept_as_a_salted_hash_and_nowhere_in_clear():
     staff.add("Kim", "server", "4827", by=MIKE)
     staff.change("s1", pin="5310", by=MIKE)
     for row in staff.store.all():
-        assert "4827" not in repr(row) and "5310" not in repr(row) and hashed(row.pin_salt, row.pin_hash)
+        # the digits are looked for everywhere but in the salt and the hash, which are random hex
+        bare = repr(replace(row, pin_salt="", pin_hash=""))
+        assert "4827" not in bare and "5310" not in bare and hashed(row.pin_salt, row.pin_hash)
     kim, amy = (m for m in staff.store.all() if m.staff_id in ("s5", "s1"))
     assert kim.pin_salt != amy.pin_salt and len(kim.pin_hash) == 64
 
