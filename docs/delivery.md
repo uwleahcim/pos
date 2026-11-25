@@ -465,8 +465,8 @@ Delivery fee.
 - **What is near the restaurant comes first.** A map service's addresses within four miles of the
   restaurant come before the ones further out (the owner's words, 2026-11-25: deliveries go four miles as a
   rule, further for a big order). It is a preference and no wall: an address further out is still listed
-  when the letters fit it. **Location › Address list › Nearby first** sets another distance (2, 4, 6, 10 or
-  20 miles). It needs the restaurant's own address (Location › **Delivery fee**); the dialog says so in red
+  when the letters fit it. **Location › Address list › Nearby first** is a slider that sets another distance,
+  from 1 to 20 miles. It needs the restaurant's own address (Location › **Delivery fee**); the dialog says so in red
   where that is not set. Google takes the distance as a circle. Mapbox and Azure Maps take the place alone
   and put what is nearest to it first. Your own earlier deliveries stand above all of them either way.
 - **How the letters are read.** Every word typed in full has to be a word of the address, and the word
@@ -557,8 +557,9 @@ The dialog lists the three services in the order they are asked, each with its o
 line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No key on this hub yet",
 "Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
 
-Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: four
-miles until another distance is tapped.
+Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: a
+slider in whole miles from 1 to 20, with the distance in words beside its name ("4 miles"). It stands at
+four miles until somebody moves it, and nothing is saved before Save.
 
 The row under Location says how it stands: "Your own earlier deliveries are listed while an address is
 typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox and

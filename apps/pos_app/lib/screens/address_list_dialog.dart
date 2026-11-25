@@ -181,35 +181,40 @@ class _AddressListDialogState extends State<AddressListDialog> {
     );
   }
 
-  /// How far "nearby" reaches: a row of distances to tap, and a line on what it does. What is saved stands
-  /// among them even where it is none of the usual ones.
+  /// How far "nearby" reaches: a slider in whole miles, the distance in words beside its name, and a line on
+  /// what it does. What is saved is said as it is even where the slider has no such stop (a distance set
+  /// some other way, like 2.5 or 25 miles): the slider then stands at its nearest stop, and a save keeps what
+  /// was saved until somebody moves it.
   Widget _nearby(BuildContext context, double near) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
-    final saved = widget.setting.nearMiles;
-    final choices = {...AddressListSetting.nearChoices, ?saved}.toList()..sort();
+    const least = AddressListSetting.nearLeast, most = AddressListSetting.nearMost;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Nearby first', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Wrap(
-          spacing: 6,
-          runSpacing: 4,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
           children: [
-            for (final miles in choices)
-              ChoiceChip(
-                key: ValueKey('address-list-near:${miles == miles.roundToDouble() ? miles.round() : miles}'),
-                label: Text(AddressListSetting.miles(miles)),
-                selected: miles == near,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                onSelected: (_) => setState(() => _near = miles),
-              ),
+            Expanded(child: Text('Nearby first', style: theme.textTheme.titleSmall)),
+            Text(
+              AddressListSetting.miles(near),
+              key: const ValueKey('address-list-near-miles'),
+              style: theme.textTheme.titleSmall,
+            ),
           ],
         ),
-        const SizedBox(height: 4),
+        Slider(
+          key: const ValueKey('address-list-near'),
+          value: near.clamp(least, most).toDouble(),
+          min: least,
+          max: most,
+          divisions: (most - least).round(),
+          label: AddressListSetting.miles(near),
+          semanticFormatterCallback: AddressListSetting.miles,
+          onChanged: _busy == 'save' ? null : (to) => setState(() => _near = to.roundToDouble()),
+        ),
         Text(
           widget.setting.originSet == false
               ? 'Addresses within ${AddressListSetting.miles(near)} of the restaurant come first, once its own '

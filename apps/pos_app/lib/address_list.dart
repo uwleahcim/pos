@@ -251,9 +251,9 @@ class AddressListSetting {
   /// null on a hub that does not say.
   final bool? originSet;
 
-  /// The distances a manager is offered for [nearMiles]: a town, a delivery's usual reach (four, what a hub
-  /// starts on), and further out.
-  static const nearChoices = [2.0, 4.0, 6.0, 10.0, 20.0];
+  /// What the slider for [nearMiles] reaches from and to, in whole miles: a few streets, to further out than
+  /// most deliveries go. A hub starts on four, a delivery's usual reach.
+  static const nearLeast = 1.0, nearMost = 20.0;
 
   /// A number of miles in words: "4 miles", "2.5 miles", "1 mile".
   static String miles(double miles) {
