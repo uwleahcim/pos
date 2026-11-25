@@ -28,6 +28,7 @@ import 'live.dart';
 import 'menu.dart';
 import 'online_orders.dart';
 import 'orders_ahead.dart';
+import 'paid_checks.dart';
 import 'prep_list.dart';
 import 'phone.dart';
 import 'powers.dart';
@@ -2082,6 +2083,34 @@ class PosApi {
   Future<GuestDetail> guestDetail(String token, String phone) async => GuestDetail.fromJson(
     await _get('/reports/guests/${phoneDigits(phone)}', headers: _bearer(token), timeout: const Duration(seconds: 30)),
   );
+
+  /// The checks of the year that wait for who paid (token of whoever may read the guest list): several
+  /// guests sat on them and nobody said which of them pays, so their money counts for no guest. The newest
+  /// first, each with its guests (docs/guest-list.md, "Who paid, said afterwards").
+  Future<List<PaidCheck>> waitingChecks(String token) async {
+    final json = await _get('/reports/guests/payers', headers: _bearer(token), timeout: const Duration(seconds: 90));
+    return [
+      if (json['checks'] is List)
+        for (final row in json['checks'] as List)
+          if (row is Map) PaidCheck.fromJson(row.cast<String, dynamic>()),
+    ];
+  }
+
+  /// One check with every guest of it and which of them its money counts for, whether it waits or not
+  /// (same token). 404 `no_check` for a check that is no visit of the year or has no guest the hub noted.
+  Future<PaidCheck> paidCheck(String token, String orderId) async => PaidCheck.fromJson(
+    await _get('/reports/guests/payers/$orderId', headers: _bearer(token), timeout: const Duration(seconds: 30)),
+  );
+
+  /// Says, afterwards, which guest paid this check ([pays] false takes the word back): its money counts
+  /// for that guest in the guest list and for no other. [guest] is the [PaidGuest.key] the hub gave. It is
+  /// the word a tap on the check says, said by whoever may read the guest list (the name behind the
+  /// token is kept with it). It takes no money and nothing is written on the check. Hands back the check
+  /// as it stands now.
+  Future<PaidCheck> sayPaid(String token, String orderId, String guest, {required bool pays}) async =>
+      PaidCheck.fromJson(
+        await _post('/reports/guests/payers/$orderId', {'guest': guest, 'pays': pays}, headers: _bearer(token)),
+      );
 
   /// What the box that tags a guest needs where the guest list was not read, at a reservation or a party on
   /// the waitlist (token of whoever may read the guest list): the tags on offer, what they are held to, and

@@ -49,7 +49,7 @@ A change holds on every screen from the moment it is saved.
 | **Keep the manager's log** | Read and write what happened in a shift | Nobody |
 | **Run the waste log** | Read the waste totals, and strike out anyone's entry of any day (`waste-log.md`) | Nobody |
 | **See the reports** | Today, the day, sales, dishes sold, kitchen times, and what came off the checks; print the day; copy the sales of any days as a table for the accountant; every name and number of a staff contest's board; the suggestions taken, by person (`today.md`, `day-report.md`, `sales-report.md`, `dishes-sold.md`, `kitchen-times.md`, `contests.md`, `goes-with.md`) | Nobody |
-| **See the guest list** | Phone customers: their numbers, visits and what they spent; tag a guest and write their note, and tag a guest from their reservation or the waitlist with their PIN (`guest-list.md`) | Nobody |
+| **See the guest list** | Phone customers: their numbers, visits and what they spent; tag a guest and write their note, tag a guest from their reservation or the waitlist with their PIN, and say afterwards which guest paid a check nobody was tapped on (`guest-list.md`) | Nobody |
 | **See and correct the hours** | Everyone's hours on the time clock, and corrections to a shift (`time-clock.md`) | Nobody |
 | **Edit the menu** | Dishes, prices and options, in the menu editor (`menus.md`) | Nobody |
 

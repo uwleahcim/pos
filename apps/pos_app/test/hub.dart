@@ -124,6 +124,24 @@ class Hub {
   final payers = <String, String>{};
   final payerSaid = <(String, String, bool, String)>[];
 
+  /// Who paid, said afterwards from the guest list (`GET /reports/guests/payers`, `GET` and `POST
+  /// /reports/guests/payers/{id}`). [paidChecks] is every check the hub noted guests on, by its id, each as
+  /// the hub answers one; null is a hub older than this, which says no `waiting` in the guest list either.
+  /// The ones that `waits` are the list, the newest first, and what the guest list says of them
+  /// (`waiting`) is counted from them. A word is kept as the real hub keeps it: that guest pays and no
+  /// other, said by [paidBy]; taken back, the number typed on the check pays, or its only guest, or it
+  /// waits. [paidSaid] is every word taken, as (check, guest, pays); [paidAsks] the checks read one by one;
+  /// [paidListAsks] how often the list was read; [paidAuth] the token of the last of these calls;
+  /// [paidDown] fails these calls as if no hub answered, and [refusePaid] answers the word with that status.
+  Map<String, Map<String, dynamic>>? paidChecks;
+  final paidSaid = <(String, String, bool)>[];
+  final paidAsks = <String>[];
+  int paidListAsks = 0;
+  String? paidAuth;
+  String paidBy = 'Mike';
+  bool paidDown = false;
+  int? refusePaid;
+
   /// Table timers: the setting it keeps (`GET/PUT /settings/table_timers`; null for a hub older than them),
   /// the token the last save carried and a reason to refuse the next save with.
   Map<String, dynamic>? tableTimers = {
@@ -580,6 +598,77 @@ class Hub {
       'tags_by': carried.isEmpty ? '' : guestKeeper,
       'tags_ms': carried.isEmpty ? null : clockNow,
     });
+  }
+
+  /// The checks that wait for who paid, the newest first.
+  List<Map<String, dynamic>> _waitingChecks() =>
+      [
+        for (final check in paidChecks!.values)
+          if (check['waits'] == true) check,
+      ]..sort((a, b) {
+        final day = (b['day'] as String).compareTo(a['day'] as String);
+        return day != 0 ? day : (b['opened_ms'] as int? ?? 0).compareTo(a['opened_ms'] as int? ?? 0);
+      });
+
+  /// What the guest list says of them: how many, and what they come to.
+  Map<String, dynamic> _waiting() {
+    final waits = _waitingChecks();
+    final cents = waits.fold<int>(0, (sum, check) => sum + (double.parse(check['net'] as String) * 100).round());
+    return {'checks': waits.length, 'net': (cents / 100).toStringAsFixed(2)};
+  }
+
+  http.Response _paid(http.Request request, String path) {
+    paidAuth = request.headers['authorization'];
+    if (paidDown) throw const SocketException('down');
+    if (path == '/reports/guests/payers') {
+      paidListAsks++;
+      return json({'first': '2025-11-17', 'last': '2026-11-16', 'now_ms': clockNow, 'checks': _waitingChecks()});
+    }
+    final id = path.substring('/reports/guests/payers/'.length);
+    final check = paidChecks![id];
+    if (request.method == 'GET') paidAsks.add(id);
+    if (check == null) {
+      return json({
+        'detail': {
+          'error': 'no_check',
+          'message': 'This check is no visit of the last year, or the hub noted no guest on it.',
+        },
+      }, 404);
+    }
+    if (request.method == 'GET') return json(check);
+    if (refusePaid != null) {
+      return json({
+        'detail': {'error': 'sign_in', 'message': salesRefusal},
+      }, refusePaid!);
+    }
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    final key = body['guest'] as String? ?? '';
+    final pays = body['pays'] != false;
+    final guests = (check['guests'] as List).cast<Map<String, dynamic>>();
+    if (guests.every((guest) => guest['key'] != key)) {
+      return json({
+        'detail': {'error': 'unknown_guest', 'message': 'This guest is not a guest of this check any more.'},
+      }, 404);
+    }
+    paidSaid.add((id, key, pays));
+    final one = guests.firstWhere((guest) => guest['key'] == key);
+    final wasBy = check['said_by'] as String? ?? '';
+    // the guest somebody said: this one now, or whoever was said before when the word taken back is not theirs
+    final before = wasBy.isEmpty ? null : guests.where((guest) => guest['pays'] == true).firstOrNull;
+    final said = pays ? (one['typed'] == true ? null : one) : (identical(before, one) ? null : before);
+    // for want of a word: the number typed on the check, or its only guest
+    final byItself =
+        guests.where((guest) => guest['typed'] == true).firstOrNull ?? (guests.length == 1 ? guests.single : null);
+    final payer = said ?? byItself;
+    paidChecks![id] = {
+      ...check,
+      'guests': [
+        for (final guest in guests) {...guest, 'pays': identical(guest, payer)},
+      ],
+      'waits': payer == null,
+      'said_by': said == null ? '' : (pays ? paidBy : wasBy),
+    };
+    return json(paidChecks![id]!);
   }
 
   Future<http.Response> _keepGuest(http.Request request, String phone) async {
@@ -3441,7 +3530,10 @@ class Hub {
       }
       guestsAsks++;
       if (guestsHeld != null) await guestsHeld!.future;
-      return json(guests!);
+      return json(paidChecks == null ? guests! : {...guests!, 'waiting': _waiting()});
+    }
+    if (paidChecks != null && (path == '/reports/guests/payers' || path.startsWith('/reports/guests/payers/'))) {
+      return _paid(request, path);
     }
     if (path == '/reports/guests/tags' && request.method == 'GET' && tagBox && guests != null) {
       return _tagBox(request);

@@ -48,7 +48,9 @@ it has several):
   number was typed on A7's check too: each has the visit. The money counts for the one a tap on the
   joined check says pays (its strip asks **Who pays? Tap a name.**), and with no tap for the number on
   B5's check. Who pays was said of each table's own check: the word of B5's check stands, and one said
-  of A7's does not go over (`guest-list.md`, "Every guest of a check").
+  of A7's does not go over (`guest-list.md`, "Every guest of a check"). A joined check nobody was tapped
+  on waits in the guest list, where a manager says afterwards who paid; the customer whose number was
+  typed on A7's check is one of the names to tap there (`guest-list.md`, "Who paid, said afterwards").
 - **Allergies** are told again on the joined check: a seat's on its new seat, the table's together with the
   other table's. The kitchen hears of them as of any allergy told on a check (see
   [allergies.md](allergies.md)).

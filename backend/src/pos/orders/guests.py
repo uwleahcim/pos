@@ -23,6 +23,9 @@ How it is counted:
   check with no number, its only guest. A check with several guests, no number and no word is nobody's
   money until one is said or typed (`waits` on its visits). A visit that somebody else paid is `paid`
   false, and counts as a visit.
+- The checks that wait are counted for the list (`waiting`: how many, and what they come to), and each is
+  read with everybody who is a guest of it (`paid_by`), so whoever may read the list can say who paid
+  afterwards. A visit says how many `guests` its check has and at which `table` it was.
 - `spent` is the net sales of the visits they paid: every dish at the price it was sold at, less comps and
   discounts, before tax, charges and gratuity. Added up over every guest it is the net sales of the checks
   that have a guest who pays, each check once.
@@ -92,6 +95,8 @@ class Visit(NamedTuple):
     paid: bool = True  # the check's money is this guest's; false for a guest of a check somebody else pays
     seated: bool = False  # a guest the host seated on the check (`pos.check_guests`), not the number typed on it
     waits: bool = False  # the check has several guests and nobody said who pays: its money is nobody's yet
+    guests: int = 1  # how many guests the check has, this one among them
+    table: str = ""  # the table the check is of, as its name is written; empty for an order with none
 
 
 def visit_of(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one: Any = _same) -> Visit | None:
@@ -130,6 +135,7 @@ def _visit(state: OrderState, taxes: TaxProfile, rules: PricingRules | None, one
         name=intern(" ".join(str(state.fields.get("customer_name") or "").split())),
         kind=sale.kind,
         dishes=one(tuple((item, name, qty) for (item, name), qty in dishes.items())),
+        table=intern(" ".join(str(state.fields.get("table") or "").split())),
     )
 
 
@@ -195,7 +201,71 @@ def _guests_of(check: Visit, seated: Sequence[CheckGuest]) -> Iterator[Visit]:
     said = next((guest.phone for guest in seated if guest.pays), "")
     payer = payer_of(check.phone, list(names), said)
     for phone, name in names.items():
-        yield check._replace(phone=phone, name=name, paid=phone == payer, seated=phone != check.phone, waits=not payer)
+        yield check._replace(
+            phone=phone,
+            name=name,
+            paid=phone == payer,
+            seated=phone != check.phone,
+            waits=not payer,
+            guests=len(names),
+        )
+
+
+TYPED = "typed"
+"""What the number typed on a check is known by, where somebody says afterwards who paid the check. The
+other guests of a check are known by where the hub noted them: "reservation:<id>", "waitlist:<id>",
+"check:<id>" (`pos.check_guests`)."""
+
+
+def paid_by(check: Visit, seated: Sequence[CheckGuest]) -> dict[str, Any]:
+    """One check with everybody who is a guest of it, and which of them its money counts for: what
+    whoever says afterwards who paid it is shown. `check` is the check as a visit (`check_of`), `seated`
+    who the hub noted on it, the first to sit first.
+
+    The guests are the ones `shared_out` gives the visit, in its order: the number typed on the check
+    first (`typed`), then the others, a number once. Each has the `key` it is said by, its `name` and its
+    `phone`, and `pays` for the one the money counts for (`payer_of`). `waits` when it counts for nobody
+    yet; `said_by` is who said the one that pays, empty where nobody had to: the number on the check, or
+    its only guest."""
+    guests: list[dict[str, Any]] = []
+    if check.phone:
+        guests.append({"key": TYPED, "name": check.name, "phone": check.phone, "typed": True})
+    said = said_by = ""
+    for guest in seated:
+        if guest.pays and not said:
+            said, said_by = guest.phone, guest.pays_by
+        if all(guest.phone != listed["phone"] for listed in guests):
+            key = f"{guest.source}:{guest.source_id}"
+            guests.append({"key": key, "name": guest.name, "phone": guest.phone, "typed": False})
+    payer = payer_of(check.phone, [guest["phone"] for guest in guests], said)
+    return {
+        "order_id": check.order_id,
+        "order_no": check.order_no,
+        "table": check.table,
+        "day": check.day.isoformat(),
+        "opened_ms": check.opened_ms,
+        "kind": check.kind,
+        "net": str(check.net),
+        "guests": [{**guest, "pays": guest["phone"] == payer} for guest in guests],
+        "waits": not payer,
+        "said_by": said_by if payer and payer == said else "",
+    }
+
+
+def checks_paid_by(checks: Iterable[Visit], seated: Iterable[CheckGuest], now_ms: int) -> list[dict[str, Any]]:
+    """Each of these checks that counts in the days the list reads (`window`), with its guests and who
+    pays it (`paid_by`), the newest first. `checks` are the checks somebody sat on (`check_of`), `seated`
+    who sat on them; a check nobody is noted on is left out."""
+    first, today = window(now_ms)
+    by_check: dict[str, list[CheckGuest]] = {}
+    for guest in sorted(seated, key=lambda guest: (guest.at_ms, guest.source, guest.source_id)):
+        by_check.setdefault(guest.order_id, []).append(guest)
+    rows = [
+        (check.day, check.opened_ms, check.order_id, paid_by(check, by_check[check.order_id]))
+        for check in checks
+        if check.order_id in by_check and first <= check.day <= today
+    ]
+    return [row for *_, row in sorted(rows, key=lambda row: row[:3], reverse=True)]
 
 
 def window(now_ms: int) -> tuple[date, date]:
@@ -321,11 +391,17 @@ def _tagged_row(phone: str, name: str, ever: tuple[int, int] | None, note: str, 
     }
 
 
-def _gather(visits: Iterable[Visit], first: date, today: date) -> dict[str, _Guest]:
+def _gather(
+    visits: Iterable[Visit], first: date, today: date, waiting: dict[str, Decimal] | None = None
+) -> dict[str, _Guest]:
+    """The visits of those days by guest. `waiting` is filled with the checks among them that wait for
+    who paid, each once, with what it comes to."""
     guests: dict[str, _Guest] = {}
     for visit in visits:
         if first <= visit.day <= today:
             guests.setdefault(visit.phone, _Guest()).add(visit)
+            if visit.waits and waiting is not None:
+                waiting[visit.order_id] = visit.net
     return guests
 
 
@@ -361,11 +437,14 @@ def guests_report(
     carries a number (for since when and how many orders ever), `notes` the note kept about each number and
     `tags` the tags on each. `tags` in the answer is every tag there is to offer, with how many of the
     guests listed carry it. `tagged` is every number that carries a tag and has no visit in those days,
-    under the name it was tagged by (`names`), by that name and the nameless by their number after them."""
+    under the name it was tagged by (`names`), by that name and the nameless by their number after them.
+    `waiting` is how many checks of those days have several guests and nobody who pays yet, and what they
+    come to: money that counts for no guest until somebody says who paid."""
     first, today = window(now_ms)
     ever = _ever(entries)
     carried = tags or {}
     called = names or {}
+    waiting: dict[str, Decimal] = {}
     rows = [
         _row(
             phone,
@@ -377,7 +456,7 @@ def guests_report(
             today=today,
             favourites=FAVOURITES,
         )
-        for phone, guest in _gather(visits, first, today).items()
+        for phone, guest in _gather(visits, first, today, waiting).items()
     ]
     rows.sort(key=lambda row: (-Decimal(row["spent"]), -row["visits"], row["name"].lower(), row["phone"]))
     spent = sum((Decimal(row["spent"]) for row in rows), ZERO)
@@ -405,6 +484,7 @@ def guests_report(
             "lapsed": sum(1 for row in rows if row["lapsed"]),
             "new": sum(1 for row in rows if row["new"]),
         },
+        "waiting": {"checks": len(waiting), "net": str(sum(waiting.values(), ZERO).quantize(CENT))},
     }
 
 
@@ -458,6 +538,9 @@ def guest_report(
                 "paid": visit.paid,
                 # nobody paid it yet as far as the list knows: several guests, and no word who pays
                 "waits": visit.waits,
+                # how many guests the check has, and its table: more than one, and who paid can be said
+                "guests": visit.guests,
+                "table": visit.table,
                 "dishes": _favourites({(item, name): qty for item, name, qty in visit.dishes}, defs, len(visit.dishes)),
             }
             for visit in latest[:LATEST]

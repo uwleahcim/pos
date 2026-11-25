@@ -13,6 +13,8 @@ who has not ordered yet is in the list too, after the others, and a party seated
 waitlist is named on the check of its table, on the floor map and in the list of checks, where the search
 finds the check by that name. And such a party is a guest of this list: it came in and ordered, so it has
 the visit, and so has every other guest of its check ([Every guest of a check](#every-guest-of-a-check)).
+A check of several guests that nobody was said to have paid waits here, and a manager says who paid it
+afterwards ([Who paid, said afterwards](#who-paid-said-afterwards)).
 It grows out of the customers the to-go form already remembers by their number (`customers.md`): nothing
 is typed in for the list itself.
 
@@ -27,6 +29,10 @@ again.
 
 At the top: how many guests there are, how many of them are regulars, stopped coming or new, and what all
 of them spent, over how many visits and how much a visit.
+
+When checks wait for who paid, a coloured line under that says how many and what they come to
+(**3 checks wait for who paid**). A tap on it opens them
+([Who paid, said afterwards](#who-paid-said-afterwards)). With no check waiting there is no line.
 
 Then every guest, one line each, numbered from the top:
 
@@ -76,9 +82,11 @@ A tap opens a guest:
 - What they spend a visit, and their visits in the last 90 days. A guest who was at a table that another
   guest paid says how many of their visits they paid themselves (**paid 3 of 5**).
 - **Favourite dishes**: the ten they ordered most in the year, with how many.
-- **Latest visits**: the last ten, each with its day, whether it was to go, delivery or a table, what it
-  came to and its dishes. A table that another guest paid says **another guest paid** in place of the
-  money. **A tap on a visit opens that check's history** (`check-history.md`).
+- **Latest visits**: the last ten, each with its day, whether it was to go, delivery or a table (the
+  table by its name, "Table A7"), what it came to and its dishes. A table that another guest paid says **another guest paid** in place of the
+  money. **A tap on a visit opens that check's history** (`check-history.md`). Under a visit at a table
+  of several guests is the button **Who paid** (**Say who paid** while its check waits):
+  [Who paid, said afterwards](#who-paid-said-afterwards).
 
 Any number of guests can be open at once.
 
@@ -128,8 +136,10 @@ table), and the hub notes whose check it is.
   - **One guest pays a check.** Tap another name and the label moves.
   - **Taken back the same way**: tap the name that pays, and its ticked line. The check asks again.
   - Anybody signed in who has the check open can say it, as anybody can ring a dish in. The hub keeps who
-    said it.
+    said it, and this list says it ("said by Amy").
   - It can be said at any time while the party sits on the check, before the dishes or after the bill.
+    When nobody did, a manager says it from this list
+    ([Who paid, said afterwards](#who-paid-said-afterwards)).
   - A party that left **no number** has no arrow: this list cannot count it. With one party that left a
     number and one that did not, the one with the number is the check's only guest and pays without a
     word.
@@ -161,6 +171,49 @@ table), and the hub notes whose check it is.
   told what they were told. Nothing sends any of it out of the hub.
 - **From the update on.** The tables seated today and yesterday when the hub is updated count; a party
   seated before that does not.
+
+### Who paid, said afterwards
+
+The tap on the check is for the party while it sits there. When nobody tapped, the check **waits**:
+everybody at the table has the visit and the money counts for nobody. A manager says who paid here,
+afterwards. Since 24 November 2026.
+
+- **The line at the top of the list.** While checks wait, a coloured line under "They spent" says how
+  many, and what they come to: the money that counts for no guest yet.
+- **Tap it** for the screen **Who paid?**: every check of the year that waits, the newest first. Each has
+  its day and its table, the time it was opened, its number and what it comes to before tax, and under
+  that **its guests, each a button**.
+- **Tap the guest who paid.** The name is ticked, and the line under the names says
+  **Linda Chen paid, said by Mike.** The check's money counts for that guest from then on. It is the
+  word a tap on the check says, kept the same way.
+  - **A wrong tap is put right on the spot**: tap another name and the tick moves; tap the ticked name
+    and the word is taken back. A check you said stays on the screen until you read again (the round
+    arrow at the top), so that it can be.
+  - Back on the list the figures are read again: that guest's money, and how many checks still wait.
+- **From a guest's visit.** Under a guest, a visit at a table of several guests has the button
+  **Who paid** (**Say who paid** while its check waits). It opens that one check with the same buttons:
+  to say it, or to say otherwise when the wrong name was tapped at the table.
+- **Who the buttons are**: every guest of the check
+  ([Who is a guest of a check](#every-guest-of-a-check)). The parties seated on it from the book or the
+  waitlist that left a number, each under its name; the **number typed on the check**; and the number
+  typed on a check that **was merged into it**. A guest who gave no name is a button with their number.
+- **The number typed on the check** pays for want of a word, and is ticked without one ("their number
+  is on the check"). Tap another guest to say that they paid instead; take that back and the number on
+  the check pays again.
+- **For as long as the list reads the visit**: a year. The reservation book forgets a party 30 days
+  after the day and the waitlist the night after, and the strip on the check is gone with them. This
+  screen does not ask them: it reads what the hub noted of who sat on the check, which is kept 400 days.
+- **Who may say it**: whoever may open this list, with the manager's PIN. The hub keeps the name behind
+  the PIN with the word, and the check's line says it. A word said with a tap on the check says the name
+  of whoever tapped.
+- **It takes no money, and nothing is written on the check.** No bill, no kitchen ticket, no sale and no
+  figure of Sales or The day changes. It says who a check's money counts for in this list, and nothing
+  else.
+- A check with **one guest** never waits, and neither does one with a number typed on it: they are not
+  on the screen. A table whose parties left **no number** has no guest in this list, so there is nothing
+  to say of it.
+- A device that is not rebuilt shows the list as it was, with no line and no button. So does a rebuilt
+  one with a hub that is not updated.
 
 ## Tags and the note
 
@@ -480,12 +533,12 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   a party that was seated before the hub was updated, other than today's and yesterday's; a party's visit
   in what the to-go form says of a caller ("12 orders since Mar 2025" still counts the orders that carry
   the number).
-- For who pays: saying it once the book or the waitlist has forgotten the party (the waitlist the next
-  night, the book after 30 days: the check's strip is gone by then); saying it from the guest list or
-  from a check's history; a tap for a guest whose number was typed on a check that was merged in (that
-  guest is in this list with the visit, and is not named on the joined check: type the payer's number
-  there); a list of the checks that still wait for the word; who said it, shown on a screen (the hub
-  keeps it).
+- For who pays: saying that none of a check's guests paid (such a check stays among the ones that
+  wait); saying it from a check's history, or on the check itself once the book or the waitlist has
+  forgotten the party (it is said from this list then); a tap on the check for a guest whose number was
+  typed on a check that was merged in (that guest is not named on the joined check: say it from this
+  list); finding one check among the ones that wait by a name or a day (they are listed the newest
+  first); when the word was said (the hub keeps who said it, and this list says that).
 - When two tables are put together: going back over the tables put together before the hub was updated;
   changing the table the book says the party was seated at; taking a party along with dishes that are
   moved one by one.
@@ -664,6 +717,30 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   `_payer` (a `PopupMenuButton` of one ticked line) in `lib/screens/order_screen.dart`;
   `GuestVisit.paid`, `waits`, `unpaidWords`; `Guest.paid`, `paidWords`. Tests:
   `backend/tests/orders/test_who_pays.py`, `apps/pos_app/test/who_pays_test.dart`.
+- Who paid, said afterwards: three calls in `backend/src/pos/api/guests.py`, with the token of a session
+  that holds `guests`, declared before `/reports/guests/{phone}` (which would take "payers" for a
+  number). `GET /reports/guests/payers` answers `{first, last, now_ms, checks}`: every check of the
+  window that waits, the newest first. `GET /reports/guests/payers/{order_id}` answers one check whether
+  it waits or not, or 404 `no_check` (no visit of the year, or no guest noted on it). A check is
+  `{order_id, order_no, table, day, opened_ms, kind, net, guests, waits, said_by}` and a guest
+  `{key, name, phone, typed, pays}`: `key` is `typed` for the number on the check and else
+  `<source>:<source_id>` of its `check_guest` row; a number is listed once, the typed one first.
+  `POST /reports/guests/payers/{order_id}` takes `{guest, pays}` and answers the check as it stands:
+  for a noted guest it is `CheckGuests.pay(..., by=<the session's name>)`, the word the tap says; for
+  `typed` it takes the word from whoever had it; `pays: false` takes it from every paying note of that
+  number on the check. 404 `unknown_guest`, 422 `bad_value` (`typed` with `pays: false`: it has no word
+  to take back), 503 `read_only` or `not_kept`. It tells the feed `reservations` or `waitlist` when the
+  check has notes from them (an open check reads its strip again), logs the check and the staff id and
+  no guest, and reads and writes no order. Reckoning: `paid_by(check, seated)` and
+  `checks_paid_by(checks, seated, now_ms)` in `backend/src/pos/orders/guests.py`, on `payer_of`;
+  `guests_report` answers `waiting: {checks, net}` (each waiting check once), and each `latest` visit
+  says `guests` (how many sat on its check) and `table`. App: `lib/paid_checks.dart` (`PaidCheck`,
+  `PaidGuest`), `PosApi.waitingChecks`, `paidCheck` and `sayPaid`, `lib/screens/who_paid.dart`
+  (`WhoPaidCard`, `WhoPaidScreen`, `showWhoPaid`), `GuestsReport.saysPaid`, `waiting` and `waitingNet`
+  (no `waiting` from an older hub: no line and no button), `GuestVisit.guests`, `table` and `shared`;
+  keys `guests-waiting`, `who-paid:<check>`, `who-paid-guest:<check>:<key>`,
+  `who-paid-standing:<check>`, `guest-visit-paid:<phone>:<check>`. Tests:
+  `backend/tests/orders/test_who_paid_after.py`, `apps/pos_app/test/who_paid_test.dart`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while
