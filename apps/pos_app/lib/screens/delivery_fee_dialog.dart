@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../delivery_fee.dart';
 import '../takeout.dart';
+import 'address_box.dart';
 
 /// What a delivery costs the customer, as a manager sets it for the location (docs/delivery.md, "The
 /// delivery fee"): whether a fee is charged at all, whether it goes by miles or by the minutes of the drive,
@@ -242,12 +243,12 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
                   style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  key: const ValueKey('fee-origin'),
+                // the list under it holds no customer's delivery: a map service's answers, where that is on
+                AddressBox(
+                  fieldKey: const ValueKey('fee-origin'),
                   controller: _origin,
+                  source: (typed) => widget.api.suggestAddresses(typed, own: false),
                   maxLength: 200,
-                  textCapitalization: TextCapitalization.words,
-                  keyboardType: TextInputType.streetAddress,
                   decoration: const InputDecoration(
                     isDense: true,
                     labelText: 'Restaurant address',

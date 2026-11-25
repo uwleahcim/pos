@@ -985,6 +985,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   widget.api.deliveryDistance(address, phone: order.phone, fresh: fresh, now: now)
             : null,
         live: live,
+        addresses: (typed) => widget.api.suggestAddresses(typed, phone: order.phone),
       ),
     );
     if (asked == null || !mounted) return;

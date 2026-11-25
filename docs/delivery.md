@@ -13,7 +13,9 @@ applies (see [The delivery fee](#the-delivery-fee)). Where the hub has a map ser
 far the address is and picks the price for it (see [Looking the distance up](#looking-the-distance-up)),
 and a customer who orders again to the same address is not looked up a second time (see
 [Customers who order again](#customers-who-order-again)). Where a manager turned it on, a delivery for now
-is promised by the roads as they are at that minute (see [Live traffic](#live-traffic)).
+is promised by the roads as they are at that minute (see [Live traffic](#live-traffic)). While an address
+is typed, a list under the box says what it could become, the restaurant's own earlier deliveries first
+(see [A list of addresses while typing](#a-list-of-addresses-while-typing)).
 Nothing else here is about money: there is no tip yet, and a delivery is a sale like any other, counted in
 every report as a to-go order is.
 
@@ -429,6 +431,121 @@ hub does.
 Like the rest of the hub's side for Google, this was written from Google's pages and has not been tried
 against Google itself. The first `sudo hubctl maps test "..."` with live traffic on is the first real try.
 
+## A list of addresses while typing
+
+Wherever the app asks for a street address, a list opens under the box while somebody types: what the
+letters typed so far could become. **A tap puts one in the box.** It is under **Deliver to** on the to-go
+form and on an order's own dialog (a catering order's too), and under **Restaurant address** in Location ›
+Delivery fee.
+
+- **Your own deliveries come first.** The addresses the restaurant delivered to in the past year, read off
+  its own orders. That costs nothing and asks nobody outside the building.
+- **The customer's own lead the list.** With their number on the form, the addresses they had deliveries
+  brought to before stand at the top, with a small person on a pin before each. Another customer's address
+  has a clock arrow before it and is listed as an address and nothing else: no name, no number.
+- **Google Maps comes after them, where a manager turned that on**
+  ([Turning Google on for the list](#turning-google-on-for-the-list)). It is for an address the restaurant
+  never delivered to. Its lines have a pin before them, the street in bold and the town beside it, and the
+  words **Google Maps** stand under the list.
+- **The list comes once the typing pauses**, about a third of a second: from the second letter for your
+  own deliveries, from the fourth for Google. Six lines at most. When Google adds its own, three of yours
+  stand above them.
+- **How the letters are read.** Every word typed in full has to be a word of the address, and the word
+  still being typed has to begin one. "12 el" lists 12 Elm St and not 120 Elmwood Ave. "elm" lists every
+  Elm Street the restaurant went to, whatever the number. An address that begins with what was typed comes
+  before one that has it further on, and of two like that the newer delivery comes first.
+- **Nothing is put in the box by itself.** What was typed stands until somebody taps a line. **Enter** (Done
+  on a phone's keyboard) says the address is done as it was typed, and takes no line.
+- **A tap is the address done.** The line is in the box, the list closes, the keyboard stays in the box,
+  and where the hub looks distances up, how far it is is asked at once, as after Enter.
+- **With a keyboard**: the arrow down goes into the list, Enter takes the line the focus is on, the arrow
+  up from the top line is back in the box, and Escape closes the list and leaves what was typed.
+- **The list goes when the box is left.** An address the form filled in by itself, such as a returning
+  customer's last one, is not asked about.
+- **The box stays in sight.** The form scrolls the list up into view under the box. On a screen too short
+  for both, the box goes to the top and the list shows as far as there is room; the rest is a scroll away.
+- **A list is a help and no more.** When the hub or Google does not answer there is no list and no word
+  about it, and the address is typed in full as before. A list never holds a form up, and never makes a
+  screen turn away from its hub.
+- **Google is not asked** about fewer than four letters, about a number alone ("12"), or about an address
+  the restaurant already has in full.
+- **The restaurant's own address** lists Google's answers alone, where Google is on. No customer's address
+  is offered for it.
+- **A delivery taken now is on the list about a minute later**, for the next customer in the same street.
+- **An address that was tapped is the customer's address**, typed with fewer letters. It goes on the order
+  like one typed in full, and nothing says it came off a list.
+
+### What the list sends out
+
+- **With Google off, nothing.** The list is made on the hub from the restaurant's own orders.
+- **With Google on, the letters typed in an address box**, from the fourth letter, each time the typing
+  pauses. Nothing else: no name, no phone number, nothing of an order.
+- **The customer's phone number stays on the hub.** The form sends it with the letters so the hub can put
+  that customer's own addresses first. It is never sent to Google.
+- **The restaurant's own address, once**, so that Google lists streets nearby first. Google answers where
+  that is, and the hub keeps it in memory for under thirty days and writes it nowhere. (Until Google
+  answered, it goes by where the hub's internet connection is.)
+- **What Google answers is shown and then gone.** The hub keeps none of it, and neither does the app. Its
+  terms do not let a list be kept.
+- **The key travels in a header of the request, and the letters in its body**, never in an address a log
+  could show. The hub's log names no address and no key.
+- **Anybody on the restaurant's network can ask the hub for a list**, as for a distance. The answer holds
+  addresses and no names. With a phone number sent along it also says which of them were that customer's,
+  like the card a form shows for a number.
+- **Google keeps its own records** of what it is asked, under its own terms
+  (<https://cloud.google.com/maps-platform/terms>) and privacy policy (<https://policies.google.com/privacy>).
+
+### Turning Google on for the list
+
+Google's part is **off until a manager turns it on**, because it sends what is typed in an address box to
+Google. It uses the Google key the hub already has ([Google Maps as the second
+service](#google-maps-as-the-second-service)). That key has to be allowed one more of Google's services,
+**Places API (New)**.
+
+The Google account and its card are the owner's. What follows is what Google's own pages said on
+2026-11-25 (<https://developers.google.com/maps/documentation/places/web-service/place-autocomplete>,
+<https://developers.google.com/maps/billing-and-pricing/pricing>); the pages are Google's to change.
+
+1. **Rebuild the app on every device first.** An app from before the list shows none, and asks nothing.
+2. **In the Google Cloud console** (<https://console.cloud.google.com>), in the project the hub's key
+   belongs to, find **Places API (New)** and press **Enable**. Not the older "Places API": the hub calls the
+   new one.
+3. **Allow the key to use it**: **Google Maps Platform › Keys & Credentials**, the hub's key, **API
+   restrictions**, and tick **Places API (New)** beside Routes API. Save.
+4. **Try it** in the app: Back office › Location › **Address list** › **Try it**. "Google answered: it
+   lists addresses for this hub." says the key works. "Google refused the hub's key. Is Places API (New)
+   turned on for it?" says step 2 or 3 is not done, or that Google needs a few more minutes. Trying asks
+   Google about the restaurant's own address, never a customer's, and turns nothing on.
+5. **Turn on "Ask Google Maps for new addresses"** and **Save**. From the next letter typed, every screen
+   lists Google's answers under your own.
+
+The row under Location says how it stands: "Your own earlier deliveries are listed while an address is
+typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed". On a hub
+with no Google key the switch can be turned on all the same and is used from the day the key is there; the
+row then says "On, but not used yet: this hub has no Google Maps key".
+
+Turning it off is the same switch. Nothing typed leaves the building from then on.
+
+`sudo hubctl maps status` has a line for it: "the list of addresses while typing: asks google too; asked
+212 times today (at most 300), 1 gave no list".
+
+**What it costs.** Google's price list said on 2026-11-25 that the first 10,000 of these requests in a
+month are free and each 1,000 after that are $2.83. Google counts every time a list is asked for, which
+is every pause in the typing, so one new address is often three or four. The hub asks at most 300 times a
+day (`POS_MAPS_SUGGEST_DAILY` in `/opt/pos/.env`), about 9,000 a month, which stays inside the free
+10,000. Past the day's 300 the list holds your own deliveries alone until the next day. A restaurant that
+runs out raises the number and pays Google for what goes over. A day's limit set on Google's side
+(**Google Maps Platform › Quotas**) holds whatever the hub does.
+
+**Google's rules.** Its name stands under every list that holds one of its answers, and nothing it answers
+is kept (<https://developers.google.com/maps/documentation/places/web-service/policies>). The rule about
+terms of use and a privacy policy the public can read
+([above](#google-maps-as-the-second-service)) is in these rules too. Whether and how it applies is the
+owner's to settle, with a lawyer where in doubt. Nothing here is legal advice.
+
+The hub's side was written from Google's pages and has not been tried against Google itself: **Try it**
+under Location is the first real try. If it reads oddly, its words say why.
+
 ## The papers
 
 - **Every station's ticket says DELIVERY**, beside how the order was taken ("Phone  DELIVERY"), so the
@@ -613,8 +730,18 @@ it and when.
   there is no driver's fee or tip. Taking the money for a delivery is recorded as on any to-go order, by
   whoever marks it delivered.
 - **The address goes nowhere else.** It is sent to the map service for the distance, alone, and only
-  where the owner set that up ([What leaves the building](#what-leaves-the-building)). No texting
-  service, no delivery app and no other service is told it.
+  where the owner set that up ([What leaves the building](#what-leaves-the-building)), and the letters
+  typed are sent to Google for the list where a manager turned that on
+  ([What the list sends out](#what-the-list-sends-out)). No texting service, no delivery app and no other
+  service is told it.
+- **The list does not check an address.** A line of your own is an address somebody typed once, as they
+  typed it, a misspelling included. Nothing says whether an address exists or can be delivered to.
+- **No apartment or unit from the list.** Google is asked for streets and buildings. The unit is typed
+  after the tap.
+- **The list is for the United States**, and for nothing but street addresses: not for the lines at the
+  head of the bill, and not for the network addresses in Settings.
+- **No list without the hub.** With no hub answering the address is typed in full. One spelling of an
+  address is one line: "12 Elm St" and "12 Elm Street" are listed as two.
 - **The sale is the same.** A delivery is counted in the sales, the day's report and the accountant's
   table exactly as a to-go order is, and every payment on it is recorded on the day it is taken.
 
@@ -655,9 +782,57 @@ hub has not answered about live traffic (an older hub: update it)". An app from 
 never says a delivery is for now, so nothing is asked about the roads and its deliveries are promised the
 minutes set for Delivery. Rebuild the apps after the hub, then turn it on.
 
+The list of addresses likewise: a hub from before it has none, an app asks it once in ten minutes and
+shows a plain box, and the row under Location says "The hub has not answered about the list of addresses
+(an older hub: update it)". An app from before the list on a new hub has plain boxes and asks nothing.
+
 ## For developers
 
-Live traffic (the notes on the second map service, the lookup and saved distances are further down):
+The list of addresses while typing (the notes on live traffic, the second map service, the lookup and
+saved distances are further down):
+
+- `pos.addresses`: `fits(typed, address)` (each word typed whole is a word of the address, the word being
+  typed begins one, and the address is more than what was typed; a trailing space or comma ends a word);
+  `own_addresses(store, phone)` (that customer's newest 40 orders); `AddressBook.listed(store, now_ms=)`
+  (deliveries of the last 400 days off `store.with_phone()`, the newest first, read in parts of 200
+  through an `OrderMemo`, 5,000 addresses at most, rebuilt once a minute, in memory only); `known(typed,
+  own, others, most=)` orders them. `Suggestion.as_json()` is `{address, main, rest, from}` with `from`
+  one of `customer`, `orders`, `google`.
+- `pos.addresses.Places`: Places API (New). `suggest` is `POST /v1/places:autocomplete` with `input`,
+  `includedRegionCodes: ["us"]`, `languageCode: en`, `includedPrimaryTypes` (`street_address`, `premise`,
+  `subpremise`, `route`; `POS_MAPS_SUGGEST_TYPES` changes them, `all` asks with none) and a `locationBias`
+  circle of 20 km where the restaurant's place is known; the key in `X-Goog-Api-Key`, the mask
+  `suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat`. No session token: the
+  hub never asks for a place's details after a pick, so each request is billed by itself. `locate` is one
+  autocomplete for the place id and `GET /v1/places/{id}` with the mask `location`. 401 and 403 are
+  `refused`, 429 `limit`, 404 `not_found`, anything else `unreachable` (`pos.maps.LookupFailed`).
+- `pos.addresses.Suggester`: the day's most (`POS_MAPS_SUGGEST_DAILY`, 300), two seconds for an answer,
+  the restaurant's place found on a thread of its own and held under 25 days, `status()` for
+  `/maps/status` (`suggest`, with `enabled` from the setting). `POS_MAPS_GOOGLE_KEY` is the key;
+  `pos.api.keys.use_keys` hands a key typed in the app to it at once.
+- The setting `address_list` (`pos.settings`): `google`, false until a manager sets it. `GET/PUT
+  /settings/address_list` (the PUT needs a manager) answers it with `service` (the hub has a key), `asks`
+  (both) and `credit`. `POST /settings/address_list/try` (a manager) asks once about the restaurant's own
+  address, or "1 Main St" where none is set: `{ok, found, reason, message}`, 409 `no_service` with no key.
+- `POST /addresses/suggest` `{typed, phone, own}`: `{typed, suggestions, credit}`. No token, like
+  `/delivery/distance`. Own addresses always; the service only with the setting on, a key, four letters
+  with a letter among them, and no known address equal to what was typed. With answers of the service the
+  own lines are cut to three and the list to six. A failure of the service is a shorter list, never an
+  error. `own: false` lists no delivery and sends no place.
+- App: `lib/address_list.dart` (`AddressSuggestion`, `AddressSuggestions`, `AddressSource`,
+  `AddressListSetting`, `AddressListTry`); `PosApi.suggestAddresses` through `_aside`, which asks the hub
+  the terminal talks to, waits four seconds and never changes `connection`, and leaves a hub that answered
+  404 alone for ten minutes; `addressList`, `saveAddressList`, `tryAddressList`.
+  `lib/screens/address_box.dart`: `AddressBox` around the text box and its list (a `Focus` around both, so
+  the focus going into the list is not the box being left; the list in a `TextFieldTapRegion`, so a click
+  on a Mac is not a click away; a pause of 300 ms, answers for other letters dropped). It is the box of
+  `EventFields` (`addresses:`, handed in by the to-go form and by `WhenDialog`) and of `fee-origin` in
+  `DeliveryFeeDialog`. `_bringUp` scrolls the form to the list's end, and no further than the box at the
+  top. `AddressListDialog` and the row `address-list` under Location.
+- Tests: `backend/tests/orders/test_address_list.py` (Google's side against `httpx.MockTransport`; Google
+  itself is never called) and `apps/pos_app/test/address_list_test.dart`.
+
+Live traffic:
 
 - The setting `live_drive` (`pos.settings`): `enabled` (false until a manager sets it) and `before`, whole
   minutes from 0 to 240 (25). `GET/PUT /settings/live_drive`; the PUT needs a manager. The answer adds

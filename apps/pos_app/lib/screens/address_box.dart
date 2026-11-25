@@ -1,0 +1,285 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+
+import '../address_list.dart';
+import '../takeout.dart';
+import 'fee_lookup.dart';
+
+/// A box a street address is typed in, with a list under it of what the letters typed so far could become
+/// (docs/delivery.md, "A list of addresses while typing"). The hub says what is listed ([source]): the
+/// restaurant's own earlier deliveries first, and a map service's answers where a manager turned that on.
+///
+/// A tap on a line puts it in the box. Nothing else does: what was typed stands until somebody taps, and
+/// Enter says the address is done as it is typed. The list is asked for once the typing pauses, never for
+/// an address the form itself filled in, and it goes when the box is left. With a keyboard, the arrow down
+/// goes into the list, Enter takes the line and Escape closes the list.
+///
+/// A list that holds a map service's answer carries its name ([MapCredit]), as its terms want.
+class AddressBox extends StatefulWidget {
+  const AddressBox({
+    super.key,
+    required this.controller,
+    this.source,
+    this.fieldKey,
+    this.decoration = const InputDecoration(),
+    this.maxLength,
+    this.onChanged,
+    this.onDone,
+    this.onLeft,
+    this.wait = const Duration(milliseconds: 300),
+  });
+
+  final TextEditingController controller;
+
+  /// How the hub is asked for the list; null where there is none to ask for, and the box is a box.
+  final AddressSource? source;
+
+  /// The key of the text box itself.
+  final Key? fieldKey;
+  final InputDecoration decoration;
+  final int? maxLength;
+
+  /// Something was typed, or a line was tapped.
+  final VoidCallback? onChanged;
+
+  /// The address is done: Enter, or a line was tapped.
+  final VoidCallback? onDone;
+
+  /// The box and its list were left for something else on the screen.
+  final VoidCallback? onLeft;
+
+  /// How long the typing pauses before the hub is asked.
+  final Duration wait;
+
+  /// Letters typed before a list is asked for.
+  static const from = 2;
+
+  @override
+  State<AddressBox> createState() => _AddressBoxState();
+}
+
+class _AddressBoxState extends State<AddressBox> {
+  final _focus = FocusNode(debugLabel: 'address box');
+  final _listed = GlobalKey();
+  Timer? _pause;
+  int _turn = 0;
+  AddressSuggestions? _list;
+
+  @override
+  void dispose() {
+    _pause?.cancel();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _typed(String _) {
+    widget.onChanged?.call();
+    _pause?.cancel();
+    _turn++; // an answer still on its way is for other letters
+    if (widget.source == null) return;
+    if (oneLine(widget.controller.text).length < AddressBox.from) {
+      if (_list != null) setState(() => _list = null);
+      return;
+    }
+    _pause = Timer(widget.wait, _ask);
+  }
+
+  Future<void> _ask() async {
+    final source = widget.source, typed = widget.controller.text;
+    if (source == null || !mounted) return;
+    final turn = ++_turn;
+    AddressSuggestions? answer;
+    try {
+      answer = await source(typed);
+    } on Object {
+      answer = null; // a list is a help: no list, and no word about it
+    }
+    if (!mounted || turn != _turn || widget.controller.text != typed) return;
+    setState(() => _list = answer == null || answer.suggestions.isEmpty ? null : answer);
+    if (_list == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bringUp());
+  }
+
+  /// The list opened under the box. Where the form scrolls, its end is brought into sight, but never the
+  /// box out of it: on a screen too short for both, the box goes to the top and the list shows as far as
+  /// there is room, so what is being typed can be read.
+  void _bringUp() {
+    final listed = _listed.currentContext;
+    if (!mounted || listed == null || !listed.mounted) return;
+    final list = listed.findRenderObject(), box = context.findRenderObject();
+    final position = Scrollable.maybeOf(context)?.position;
+    if (list == null || box == null || position == null) return;
+    final viewport = RenderAbstractViewport.maybeOf(list);
+    if (viewport == null) return;
+    final toEnd = viewport.getOffsetToReveal(list, 1).offset;
+    final toBox = viewport.getOffsetToReveal(box, 0).offset - _over;
+    final to = math.min(toEnd, toBox).clamp(position.minScrollExtent, position.maxScrollExtent);
+    if (to > position.pixels) {
+      position.animateTo(to, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
+    }
+  }
+
+  /// Room kept over the box when it goes to the top: its label stands on its upper edge.
+  static const _over = 12.0;
+
+  void _close() {
+    _pause?.cancel();
+    _turn++;
+    if (_list != null && mounted) setState(() => _list = null);
+  }
+
+  void _pick(AddressSuggestion picked) {
+    _focus.requestFocus(); // before the line that was tapped is gone, so the box and its list are not left
+    widget.controller.value = TextEditingValue(
+      text: picked.address,
+      selection: TextSelection.collapsed(offset: picked.address.length),
+    );
+    _close();
+    widget.onChanged?.call();
+    widget.onDone?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = _list;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: (has) {
+        if (has) return;
+        _close();
+        widget.onLeft?.call();
+      },
+      child: CallbackShortcuts(
+        bindings: list == null
+            ? const <ShortcutActivator, VoidCallback>{}
+            : {
+                const SingleActivator(LogicalKeyboardKey.escape): () {
+                  _focus.requestFocus();
+                  _close();
+                },
+              },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: widget.fieldKey,
+              focusNode: _focus,
+              controller: widget.controller,
+              maxLength: widget.maxLength,
+              textCapitalization: TextCapitalization.words,
+              keyboardType: TextInputType.streetAddress,
+              decoration: widget.decoration,
+              onChanged: _typed,
+              onSubmitted: (_) {
+                _close();
+                widget.onDone?.call();
+              },
+            ),
+            if (list != null)
+              // a click on a line is not a click away from the box: the box keeps the keyboard
+              TextFieldTapRegion(
+                child: _AddressList(key: _listed, list: list, onPick: _pick),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The lines under the box, each a button, and under them the name of the map service when one of them is
+/// its answer.
+class _AddressList extends StatelessWidget {
+  const _AddressList({super.key, required this.list, required this.onPick});
+
+  final AddressSuggestions list;
+  final ValueChanged<AddressSuggestion> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
+    final credit = list.credit;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Material(
+        key: const ValueKey('address-list'),
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          side: BorderSide(color: scheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (index, one) in list.suggestions.indexed)
+              Semantics(
+                button: true,
+                label: one.theirs
+                    ? 'Their earlier delivery'
+                    : one.own
+                    ? 'An earlier delivery'
+                    : null,
+                child: InkWell(
+                  key: ValueKey('address-suggestion:$index'),
+                  onTap: () => onPick(one),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 40),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      child: Row(
+                        children: [
+                          Icon(
+                            one.theirs
+                                ? Icons.person_pin_circle_outlined
+                                : one.own
+                                ? Icons.history
+                                : Icons.place_outlined,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: one.main,
+                                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                                  ),
+                                  if (one.rest.isNotEmpty) TextSpan(text: '  ${one.rest}', style: quiet),
+                                ],
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (credit != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(start: 12, end: 12, top: 2, bottom: 6),
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: MapCredit(credit, mark: const ValueKey('address-credit')),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}

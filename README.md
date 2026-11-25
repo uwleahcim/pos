@@ -37,7 +37,9 @@ merges after any disconnect.
   customer who orders again to the same address is not looked up a second time; Google Maps can be a
   second map service, asked when the first gives no distance, whose figures pick the price and are not
   kept; with live traffic turned on, a delivery for now is promised the kitchen's minutes and the drive as
-  the roads are at that minute, and the fee never goes by it): `docs/delivery.md`
+  the roads are at that minute, and the fee never goes by it; while an address is typed, a list under the
+  box says what it could become, the restaurant's own earlier deliveries first and, where a manager turned
+  it on, Google's answers after them): `docs/delivery.md`
 - Finding a check (a search box on the list of checks: name, phone, table, order number or server, open
   and closed; another day's checks for a manager; the check of a table whose party the host seated from
   the book or the waitlist says the party's name in the list and is found by it): `docs/finding-checks.md`
