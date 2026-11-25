@@ -3,7 +3,8 @@
 Every call is a manager's (the token from `/admin/session`): no setting hands them out.
 
 - `GET /hub/keys`: every key the hub can hold, as a screen may see it (`pos.keys.HubKeys.views`): `keys`, each
-  with its `name` (`maps`, `maps_google`, `online`, `push_apple`), whether one is in force (`set`), where
+  with its `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `push_apple`), whether one is
+  in force (`set`), where
   from (`source`: `app`, `hub` for the hub's own file, or null), its last characters (`ending`), Apple's ids
   (`shown`), who touched it in the app last and when (`by`, `at_ms`), `removed` and `unreadable`. And
   `kept`: false on a hub that has nowhere to keep its sealing secret, where a key typed in the app lasts
@@ -69,10 +70,12 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..addresses import places_from_env
+from ..addresses import services_from_env
 from ..keys import (
     MAPS,
+    MAPS_AZURE,
     MAPS_GOOGLE,
+    MAPS_MAPBOX,
     ONLINE,
     ONLINE_PUSH,
     ONLINE_TUNNEL,
@@ -219,8 +222,11 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
     if wanted & {MAPS, MAPS_GOOGLE}:
         lookups: Lookups = app.state.lookups
         lookups.use(maps_from_env(env), fallback_from_env(env))
-        app.state.suggester.use(places_from_env(env))  # the list of addresses asks with Google's key too
-        app.state.feed.changed("settings")  # the delivery fee and live traffic say what the hub can look up
+    if wanted & {MAPS, MAPS_GOOGLE, MAPS_MAPBOX, MAPS_AZURE}:
+        # the list of addresses asks with Google's key too, and with Mapbox's and Azure Maps' after it
+        app.state.suggester.use(*services_from_env(env))
+        # the delivery fee, live traffic and the list of addresses say what the hub can look up
+        app.state.feed.changed("settings")
     if ONLINE in wanted:
         online: OnlineOrders = app.state.online
         # not in the middle of a round, which may be waiting for GloriaFood: off the loop

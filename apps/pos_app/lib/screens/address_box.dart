@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../address_list.dart';
 import '../takeout.dart';
 import 'fee_lookup.dart';
+import 'service_badge.dart';
 
 /// A box a street address is typed in, with a list under it of what the letters typed so far could become
 /// (docs/delivery.md, "A list of addresses while typing"). The hub says what is listed ([source]): the
@@ -18,7 +19,10 @@ import 'fee_lookup.dart';
 /// an address the form itself filled in, and it goes when the box is left. With a keyboard, the arrow down
 /// goes into the list, Enter takes the line and Escape closes the list.
 ///
-/// A list that holds a map service's answer carries its name ([MapCredit]), as its terms want.
+/// A list that holds a map service's answer carries its name ([MapCredit]), as its terms want, and before
+/// it a tiny badge of that service with a ring for how much of its free amount is left this month
+/// ([ServiceBadge]): at a glance who answered and how far the free amount goes. Both stand at the top of
+/// the list, where nothing moves them.
 class AddressBox extends StatefulWidget {
   const AddressBox({
     super.key,
@@ -193,8 +197,8 @@ class _AddressBoxState extends State<AddressBox> {
   }
 }
 
-/// The lines under the box, each a button, and under them the name of the map service when one of them is
-/// its answer.
+/// The lines under the box, each a button, and over them the map service's badge and name when one of them
+/// is its answer.
 class _AddressList extends StatelessWidget {
   const _AddressList({super.key, required this.list, required this.onPick});
 
@@ -207,6 +211,7 @@ class _AddressList extends StatelessWidget {
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
     final credit = list.credit;
+    final service = list.service;
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Material(
@@ -221,6 +226,35 @@ class _AddressList extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // who answered and what it has left, at the top: under the box, where the list's length and the
+            // addresses' lengths never move it
+            if (credit != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.only(start: 11, end: 12, top: 6, bottom: 2),
+                child: Row(
+                  children: [
+                    if (service != null) ...[
+                      ServiceBadge(
+                        key: const ValueKey('address-badge'),
+                        service: service,
+                        title: list.title ?? credit,
+                        share: list.share,
+                        words: list.leftWords,
+                      ),
+                      const SizedBox(width: 7),
+                    ],
+                    // a long name on a narrow screen with large type is made smaller, never cut or broken:
+                    // its terms want it whole
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: AlignmentDirectional.centerStart,
+                        child: MapCredit(credit, mark: const ValueKey('address-credit')),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             for (final (index, one) in list.suggestions.indexed)
               Semantics(
                 button: true,
@@ -267,14 +301,6 @@ class _AddressList extends StatelessWidget {
                       ),
                     ),
                   ),
-                ),
-              ),
-            if (credit != null)
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: 12, end: 12, top: 2, bottom: 6),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: MapCredit(credit, mark: const ValueKey('address-credit')),
                 ),
               ),
           ],

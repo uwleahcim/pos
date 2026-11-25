@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../address_list.dart' show counted;
 import '../api.dart';
 import '../hub_keys.dart';
 
@@ -331,6 +332,20 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     });
   }
 
+  /// A map service that lists addresses while one is typed is asked once, about the restaurant's own
+  /// address, whether the list uses it yet or not (Location, Address list).
+  Future<void> _tryAddresses(String name, String via, String service) => _trying(name, () async {
+    final tried = await widget.api.tryAddressList(widget.token, service: via);
+    if (!tried.ok) return (words: tried.message.isEmpty ? '$service gave no list.' : tried.message, bad: true);
+    final left = tried.left == null ? '' : ' ${counted(tried.left!)} free lookups are left this month.';
+    return (
+      words:
+          '$service answered: the key works.$left It is asked for addresses once it is turned on under '
+          'Location, Address list.',
+      bad: false,
+    );
+  });
+
   /// GloriaFood is asked for orders now, as the button "Ask now" does. Where the hub asks several accounts
   /// it asks them all, and what is said here is what [account] answered.
   Future<void> _tryOnline(String name, OnlineAccount? account) => _trying(name, () async {
@@ -404,6 +419,10 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
         _tryMaps(key.name, 'geocodio', 'Geocodio');
       case 'maps_google':
         _tryMaps(key.name, 'google', 'Google Maps');
+      case 'maps_mapbox':
+        _tryAddresses(key.name, 'mapbox', 'Mapbox');
+      case 'maps_azure':
+        _tryAddresses(key.name, 'azure', 'Azure Maps');
       case 'push_apple':
         _tryApple(key.name);
       case 'online_push' || 'online_tunnel':

@@ -1,7 +1,8 @@
 # Keys and connections
 
 The hub talks to a few services outside the restaurant, and each wants a key: the map service a delivery's
-distance is asked of, Google Maps behind it, GloriaFood for the website's orders (a key for asking, and one
+distance is asked of, Google Maps behind it, Mapbox and Azure Maps for the list of addresses while one is
+typed, GloriaFood for the website's orders (a key for asking, and one
 its own pushes carry), Cloudflare for the tunnel those pushes come in by, and Apple for waking a locked
 iPhone. Until 2026-11-24 every one of them was put on the hub in its terminal (`sudo hubctl maps key` and
 the like). Now a manager or an owner types them in the app, under **Location › Keys and connections**, and
@@ -14,7 +15,7 @@ shows on the page as set.
 
 Orders screen › the three dots › **Location**, a manager's PIN, then **Keys and connections**. The row
 itself says which keys are set and which are not ("Set: map service, GloriaFood · Not set: Google Maps,
-GloriaFood push, Cloudflare tunnel, Apple push"). Only a manager or an owner sees the row and opens the
+Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, Apple push"). Only a manager or an owner sees the row and opens the
 page. It is not a power that can be handed to another role (`roles.md`).
 
 Each key is a card:
@@ -39,6 +40,8 @@ from another. A key shorter than sixteen characters shows none of itself.
 | --- | --- | --- | --- |
 | **Map service (Geocodio)** | Asks how far a delivery is, so the form picks the fee (`delivery.md`, "Looking the distance up") | geocod.io: sign in, API Keys, a key with the Distance permission | Asks Geocodio alone how far an address you type is from the restaurant |
 | **Google Maps** | Asked when the map service gives no distance, about the roads right now for live traffic, and, where a manager turned it on, for the list of addresses while one is typed (`delivery.md`, "A second map service", "Live traffic", "A list of addresses while typing") | Google Cloud console: Keys & Credentials, an API key restricted to the Routes API; for the list of addresses, Places API (New) ticked beside it | Asks Google alone how far an address you type is. (The list of addresses has its own Try it: Location › Address list) |
+| **Mapbox** | Asked for the list of addresses while one is typed, once Google's free lookups for the month are used up or Google is not answering, where a manager turned it on (`delivery.md`, "Mapbox and Azure Maps behind Google") | mapbox.com: the account page, Tokens, the default public token (starts with `pk.`), with no URL restriction | Asks Mapbox alone for addresses like the restaurant's own, and says how many free lookups are left this month |
+| **Azure Maps** | The same, after Mapbox | Azure portal: an Azure Maps account, Settings › Authentication, the Primary Key | Asks Azure Maps alone, the same way |
 | **GloriaFood (online orders)** | Asks GloriaFood every minute for the orders accepted on the website (`online-orders.md`) | GloriaFood's admin: Others, Third party integrations, the key of the integration "Poll Accepted Order v2" | Asks GloriaFood for orders now, as **Ask now** does |
 | **GloriaFood push key** | Every order GloriaFood sends by itself, the moment it is accepted, must carry it; the push door opens for it and for nothing else (`online-orders.md`, "Push") | Yours to make: **Make one** in the box, **Copy**, Save, and the same key into GloriaFood's admin as the master key of the integration "Push Accepted Order" | Tries the way in: see below |
 | **Cloudflare Tunnel (the way in)** | The hub holds a line open to Cloudflare, and GloriaFood's pushes come down it to the push door. Nothing is opened on the router | Cloudflare's dashboard: Zero Trust, Networks, Tunnels, your tunnel. The command it shows for installing it, pasted whole, or only the long word in it that starts with `eyJ` | Tries the way in: see below |

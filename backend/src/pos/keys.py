@@ -1,9 +1,10 @@
 """The hub's keys for the services outside the building, as a manager types them in the app.
 
-A hub asks a map service how far a delivery is, asks GloriaFood for the website's orders and wakes a locked
-iPhone through Apple. Each of those wants a key, and until now each key was put on the hub from its
-terminal (`hubctl maps key`, `hubctl online key`, `hubctl push apple`), into `/opt/pos/.env`. This module
-lets a manager type the same keys in the app (Location, Keys and connections; docs/hub-keys.md).
+A hub asks a map service how far a delivery is and what the letters typed in an address box could become,
+asks GloriaFood for the website's orders and wakes a locked iPhone through Apple. Each of those wants a key,
+and until now each key was put on the hub from its terminal (`hubctl maps key`, `hubctl online key`,
+`hubctl push apple`), into `/opt/pos/.env`. This module lets a manager type the same keys in the app
+(Location, Keys and connections; docs/hub-keys.md).
 
 What is kept, and how:
 
@@ -74,6 +75,11 @@ APPLE_BUNDLE = "org.chinasky.posApp"
 """The app Apple's key pushes to, unless another is typed (`pos.push.apns`)."""
 
 MAP_KEY = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+MAPBOX_TOKEN = re.compile(r"^[pst]k\.[A-Za-z0-9_-]{20,600}\.[A-Za-z0-9_-]{10,200}$")
+"""A Mapbox access token: `pk.` (a public one, which will do), `sk.` or `tk.`, and two runs of letters and
+digits with a dot between them."""
+AZURE_KEY = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+"""The key of an Azure Maps account, its primary or its secondary: one run of letters and digits."""
 ONLINE_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{8,200}$")
 PUSH_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{16,200}$")
 """The key GloriaFood's pushes carry: what `hubctl online push key` takes."""
@@ -226,6 +232,7 @@ class Slot:
 
 
 MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE = "maps", "maps_google", "online", "push_apple"
+MAPS_MAPBOX, MAPS_AZURE = "maps_mapbox", "maps_azure"
 ONLINE_PUSH, ONLINE_TUNNEL = "online_push", "online_tunnel"
 
 SLOTS: dict[str, Slot] = {
@@ -246,6 +253,22 @@ SLOTS: dict[str, Slot] = {
             _one_key(MAP_KEY, "letters and digits, 16 or more, no spaces"),
             _one_from_env("POS_MAPS_GOOGLE_KEY"),
             lambda data: {"POS_MAPS_GOOGLE_KEY": data["key"]},
+        ),
+        # Mapbox and Azure Maps, asked for the list of addresses while one is typed when Google gives no answer
+        # (docs/delivery.md, "A list of addresses while typing"). Typed in the app; no hubctl command sets them.
+        Slot(
+            MAPS_MAPBOX,
+            ("POS_MAPS_MAPBOX_KEY",),
+            _one_key(MAPBOX_TOKEN, "a Mapbox token starts with pk. and has no spaces"),
+            _one_from_env("POS_MAPS_MAPBOX_KEY"),
+            lambda data: {"POS_MAPS_MAPBOX_KEY": data["key"]},
+        ),
+        Slot(
+            MAPS_AZURE,
+            ("POS_MAPS_AZURE_KEY",),
+            _one_key(AZURE_KEY, "letters and digits, 32 or more, no spaces"),
+            _one_from_env("POS_MAPS_AZURE_KEY"),
+            lambda data: {"POS_MAPS_AZURE_KEY": data["key"]},
         ),
         # GloriaFood's key for this restaurant, for asking after the website's orders: `hubctl online key`
         Slot(
@@ -635,7 +658,9 @@ def keys_from_env() -> HubKeys:
 __all__ = [
     "APPLE_BUNDLE",
     "MAPS",
+    "MAPS_AZURE",
     "MAPS_GOOGLE",
+    "MAPS_MAPBOX",
     "ONLINE",
     "ONLINE_PUSH",
     "ONLINE_TUNNEL",
