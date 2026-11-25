@@ -279,18 +279,77 @@ class Hub {
   }
 
   /// The list's setting (`GET/PUT /settings/address_list`) and the token the last save carried; null is a
-  /// hub older than the list. [addressTry] is what a try of the map service says (`POST
-  /// /settings/address_list/try`), and [addressTries] how often it was tried.
+  /// hub older than the list. Under `services`, every map service in the order they are asked, each with
+  /// whether a manager turned it on and whether the hub has a key for it; a setting without them is a hub
+  /// from before there were several, which knows Google alone. [addressTry] is what a try of a map service
+  /// says (`POST /settings/address_list/try`), [addressTries] how often one was tried and [addressTried]
+  /// which service each try named (null for a try that named none).
   Map<String, dynamic>? addressList;
   String? addressListAuth;
-  Map<String, dynamic> addressTry = {'ok': true, 'found': 3, 'reason': null, 'message': ''};
+  Map<String, dynamic> addressTry = {'ok': true, 'found': 3, 'reason': null, 'message': '', 'left': 9411};
   int addressTries = 0;
-  static Map<String, dynamic> get addressListOff => {
+  final addressTried = <String?>[];
+
+  /// What each map service is called, and the words under a list with one of its answers.
+  static const addressTitles = {'google': 'Google Maps', 'mapbox': 'Mapbox', 'azure': 'Azure Maps'};
+  static const addressCredits = {
+    'google': 'Google Maps',
+    'mapbox': '\u00a9 Mapbox \u00a9 OpenStreetMap',
+    'azure': 'Azure Maps',
+  };
+  static const addressMost = {'google': 9500, 'mapbox': 95000, 'azure': 47500};
+
+  /// One map service under `services`, as the hub says it stands.
+  static Map<String, dynamic> addressService(
+    String name, {
+    bool on = false,
+    bool key = true,
+    int? left,
+    bool resting = false,
+  }) {
+    final most = addressMost[name]!;
+    final had = key ? (left ?? most) : null;
+    return {
+      'name': name,
+      'title': addressTitles[name],
+      'credit': addressCredits[name],
+      'on': on,
+      'key': key,
+      'asks': on && key,
+      'left': had,
+      'monthly_most': most,
+      'used_up': had != null && had < 1,
+      'resting': key && resting,
+    };
+  }
+
+  /// A hub with keys for Google and Mapbox and none for Azure Maps, all three off.
+  static Map<String, dynamic> get addressListOff =>
+      addressListOf([addressService('google'), addressService('mapbox'), addressService('azure', key: false)]);
+
+  /// The setting of these services, with what an app from before there were several reads beside them.
+  static Map<String, dynamic> addressListOf(List<Map<String, dynamic>> services) {
+    final google = services.firstWhere((one) => one['name'] == 'google');
+    return {
+      for (final one in services) one['name'] as String: one['on'],
+      'service': google['key'],
+      'asks': google['asks'],
+      'credit': 'Google Maps',
+      'services': services,
+    };
+  }
+
+  /// A hub from before there were several services: Google alone.
+  static Map<String, dynamic> get addressListOld => {
     'google': false,
     'service': true,
     'asks': false,
     'credit': 'Google Maps',
   };
+
+  /// How many free lookups the service that answered a list has left this month; null is a hub that does
+  /// not say (one from before there were several).
+  int? addressLeft = 9412;
 
   /// The rules of the points (docs/points.md; `GET/PUT /settings/points`); null is a hub older than points.
   /// A save is kept as the real hub keeps it: the rate, what earns and the days as sent, in force from
@@ -393,14 +452,22 @@ class Hub {
     await addressWaits?.future;
     final typed = '${body['typed']}'.trim().replaceAll(RegExp(r'\s+'), ' ');
     final listed = lists[typed.toLowerCase()] ?? const <Map<String, dynamic>>[];
+    bool own(Map<String, dynamic> one) => one['from'] == 'customer' || one['from'] == 'orders';
     final shown = [
       for (final one in listed)
-        if (body['own'] != false || one['from'] == 'google') one,
+        if (body['own'] != false || !own(one)) one,
     ];
+    final answered = shown.where((one) => !own(one)).map((one) => one['from'] as String).firstOrNull;
     return json({
       'typed': typed,
       'suggestions': shown,
-      'credit': shown.any((one) => one['from'] == 'google') ? 'Google Maps' : null,
+      'credit': addressCredits[answered],
+      if (addressLeft != null) ...{
+        'service': answered,
+        'title': addressTitles[answered],
+        'left': answered == null ? null : addressLeft,
+        'monthly_most': addressMost[answered],
+      },
     });
   }
 
@@ -948,7 +1015,16 @@ class Hub {
   /// with these words instead), and `POST /hub/online/push/try` answers [wayTried] ([wayTries] counts them),
   /// or 409 while the hub has no key for pushes.
   Map<String, Map<String, dynamic>>? hubKeys = {
-    for (final name in ['maps', 'maps_google', 'online', 'online_push', 'online_tunnel', 'push_apple'])
+    for (final name in [
+      'maps',
+      'maps_google',
+      'maps_mapbox',
+      'maps_azure',
+      'online',
+      'online_push',
+      'online_tunnel',
+      'push_apple',
+    ])
       name: noKey(name),
   };
   Map<String, dynamic>? wayIn = {'address': '', 'door': true, 'tunnel_told': true, 'tunnel': tunnelStands('off')};
@@ -4031,8 +4107,21 @@ class Hub {
           addressListAuth = request.headers['authorization'];
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           final had = addressList!;
-          final google = body['google'] == true;
-          addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
+          final services = had['services'] as List?;
+          if (services == null) {
+            final google = body['google'] == true;
+            addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
+          } else {
+            // one that is not named stays as it is
+            addressList = addressListOf([
+              for (final one in services.cast<Map<String, dynamic>>())
+                {
+                  ...one,
+                  'on': body[one['name']] is bool ? body[one['name']] : one['on'],
+                  'asks': (body[one['name']] is bool ? body[one['name']] : one['on']) == true && one['key'] == true,
+                },
+            ]);
+          }
         }
         return json(addressList!);
       case '/settings/points':
@@ -4040,12 +4129,24 @@ class Hub {
       case '/settings/address_list/try':
         if (addressList == null) return json({'detail': 'Not Found'}, 404);
         addressTries++;
-        if (addressList!['service'] != true) {
+        final asked = request.body.isEmpty ? null : (jsonDecode(request.body) as Map<String, dynamic>)['service'];
+        addressTried.add(asked as String?);
+        final services = addressList!['services'] as List?;
+        final name = services == null ? 'google' : asked ?? 'google'; // an older hub tries Google whatever is named
+        final key = services == null
+            ? addressList!['service'] == true
+            : services.cast<Map<String, dynamic>>().any((one) => one['name'] == name && one['key'] == true);
+        if (!key) {
           return json({
-            'detail': {'error': 'no_service', 'message': 'this hub has no Google Maps key'},
+            'detail': {
+              'error': 'no_service',
+              'message': name == 'google'
+                  ? 'this hub has no Google Maps key'
+                  : 'this hub has no key for ${addressTitles[name]}',
+            },
           }, 409);
         }
-        return json(addressTry);
+        return json({...addressTry, 'service': name});
       case '/settings/live_drive':
         if (liveDrive == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

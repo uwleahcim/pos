@@ -1,6 +1,6 @@
 /// The hub's keys for the services outside the restaurant (docs/hub-keys.md): the map services a
-/// delivery's distance is asked of, GloriaFood for the website's orders, and Apple for waking a locked
-/// iPhone. A manager types them under Location, Keys and connections; the hub keeps them sealed and uses
+/// delivery's distance is asked of, the ones that list addresses while one is typed, GloriaFood for the
+/// website's orders, and Apple for waking a locked iPhone. A manager types them under Location, Keys and connections; the hub keeps them sealed and uses
 /// them at once. What the hub tells a screen about a key (`GET /hub/keys`) is never the key: whether one is
 /// in force, where it came from, its last characters, and who typed it and when.
 ///
@@ -43,8 +43,8 @@ class HubKey {
     unreadable: json['unreadable'] == true,
   );
 
-  /// `maps`, `maps_google`, `online`, `online_push`, `online_tunnel` or `push_apple`; `online:<id>` for a
-  /// further account of GloriaFood's.
+  /// `maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `online_push`, `online_tunnel` or
+  /// `push_apple`; `online:<id>` for a further account of GloriaFood's.
   final String name;
 
   /// A key is in force on the hub.
@@ -436,6 +436,29 @@ const hubKeyInfo = <String, HubKeyInfo>{
         'In the Google Cloud console: Keys & Credentials, Create credentials, API key, restricted to the '
         'Routes API.',
     removing: 'The hub stops asking Google Maps. Live traffic, if it is on, is no longer used.',
+  ),
+  'maps_mapbox': HubKeyInfo(
+    title: 'Mapbox',
+    short: 'Mapbox',
+    about:
+        'Asked for the list of addresses while one is typed, once Google has used up its free lookups for the '
+        'month or is not answering. It is used once it is turned on under Location, Address list.',
+    without: 'Without it Mapbox is passed over.',
+    where:
+        'At mapbox.com: make an account, open Tokens, and copy the default public token (it starts with pk.). '
+        'It must have no URL restriction.',
+    removing: 'The hub stops asking Mapbox for addresses.',
+  ),
+  'maps_azure': HubKeyInfo(
+    title: 'Azure Maps',
+    short: 'Azure Maps',
+    about:
+        'Asked for the list of addresses while one is typed, once the services before it have used up their '
+        'free lookups for the month or are not answering. It is used once it is turned on under Location, '
+        'Address list.',
+    without: 'Without it Azure Maps is passed over.',
+    where: 'In the Azure portal: create an Azure Maps account, open it, Authentication, and copy the Primary Key.',
+    removing: 'The hub stops asking Azure Maps for addresses.',
   ),
   'online': HubKeyInfo(
     title: 'GloriaFood (online orders)',

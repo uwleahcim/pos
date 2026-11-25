@@ -112,11 +112,13 @@ def credit_of(service: object) -> str | None:
 
 
 class LookupFailed(Exception):
-    """A lookup that gave no distance. `reason` is one of `SAID`; the message is for whoever takes the order."""
+    """A lookup that gave no distance. `reason` is one of `SAID`; the message is for whoever takes the order.
+    `code` is the status the service answered with, where it answered something that was no answer."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, code: int | None = None) -> None:
         super().__init__(SAID[reason])
         self.reason = reason
+        self.code = code
 
 
 class Maps(Protocol):

@@ -52,7 +52,7 @@ Future<void> nextLook(WidgetTester tester) async {
 Future<Terminal> pumpKeys(
   WidgetTester tester, {
   void Function(Hub hub)? hub,
-  Size size = const Size(700, 1600),
+  Size size = const Size(700, 2200),
   double textScale = 1,
   String token = 'tok-admin',
   List<HubKeys>? told,
@@ -327,6 +327,49 @@ void main() {
       expect(textOf(tester, 'key-maps-said'), 'Geocodio answered, so the key works, but it did not find that address.');
     });
 
+    testWidgets('Mapbox and Azure Maps are tried by listing addresses for the restaurant\'s own address', (
+      tester,
+    ) async {
+      final t = await pumpKeys(
+        tester,
+        hub: (hub) {
+          hub.addressList = Hub.addressListOf([
+            Hub.addressService('google', key: false),
+            Hub.addressService('mapbox'),
+            Hub.addressService('azure'),
+          ]);
+          hub.hubKeys!['maps_mapbox'] = Hub.hubKey('maps_mapbox', ending: 'qrst');
+          hub.hubKeys!['maps_azure'] = Hub.hubKey('maps_azure', ending: 'klmn');
+        },
+      );
+      expect(textOf(tester, 'key-maps_mapbox-state'), "Set in the hub's terminal · ends in qrst");
+      await tester.ensureVisible(find.byKey(const ValueKey('key-maps_mapbox-try')));
+      await tapKey(tester, 'key-maps_mapbox-try');
+      expect(t.hub.addressTried, ['mapbox']); // no address is asked for: the restaurant's own is used
+      expect(
+        textOf(tester, 'key-maps_mapbox-said'),
+        'Mapbox answered: the key works. 9,411 free lookups are left this month. It is asked for addresses once it '
+        'is turned on under Location, Address list.',
+      );
+      t.hub.addressTry = {
+        'ok': false,
+        'found': 0,
+        'reason': 'refused',
+        'message':
+            "Azure Maps refused the hub's key. Copy the primary key again from your Maps account in the Azure "
+            'portal.',
+        'left': 47499,
+      };
+      await tester.ensureVisible(find.byKey(const ValueKey('key-maps_azure-try')));
+      await tapKey(tester, 'key-maps_azure-try');
+      expect(t.hub.addressTried, ['mapbox', 'azure']);
+      expect(textOf(tester, 'key-maps_azure-said'), startsWith("Azure Maps refused the hub's key."));
+      // where to find each key, in the dialog that takes it
+      await tester.ensureVisible(find.byKey(const ValueKey('key-maps_mapbox-type')));
+      await tapKey(tester, 'key-maps_mapbox-type');
+      expect(textOf(tester, 'key-where'), contains('the default public token (it starts with pk.)'));
+    });
+
     testWidgets('a hub with no address of its own says so when a map service is tried', (tester) async {
       await pumpKeys(
         tester,
@@ -457,12 +500,12 @@ void main() {
       // the keys of the page are as many as they were: an account's key is not one of them
       expect(
         [for (final key in keys.keys) key.name],
-        ['maps', 'maps_google', 'online', 'online_push', 'online_tunnel', 'push_apple'],
+        ['maps', 'maps_google', 'maps_mapbox', 'maps_azure', 'online', 'online_push', 'online_tunnel', 'push_apple'],
       );
       expect(
         keys.summary,
-        'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, GloriaFood (Testing), GloriaFood push, '
-        'Cloudflare tunnel, Apple push',
+        'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, Mapbox, Azure Maps, GloriaFood (Testing), '
+        'GloriaFood push, Cloudflare tunnel, Apple push',
       );
     });
 
@@ -475,7 +518,7 @@ void main() {
       expect(keys.onlineAccounts, isNull);
       expect(keys.accounts.single.id, 'main');
       expect(keys.accounts.single.key.ending, 'wxyz');
-      expect(keys.summary, 'Set: GloriaFood · Not set: map service, Google Maps, Apple push');
+      expect(keys.summary, 'Set: GloriaFood · Not set: map service, Google Maps, Mapbox, Azure Maps, Apple push');
     });
 
     testWidgets('one account looks as it did, with the way to add another under it', (tester) async {
@@ -788,7 +831,10 @@ void main() {
       hub.wayIn = null;
       final older = HubKeys.fromJson(hub.hubKeysSaid());
       expect(older.wayIn, isNull);
-      expect([for (final key in older.keys) key.name], ['maps', 'maps_google', 'online', 'push_apple']);
+      expect(
+        [for (final key in older.keys) key.name],
+        ['maps', 'maps_google', 'maps_mapbox', 'maps_azure', 'online', 'push_apple'],
+      );
     });
 
     testWidgets('the two are cards of their own, and say what is lost without them', (tester) async {
@@ -1174,7 +1220,8 @@ void main() {
       await bringUp(tester, 'hub-keys');
       expect(
         row(tester),
-        'Set: map service · Not set: Google Maps, GloriaFood, GloriaFood push, Cloudflare tunnel, Apple push',
+        'Set: map service · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood, GloriaFood push, Cloudflare tunnel, '
+        'Apple push',
       );
       await tapKey(tester, 'hub-keys');
       expect(find.byType(HubKeysScreen), findsOneWidget);
@@ -1186,7 +1233,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         row(tester),
-        'Set: map service, GloriaFood · Not set: Google Maps, GloriaFood push, Cloudflare tunnel, Apple push',
+        'Set: map service, GloriaFood · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, '
+        'Apple push',
       );
     });
 

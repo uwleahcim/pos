@@ -1278,8 +1278,8 @@ class PosApi {
     return answer == null ? null : AddressSuggestions.fromJson(answer);
   }
 
-  /// Whether the list of addresses asks a map service as well as the restaurant's own deliveries, as the
-  /// location has it. Null from a hub older than the list.
+  /// Which map services the list of addresses asks as well as the restaurant's own deliveries, as the
+  /// location has it, and how each stands. Null from a hub older than the list.
   Future<AddressListSetting?> addressList() async {
     try {
       return AddressListSetting.fromJson(await _get('/settings/address_list'));
@@ -1289,7 +1289,7 @@ class PosApi {
     }
   }
 
-  /// A manager (token from [adminSession]) turns the map service on or off for the list of addresses.
+  /// A manager (token from [adminSession]) turns map services on or off for the list of addresses.
   Future<AddressListSetting> saveAddressList(String token, AddressListSetting setting) async =>
       AddressListSetting.fromJson(
         await _withFailover(
@@ -1301,11 +1301,11 @@ class PosApi {
         ),
       );
 
-  /// Has the hub ask the map service once, about the restaurant's own address, and says how it went: how a
-  /// manager finds out whether the hub's Google key may list addresses. Throws [ApiException] 409 on a hub
-  /// with no such key.
-  Future<AddressListTry> tryAddressList(String token) async => AddressListTry.fromJson(
-    await _post('/settings/address_list/try', const <String, dynamic>{}, headers: _bearer(token)),
+  /// Has the hub ask one map service once (`google`, `mapbox`, `azure`), about the restaurant's own address,
+  /// and says how it went: how a manager finds out whether the hub's key for it lists addresses. Throws
+  /// [ApiException] 409 on a hub with no key for it. A hub from before there were several asks Google.
+  Future<AddressListTry> tryAddressList(String token, {String service = 'google'}) async => AddressListTry.fromJson(
+    await _post('/settings/address_list/try', <String, dynamic>{'service': service}, headers: _bearer(token)),
   );
 
   /// The rules of the points as the location has them (docs/points.md): how many points a dollar earns,

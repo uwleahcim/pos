@@ -69,8 +69,9 @@
   of the minutes set for Delivery. It needs a map service that knows the roads right now; the fee never
   goes by it.
 - `address_list`: whether the list of addresses under a box that is being typed in (`pos.addresses`, "A list
-  of addresses while typing" in docs/delivery.md) asks a map service as well: `google`, off until a manager
-  turns it on. The restaurant's own earlier deliveries are listed either way.
+  of addresses while typing" in docs/delivery.md) asks a map service as well: `google`, `mapbox` and `azure`,
+  each off until a manager turns it on. They are asked in that order, each after the first only when the
+  one before it gives no answer. The restaurant's own earlier deliveries are listed either way.
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
@@ -185,7 +186,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # owner's to say.
     "live_drive": {"enabled": False, "before": 25},
     # Off: it sends what is typed in an address box to Google, and that is the owner's to decide.
-    "address_list": {"google": False},
+    "address_list": {"google": False, "mapbox": False, "azure": False},
     # Off: no version of the rules, so nobody earns a point until the owner sets how many a dollar earns
     # (pos.orders.points, which also checks what the app may set).
     "points": {"rules": [], "days": 365},
@@ -564,12 +565,16 @@ def clean_live_drive(data: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def clean_address_list(data: Mapping[str, Any]) -> dict[str, Any]:
-    """The list of addresses as the app may set it, checked: `google`, whether the map service is asked as
-    well as the restaurant's own deliveries. Raises ValueError on a bad value."""
-    google = data.get("google", False)
-    if not isinstance(google, bool):
-        raise ValueError("google is true or false")
-    return {"google": google}
+    """The list of addresses as the app may set it, checked: `google`, `mapbox` and `azure`, whether each map
+    service is asked as well as the restaurant's own deliveries (false for one that is left out). Raises
+    ValueError on a bad value."""
+    out: dict[str, Any] = {}
+    for name in DEFAULTS["address_list"]:
+        on = data.get(name, False)
+        if not isinstance(on, bool):
+            raise ValueError(f"{name} is true or false")
+        out[name] = on
+    return out
 
 
 def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:

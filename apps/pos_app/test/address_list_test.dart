@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/address_list.dart';
@@ -10,6 +11,7 @@ import 'package:pos_app/screens/address_list_dialog.dart';
 import 'package:pos_app/screens/delivery_fee_dialog.dart';
 import 'package:pos_app/screens/fee_lookup.dart';
 import 'package:pos_app/screens/location_settings_screen.dart';
+import 'package:pos_app/screens/service_badge.dart';
 import 'package:pos_app/screens/tap_focus.dart';
 import 'package:pos_app/screens/text_arrows.dart';
 import 'package:pos_app/screens/theme.dart';
@@ -79,8 +81,10 @@ Future<Box> pumpBox(
   bool keys = false,
   String text = '',
   ThemeData? theme,
+  Size? size,
 }) async {
   final t = await terminal(tester);
+  if (size != null) tester.view.physicalSize = size; // after the terminal, which sets its own
   t.hub.addressLists = listed ? (lists ?? Hub.elmLists) : null;
   final box = Box(t)..controller.text = text;
   await tester.pumpWidget(
@@ -154,26 +158,101 @@ void main() {
       });
       expect((list.typed, list.credit), ('12 el', 'Google Maps'));
       expect([for (final one in list.suggestions) one.address], [elm, elmMedford]);
+      // a hub from before there were several services says nothing of who answered or what is left
+      expect((list.service, list.title, list.left, list.leftWords), (null, null, null, null));
       final none = AddressSuggestions.fromJson(const {'suggestions': 'none', 'credit': ''});
       expect((none.typed, none.suggestions.length, none.credit), ('', 0, null));
     });
 
-    test('the setting: what a manager turned on, what the hub has, and what a save sends', () {
-      final on = AddressListSetting.fromJson(const {
+    test('a list says which service answered and how many free lookups it has left this month', () {
+      AddressSuggestions of(Object? left, {Object? most = 95000}) => AddressSuggestions.fromJson({
+        'typed': '12 el',
+        'suggestions': [Hub.addressLine(elmMedford, from: 'mapbox')],
+        'credit': '\u00a9 Mapbox \u00a9 OpenStreetMap',
+        'service': 'mapbox',
+        'title': 'Mapbox',
+        'left': left,
+        'monthly_most': most,
+      });
+      final list = of(94988);
+      expect((list.service, list.title, list.left, list.monthlyMost), ('mapbox', 'Mapbox', 94988, 95000));
+      expect(list.leftWords, '94,988 of 95,000 free lookups left this month');
+      expect(list.share, closeTo(0.99987, 0.00001));
+      expect((of(0).share, of(0).leftWords), (0.0, '0 of 95,000 free lookups left this month'));
+      expect(of(95000).share, 1.0);
+      // without the month's most there is no ring, and the words say what is left alone
+      expect((of(1, most: null).share, of(1, most: null).leftWords), (null, '1 free lookup left this month'));
+      expect(of(0, most: 0).leftWords, 'no free lookups left this month');
+      expect(of(999, most: 'x').leftWords, '999 free lookups left this month');
+      for (final odd in <Object?>[null, -1, '12', 1.5]) {
+        expect((of(odd).leftWords, of(odd).share), (null, null));
+      }
+      expect([counted(0), counted(12), counted(1234567), counted(-4500)], ['0', '12', '1,234,567', '-4,500']);
+    });
+
+    test('the setting: every service in the order they are asked, and what a save sends', () {
+      final setting = AddressListSetting.fromJson(
+        Hub.addressListOf([
+          Hub.addressService('google', on: true, left: 0),
+          Hub.addressService('mapbox', on: true, left: 94988, resting: true),
+          Hub.addressService('azure', key: false),
+        ]),
+      );
+      expect([for (final one in setting.services) one.name], ['google', 'mapbox', 'azure']);
+      expect([for (final one in setting.services) one.title], ['Google Maps', 'Mapbox', 'Azure Maps']);
+      expect(
+        [for (final one in setting.services) (one.on, one.key, one.asks)],
+        [(true, true, true), (true, true, true), (false, false, false)],
+      );
+      expect((setting.google, setting.asks), (true, true));
+      expect([for (final one in setting.asking) one.name], ['google', 'mapbox']);
+      final (google, mapbox, azure) = (setting.services[0], setting.services[1], setting.services[2]);
+      expect((google.left, google.monthlyMost, google.usedUp), (0, 9500, true));
+      expect(google.words, startsWith('Its free lookups for this month are used up'));
+      expect(mapbox.words, 'Not answering right now: the next one is asked meanwhile');
+      expect(azure.words, 'No key on this hub yet (Keys and connections)');
+      expect(
+        AddressService.of(Hub.addressService('mapbox', left: 94988))!.words,
+        'Off · 94,988 of 95,000 free lookups left this month',
+      );
+      expect(
+        AddressService.of(Hub.addressService('mapbox', on: true, left: 94988))!.words,
+        '94,988 of 95,000 free lookups left this month',
+      );
+      // whether there is a key is the hub's to say: a save sends the switches alone, every one of them
+      expect(setting.toJson(), {'google': true, 'mapbox': true, 'azure': false});
+      expect(setting.turned({'google': false}).toJson(), {'google': false, 'mapbox': true, 'azure': false});
+      // what names no service is none
+      expect(AddressService.of(const {'title': 'Bing'}), isNull);
+      expect(AddressService.of('google'), isNull);
+    });
+
+    test('the setting of a hub from before there were several is Google alone', () {
+      final old = AddressListSetting.fromJson(const {
         'google': true,
         'service': true,
         'asks': true,
         'credit': 'Google Maps',
       });
-      expect((on.google, on.service, on.asks, on.credit), (true, true, true, 'Google Maps'));
-      // whether there is a map service is the hub's to say: a save sends the switch alone
-      expect(on.toJson(), {'google': true});
+      expect(
+        [for (final one in old.services) (one.name, one.title, one.on, one.key)],
+        [('google', 'Google Maps', true, true)],
+      );
+      expect((old.google, old.asks, old.services.single.left), (true, true, null));
+      expect(old.services.single.words, 'On');
+      expect(old.toJson(), {'google': true}); // what that hub understands
       final bare = AddressListSetting.fromJson(const {});
-      expect((bare.google, bare.service, bare.asks, bare.credit), (false, false, false, 'Google Maps'));
-      final tried = AddressListTry.fromJson(const {'ok': true, 'found': 3, 'reason': null, 'message': ''});
-      expect((tried.ok, tried.found, tried.message), (true, 3, ''));
+      expect((bare.google, bare.asks, bare.services.single.key), (false, false, false));
+      final tried = AddressListTry.fromJson(const {
+        'ok': true,
+        'found': 3,
+        'reason': null,
+        'message': '',
+        'left': 9411,
+      });
+      expect((tried.ok, tried.found, tried.message, tried.left), (true, 3, '', 9411));
       final failed = AddressListTry.fromJson(const {'ok': false, 'found': 'x', 'message': 'Google refused the key.'});
-      expect((failed.ok, failed.found, failed.message), (false, 0, 'Google refused the key.'));
+      expect((failed.ok, failed.found, failed.message, failed.left), (false, 0, 'Google refused the key.', null));
     });
   });
 
@@ -221,18 +300,25 @@ void main() {
       expect((await tester.runAsync(() => t.api.suggestAddresses('12 el')))?.suggestions, hasLength(4));
     });
 
-    testWidgets('the setting is read and saved with the manager\'s token, and the service is tried', (tester) async {
+    testWidgets('the setting is read and saved with the manager\'s token, and each service is tried', (tester) async {
       final t = await terminal(tester);
       expect(await tester.runAsync(t.api.addressList), isNull); // an older hub
       t.hub.addressList = Hub.addressListOff;
       final off = await tester.runAsync(t.api.addressList);
-      expect((off?.google, off?.service, off?.asks), (false, true, false));
-      final saved = await tester.runAsync(
-        () => t.api.saveAddressList('tok-admin', const AddressListSetting(google: true)),
+      expect(
+        [for (final one in off!.services) (one.name, one.on, one.key)],
+        [('google', false, true), ('mapbox', false, true), ('azure', false, false)],
       );
-      expect((saved?.google, saved?.asks, t.hub.addressListAuth), (true, true, 'Bearer tok-admin'));
-      final tried = await tester.runAsync(() => t.api.tryAddressList('tok-admin'));
-      expect((tried?.ok, tried?.found, t.hub.addressTries), (true, 3, 1));
+      final saved = await tester.runAsync(
+        () => t.api.saveAddressList('tok-admin', off.turned({'google': true, 'mapbox': true})),
+      );
+      expect([for (final one in saved!.services) one.asks], [true, true, false]);
+      expect(t.hub.addressListAuth, 'Bearer tok-admin');
+      final tried = await tester.runAsync(() => t.api.tryAddressList('tok-admin', service: 'mapbox'));
+      expect((tried?.ok, tried?.found, tried?.left), (true, 3, 9411));
+      expect(t.hub.addressTried, ['mapbox']);
+      await tester.runAsync(() => t.api.tryAddressList('tok-admin'));
+      expect(t.hub.addressTried, ['mapbox', 'google']);
     });
   });
 
@@ -257,9 +343,14 @@ void main() {
           Icons.place_outlined,
         ],
       );
-      // a list with a map service's answer carries its name, as its terms want
+      // a list with a map service's answer carries its name, as its terms want, and what it has left free
       expect(said(tester, 'address-credit'), 'Google Maps');
       expect(tester.widget<Text>(key('address-credit')).style?.color, MapCredit.onLight);
+      final badge = tester.widget<ServiceBadge>(key('address-badge'));
+      expect((badge.service, badge.title), ('google', 'Google Maps'));
+      expect(badge.words, '9,412 of 9,500 free lookups left this month');
+      expect(badge.share, closeTo(0.9907, 0.0001));
+      expect(ServiceBadge.letterOf('google', 'Google Maps'), 'G');
       // nothing is put in the box by itself, and the form was told of the typing alone
       expect((box.controller.text, box.changed, box.done, box.left), ('12 el', 1, 0, 0));
     });
@@ -274,6 +365,108 @@ void main() {
       await type(tester, '12 el', box: 'address');
       expect(lines(tester), [elm, elmCt]);
       expect(key('address-credit'), findsNothing);
+      expect(key('address-badge'), findsNothing);
+    });
+
+    testWidgets('once Google\'s free lookups are used up, the line under the list names the one that answered', (
+      tester,
+    ) async {
+      final box = await pumpBox(
+        tester,
+        lists: {
+          '12 el': [
+            Hub.addressLine(elm, from: 'customer'),
+            Hub.addressLine(elmMedford, from: 'mapbox', main: '12 Elm Street', rest: 'Medford, MA'),
+          ],
+          '12 elm': [Hub.addressLine(elmwood, from: 'azure', main: '12 Elmwood Road', rest: 'Winchester, MA')],
+        },
+      );
+      box.t.hub.addressLeft = 94988;
+      await type(tester, '12 el', box: 'address');
+      expect(lines(tester), [elm, '12 Elm Street  Medford, MA']);
+      expect(said(tester, 'address-credit'), '\u00a9 Mapbox \u00a9 OpenStreetMap');
+      var badge = tester.widget<ServiceBadge>(key('address-badge'));
+      expect((badge.service, ServiceBadge.letterOf(badge.service, badge.title)), ('mapbox', 'M'));
+      expect(badge.words, '94,988 of 95,000 free lookups left this month');
+      // a reader hears whose lookups they are, and a tap on the badge says it too
+      final handle = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('Mapbox: 94,988 of 95,000 free lookups left this month'), findsOneWidget);
+      handle.dispose();
+      await tester.tap(key('address-badge'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Mapbox: 94,988 of 95,000 free lookups left this month'), findsOneWidget);
+      // the list and the keyboard stay
+      expect((inBox(tester, 'address'), key('address-suggestion:1').evaluate().length), (true, 1));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      // nearly nothing left: the ring is red
+      box.t.hub.addressLeft = 1;
+      await type(tester, '12 elm', box: 'address');
+      expect(said(tester, 'address-credit'), 'Azure Maps');
+      badge = tester.widget<ServiceBadge>(key('address-badge'));
+      expect((badge.service, badge.words), ('azure', '1 of 47,500 free lookups left this month'));
+      final context = tester.element(key('address-badge'));
+      expect(ServiceBadge.ringColor(context, badge.share!), PosColors.of(context).timerLate);
+      expect(ServiceBadge.ringColor(context, 0.15), PosColors.of(context).timerWarn);
+      expect(ServiceBadge.ringColor(context, 0.5), Theme.of(context).colorScheme.primary);
+    });
+
+    testWidgets('a hub that does not say what is left shows the name alone', (tester) async {
+      final box = await pumpBox(tester);
+      box.t.hub.addressLeft = null; // a hub from before there were several services
+      await type(tester, '12 el', box: 'address');
+      expect(said(tester, 'address-credit'), 'Google Maps');
+      expect(key('address-badge'), findsNothing);
+    });
+
+    testWidgets('the badge does not move while the list changes under it', (tester) async {
+      await pumpBox(tester);
+      await type(tester, '12 el', box: 'address');
+      final at = tester.getTopLeft(key('address-badge'));
+      // under the box, before the first line, in the column of the lines' pictures
+      expect(at.dy, lessThan(tester.getTopLeft(key('address-suggestion:0')).dy));
+      expect(at.dy, greaterThan(tester.getBottomLeft(key('address')).dy));
+      final picture = find.descendant(of: key('address-suggestion:0'), matching: find.byType(Icon));
+      expect(tester.getCenter(key('address-badge')).dx, closeTo(tester.getCenter(picture).dx, 1.5));
+      await type(tester, '12 elm s', box: 'address'); // a shorter list, other addresses
+      expect(lines(tester), hasLength(3));
+      expect(tester.getTopLeft(key('address-badge')), at);
+    });
+
+    testWidgets('on a small phone with large type the badge stays tiny and the name is whole', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await pumpBox(tester, size: const Size(320, 640));
+      await type(tester, '12 el', box: 'address');
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(key('address-list')).width, 320 - 32);
+      expect(tester.getSize(key('address-badge')), const Size(ServiceBadge.size, ServiceBadge.size)); // tiny still
+      expect(tester.getRect(key('address-credit')).right, lessThanOrEqualTo(320 - 16 - 12));
+    });
+
+    testWidgets('a long name on a narrow screen with large type is made smaller, never cut or broken', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await pumpBox(
+        tester,
+        size: const Size(240, 640),
+        lists: {
+          '12 el': [Hub.addressLine('12 Ellis Street, Woburn, MA', from: 'mapbox')],
+        },
+      );
+      await type(tester, '12 el', box: 'address');
+      expect(tester.takeException(), isNull);
+      expect(tester.widget<Text>(key('address-credit')).data, '\u00a9 Mapbox \u00a9 OpenStreetMap');
+      final words = tester.renderObject<RenderParagraph>(key('address-credit'));
+      // the whole name was laid out on one line (wider than there is room for)...
+      expect(words.didExceedMaxLines, isFalse);
+      expect(words.size.width, greaterThan(tester.getSize(key('address-list')).width));
+      expect(words.size.width, moreOrLessEquals(words.getMaxIntrinsicWidth(double.infinity), epsilon: 1));
+      // ...and is shown smaller, inside the list, after the badge
+      final shown = tester.getRect(key('address-credit')), list = tester.getRect(key('address-list'));
+      expect(shown.right, lessThanOrEqualTo(list.right - 12 + 0.01));
+      expect(shown.left, greaterThan(tester.getRect(key('address-badge')).right));
+      expect(tester.getSize(key('address-badge')), const Size(ServiceBadge.size, ServiceBadge.size));
     });
 
     testWidgets('a reader is told whose address a line is', (tester) async {
@@ -610,33 +803,63 @@ void main() {
 
     String rowWords(WidgetTester tester) => ((tester.widget<ListTile>(key('address-list')).subtitle!) as Text).data!;
 
-    testWidgets('the map service is off until a manager turns it on, and the dialog says what is sent', (tester) async {
+    bool switched(WidgetTester tester, String service) =>
+        tester.widget<SwitchListTile>(key('address-list-$service')).value;
+
+    testWidgets('every service is off until a manager turns it on, and they stand in the order they are asked', (
+      tester,
+    ) async {
       final t = await pumpLocation(tester, list: Hub.addressListOff);
       expect(rowWords(tester), 'Your own earlier deliveries are listed while an address is typed');
       await tapKey(tester, 'address-list');
       expect(find.byType(AddressListDialog), findsOneWidget);
-      expect(tester.widget<SwitchListTile>(key('address-list-google')).value, isFalse);
-      expect(find.text('Off: nothing that is typed leaves the building'), findsOneWidget);
+      expect(find.text('1. Google Maps'), findsOneWidget);
+      expect(find.text('2. Mapbox'), findsOneWidget);
+      expect(find.text('3. Azure Maps'), findsOneWidget);
+      final top = [
+        for (final service in ['google', 'mapbox', 'azure']) tester.getTopLeft(key('address-list-$service')).dy,
+      ];
+      expect(top, orderedEquals([...top]..sort()));
+      expect(
+        [
+          for (final service in ['google', 'mapbox', 'azure']) switched(tester, service),
+        ],
+        [false, false, false],
+      );
+      expect(said(tester, 'address-list-state:google'), 'Off · 9,500 of 9,500 free lookups left this month');
+      expect(said(tester, 'address-list-state:mapbox'), 'Off · 95,000 of 95,000 free lookups left this month');
+      expect(said(tester, 'address-list-state:azure'), 'No key on this hub yet (Keys and connections)');
+      expect(key('address-list-try:azure'), findsNothing); // nothing to try it with
+      expect(said(tester, 'address-list-order'), contains('the next one only once the one before it has used up'));
       expect(said(tester, 'address-list-says'), contains('costs nothing and asks nobody'));
-      expect(said(tester, 'address-list-sent'), contains("once the restaurant's own address"));
-      expect(said(tester, 'address-list-sent'), contains('Nothing else: no name, no phone number'));
-      expect(said(tester, 'address-list-sent'), contains('Google may charge'));
+      expect(said(tester, 'address-list-sent'), 'All off: nothing that is typed leaves the building.');
       await tapKey(tester, 'address-list-google');
-      expect(find.text('What is typed in an address box is sent to Google, from the fourth letter'), findsOneWidget);
-      expect(t.hub.addressListAuth, isNull); // nothing is saved by the switch alone
+      await tapKey(tester, 'address-list-mapbox');
+      expect(said(tester, 'address-list-sent'), contains('no name, no phone number'));
+      expect(said(tester, 'address-list-sent'), contains('stops a little short of what each gives away free'));
+      expect(t.hub.addressListAuth, isNull); // nothing is saved by the switches alone
       await tapKey(tester, 'address-list-save');
       expect(t.hub.addressListAuth, 'Bearer tok-admin');
-      expect((t.hub.addressList?['google'], t.hub.addressList?['asks']), (true, true));
+      expect(
+        [
+          for (final name in ['google', 'mapbox', 'azure']) t.hub.addressList?[name],
+        ],
+        [true, true, false],
+      );
       expect(find.byType(AddressListDialog), findsNothing);
       expect(find.text('Address list saved'), findsOneWidget);
-      expect(rowWords(tester), 'Your own earlier deliveries, then Google Maps, are listed while an address is typed');
-      // and off again
+      expect(
+        rowWords(tester),
+        'Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox takes over '
+        'when it gives no list',
+      );
+      // and Google off again: Mapbox is the first one asked
       await tapKey(tester, 'address-list');
-      expect(tester.widget<SwitchListTile>(key('address-list-google')).value, isTrue);
+      expect((switched(tester, 'google'), switched(tester, 'mapbox')), (true, true));
       await tapKey(tester, 'address-list-google');
       await tapKey(tester, 'address-list-save');
-      expect(t.hub.addressList?['google'], isFalse);
-      expect(rowWords(tester), startsWith('Your own earlier deliveries are listed'));
+      expect((t.hub.addressList?['google'], t.hub.addressList?['mapbox']), (false, true));
+      expect(rowWords(tester), 'Your own earlier deliveries, then Mapbox, are listed while an address is typed');
       await stop(tester);
     });
 
@@ -651,45 +874,93 @@ void main() {
       await stop(tester);
     });
 
-    testWidgets('Try it says whether Google lists addresses for this hub, before anything is turned on', (
+    testWidgets('Try it asks that one service, before anything is turned on, and says what it has left', (
       tester,
     ) async {
       final t = await pumpLocation(tester, list: Hub.addressListOff);
       await tapKey(tester, 'address-list');
-      expect(said(tester, 'address-list-credit'), 'Google Maps');
-      await tapKey(tester, 'address-list-try');
-      expect(said(tester, 'address-list-tried'), 'Google answered: it lists addresses for this hub.');
-      t.hub.addressTry = {'ok': true, 'found': 0, 'reason': null, 'message': ''};
-      await tapKey(tester, 'address-list-try');
-      expect(said(tester, 'address-list-tried'), contains('listed nothing for the restaurant\'s own address'));
+      await tapKey(tester, 'address-list-try:mapbox');
+      expect(t.hub.addressTried, ['mapbox']);
+      expect(said(tester, 'address-list-tried:mapbox'), 'Mapbox answered: it lists addresses for this hub.');
+      // the try was counted: the line under it says what is left now
+      expect(said(tester, 'address-list-state:mapbox'), 'Off · 9,411 of 95,000 free lookups left this month');
+      expect(key('address-list-tried:google'), findsNothing);
+      await tapKey(tester, 'address-list-try:google');
+      expect(t.hub.addressTried, ['mapbox', 'google']);
+      expect(said(tester, 'address-list-tried:google'), 'Google Maps answered: it lists addresses for this hub.');
+      t.hub.addressTry = {'ok': true, 'found': 0, 'reason': null, 'message': '', 'left': 9410};
+      await tapKey(tester, 'address-list-try:google');
+      expect(said(tester, 'address-list-tried:google'), contains('listed nothing for the restaurant\'s own address'));
       t.hub.addressTry = {
         'ok': false,
         'found': 0,
         'reason': 'refused',
-        'message': "Google refused the hub's key. Is Places API (New) turned on for it?",
+        'message':
+            "Mapbox refused the hub's token. Copy it again from your Mapbox account; it must have no URL "
+            'restriction.',
+        'left': 94000,
       };
-      await tapKey(tester, 'address-list-try');
-      expect(said(tester, 'address-list-tried'), "Google refused the hub's key. Is Places API (New) turned on for it?");
-      final scheme = Theme.of(tester.element(key('address-list-tried'))).colorScheme;
-      expect(tester.widget<Text>(key('address-list-tried')).style?.color, scheme.error);
+      await tapKey(tester, 'address-list-try:mapbox');
+      expect(said(tester, 'address-list-tried:mapbox'), startsWith("Mapbox refused the hub's token."));
+      final scheme = Theme.of(tester.element(key('address-list-tried:mapbox'))).colorScheme;
+      expect(tester.widget<Text>(key('address-list-tried:mapbox')).style?.color, scheme.error);
       t.hub.down = true;
-      await tapKey(tester, 'address-list-try');
-      expect(said(tester, 'address-list-tried'), 'The hub is not answering.');
+      await tapKey(tester, 'address-list-try:mapbox');
+      expect(said(tester, 'address-list-tried:mapbox'), 'The hub is not answering.');
       t.hub.down = false;
       // trying turned nothing on and saved nothing
-      expect((t.hub.addressTries, t.hub.addressListAuth, t.hub.addressList?['google']), (3, null, false));
+      expect((t.hub.addressTries, t.hub.addressListAuth, t.hub.addressList?['mapbox']), (4, null, false));
       await stop(tester);
     });
 
-    testWidgets('a hub with no Google Maps key says so, and keeps the switch for the day it has one', (tester) async {
-      final t = await pumpLocation(tester, list: {...Hub.addressListOff, 'service': false});
+    testWidgets('a service used up for the month, or not answering, says so in red', (tester) async {
+      await pumpLocation(
+        tester,
+        list: Hub.addressListOf([
+          Hub.addressService('google', on: true, left: 0),
+          Hub.addressService('mapbox', on: true, resting: true),
+          Hub.addressService('azure', on: true, left: 47000),
+        ]),
+      );
+      expect(
+        rowWords(tester),
+        'Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox and Azure '
+        'Maps take over when it gives no list',
+      );
       await tapKey(tester, 'address-list');
-      expect(said(tester, 'address-list-sent'), startsWith('This hub has no Google Maps key yet'));
-      expect(key('address-list-try'), findsNothing);
+      final scheme = Theme.of(tester.element(key('address-list-state:google'))).colorScheme;
+      expect(said(tester, 'address-list-state:google'), startsWith('Its free lookups for this month are used up'));
+      expect(tester.widget<Text>(key('address-list-state:google')).style?.color, scheme.error);
+      expect(said(tester, 'address-list-state:mapbox'), 'Not answering right now: the next one is asked meanwhile');
+      expect(tester.widget<Text>(key('address-list-state:mapbox')).style?.color, scheme.error);
+      expect(said(tester, 'address-list-state:azure'), '47,000 of 47,500 free lookups left this month');
+      expect(tester.widget<Text>(key('address-list-state:azure')).style?.color, scheme.onSurfaceVariant);
+      await stop(tester);
+    });
+
+    testWidgets('a service turned on with no key on this hub is kept for the day it has one', (tester) async {
+      final t = await pumpLocation(tester, list: Hub.addressListOff);
+      await tapKey(tester, 'address-list');
+      await tapKey(tester, 'address-list-azure');
+      await tapKey(tester, 'address-list-save');
+      expect((t.hub.addressList?['azure'], t.hub.addressList?['google']), (true, false));
+      expect(rowWords(tester), 'On, but not used yet: this hub has no key for Azure Maps');
+      await stop(tester);
+    });
+
+    testWidgets('a hub from before there were several has the one Google switch', (tester) async {
+      final t = await pumpLocation(tester, list: {...Hub.addressListOld, 'service': false});
+      await tapKey(tester, 'address-list');
+      expect(find.text('1. Google Maps'), findsOneWidget);
+      expect(key('address-list-mapbox'), findsNothing);
+      expect(said(tester, 'address-list-state:google'), 'No key on this hub yet (Keys and connections)');
+      expect(key('address-list-try:google'), findsNothing);
       await tapKey(tester, 'address-list-google');
       await tapKey(tester, 'address-list-save');
       expect((t.hub.addressList?['google'], t.hub.addressList?['asks']), (true, false));
       expect(rowWords(tester), 'On, but not used yet: this hub has no Google Maps key');
+      // with a key, it is tried as before: that hub tries Google whatever is named
+      t.hub.addressList = {...Hub.addressListOld, 'google': true, 'asks': true};
       await stop(tester);
     });
 
@@ -703,7 +974,7 @@ void main() {
     testWidgets("the restaurant's own address lists the map service's answers alone", (tester) async {
       final t = await pumpLocation(
         tester,
-        list: {...Hub.addressListOff, 'google': true, 'asks': true},
+        list: Hub.addressListOf([Hub.addressService('google', on: true)]),
         row: 'delivery-fee',
       );
       t.hub.addressLists = Hub.elmLists;
@@ -729,8 +1000,12 @@ void main() {
       await pumpLocation(tester, list: Hub.addressListOff, size: const Size(320, 640), type: 1.3);
       await tapKey(tester, 'address-list');
       await tapKey(tester, 'address-list-google');
-      await tapKey(tester, 'address-list-try');
-      expect(said(tester, 'address-list-tried'), startsWith('Google answered'));
+      await tapKey(tester, 'address-list-try:mapbox');
+      expect(said(tester, 'address-list-tried:mapbox'), startsWith('Mapbox answered'));
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(key('address-list-azure'));
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'address-list-azure');
       expect(tester.takeException(), isNull);
       await tapKey(tester, 'address-list-save');
       expect(find.byType(AddressListDialog), findsNothing);

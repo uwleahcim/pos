@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import localtime
-from ..addresses import Suggester, suggester_from_env
+from ..addresses import Suggester, default_asked, suggester_from_env
 from ..check_guests import CheckGuests, default_check_guests
 from ..customers import (
     NOTE_MAX,
@@ -1006,8 +1006,10 @@ def create_app(
     app.state.asks_online = False
     # how far a delivery goes, asked of a map service when the hub has a key for one (docs/delivery.md)
     app.state.lookups = lookups if lookups is not None else lookups_from_env(outside)
-    # the list of addresses under a box that is being typed in asks the same Google key (pos.addresses)
-    app.state.suggester = suggester if suggester is not None else suggester_from_env(outside)
+    # the list of addresses under a box that is being typed in asks the same Google key, and Mapbox and Azure
+    # Maps when Google gives no answer; how often each was asked this month is counted in the database
+    # (pos.addresses)
+    app.state.suggester = suggester if suggester is not None else suggester_from_env(outside, asked=default_asked())
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
@@ -1920,17 +1922,25 @@ def create_app(
         """For `hubctl maps status`: whether the hub has a map service, whether the restaurant's own address
         is set, and how often the service was asked today; the same of a second service under `fallback`, and
         under `traffic` how often the drive right now was asked and whether live traffic is turned on; under
-        `suggest` how often the list of addresses asked its service, and whether a manager turned that on
-        (None on a hub with no Google Maps key). No address is in it."""
+        `suggests`, of each map service the list of addresses can ask, in the order they are asked: how often
+        it was asked this month and today, the most it is asked in a month, and whether a manager turned it
+        on (`enabled`); and under `suggest` the first of those (None on a hub with no key for any). No
+        address is in it."""
         settings: SettingStore = app.state.settings
         lookups: Lookups = app.state.lookups
         status = lookups.status()
         if status["traffic"] is not None:
             status["traffic"]["enabled"] = settings.get("live_drive").get("enabled") is True
-        listing = app.state.suggester.status()
-        if listing is not None:
-            listing["enabled"] = settings.get("address_list").get("google") is True
-        return {**status, "origin_set": bool(settings.get("delivery_fee").get("origin")), "suggest": listing}
+        listings = app.state.suggester.statuses()
+        turned_on = settings.get("address_list")
+        for listing in listings:
+            listing["enabled"] = turned_on.get(listing["service"]) is True
+        return {
+            **status,
+            "origin_set": bool(settings.get("delivery_fee").get("origin")),
+            "suggest": listings[0] if listings else None,
+            "suggests": listings,
+        }
 
     @app.get("/settings/kitchen_notes")
     def read_kitchen_notes() -> dict[str, Any]:
