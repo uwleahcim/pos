@@ -5,10 +5,11 @@ is the one that signs in. A PIN is kept as a salted hash, as before, and is neve
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
-from pos.identity.staff import Directory, Locked, Staff, demo_directory, hash_pin, staff_from_env
+from pos.identity.staff import Directory, Locked, Staff, demo_directory, staff_from_env
 from pos.identity.staff_list import (
     ROLES,
     STAFF_MOST,
@@ -25,6 +26,15 @@ DSN = os.environ.get("POS_TEST_DATABASE_URL")
 
 MIKE = Actor("s3", "Mike")
 AMY = Actor("s1", "Amy")
+
+
+def hashed(salt: str, pin_hash: str) -> bool:
+    """Whether what is kept of a PIN is a salted hash (or nothing, for somebody taken off): 16 and 64 letters
+    of hex. Looked at by its shape and never for a PIN's digits, because random hex holds any four digits by
+    chance now and then: about one run in a hundred, which is how this was found."""
+    if not salt and not pin_hash:
+        return True
+    return bool(re.fullmatch(r"[0-9a-f]{16}", salt) and re.fullmatch(r"[0-9a-f]{64}", pin_hash))
 
 
 def own() -> list[Staff]:
@@ -203,7 +213,7 @@ def test_a_pin_is_kept_as_a_salted_hash_and_nowhere_in_clear():
     staff.add("Kim", "server", "4827", by=MIKE)
     staff.change("s1", pin="5310", by=MIKE)
     for row in staff.store.all():
-        assert "4827" not in repr(row) and "5310" not in repr(row)
+        assert "4827" not in repr(row) and "5310" not in repr(row) and hashed(row.pin_salt, row.pin_hash)
     kim, amy = (m for m in staff.store.all() if m.staff_id in ("s5", "s1"))
     assert kim.pin_salt != amy.pin_salt and len(kim.pin_hash) == 64
 
@@ -418,20 +428,13 @@ def test_the_list_survives_in_postgres_in_its_order_and_holds_no_pin():
         staff.remove("s2", by=MIKE)
         mark = staff.mark()
         with store._pool.connection() as conn:  # noqa: SLF001
-            # Every column of every row but the salt and what the PIN was turned into: those two are random letters
-            # and digits, where four digits in a row turn up by chance. They are checked for what they are below.
+            # every column there is, now or later, but the salt and the hash: those two by their shape
             dumped = conn.execute(
                 "SELECT string_agg((to_jsonb(staff_member) - 'pin_salt' - 'pin_hash')::text, ' ') FROM staff_member"
             ).fetchone()[0]
-            salted = {
-                row[0]: (row[1], row[2])
-                for row in conn.execute("SELECT staff_id, pin_salt, pin_hash FROM staff_member").fetchall()
-            }
+            pins = conn.execute("SELECT pin_salt, pin_hash FROM staff_member").fetchall()
         assert "4827" not in dumped and "5310" not in dumped and "Amy W" in dumped
-        for staff_id, pin in (("s5", "4827"), ("s1", "5310")):
-            salt, hashed = salted[staff_id]
-            assert len(salt) == 16 and len(hashed) == 64 and hashed == hash_pin(pin, salt)
-        assert salted["s2"] == ("", ""), "somebody taken off the staff keeps no PIN at all"
+        assert len(pins) == 5 and all(hashed(*kept) for kept in pins)
         again = PgStaffStore(DSN)
         try:
             restarted = listed([Staff.with_pin("x9", "Zed", "manager", "7777")], store=again)

@@ -14,6 +14,7 @@ import '../faces.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
 import '../online_orders.dart';
+import '../points.dart';
 import '../hub_keys.dart';
 import '../powers.dart';
 import '../printers.dart';
@@ -42,6 +43,7 @@ import 'kitchen_times_screen.dart';
 import 'live_drive_dialog.dart';
 import 'logbook_screen.dart';
 import 'online_orders_screen.dart';
+import 'points_dialog.dart';
 import 'hub_keys_screen.dart';
 import 'powers_screen.dart';
 import 'printers_screen.dart';
@@ -176,6 +178,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
   LiveDrive? _live; // live traffic for deliveries, as the hub has it; null until it answers (an older hub)
   AddressListSetting? _addressList; // the list of addresses while typing; null until the hub answers
+  PointsRules? _points; // the rules of the points (docs/points.md); null until the hub answers (an older hub)
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   ContestList? _contests; // the contests the location keeps (docs/contests.md); null from an older hub
@@ -286,6 +289,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     }
     await _readLive();
     await _readAddressList();
+    try {
+      final points = await widget.api.pointsRules();
+      if (mounted) setState(() => _points = points);
+    } on ApiException {
+      // nothing answered about points: the row says so
+    }
     try {
       final notes = await widget.api.kitchenNotes();
       if (mounted) setState(() => _kitchenNotes = notes);
@@ -829,6 +838,22 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (saved == null || !mounted) return;
     setState(() => _addressList = saved);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Address list saved')));
+  }
+
+  /// The rules of the points: how many a dollar earns, what earns, and how long they last.
+  Future<void> _pointsRules() async {
+    final saved = await showDialog<PointsRules>(
+      context: context,
+      builder: (_) => PointsDialog(api: widget.api, token: widget.token, rules: _points!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _points = saved);
+    // the word of the save before, if it still stands, gives way to this one
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(saved.on ? 'Points saved: they are earned from today' : 'Points saved: nobody earns')),
+      );
   }
 
   Future<void> _kitchenNotesList() async {
@@ -1490,6 +1515,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     onTap: _wasteReasons == null ? null : _wasteReasonsList,
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // what the guest who pays a check earns on it: off until somebody sets a rate
+            Card(
+              child: ListTile(
+                key: const ValueKey('points'),
+                leading: const Icon(Icons.stars_outlined),
+                title: const Text('Points'),
+                subtitle: Text(PointsDialog.summary(_points)),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _points == null ? null : _pointsRules,
               ),
             ),
             const SizedBox(height: 12),

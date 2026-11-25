@@ -195,6 +195,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "near_miles": 4.0,
         "order": ["google", "mapbox", "azure"],
     },
+    # Off: no version of the rules, so nobody earns a point until the owner sets how many a dollar earns
+    # (pos.orders.points, which also checks what the app may set).
+    "points": {"rules": [], "days": 365},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import re
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,7 +47,9 @@ def test_five_misses_lock_that_device_for_a_minute():
 
 def test_pins_are_never_stored_in_clear():
     staff = Staff.with_pin("s1", "Amy", "server", "1111")
-    assert "1111" not in staff.pin_hash and "1111" not in staff.pin_salt
+    # by their shape, and never for the digits: random hex holds any four digits by chance now and then
+    assert re.fullmatch(r"[0-9a-f]{16}", staff.pin_salt) and re.fullmatch(r"[0-9a-f]{64}", staff.pin_hash)
+    assert "1111" not in repr(replace(staff, pin_salt="", pin_hash=""))
     assert staff.pin_matches("1111") and not staff.pin_matches("1112")
 
 

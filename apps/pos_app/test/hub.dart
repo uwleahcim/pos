@@ -361,6 +361,98 @@ class Hub {
   /// not say (one from before there were several).
   int? addressLeft = 9412;
 
+  /// The rules of the points (docs/points.md; `GET/PUT /settings/points`); null is a hub older than points.
+  /// A save is kept as the real hub keeps it: the rate, what earns and the days as sent, in force from
+  /// [pointsToday] by [pointsKeeper]. [pointsSaves] is every save as it was sent and [pointsAuth] the token
+  /// of the last; [refusePoints] answers the next save with the hub's words for a value it does not take,
+  /// and [pointsDown] fails it as if no hub answered.
+  Map<String, dynamic>? points;
+  final pointsSaves = <Map<String, dynamic>>[];
+  String? pointsAuth;
+  String? refusePoints;
+  bool pointsDown = false;
+  String pointsToday = '2026-11-16';
+  String pointsKeeper = 'Mike';
+
+  /// The points of each guest by the digits of their number, for who sits on a check (`points` of a party
+  /// in `GET /orders/{id}/seated`): a number not listed has 0. Null, as on a hub where no rate was ever
+  /// set, says nothing of points there.
+  Map<String, int>? guestPoints;
+
+  /// What a hub says of the points before anybody set a rate.
+  static Map<String, dynamic> get pointsOff => {
+    'on': false,
+    'ever': false,
+    'per_dollar': '0',
+    'alcohol': false,
+    'dine_in': true,
+    'takeout': true,
+    'delivery': true,
+    'catering': true,
+    'days': 365,
+    'from': null,
+    'by': '',
+    'since': null,
+    'earlier': <Map<String, dynamic>>[],
+    'today': '2026-11-16',
+    'per_dollar_most': '100',
+    'days_least': 30,
+    'days_most': 365,
+  };
+
+  /// One point a dollar since the first of November, set by Mike.
+  static Map<String, dynamic> get pointsOn => {
+    ...pointsOff,
+    'on': true,
+    'ever': true,
+    'per_dollar': '1',
+    'from': '2026-11-01',
+    'by': 'Mike',
+    'since': '2026-11-01',
+  };
+
+  Future<http.Response> _points(http.Request request) async {
+    final had = points;
+    if (had == null) return json({'detail': 'Not Found'}, 404);
+    if (request.method != 'PUT') return json(had);
+    if (pointsDown) throw const SocketException('down');
+    pointsAuth = request.headers['authorization'];
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    pointsSaves.add(body);
+    if (refusePoints != null) {
+      return json({
+        'detail': {'error': 'bad_value', 'message': refusePoints},
+      }, 422);
+    }
+    const earning = ['per_dollar', 'alcohol', 'dine_in', 'takeout', 'delivery', 'catering'];
+    final on = (double.tryParse('${body['per_dollar'] ?? had['per_dollar']}') ?? 0) > 0;
+    final changed = earning.any((name) => body.containsKey(name) && body[name] != had[name]);
+    final was = had['on'] == true || had['ever'] == true;
+    points = {
+      ...had,
+      for (final name in [...earning, 'days'])
+        if (body.containsKey(name)) name: body[name],
+      'on': on,
+      'ever': was || on,
+      if (changed && (was || on)) ...{
+        'from': pointsToday,
+        'by': pointsKeeper,
+        'since': had['since'] ?? pointsToday,
+        'earlier': [
+          if (was && had['from'] != pointsToday)
+            {
+              for (final name in earning) name: had[name],
+              'from': had['from'],
+              'by': had['by'],
+              'until': DateTime.parse(pointsToday).subtract(const Duration(days: 1)).toIso8601String().substring(0, 10),
+            },
+          ...(had['earlier'] as List? ?? const []),
+        ],
+      },
+    };
+    return json(points!);
+  }
+
   Future<http.Response> _suggest(http.Request request) async {
     final lists = addressLists;
     if (lists == null) return json({'detail': 'Not Found'}, 404);
@@ -2528,6 +2620,11 @@ class Hub {
               'listed': phoneDigits(row['phone'] as String?).length >= customerDigits,
               'pays': payers[id] == '${from(row)}:${row['id']}',
             },
+            // a count where a rate was ever set and the party left a number: never the number itself
+            if (guestPoints != null)
+              'points': phoneDigits(row['phone'] as String?).length >= customerDigits
+                  ? guestPoints![phoneDigits(row['phone'] as String?)] ?? 0
+                  : null,
           },
       ],
       'tags': all.values.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
@@ -4042,6 +4139,8 @@ class Hub {
           }
         }
         return json(addressList!);
+      case '/settings/points':
+        return _points(request);
       case '/settings/address_list/try':
         if (addressList == null) return json({'detail': 'Not Found'}, 404);
         addressTries++;

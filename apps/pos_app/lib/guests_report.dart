@@ -1,5 +1,6 @@
 import 'customers.dart' show phoneDigits;
 import 'phone.dart' show formatPhoneNumber;
+import 'points.dart';
 
 /// The guest list as the hub reckons it (`GET /reports/guests`, docs/guest-list.md): every customer who
 /// ordered with a phone number in the last year, with how often they came, what they spent, when they were
@@ -11,6 +12,8 @@ import 'phone.dart' show formatPhoneNumber;
 /// of its own ([guestsTagged]). A number that carries a tag and has no order in the year is listed too
 /// ([GuestsReport.tagged]): a guest tagged from their reservation or their line of the waitlist before
 /// their first order. Its row has no visit and nothing spent, and it is counted in none of the hub's sums.
+/// Where the owner set a rate, each guest has points too (docs/points.md): earned on the checks they paid,
+/// reckoned by the hub like every other figure here ([GuestsReport.points] is the rules they were earned by).
 
 String _s(Object? value, [String or = '']) => value is String ? value : or;
 int _i(Object? value) => value is num ? value.toInt() : 0;
@@ -64,6 +67,7 @@ class Guest {
     this.lapsed = false,
     this.isNew = false,
     this.favourites = const [],
+    this.points = 0,
   });
 
   factory Guest.fromJson(Map<String, dynamic> json) => Guest(
@@ -84,6 +88,7 @@ class Guest {
     lapsed: json['lapsed'] == true,
     isNew: json['new'] == true,
     favourites: [for (final row in _rows(json['favourites'])) GuestDish.fromJson(row)],
+    points: _i(json['points']),
   );
 
   /// The number's digits: what tells one guest from another.
@@ -134,6 +139,11 @@ class Guest {
   /// The dishes they ordered most, the most ordered first.
   final List<GuestDish> favourites;
 
+  /// The points they have now: earned on the checks they paid, by the rules of the day of each, less the
+  /// ones older than points last (docs/points.md). 0 where no rate was set, and from a hub older than
+  /// points.
+  final int points;
+
   num get money => double.tryParse(spent) ?? 0;
 
   /// "paid 3 of 5": said only of a guest who was at a table somebody else paid, or nobody was said to.
@@ -174,6 +184,7 @@ class Guest {
     lapsed: lapsed,
     isNew: isNew,
     favourites: favourites,
+    points: points,
   );
 }
 
@@ -267,6 +278,7 @@ class GuestTotals {
     this.regulars = 0,
     this.lapsed = 0,
     this.fresh = 0,
+    this.points = 0,
   });
 
   factory GuestTotals.fromJson(Map<String, dynamic> json) => GuestTotals(
@@ -277,6 +289,7 @@ class GuestTotals {
     regulars: _i(json['regulars']),
     lapsed: _i(json['lapsed']),
     fresh: _i(json['new']),
+    points: _i(json['points']),
   );
 
   final int guests;
@@ -288,6 +301,9 @@ class GuestTotals {
 
   /// The new guests.
   final int fresh;
+
+  /// The points all the guests have between them.
+  final int points;
 }
 
 class GuestsReport {
@@ -311,6 +327,7 @@ class GuestsReport {
     this.saysPaid = false,
     this.waiting = 0,
     this.waitingNet = '0.00',
+    this.points,
   });
 
   factory GuestsReport.fromJson(Map<String, dynamic> json) {
@@ -345,6 +362,7 @@ class GuestsReport {
       saysPaid: waits is Map,
       waiting: waits is Map ? _i(waits['checks']) : 0,
       waitingNet: waits is Map ? _s(waits['net'], '0.00') : '0.00',
+      points: json['points'] is Map ? PointsRules.fromJson((json['points'] as Map).cast<String, dynamic>()) : null,
     );
   }
 
@@ -406,6 +424,13 @@ class GuestsReport {
   final int waiting;
   final String waitingNet;
 
+  /// The rules the guests' points were earned by, as they stand today (docs/points.md). Null from a hub
+  /// older than points.
+  final PointsRules? points;
+
+  /// Whether the list says points at all: a rate was set at some time. Until then there is none to say.
+  bool get hasPoints => points?.ever ?? false;
+
   /// The tags some guest of the list carries: each is a list of its own.
   List<GuestTag> get carried => [
     for (final tag in tags)
@@ -451,6 +476,7 @@ class GuestsReport {
       saysPaid: saysPaid,
       waiting: waiting,
       waitingNet: waitingNet,
+      points: points,
     );
   }
 }
@@ -469,6 +495,8 @@ class GuestVisit {
     this.waits = false,
     this.guests = 1,
     this.table = '',
+    this.points = 0,
+    this.pointsWhy = '',
   });
 
   factory GuestVisit.fromJson(Map<String, dynamic> json) => GuestVisit(
@@ -483,6 +511,8 @@ class GuestVisit {
     waits: json['waits'] == true,
     guests: json['guests'] is num ? _i(json['guests']) : 1,
     table: _s(json['table']),
+    points: _i(json['points']),
+    pointsWhy: _s(json['points_why']),
   );
 
   final String orderId;
@@ -511,6 +541,14 @@ class GuestVisit {
   /// The table the visit was at, as its name is written; empty for an order with none.
   final String table;
 
+  /// The points this visit earned the guest and that still count; where it is 0, [pointsWhy] is the hub's
+  /// word for why ("open", "gone", `whyNoPoints`). Both empty from a hub older than points.
+  final int points;
+  final String pointsWhy;
+
+  /// What the visit says of points: "13 points", or why it has none; null where there is nothing to add.
+  String? get pointsSaid => points > 0 ? pointsWords(points) : whyNoPoints(pointsWhy);
+
   /// Whether the check had other guests too, so that who paid it can be said (and said otherwise).
   bool get shared => guests > 1;
 
@@ -535,6 +573,7 @@ class GuestDetail {
     this.tagsBy = '',
     this.tagsMs,
     this.latest = const [],
+    this.pointsNext,
   });
 
   factory GuestDetail.fromJson(Map<String, dynamic> json) => GuestDetail(
@@ -544,6 +583,7 @@ class GuestDetail {
     tagsBy: _s(json['tags_by']),
     tagsMs: json['tags_ms'] is num ? _i(json['tags_ms']) : null,
     latest: [for (final row in _rows(json['latest'])) GuestVisit.fromJson(row)],
+    pointsNext: PointsNext.of(json['points_next']),
   );
 
   /// The row of the list, with more favourite dishes.
@@ -560,6 +600,9 @@ class GuestDetail {
   /// Their latest visits, the newest first.
   final List<GuestVisit> latest;
 
+  /// Of their points, the ones that stop counting first; null where they have none.
+  final PointsNext? pointsNext;
+
   /// The same reading with the note and the tags as the hub keeps them now.
   GuestDetail withKept(GuestKept now) => GuestDetail(
     guest: guest.kept(note: now.note, tags: now.tags),
@@ -568,6 +611,7 @@ class GuestDetail {
     tagsBy: now.tagsBy,
     tagsMs: now.tagsMs,
     latest: latest,
+    pointsNext: pointsNext,
   );
 }
 
@@ -624,15 +668,18 @@ List<String> tidyTags(Iterable<String> tags, [Iterable<String> known = const []]
 enum GuestSort {
   spent('Spent'),
   visits('Visits'),
-  latest('Latest');
+  latest('Latest'),
+
+  /// By the points they have: offered only where the list says points ([GuestsReport.hasPoints]).
+  points('Points');
 
   const GuestSort(this.words);
 
   final String words;
 }
 
-/// [guests] in the order [sort] asks: by what they spent, by how often they came, or by who was here last,
-/// the other figures telling equals apart and then the name.
+/// [guests] in the order [sort] asks: by what they spent, by how often they came, by who was here last, or
+/// by the points they have, the other figures telling equals apart and then the name.
 List<Guest> sortedGuests(Iterable<Guest> guests, GuestSort sort) {
   int compare(Guest a, Guest b) {
     final spent = b.money.compareTo(a.money), visits = b.visits.compareTo(a.visits), last = b.last.compareTo(a.last);
@@ -640,6 +687,7 @@ List<Guest> sortedGuests(Iterable<Guest> guests, GuestSort sort) {
       GuestSort.spent => [spent, visits, last],
       GuestSort.visits => [visits, spent, last],
       GuestSort.latest => [last, spent, visits],
+      GuestSort.points => [b.points.compareTo(a.points), spent, visits, last],
     };
     for (final one in order) {
       if (one != 0) return one;

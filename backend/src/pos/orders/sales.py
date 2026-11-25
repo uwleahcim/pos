@@ -168,6 +168,7 @@ class Sale:
     """The dishes sold, added up by dish, menu entry, hour of the day, the way each was sold and who rang it."""
     voids: tuple[tuple[int, Decimal], ...] = ()  # each void of a sent dish: when, and what it was worth
     voided: Decimal = ZERO  # a check voided whole: what its dishes came to
+    alcohol: Decimal = ZERO  # of gross less off, what its alcoholic drinks come to (the lines taxed as alcohol)
 
 
 def sale_of(
@@ -247,7 +248,32 @@ def sale_of(
         stood_ms=stood,
         lines=tuple(Sold(*key[:3], amount, qty, *key[3:]) for key, (amount, qty) in lines.items()),
         voids=voids,
+        alcohol=class_net(check, ALCOHOL_CLASS),
     )
+
+
+ALCOHOL_CLASS = "alcohol"
+"""The tax class of an alcoholic drink (`pos.menu.bar`)."""
+
+
+def class_net(check: Mapping[str, Any], tax_class: str) -> Decimal:
+    """What the lines of one tax class come to on a check after discounts: each line less what came off the
+    line itself, and less its share of what came off the whole check, by what it is worth (as the check
+    spreads such a discount for the tax). Nothing for a check with no line of that class."""
+    mine = whole = on_lines = ZERO
+    for row in check["lines"]:
+        off = Decimal(row["discount"])
+        after = Decimal(row["total"]) - off
+        on_lines += off
+        whole += after
+        if row.get("tax_class") == tax_class:
+            mine += after
+    if mine <= ZERO or whole <= ZERO:
+        return ZERO
+    off_check = Decimal(check["discount_total"]) - on_lines
+    if off_check <= ZERO:
+        return mine
+    return max(mine - (off_check * mine / whole).quantize(CENT, rounding=ROUND_HALF_UP), ZERO)
 
 
 class OrderMemo:
