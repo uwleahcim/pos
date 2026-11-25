@@ -16,6 +16,11 @@ DIALECTS: dict[str, type[Builder]] = {"escpos": Builder, "star": StarBuilder}
 AUTO = "auto"
 """A printer's language setting that is no language: print in the one the printer was found to speak."""
 
+ONE, EACH = "one", "each"
+"""How a printer that prints for several stations prints one send (its `tickets` setting): every dish on `one`
+ticket, headed with all its stations, or a ticket for `each` station, headed with that station alone. With
+`each`, the stations a manager grouped (the printer's `groups`: wok 1 with wok 2) still share a ticket."""
+
 
 @dataclass(frozen=True)
 class TicketLine:

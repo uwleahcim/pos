@@ -21,7 +21,9 @@
   (0 keeps them signed in until someone else steps up or they sign out).
 - `printers`: the kitchen printers (`pos/printing/service.py`): each with the stations it serves, its address,
   its language (escpos, star, or auto with the one it was found to speak) and the ids of the printers that
-  take its tickets when it fails, in order;
+  take its tickets when it fails, in order; `tickets`, whether one that prints for several stations puts a
+  send on `one` ticket or on a ticket for `each` station, and `groups`, the stations that share a ticket all
+  the same;
   and `takeout_station`, the station a to-go order prints whole at (null for none). An empty list leaves the
   hub on `POS_PRINTERS`.
 - `table_timers`: the timer ring around each table on the floor map (`pos/floor/plan.py`, `check_timer`):
@@ -106,7 +108,7 @@ from psycopg_pool import ConnectionPool
 from .floor.plan import STAGES
 from .identity.powers import STANDARD as STANDARD_POWERS
 from .orders import delivery_fee as fees
-from .printing.ticket import AUTO, DIALECTS
+from .printing.ticket import AUTO, DIALECTS, EACH, ONE
 from .sync.pgstore import ReadOnlyError
 
 CHANNELS = ("counter", "phone", "online", "delivery", "catering")
@@ -813,6 +815,30 @@ def fallback_loop(fallbacks: Mapping[str, list[str]]) -> list[str] | None:
     return None
 
 
+def station_groups(raw: Any, stations: list[str]) -> list[list[str]]:
+    """The stations of one printer that share a ticket when it prints a ticket a station (`tickets: each`), as
+    the app may set them, checked: a list of groups, each a list of station codes. A group keeps the stations
+    the printer still prints for, in the order they stand on it, and is dropped once fewer than two are left
+    (a station taken off the printer takes itself out of its group). A station is in one group at most.
+    Raises ValueError on a bad value."""
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list | tuple) or not all(isinstance(group, list | tuple) for group in raw):
+        raise ValueError("a printer's groups are a list of lists of station codes")
+    groups: list[list[str]] = []
+    placed: set[str] = set()
+    for group in raw:
+        wanted = {str(code or "").strip() for code in group}
+        twice = sorted(wanted & placed & set(stations))
+        if twice:
+            raise ValueError(f"the station {twice[0]} is in two groups: a station prints on one ticket")
+        members = [code for code in stations if code in wanted]
+        if len(members) > 1:
+            groups.append(members)
+            placed.update(members)
+    return groups
+
+
 def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
     """The printers as the app may set them, checked: `printers`, a list of `{id, stations, address, dialect,
     detected, fallbacks}` in the order they stand (the first takes whatever has no printer of its own), and
@@ -822,7 +848,10 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
     found to speak, `detected` (what `POST /print/identify` said of it; ESC/POS until it has been told). A
     printer sent without an id (new on the screen) gets one; ids never change after that, since the other
     printers' fallbacks name them. Fallbacks may not go round in a loop (a printer falling back, directly or
-    through others, to one that falls back to it). Raises ValueError on a bad value."""
+    through others, to one that falls back to it). `tickets` says how a printer with several stations prints
+    one send: `one` ticket for all of them (what a printer starts on), or a ticket for `each`; `groups` lists
+    the stations that share a ticket all the same when it is `each` (`station_groups`). Raises ValueError on a
+    bad value."""
     raw = data.get("printers") or []
     if not isinstance(raw, list | tuple) or not all(isinstance(entry, Mapping) for entry in raw):
         raise ValueError("printers must be a list of {id, stations, address, dialect, fallbacks}")
@@ -874,6 +903,11 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
         fallbacks = entry.get("fallbacks") or []
         if not isinstance(fallbacks, list | tuple):
             raise ValueError(f"the {station} printer's fallbacks must list printer ids")
+        tickets = entry.get("tickets") or ONE
+        if tickets not in (ONE, EACH):
+            raise ValueError(
+                f"the {station} printer prints its stations on {ONE!r} ticket or a ticket for {EACH!r}, not {tickets!r}"
+            )
         printers.append(
             {
                 "id": str(ident),
@@ -883,6 +917,8 @@ def clean_printers(data: Mapping[str, Any]) -> dict[str, Any]:
                 "dialect": dialect,
                 "detected": detected if detected in DIALECTS else None,
                 "fallbacks": [str(f) for f in fallbacks],
+                "tickets": tickets,
+                "groups": station_groups(entry.get("groups"), stations),
             }
         )
     for printer in printers:

@@ -78,6 +78,8 @@ def test_the_setting_names_each_printer_and_checks_its_fallbacks():
                 "dialect": "escpos",
                 "detected": None,
                 "fallbacks": [],
+                "tickets": "one",
+                "groups": [],
             },
             {
                 "id": "bar",
@@ -87,6 +89,8 @@ def test_the_setting_names_each_printer_and_checks_its_fallbacks():
                 "dialect": "star",
                 "detected": None,
                 "fallbacks": ["p1"],
+                "tickets": "one",
+                "groups": [],
             },
         ],
         "takeout_station": None,
@@ -236,6 +240,8 @@ def test_the_env_seeds_a_hub_until_a_manager_saves_printers(monkeypatch):
         "dialect": "star",
         "detected": None,
         "fallbacks": [],
+        "tickets": "one",
+        "groups": [],
     }
     assert [p["name"] for p in c.get("/print/printers").json()["printers"]] == ["kitchen", "bar"]
 
