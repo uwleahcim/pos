@@ -4651,6 +4651,14 @@ class Hub {
           for (final field in const ['table', 'merged_into']) {
             if (data.containsKey(field)) (order['fields'] as Map)[field] = data[field];
           }
+        case 'set_field' when data.containsKey('phone'):
+          // a guest's number typed on a table's check or a bar tab, with the name where one was typed;
+          // taken off again, the field is gone
+          for (final field in const ['phone', 'customer_name']) {
+            if (!data.containsKey(field)) continue;
+            final fields = order['fields'] as Map;
+            data[field] == null ? fields.remove(field) : fields[field] = data[field];
+          }
         case 'set_field' when data.containsKey('customer_name'):
           // the name on a bar tab, changed
           (order['fields'] as Map)['customer_name'] = data['customer_name'];

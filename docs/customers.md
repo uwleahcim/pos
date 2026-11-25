@@ -21,6 +21,8 @@ typed into it (it waits for the typing to pause). Numbers match by their digits:
   It replaces the phone company's caller-ID name ("WIRELESS CALLER"), which is rarely the person.
 - **One line on how well the restaurant knows them**: `12 orders since Mar 2025, the last on 3 Nov`, or
   `No orders from this number yet`. A voided order does not count; one opened and left empty does.
+  A table's check or a bar tab with their number typed on it counts too (`guest-list.md`, "A walk-in's
+  number"), though a call from that number never opens it: a table's check is not a caller's order.
 - **Their tags**, each a small label ("VIP", "Catering client"), when a manager has put some on them in the
   guest list (`guest-list.md`, "Tags and the note"). Since 2026-11-23. They are read here and not changed:
   a tag is put on and taken off in the guest list.

@@ -47,14 +47,17 @@ in one line.
 **The guest who pays.** A guest is a phone number, as in the guest list (`guest-list.md`):
 
 - the number typed on a to-go order, a delivery or a catering order;
-- a party seated from its **reservation** or from the **waitlist** that left a number.
+- a party seated from its **reservation** or from the **waitlist** that left a number;
+- a **walk-in** whose number is typed on the check of their table or on their bar tab
+  (`guest-list.md`, "A walk-in's number"). Since 25 November 2026.
 
 A check with one guest is that guest's. Where several guests sit on one check, the points go to **the one
 somebody said pays**: a tap on the name on the check, or afterwards from the guest list (`guest-list.md`,
 "Who pays"). Until somebody says it, the check's money counts for nobody, and so do its points. When it is
 said afterwards, or said otherwise, the points go with the money.
 
-A walk-in with no number is no guest of the list and earns nothing.
+A number typed on the check pays it for want of another word, so that guest earns. A walk-in who leaves
+no number is no guest of the list and earns nothing.
 
 ## How long points last
 
@@ -87,12 +90,14 @@ last month, and lowering it takes none away.
   closed", "its points ran out", "this kind of order earns no points", "catering earns no points",
   "nothing on it earns points", "no points were given that day").
 - **At the table**: on the check of a table, beside the name of each seated party that left a number:
-  "99 pts". A party that left no number has none to show.
+  "99 pts". A party that left no number has none to show. A guest whose number is typed on the check or
+  the tab has theirs beside their name, and the box the number is typed in says them too.
 - **On the to-go form**: under how often the customer ordered: "They have 99 points", or "No points yet".
 
 The guest list is behind the manager's PIN (or whoever you gave the guest list to). The check of a table
 and the to-go form are seen by whoever serves the table or takes the call. They see **a count and
-nothing else**: no number, no money. Mind that a count says roughly what a guest paid: 240 points at one
+nothing else**: no number, no money. (A number somebody typed on a check is in the box it was typed in,
+for whoever opens that check.) Mind that a count says roughly what a guest paid: 240 points at one
 point a dollar is about $240 in a year.
 
 Points are not printed on a bill or a kitchen ticket and are sent nowhere.
@@ -116,7 +121,6 @@ Points are not printed on a bill or a kitchen ticket and are sent nowhere.
 - **Spending points**: taking money off a check for them. It is the next piece, on the owner's word.
 - Points printed on the bill, or told to the guest by text or e-mail. A guest asks, and whoever has the
   check or the form reads it off.
-- Typing a walk-in's number on a table's check, so that a guest with no reservation earns at a table.
 - Points on the screen of a to-go order once it is open (the form says them when the call is taken).
 - Giving or taking points by hand, and wiping everybody's points at once.
 - Points for the checks from before the rate was set, and points that never run out.

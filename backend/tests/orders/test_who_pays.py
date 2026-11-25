@@ -22,7 +22,7 @@ from pos.waitlist import Waitlist
 
 from .test_check_guests import NOVAK, check, latest, put_together, tally, type_number
 from .test_day import DSN, EGGROLL, WINGS, Hub
-from .test_guest_tags import HOLLY, book_table, host_stand, kept, seat, wait
+from .test_guest_tags import HOLLY, book_table, host_stand, kept, seat, shown, wait
 from .test_guests import GTC, LINDA, OMAR, PRIYA, guests, one
 
 
@@ -143,7 +143,7 @@ def test_the_check_is_told_who_can_pay_and_who_does_and_never_a_number():
         "points": None,  # no rate was ever set here (test_points.py)
     }
     assert len({party["key"] for party in told["parties"]}) == 3
-    words = h.c.get("/orders/t-1/seated").text + say(h, "t-1", linda).text
+    words = shown(h.c.get("/orders/t-1/seated")) + shown(say(h, "t-1", linda))
     assert not any(phone in words for phone in (LINDA, NOVAK, "555"))
     # a check nobody was seated on says so as before, and that the hub takes the word
     assert who_sits(h, "t-9") == {"order_id": "t-9", "parties": [], "tags": [], "payer": True}
