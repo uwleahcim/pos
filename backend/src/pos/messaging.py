@@ -133,6 +133,10 @@ class Notifier:
         return out
 
     def _change(self, before: OrderState, after: OrderState) -> Message | None:
+        if str(after.fields.get("order_type") or "dine_in") == "dine_in":
+            # a table's check or a bar tab: the guests are in the room. A number typed on it is for the
+            # guest list (docs/guest-list.md, "A walk-in's number") and is never sent a text.
+            return None
         if after.fields.get("stage") == "ready" and before.fields.get("stage") != "ready":
             if is_delivery(after.fields):
                 return None  # it is brought to them: nobody is told to come and get it

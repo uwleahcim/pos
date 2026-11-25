@@ -69,7 +69,7 @@ from ..menu.defs import Definitions
 from ..sync.oplog import OrderEntry, OrderState, phone_digits
 from ..tax import TaxProfile
 from .adjustments import PricingRules
-from .day import ZERO
+from .day import TAB, ZERO
 from .points import Points, tally
 from .sales import CENT, OrderMemo, _each, _same, sale_of
 
@@ -341,6 +341,14 @@ def _ever(entries: Iterable[OrderEntry]) -> dict[str, tuple[int, int]]:
     return ever
 
 
+def _called(visits: Sequence[Visit]) -> str:
+    """What a guest is called: the name on their latest visit that has one. A bar tab's name is what the
+    bar calls the tab ("Blue jacket"), so it names a guest only where no other visit of theirs has one."""
+    return next((visit.name for visit in visits if visit.name and visit.kind != TAB), "") or next(
+        (visit.name for visit in visits if visit.name), ""
+    )
+
+
 def _row(
     phone: str,
     guest: _Guest,
@@ -360,7 +368,7 @@ def _row(
     since_ms = min(ever[1] if ever is not None else visits[-1].opened_ms, visits[-1].opened_ms)
     return {
         "phone": phone,
-        "name": next((visit.name for visit in visits if visit.name), ""),
+        "name": _called(visits),
         "note": note,
         "tags": list(tags),
         "visits": len(visits),

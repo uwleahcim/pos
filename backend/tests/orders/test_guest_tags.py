@@ -761,6 +761,17 @@ def test_the_tags_at_the_table_go_on_no_order_and_no_bill_and_change_nothing(mon
     assert lines and not any("VIP" in line or "Linda" in line or "no MSG" in line for line in lines)
 
 
+def shown(answer) -> str:
+    """What an answer about who sits on a check shows, as text, without the keys its parties are said by.
+    A key is 32 letters and digits drawn by chance, so now and then one holds any three digits a test
+    looks for; a phone number is never in one."""
+    text = answer.text
+    for party in answer.json().get("parties", []):
+        if party.get("key"):
+            text = text.replace(str(party["key"]), "")
+    return text
+
+
 def seated_at(h: Hub, order_id: str) -> dict:
     """Who the hub says sits on this check, as the screen with a table's check open asks (no token). What
     the answer says about who pays the check is left out here: it has tests of its own (test_who_pays.py).
@@ -797,7 +808,7 @@ def test_the_check_of_a_seated_party_is_told_whose_table_it_is_and_the_note_of_t
         "tags": ["Catering client", "VIP"],
     }
     # the name and the reservation's own note: not the number, and not the line kept about the customer
-    assert LINDA not in told.text and "555" not in told.text and "no MSG" not in told.text
+    assert LINDA not in shown(told) and "555" not in shown(told) and "no MSG" not in shown(told)
     assert seated_at(h, "t-2")["parties"] == []  # another table's check
     # the call for the tags alone answers as it did, and names nobody
     assert at_table(h, "t-1") == {"order_id": "t-1", "tags": ["Catering client", "VIP"]}

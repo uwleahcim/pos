@@ -162,7 +162,8 @@ def customer_card(
     total: Callable[[OrderState], str],
     tags: GuestTags | None = None,
 ) -> dict[str, Any]:
-    """What is known of the customer at this number: the name on their latest order that has one, how many
+    """What is known of the customer at this number: the name on their latest order that has one (a bar tab's name is
+    what the bar calls the tab, and names them only where no other order of theirs has one), how many
     orders they placed (voided ones do not count), when the first and the latest were opened, the note, the
     `tags` a manager put on them in the guest list (read from the `tags` given; none without it), where
     their latest delivery went (`address`, with `address_note`, what was said for the driver that time; a
@@ -201,8 +202,11 @@ def customer_card(
     if entries:
         card.update(orders=len(entries), first_ms=entries[-1].first_ms, last_ms=entries[0].first_ms)
     recent: list[dict[str, Any]] = []
+    tab = ""  # what a bar tab with their number was called: their name only for want of another
     for state in store.views(entries[:_LOOK_AT]):
-        if not card["name"]:
+        if state.is_tab:
+            tab = tab or state.tab_name
+        elif not card["name"]:
             card["name"] = str(state.fields.get("customer_name") or "").strip()
         if not card["address"] and is_delivery(state.fields):
             card["address"] = " ".join(str(state.fields.get("address") or "").split())
@@ -223,6 +227,7 @@ def customer_card(
                 "items": dishes,
             }
         )
+    card["name"] = card["name"] or tab
     card["recent"] = recent
     card["known"] = bool(entries) or bool(card["note"]) or bool(card["tags"])
     return card

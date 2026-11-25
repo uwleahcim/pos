@@ -116,7 +116,8 @@ table), and the hub notes whose check it is.
   it is nobody's visit any more; its customer is a guest of the joined check.
 - The same number twice at one check is one guest.
 - A party that left **no number** cannot be in this list: a guest here is a phone number. A **walk-in**
-  seated straight from the floor map has no party behind it; type a number on the check, as before.
+  seated straight from the floor map has no party behind it; type their number on the check
+  ([A walk-in's number](#a-walk-ins-number)).
 
 **The visit**
 
@@ -217,6 +218,53 @@ afterwards. Since 24 November 2026.
 - A device that is not rebuilt shows the list as it was, with no line and no button. So does a rebuilt
   one with a hub that is not updated.
 
+### A walk-in's number
+
+A party that walks in and is seated straight from the floor map left no number with the host, so the
+list could not count it. Since 25 November 2026 whoever serves the table types the number on the check.
+That makes the check this guest's visit, and where a rate is set they earn points on it (`points.md`).
+
+- **Guest**, on the check of a table: under **Allergy**, in front of the courses, so the seats keep
+  their whole line. On a phone it is the small sign of a person with a plus, beside **Allergy**. A bar
+  tab has it too. A to-go order has none: its number is typed on its form.
+- **The box** asks for the phone number and, at a table, a name "if they give one". Seven digits or more
+  make a number; with fewer the box says so and **Save** stays grey. Written any way: `781 555 0142`,
+  `(781) 555-0142`.
+- **As the number is typed the hub says who it is**, the way the to-go form does: how often they
+  ordered and when last, their points ("They have 240 points", "No points yet"; nothing where no rate
+  was ever set), and their tags. The name it knows them by fills the name box, unless one was typed.
+  A number the hub knows nothing of is kept all the same, and so is one typed while no hub answers.
+- **Save**, and the strip under the app bar says the guest: the name (**Guest** for none), their
+  points, their tags and the customer's one-line note. The sign on the button is filled in. The number
+  itself is not on the screen; it is in the box when the box is opened.
+- **Change it or take it off**: tap the guest in the strip, or **Guest** again. **Take off** leaves the
+  check with no number and no name, and the visit is nobody's again.
+- **One number a check**: the guest who pays. A table of friends who each want points is not built.
+- **Who pays**: the number typed pays, for want of another word. At a table where the host also seated
+  a party that left a number, both have the visit; the typed number pays, and the strip does not ask.
+  A tap on the seated party's name, **Linda P. pays**, says otherwise, as ever.
+- **A bar tab** takes the number alone and keeps the name it is called by. The box and the strip say the
+  name the hub knows the number by. A tab's name ("Blue jacket") is not taken for the guest's name in
+  this list or on the to-go form, unless no other order of theirs has one.
+- **While the check is open.** A closed check says its guest and has no button: reopen it to type the
+  number or change it. The points follow at once either way, as they are read off the checks.
+- **Anybody who has the check open** can type it, as anybody can ring a dish in. The check's history
+  says who typed it and when, and who changed it or took it off.
+- **It goes on the check itself**, the way a to-go order carries its number. So it is kept with no hub
+  in reach and goes over with the rest, and it follows the check when the table is moved or two tables
+  are put together.
+- **What it does not do.**
+  - It moves no money: no sale, no bill and no report changes. Only this list and the points count it.
+  - It prints nowhere: the bill of a table says the table, and the kitchen ticket too.
+  - **No text is ever sent to it.** Texts go to to-go orders. A table's check and a bar tab send none,
+    whatever is on them.
+  - When that number phones later the same day, the to-go form opens for a new order, never the
+    table's check. Their name, note and tags are on the form as for any caller.
+- On the to-go form, "12 orders since Mar 2025" counts the checks that carry the number, so a table
+  with their number typed is one more, and it is among their latest orders with **Same again**.
+- A device that is not rebuilt has no button, and shows a number typed elsewhere as it did before:
+  the tags and the note, with no name and no points.
+
 ## Tags and the note
 
 A **tag** is a word or two put on a guest to pick them out by: "VIP", "Friend of the house", "Catering
@@ -311,8 +359,8 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
   ([Every guest of a check](#every-guest-of-a-check)).
 - **A party that joins a table** (the host taps a seated table and **Join**) has a line of its own under
   the first party, with its own name, tags and note. So it can be read who carries which tag.
-- A check that has a number of its own (typed on it) shows that customer's tags and note first, then the
-  parties seated on it.
+- A check that has a number of its own (typed on it) shows that guest first, by name with their points,
+  tags and note, then the parties seated on it.
 - **The strip stays slim.** It is one line where that fits; on a phone the note goes under the name and
   the labels. It is never more than a quarter of the screen's height, so the check and the menu keep
   their room: two parties with many tags and long notes on a small phone are a scroll away inside the
@@ -331,7 +379,7 @@ the app bar, the same strip a to-go order has. Whoever opens the check to ring t
   tap on a name, then **Linda P. pays**. A check with one party has none of that and looks as it did
   ([Every guest of a check](#every-guest-of-a-check), "Who pays").
 - A **walk-in** seated straight from the floor map has no reservation and no party behind it, so its
-  check has no strip.
+  check has no strip until their number is typed on it ([A walk-in's number](#a-walk-ins-number)).
 - As everywhere, none of it prints, on no kitchen ticket and no bill, and nothing sends it out of the
   hub. Every server who opens the check reads it, so the advice above holds for a note too: write in a
   reservation what the staff may read.
@@ -527,9 +575,11 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
 - In the list of checks: the star and the tags (a row says the party's name alone), and the name on a
   check of another day than today's and yesterday's.
 - At the table: how many the party was booked as and whether it came from the book or the waitlist (the
-  check counts its own guests); the customer's one-line note of a seated guest; a walk-in (type their
-  number on the check and it shows what that number carries); writing or changing the note from the
-  check.
+  check counts its own guests); the customer's one-line note of a seated guest; writing or changing
+  the note from the check.
+- For a walk-in's number: more than one typed number on a check; typing it on a closed check without
+  reopening it; typing it from the floor map or the list of checks; a tab's guest under a name of
+  their own.
 - For the guests of a check: sharing a check's money out between its guests; who at the table ate what;
   spending a guest's points (earning and showing them is `points.md`); counting
   a party that was seated before the hub was updated, other than today's and yesterday's; a party's visit
@@ -743,6 +793,21 @@ place, a number that **carries a tag** is listed even with no order in the 12 mo
   keys `guests-waiting`, `who-paid:<check>`, `who-paid-guest:<check>:<key>`,
   `who-paid-standing:<check>`, `guest-visit-paid:<phone>:<check>`. Tests:
   `backend/tests/orders/test_who_paid_after.py`, `apps/pos_app/test/who_paid_test.dart`.
+- A walk-in's number: nothing new on the hub's API. The app writes the order's own `phone` (and, at a
+  table, `customer_name`) with a `set_field` op, as a to-go order carries them (`by` and `by_id` say
+  who), and takes them off with `null`; `visit_of`, `payer_of`, the orders index, points and
+  `/customers/lookup` already read them. Two guards came with it, both on `order_type` `dine_in`:
+  `last_order` (`backend/src/pos/orders/callers.py`) skips a table's check and a tab, so
+  `GET /orders/last` never opens one for a caller, and `Notifier._change` (`backend/src/pos/messaging.py`)
+  sends no text for one. A tab's `customer_name` is what the bar calls it: `_called` (the guest list's
+  row) and `customer_card` (`backend/src/pos/customers.py`) take it for the guest's name only where no
+  other visit has one. App: `lib/screens/guest_number_dialog.dart` (`GuestNumberDialog`, `GuestNumber`,
+  `guestNumberOff`), `OrderScreen._guestNumber`, `_hasGuestNumber`, `_GuestChip` and the strip's
+  `guest`, `guestPoints` and `onGuest`; keys `guest-chip`, `guest-number-why`, `guest-number-phone`,
+  `guest-number-name`, `guest-number-known`, `guest-number-summary`, `guest-number-points`,
+  `guest-number-tag:<tag>`, `guest-number-off`, `guest-number-save`, `check-guest`, `check-guest-name`,
+  `check-guest-points`. Tests: `backend/tests/orders/test_walk_in_number.py`,
+  `apps/pos_app/test/walk_in_number_test.dart`.
 - A call that rings: `GET /customers/tags?phone=` answers `{phone, tags}` and nothing else of the customer
   (no name, no note, no orders), with no token, like the lookup. App: `PosApi.customerTags` (empty for a
   short number, no answer or an older hub); `PhoneBar.tagsOf`, which `lib/main.dart` hands over only while

@@ -42,6 +42,7 @@ import 'comp_menu.dart';
 import 'compact.dart';
 import 'discount_sheet.dart';
 import 'event_fields.dart';
+import 'guest_number_dialog.dart';
 import 'guest_tag_mark.dart';
 import 'lot_comp_dialog.dart';
 import 'menu_editor.dart' show ManagerPinDialog;
@@ -131,6 +132,8 @@ class _OrderScreenState extends State<OrderScreen> {
   String _customerNote = ''; // the line kept about the customer at this order's number
   List<String> _customerTags = const []; // and the tags a manager put on them in the guest list
   String? _noteFor; // the number's digits it was read for
+  int? _customerPoints; // and the points they have, where the owner set a rate (docs/points.md)
+  String _customerName = ''; // and the name the hub knows them by: who a bar tab's number is of
   TableGuests _table = TableGuests.none; // the parties the host seated on this check, and their tags
   bool _tableAsked = false; // they were asked for, once it was known that this is a table's check
   int _ticks = 0; // of the timer: the table's guests are asked for again every fifteenth
@@ -344,11 +347,53 @@ class _OrderScreenState extends State<OrderScreen> {
     if (!mounted || _noteFor != digits) return;
     final note = customer?.note ?? '';
     final tags = customer?.tags ?? const <String>[];
-    if (note == _customerNote && listEquals(tags, _customerTags)) return;
+    final points = customer?.points;
+    final name = customer?.name.trim() ?? '';
+    if (note == _customerNote &&
+        listEquals(tags, _customerTags) &&
+        points == _customerPoints &&
+        name == _customerName) {
+      return;
+    }
     setState(() {
       _customerNote = note;
       _customerTags = tags;
+      _customerPoints = points;
+      _customerName = name;
     });
+  }
+
+  /// Whether this check carries the number of a guest at a table or at the bar: a walk-in who left one
+  /// (docs/guest-list.md, "A walk-in's number"). A to-go order's number is its customer's, in its title.
+  bool _hasGuestNumber(Order order) =>
+      !order.isTakeout && phoneDigits(order.fields['phone']?.toString()).length >= customerDigits;
+
+  /// The number of the guest who pays, typed on a table's check or a bar tab: a guest with no reservation
+  /// is then a guest of the guest list, this check is their visit, and where the owner set a rate they earn
+  /// points on it. It goes on the check as a to-go order's number does, so it is kept with no hub in reach;
+  /// it prints on no bill and no ticket. The check's history keeps who typed it. A bar tab keeps the name
+  /// it is called by: its number alone is typed.
+  Future<void> _guestNumber(Order order) async {
+    final tab = order.isTab;
+    final typed = await showDialog<GuestNumber>(
+      context: context,
+      builder: (_) => GuestNumberDialog(
+        phone: order.phone.trim(),
+        name: tab ? '' : order.customerName.trim(),
+        named: !tab,
+        where: tab ? 'this tab' : 'Table ${order.table}',
+        lookup: widget.api.customer,
+      ),
+    );
+    if (typed == null || !mounted) return;
+    final changed = <String, dynamic>{
+      if (typed.phone != order.phone.trim()) 'phone': typed.phone.isEmpty ? null : typed.phone,
+      if (!tab && typed.name != order.customerName.trim()) 'customer_name': typed.name.isEmpty ? null : typed.name,
+    };
+    if (changed.isEmpty) return;
+    await _append('set_field', {...changed, 'by': ?_staffName, 'by_id': ?_staffId});
+    final now = _order;
+    if (mounted && now != null) unawaited(_readCustomer(now)); // their note, tags and points, without the wait
   }
 
   /// Who the host seated on this check, for a table's check: the party of a reservation or of the waitlist,
@@ -1668,6 +1713,10 @@ class _OrderScreenState extends State<OrderScreen> {
     final allergyChip = order == null || _allergens == null
         ? null
         : _AllergyChip(noted: told.isNotEmpty, onTap: () => _noteAllergy(order));
+    // a table's check and a bar tab take the number of a guest who left one (a walk-in earns points too)
+    final guestChip = order == null || !open || order.isTakeout
+        ? null
+        : _GuestChip(has: _hasGuestNumber(order), onTap: () => _guestNumber(order));
     // how a to-go order leaves: the chip says it, and a tap changes it (a catering order says it on its
     // line under the bar, with the rest of its event)
     final leavingChip = order == null || !open || order.isCatering || !_asksHowItLeaves(order)
@@ -1720,6 +1769,7 @@ class _OrderScreenState extends State<OrderScreen> {
                   seated: order?.isTakeout != true,
                   onSeatTab: order != null && order.isTab ? () => _seatTab(order) : null,
                   allergy: allergyChip,
+                  guest: guestChip,
                   leaving: leavingChip,
                   allergic: {for (final a in told) a.seat ?? 0},
                   seats: seats,
@@ -1815,11 +1865,19 @@ class _OrderScreenState extends State<OrderScreen> {
                 ],
                 onOut: () => unawaited(_wentOut(ready)),
               ),
-            if (order != null && (_customerNote.isNotEmpty || _guestTags.isNotEmpty || _table.parties.isNotEmpty))
+            if (order != null &&
+                (_customerNote.isNotEmpty ||
+                    _guestTags.isNotEmpty ||
+                    _table.parties.isNotEmpty ||
+                    _hasGuestNumber(order)))
               _CustomerStrip(
                 note: _customerNote,
                 tags: _guestTags,
                 parties: _table.parties,
+                // the guest whose number is typed on a table's check or a tab: their name, and their points
+                guest: _hasGuestNumber(order) ? (order.isTab ? _customerName : order.customerName.trim()) : null,
+                guestPoints: _customerPoints,
+                onGuest: open ? () => _guestNumber(order) : null,
                 // two or more guests of the check left a number: a tap on a name says which of them pays
                 onPays: _asksPayer ? _sayPayer : null,
                 // nobody was said to pay and no number is typed on the check: its money waits for the word
@@ -2731,6 +2789,7 @@ class _SeatCourseBar extends StatelessWidget {
     this.seated = true,
     this.onSeatTab,
     this.allergy,
+    this.guest,
     this.leaving,
     this.allergic = const {},
     required this.seats,
@@ -2751,6 +2810,10 @@ class _SeatCourseBar extends StatelessWidget {
 
   /// The Allergy chip, when the hub takes allergies.
   final Widget? allergy;
+
+  /// "Guest": the number of a guest who left one, on a table's check and a bar tab. Beside "Allergy" on
+  /// one line; under it where the seats and the courses have a line each.
+  final Widget? guest;
 
   /// Pickup or Delivery, on a to-go order whose hub knows of deliveries (docs/delivery.md).
   final Widget? leaving;
@@ -2787,6 +2850,16 @@ class _SeatCourseBar extends StatelessWidget {
         visualDensity: VisualDensity.compact,
       ),
     );
+    final courseChips = [
+      if (seated && courses.isNotEmpty) const Text('Course  '),
+      if (seated)
+        for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
+    ];
+    // a phone, and a menu with no courses: one line. Else two, the seats over the courses.
+    final oneLine = compact(context) || courseChips.isEmpty;
+    // On two lines "Guest" stands under "Allergy", in front of the courses: the seats keep the whole of
+    // their line, so a table of six still has its last seat and the two round buttons in reach.
+    final guestBelow = guest != null && !oneLine && onSeatTab == null;
     final seatChips = !seated
         ? [if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy), ?leaving]
         : onSeatTab != null
@@ -2803,9 +2876,11 @@ class _SeatCourseBar extends StatelessWidget {
               ),
             ),
             if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
+            ?guest,
           ]
         : [
             if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
+            if (guest != null && !guestBelow) Padding(padding: const EdgeInsets.only(right: 10), child: guest),
             const Text('Seat  '),
             chip('Table', seat == null, () => onSeat(null), alert: allergic.contains(0)),
             for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i), alert: allergic.contains(i)),
@@ -2822,11 +2897,6 @@ class _SeatCourseBar extends StatelessWidget {
               onPressed: onAddSeat,
             ),
           ];
-    final courseChips = [
-      if (seated && courses.isNotEmpty) const Text('Course  '),
-      if (seated)
-        for (final c in courses) chip(c.name, course == c.id, () => onCourse(c.id)),
-    ];
     Widget row(List<Widget> children) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(children: children),
@@ -2838,10 +2908,16 @@ class _SeatCourseBar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
       ),
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-      child: compact(context) || courseChips.isEmpty
+      child: oneLine
           // a phone: both on one line that scrolls, to leave the screen to the menu
           ? row([...seatChips, if (courseChips.isNotEmpty) const SizedBox(width: 8), ...courseChips])
-          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [row(seatChips), row(courseChips)]),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                row(seatChips),
+                row([if (guestBelow) Padding(padding: const EdgeInsets.only(right: 10), child: guest), ...courseChips]),
+              ],
+            ),
     );
   }
 }
@@ -2864,6 +2940,48 @@ class _AllergyChip extends StatelessWidget {
       backgroundColor: noted ? scheme.error : null,
       side: noted ? BorderSide(color: scheme.error) : null,
       tooltip: noted ? 'Change the allergies noted' : 'Note an allergy for the table or a seat',
+      visualDensity: VisualDensity.compact,
+      onPressed: onTap,
+    );
+  }
+}
+
+/// The way to the number of a guest who left one, on a table's check and a bar tab (docs/guest-list.md, "A
+/// walk-in's number"): filled once the check carries a number. A phone shows the sign alone, so the seats
+/// beside it stay in reach without scrolling.
+class _GuestChip extends StatelessWidget {
+  const _GuestChip({required this.has, required this.onTap});
+
+  final bool has;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final tooltip = has ? "Change the guest's number, or take it off" : "Type the guest's phone number";
+    final icon = has ? Icons.person : Icons.person_add_alt_1_outlined;
+    if (compact(context)) {
+      return IconButton(
+        key: const ValueKey('guest-chip'),
+        tooltip: tooltip,
+        visualDensity: VisualDensity.compact,
+        style: has
+            ? IconButton.styleFrom(
+                backgroundColor: scheme.secondaryContainer,
+                foregroundColor: scheme.onSecondaryContainer,
+              )
+            : null,
+        icon: Icon(icon, size: 20),
+        onPressed: onTap,
+      );
+    }
+    return ActionChip(
+      key: const ValueKey('guest-chip'),
+      avatar: Icon(icon, size: 18, color: has ? scheme.onSecondaryContainer : null),
+      label: const Text('Guest'),
+      labelStyle: has ? TextStyle(color: scheme.onSecondaryContainer, fontWeight: FontWeight.w700) : null,
+      backgroundColor: has ? scheme.secondaryContainer : null,
+      tooltip: tooltip,
       visualDensity: VisualDensity.compact,
       onPressed: onTap,
     );
@@ -3008,10 +3126,25 @@ class _CustomerStrip extends StatefulWidget {
     this.parties = const [],
     this.onPays,
     this.asksWho = false,
+    this.guest,
+    this.guestPoints,
+    this.onGuest,
   });
 
   final String note;
   final List<String> tags;
+
+  /// The guest whose number is typed on a table's check or a bar tab (docs/guest-list.md, "A walk-in's
+  /// number"), by the name typed with it, empty for one who gave none; on a tab, which is called by its
+  /// own name, the name the hub knows the number by, empty for one it does not know. Null for a check
+  /// with no such number: the strip is then the strip it was.
+  final String? guest;
+
+  /// The points that guest has (docs/points.md); null where no rate was ever set.
+  final int? guestPoints;
+
+  /// Opens the number to change it or take it off; null on a check that is closed.
+  final VoidCallback? onGuest;
 
   /// The parties seated on a table's check, the first to sit first.
   final List<SeatedParty> parties;
@@ -3054,6 +3187,8 @@ class _CustomerStripState extends State<_CustomerStrip> {
             Icon(
               note.isNotEmpty
                   ? Icons.sticky_note_2_outlined
+                  : widget.guest != null
+                  ? Icons.person_outline
                   : parties.isNotEmpty
                   ? Icons.event_seat_outlined
                   : Icons.sell_outlined,
@@ -3088,12 +3223,14 @@ class _CustomerStripState extends State<_CustomerStrip> {
       crossAxisAlignment: CrossAxisAlignment.start,
       spacing: 2,
       children: [
-        if (tags.isNotEmpty || note.isNotEmpty)
+        if (widget.guest != null || tags.isNotEmpty || note.isNotEmpty)
           Wrap(
             spacing: 6,
             runSpacing: 2,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              // the guest whose number the check carries, before what is kept about them
+              if (widget.guest case final guest?) _guest(theme, guest),
               for (final tag in tags) GuestTagMark(tag, key: ValueKey('customer-tag:$tag')),
               if (note.isNotEmpty)
                 Text(
@@ -3142,6 +3279,38 @@ class _CustomerStripState extends State<_CustomerStrip> {
           ),
       ],
     );
+  }
+
+  /// The guest whose number is typed on the check: the name typed with it ("Guest" for none), their points,
+  /// and a small pencil where a tap changes the number. The room above and under it is for a finger.
+  Widget _guest(ThemeData theme, String guest) {
+    final scheme = theme.colorScheme;
+    final words = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        spacing: 6,
+        children: [
+          Flexible(
+            child: Text(
+              guest.isEmpty ? 'Guest' : guest,
+              key: const ValueKey('check-guest-name'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (widget.guestPoints case final points?) _points(theme, const ValueKey('check-guest-points'), points),
+          if (widget.onGuest != null) Icon(Icons.edit_outlined, size: 13, color: scheme.onSurfaceVariant),
+        ],
+      ),
+    );
+    return widget.onGuest == null
+        ? KeyedSubtree(key: const ValueKey('check-guest'), child: words)
+        : Tooltip(
+            message: "Change the guest's number, or take it off",
+            child: InkWell(key: const ValueKey('check-guest'), onTap: widget.onGuest, child: words),
+          );
   }
 
   /// A guest's points, small and quiet beside who they are: "1,240 pts".

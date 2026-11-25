@@ -38,7 +38,7 @@ from pos.waitlist import Waitlist
 
 from .test_check_guests import NOVAK, check
 from .test_day import BEER, DSN, EGGROLL, WINGS, Hub, at
-from .test_guest_tags import book_table, seat, wait
+from .test_guest_tags import book_table, seat, shown, wait
 from .test_guests import GTC, LINDA, OMAR, SAM, TODAY, a_year, ago, guest, guests, one, order
 from .test_who_paid_after import said_after
 from .test_who_pays import said, who_sits
@@ -394,7 +394,7 @@ def test_at_a_table_of_several_guests_the_points_are_the_one_who_pays():
     # the table's check says how many each guest has, to whoever serves it: a count and no number
     told = h.c.get("/orders/t-1/seated")
     assert [(party["name"], party["points"]) for party in told.json()["parties"]] == [("Linda P.", 99), ("Novak", 17)]
-    assert not any(phone in told.text for phone in (LINDA, NOVAK, "555"))
+    assert not any(phone in shown(told) for phone in (LINDA, NOVAK, "555"))
     # no, Linda paid: said afterwards from the guest list, and the points go with the money
     said_after(h, "t-1", linda)
     assert has(h, LINDA) == 116 and has(h, NOVAK) == 0
