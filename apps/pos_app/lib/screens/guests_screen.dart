@@ -9,6 +9,7 @@ import 'guest_edit_dialog.dart';
 import 'guest_tag_mark.dart';
 import 'span_report.dart';
 import 'theme.dart';
+import 'who_paid.dart';
 
 /// The guest list, for a manager (docs/guest-list.md): every customer who ordered with a phone number in
 /// the last year, with how often they came, what they spent and when they were last here; the regulars, the
@@ -19,7 +20,10 @@ import 'theme.dart';
 /// neither about their orders: the tags a manager puts on them ("VIP"), each of which is a list of its own,
 /// and the one line of the note. A guest who carries a tag and has no order in the year is in the list too,
 /// after the others (tagged from their reservation or the waitlist before their first order): their row
-/// says so in place of visits and money, and their tags and note are changed like anybody's.
+/// says so in place of visits and money, and their tags and note are changed like anybody's. One more thing
+/// is said from here: who paid a check that several guests sat on, where nobody tapped it on the check
+/// (`who_paid.dart`). The list says how many such checks wait, and a visit at such a table opens its check's
+/// guests.
 class GuestsScreen extends StatefulWidget {
   const GuestsScreen({super.key, required this.api, required this.token});
 
@@ -170,6 +174,24 @@ class _GuestsScreenState extends State<GuestsScreen> {
           ),
         ),
       );
+  }
+
+  /// The checks that wait for who paid, each with its guests to tap. When something was said there, the
+  /// list is read again: a check's money counts for a guest now.
+  Future<void> _openWaiting() async {
+    var said = false;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => WhoPaidScreen(api: widget.api, token: widget.token, onSaid: () => said = true),
+      ),
+    );
+    if (said && mounted) _load();
+  }
+
+  /// The guests of the check of one visit, to say (or say otherwise) who paid it.
+  Future<void> _whoPaid(GuestVisit visit) async {
+    final said = await showWhoPaid(context, api: widget.api, token: widget.token, orderId: visit.orderId);
+    if (said && mounted) _load();
   }
 
   /// Another list or order: it starts again from its top.
@@ -325,6 +347,44 @@ class _GuestsScreenState extends State<GuestsScreen> {
           strong: true,
           underWide: true,
         ),
+        if (report.saysPaid && report.waiting > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: theme.colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                key: const ValueKey('guests-waiting'),
+                onTap: _openWaiting,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${_count(report.waiting, 'check waits', 'checks wait')} for who paid',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: theme.colorScheme.onSecondaryContainer,
+                              ),
+                            ),
+                            Text(
+                              '${dollars(report.waitingNet)} that counts for no guest yet. Tap to say who paid.',
+                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSecondaryContainer),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, color: theme.colorScheme.onSecondaryContainer),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         const SizedBox(height: 10),
         SegmentedButton<GuestSort>(
           showSelectedIcon: false,
@@ -499,7 +559,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
               child: const LinearProgressIndicator(),
             )
           else if (detail != null)
-            for (final visit in detail.latest)
+            for (final visit in detail.latest) ...[
               InkWell(
                 key: ValueKey('guest-visit:${listed.phone}:${visit.orderId}'),
                 onTap: () => Navigator.of(context).push(
@@ -508,13 +568,33 @@ class _GuestsScreenState extends State<GuestsScreen> {
                   ),
                 ),
                 child: ReportLine(
-                  [_dayWords(visit.day, weekday: true), kindLabel(visit.kind)].join(' · '),
+                  [
+                    _dayWords(visit.day, weekday: true),
+                    // the table by its name, where the hub says which
+                    visit.table.isNotEmpty ? 'Table ${visit.table}' : kindLabel(visit.kind),
+                  ].join(' · '),
                   // a visit at a table somebody else paid says so where its money would stand
                   visit.unpaidWords ?? dollars(visit.net),
                   under: visit.dishWords,
                   underWide: true,
                 ),
               ),
+              // a table of several guests: who paid it can be said here, or said otherwise
+              if (report.saysPaid && visit.shared)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: ValueKey('guest-visit-paid:${listed.phone}:${visit.orderId}'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    icon: const Icon(Icons.how_to_reg_outlined, size: 18),
+                    label: Text(visit.waits ? 'Say who paid' : 'Who paid'),
+                    onPressed: () => _whoPaid(visit),
+                  ),
+                ),
+            ],
         ],
       ),
     );

@@ -24,6 +24,23 @@
   with how many numbers carry it (`guests`: every number, one that never ordered too), `tag_max` and
   `tags_most` what the tags are held to, and for a `phone` the tags it `carried` now with who put them on
   and when (`tags_by`, `tags_ms`). It reads no order. 422 `bad_value` for a `phone` that is no number.
+- `GET /reports/guests/payers` (manager token): the `checks` of the year that wait for who paid: several
+  guests, no number typed on them and no word, so their money counts for no guest (`waiting` in the list
+  above says how many and what they come to). The newest first, each with its `order_id`, `order_no`,
+  `table`, `day`, `opened_ms`, `kind`, what it comes to (`net`) and its `guests`: each with the `key` it
+  is said by, its `name`, its `phone`, whether it is the number `typed` on the check, and whether it
+  `pays`; `waits`, and `said_by` (who said the one that pays).
+- `GET /reports/guests/payers/{order_id}` (manager token): one such check, whether it waits or not: what
+  a guest's visit at a table of several guests opens. 404 `no_check` for a check that is no visit of the
+  year or that the hub noted no guest on.
+- `POST /reports/guests/payers/{order_id}` `{guest, pays}` (manager token): who paid the check, said
+  afterwards (`pays` false takes the word back). `guest` is a `key` of the call above. It is the word a
+  tap on the check says (`POST /orders/{id}/payer` below), kept the same way with the name behind the
+  token as who said it; but it is said of the guests the hub noted on the check (`pos.check_guests`), so
+  it can be said when the book and the waitlist have long forgotten the party, and of the number of a
+  check that was merged in. `typed` is the number on the check: it pays for want of a word, so saying it
+  takes the word from whoever had it. The answer is the check as the call above reads it. 404
+  `unknown_guest` for a key that is no guest of this check.
 - `PUT /reports/guests/{phone}` `{note, tags, name}` (manager token): what the restaurant keeps about the
   guest at this number, either or both; one left out stays as it is, an empty one is taken off. The answer
   is both as they are kept now, each with who wrote it and when. The name behind the token is who wrote it.
@@ -90,7 +107,16 @@ from ..customers import ReadOnlyError as NotesReadOnly
 from ..guest_tags import TAG_MAX, TAGS_MOST, clean_name, clean_tags, offered, tags_together
 from ..guest_tags import ReadOnlyError as TagsReadOnly
 from ..identity.tokens import Grant
-from ..orders.guests import CheckMemo, VisitMemo, guest_report, guests_report, in_window, shared_out, window
+from ..orders.guests import (
+    CheckMemo,
+    VisitMemo,
+    checks_paid_by,
+    guest_report,
+    guests_report,
+    in_window,
+    shared_out,
+    window,
+)
 from ..sync.oplog import phone_digits
 from .auth import holder_from
 
@@ -246,6 +272,14 @@ class PayerIn(BaseModel):
     pays: bool = True
 
 
+class PaidIn(BaseModel):
+    """Who paid a check, as whoever reads the guest list says it afterwards: `guest` is the `key` the
+    check's guests were read with (`GET /reports/guests/payers`), `pays` false takes the word back."""
+
+    guest: str = Field(max_length=200)
+    pays: bool = True
+
+
 class GuestIn(BaseModel):
     """What the restaurant keeps about a guest, written from the guest list: the note and the tags. One left
     out stays as it is; an empty one is taken off. `name` is what the guest is called where they are tagged
@@ -293,10 +327,8 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
         store = app.state.store
         now_ms = store.now_ms()
         entries = store.with_phone()
-        # who sat down on a check since the year began (a check opened the day before can count in it)
-        began = localtime.service_day(window(now_ms)[0])[0] - 2 * 24 * 60 * 60 * 1000
         return guests_report(
-            everybody(entries, app.state.check_guests.since(began), now_ms),
+            everybody(entries, app.state.check_guests.since(began(now_ms)), now_ms),
             entries,
             app.state.customers.all(),
             defs=app.state.menu.defs,
@@ -304,6 +336,105 @@ def add_guest_list(app: FastAPI, memo: VisitMemo | None = None) -> None:
             tags=app.state.guest_tags.all(),
             names=app.state.guest_tags.names(),
         )
+
+    def began(now_ms: int) -> int:
+        """Since when a guest can have sat down on a check of the year the list reads (a check opened the
+        day before can count in it)."""
+        return localtime.service_day(window(now_ms)[0])[0] - 2 * 24 * 60 * 60 * 1000
+
+    def one_check(order_id: str, now_ms: int) -> tuple[dict[str, Any], list[CheckGuest]] | None:
+        """This check with its guests and who pays it, and the guests as the hub noted them; None for a
+        check that is no visit of the year or that nobody is noted on."""
+        noted = app.state.check_guests.on([order_id])
+        read = checks_paid_by(sat_on(noted, now_ms), noted, now_ms) if noted else []
+        return (read[0], noted) if read else None
+
+    def no_check() -> HTTPException:
+        words = "This check is no visit of the last year, or the hub noted no guest on it."
+        return HTTPException(404, {"error": "no_check", "message": words})
+
+    # Before `/reports/guests/{phone}`, which would take "payers" for a number.
+    @app.get("/reports/guests/payers")
+    def read_waiting(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """The checks of the year that wait for who paid: several guests sat on them, no number is typed
+        on them and nobody said who pays, so their money counts for no guest. The newest first, each with
+        its guests, for whoever reads the guest list to say who paid."""
+        manager(authorization)
+        now_ms = app.state.store.now_ms()
+        noted = app.state.check_guests.since(began(now_ms))
+        first, today = window(now_ms)
+        return {
+            "first": first.isoformat(),
+            "last": today.isoformat(),
+            "now_ms": now_ms,
+            "checks": [row for row in checks_paid_by(sat_on(noted, now_ms), noted, now_ms) if row["waits"]],
+        }
+
+    @app.get("/reports/guests/payers/{order_id}")
+    def read_paid(order_id: str, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """One check with every guest of it and which of them its money counts for, whether it waits or
+        somebody was said: what a guest's visit at a table of several guests opens."""
+        manager(authorization)
+        found = one_check(order_id, app.state.store.now_ms())
+        if found is None:
+            raise no_check()
+        return found[0]
+
+    @app.post("/reports/guests/payers/{order_id}")
+    def say_paid(order_id: str, body: PaidIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Whoever may read the guest list says who paid this check, afterwards (`pays` false takes the
+        word back): the word a tap on the check says, kept the same way, with the name behind the token.
+        It is said of the guests the hub noted on the check, so it can be said when the book and the
+        waitlist have forgotten the party, and of the number of a check that was merged in. The number
+        typed on the check (`typed`) pays for want of a word: saying it takes the word from whoever had it.
+
+        It is a word about the guest list alone: no money is taken, nothing is written on the check, and
+        no bill, kitchen ticket, sale or report other than the guest list changes. 404 `no_check`; 404
+        `unknown_guest` for a key that is no guest of this check. The answer is the check as it is read."""
+        grant = manager(authorization)
+        found = one_check(order_id, app.state.store.now_ms())
+        if found is None:
+            raise no_check()
+        row, noted = found
+        guest = next((guest for guest in row["guests"] if guest["key"] == body.guest), None)
+        if guest is None:
+            raise HTTPException(
+                404, {"error": "unknown_guest", "message": "This guest is not a guest of this check any more."}
+            )
+        if guest["typed"] and not body.pays:
+            words = "The number on the check pays unless another guest is said to: say who paid instead."
+            raise HTTPException(422, {"error": "bad_value", "message": words})
+        kept_guests = app.state.check_guests
+        try:
+            if body.pays and not guest["typed"]:
+                source, _, source_id = body.guest.partition(":")
+                said = kept_guests.pay(source, source_id, True, by=grant.name)
+                if said is None or said.order_id != order_id:
+                    raise HTTPException(
+                        503, {"error": "not_kept", "message": "The hub could not keep who paid. Try again in a moment."}
+                    )
+            else:
+                # the word is taken back: from this guest (every note of their number on the check), or,
+                # for the number typed on the check, from whoever had it
+                for other in noted:
+                    if other.pays and (guest["typed"] or other.phone == guest["phone"]):
+                        kept_guests.pay(other.source, other.source_id, False)
+        except GuestsReadOnly as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        _log.info(
+            "who paid check %s was said from the guest list by %s (%s)",
+            order_id,
+            grant.staff_id,
+            "paid" if body.pays else "taken back",
+        )
+        # a screen with this check open shows who pays: it reads again
+        for topic, source in (("reservations", "reservation"), ("waitlist", "waitlist")):
+            if any(other.source == source for other in noted):
+                app.state.feed.changed(topic)
+        now = one_check(order_id, app.state.store.now_ms())
+        if now is None:
+            raise no_check()
+        return now[0]
 
     # Before `/reports/guests/{phone}`, which would take "tags" for a number.
     @app.get("/reports/guests/tags")

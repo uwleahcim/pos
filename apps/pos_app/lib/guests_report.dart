@@ -308,9 +308,13 @@ class GuestsReport {
     this.noteMax = 120,
     this.tagMax = 24,
     this.tagsMost = 6,
+    this.saysPaid = false,
+    this.waiting = 0,
+    this.waitingNet = '0.00',
   });
 
   factory GuestsReport.fromJson(Map<String, dynamic> json) {
+    final waits = json['waiting'];
     // a row with a visit belongs to the guests who ordered, whatever list it came in
     final tagged = [
       for (final row in _rows(json['tagged']))
@@ -338,6 +342,9 @@ class GuestsReport {
       noteMax: json['note_max'] is num ? _i(json['note_max']) : 120,
       tagMax: json['tag_max'] is num ? _i(json['tag_max']) : 24,
       tagsMost: json['tags_most'] is num ? _i(json['tags_most']) : 6,
+      saysPaid: waits is Map,
+      waiting: waits is Map ? _i(waits['checks']) : 0,
+      waitingNet: waits is Map ? _s(waits['net'], '0.00') : '0.00',
     );
   }
 
@@ -390,6 +397,15 @@ class GuestsReport {
   final int tagMax;
   final int tagsMost;
 
+  /// Whether this hub takes who paid a check from the guest list, afterwards (docs/guest-list.md, "Who
+  /// paid, said afterwards"). One older than that does not say [waiting] at all.
+  final bool saysPaid;
+
+  /// How many checks of the year wait for who paid (several guests sat on them and nobody said which of
+  /// them pays), and what they come to: money that counts for no guest until somebody says.
+  final int waiting;
+  final String waitingNet;
+
   /// The tags some guest of the list carries: each is a list of its own.
   List<GuestTag> get carried => [
     for (final tag in tags)
@@ -432,6 +448,9 @@ class GuestsReport {
       noteMax: noteMax,
       tagMax: tagMax,
       tagsMost: tagsMost,
+      saysPaid: saysPaid,
+      waiting: waiting,
+      waitingNet: waitingNet,
     );
   }
 }
@@ -448,6 +467,8 @@ class GuestVisit {
     this.dishes = const [],
     this.paid = true,
     this.waits = false,
+    this.guests = 1,
+    this.table = '',
   });
 
   factory GuestVisit.fromJson(Map<String, dynamic> json) => GuestVisit(
@@ -460,6 +481,8 @@ class GuestVisit {
     dishes: [for (final row in _rows(json['dishes'])) GuestDish.fromJson(row)],
     paid: json['paid'] != false,
     waits: json['waits'] == true,
+    guests: json['guests'] is num ? _i(json['guests']) : 1,
+    table: _s(json['table']),
   );
 
   final String orderId;
@@ -480,6 +503,16 @@ class GuestVisit {
   /// The check had several guests and nobody has said which of them pays: its money counts for none of
   /// them yet (docs/guest-list.md, "Who pays").
   final bool waits;
+
+  /// How many guests the check of this visit has, this one among them: more than one, and its money
+  /// counts for the one of them who paid. 1 from a hub that does not say.
+  final int guests;
+
+  /// The table the visit was at, as its name is written; empty for an order with none.
+  final String table;
+
+  /// Whether the check had other guests too, so that who paid it can be said (and said otherwise).
+  bool get shared => guests > 1;
 
   /// What stands where the money of a visit stands when the guest did not pay it.
   String? get unpaidWords => paid
