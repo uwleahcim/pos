@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from pos.identity.staff import Directory, Locked, Staff, demo_directory, staff_from_env
+from pos.identity.staff import Directory, Locked, Staff, demo_directory, hash_pin, staff_from_env
 from pos.identity.staff_list import (
     ROLES,
     STAFF_MOST,
@@ -418,8 +418,20 @@ def test_the_list_survives_in_postgres_in_its_order_and_holds_no_pin():
         staff.remove("s2", by=MIKE)
         mark = staff.mark()
         with store._pool.connection() as conn:  # noqa: SLF001
-            dumped = conn.execute("SELECT string_agg(staff_member::text, ' ') FROM staff_member").fetchone()[0]
+            # Every column of every row but the salt and what the PIN was turned into: those two are random letters
+            # and digits, where four digits in a row turn up by chance. They are checked for what they are below.
+            dumped = conn.execute(
+                "SELECT string_agg((to_jsonb(staff_member) - 'pin_salt' - 'pin_hash')::text, ' ') FROM staff_member"
+            ).fetchone()[0]
+            salted = {
+                row[0]: (row[1], row[2])
+                for row in conn.execute("SELECT staff_id, pin_salt, pin_hash FROM staff_member").fetchall()
+            }
         assert "4827" not in dumped and "5310" not in dumped and "Amy W" in dumped
+        for staff_id, pin in (("s5", "4827"), ("s1", "5310")):
+            salt, hashed = salted[staff_id]
+            assert len(salt) == 16 and len(hashed) == 64 and hashed == hash_pin(pin, salt)
+        assert salted["s2"] == ("", ""), "somebody taken off the staff keeps no PIN at all"
         again = PgStaffStore(DSN)
         try:
             restarted = listed([Staff.with_pin("x9", "Zed", "manager", "7777")], store=again)

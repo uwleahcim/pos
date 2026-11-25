@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from pos.api.app import create_app
 from pos.api.staff import use_staff, watch_staff
 from pos.identity.faces import FaceSignIn, FaceStore, Template
-from pos.identity.staff import Directory, Staff
+from pos.identity.staff import Directory, Staff, hash_pin
 from pos.identity.staff_list import Actor, StaffList, StaffStore
 from pos.identity.tags import TagStore
 from pos.settings import SettingStore
@@ -319,9 +319,19 @@ def test_what_the_database_holds_is_no_pin():
     api, staff = wired()
     mike = session(api)
     api.post("/hub/staff", json={"name": "Kim", "role": "server", "pin": "4827"}, headers=mike)
-    dumped = json.dumps([vars(member) for member in staff.store.all()])
+    kept = {member.staff_id: vars(member) for member in staff.store.all()}
+    # The salt and what a PIN was turned into are random letters and digits, and four digits in a row turn up in
+    # those by chance (about one run in twenty with these PINs). So everything else that is kept is searched for the
+    # PINs, and those two are checked for what they are: a salt, and the PIN put through `hash_pin` with it, which
+    # has no way back.
+    rest = json.dumps([{k: v for k, v in row.items() if k not in ("pin_salt", "pin_hash")} for row in kept.values()])
     for pin in PINS:
-        assert pin not in dumped
+        assert pin not in rest
+    typed = {"s1": "1111", "s2": "2222", "s3": "9999", "s4": "3333", "s5": "4827"}
+    assert set(kept) == set(typed)
+    for staff_id, pin in typed.items():
+        salt, hashed = kept[staff_id]["pin_salt"], kept[staff_id]["pin_hash"]
+        assert len(salt) == 16 and len(hashed) == 64 and hashed == hash_pin(pin, salt)
 
 
 # --- a change made somewhere else ----------------------------------------------------------------------------------
