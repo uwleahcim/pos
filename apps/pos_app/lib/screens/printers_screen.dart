@@ -8,7 +8,8 @@ import '../printers.dart';
 /// The kitchen printers, for a manager: each prints for one station of the menu or several, by its address
 /// (typed, or picked from the printers the hub finds on the LAN: the magnifier), in the language the printer
 /// itself answers with (Auto) or one set by hand, with the printers that take its tickets when it is down,
-/// in order (never round in a loop). The screen says which stations the menu prints at and have no printer yet (one tap adds it)
+/// in order (never round in a loop). A printer for several stations prints a send on one ticket or on a
+/// ticket for each station, with the stations grouped on its card sharing one. The screen says which stations the menu prints at and have no printer yet (one tap adds it)
 /// and sets the station a to-go order prints whole at. The hub keeps it all and routes the next ticket by
 /// it. Behind the manager PIN, from Location settings.
 class PrintersScreen extends StatefulWidget {
@@ -35,12 +36,17 @@ class _PrinterRow {
     required this.dialect,
     this.detected,
     List<String>? fallbacks,
+    this.tickets,
+    List<List<String>>? groups,
   }) : stations = List.of(stations ?? const []),
        address = TextEditingController(text: address),
-       fallbacks = List.of(fallbacks ?? const []);
+       fallbacks = List.of(fallbacks ?? const []),
+       groups = [for (final group in groups ?? const <List<String>>[]) List.of(group)];
 
   final String id;
   final List<String> stations;
+  String? tickets; // one ticket for all its stations, or one for each; null with a hub that knows one way
+  List<List<String>> groups; // the stations that share a ticket when each prints its own
   bool stationTyped = false; // a station the menu does not list yet is being typed
   final TextEditingController address;
   final TextEditingController stationCode = TextEditingController();
@@ -62,7 +68,12 @@ class _PrinterRow {
     dialect: dialect,
     detected: detected,
     fallbacks: List.of(fallbacks),
+    tickets: tickets,
+    groups: keptGroups(stations, groups),
   );
+
+  /// The stations of each ticket it prints for one send.
+  List<List<String>> get sets => ticketSets(stations, tickets, groups);
 
   void dispose() {
     address.dispose();
@@ -84,6 +95,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
   int _scans = 0;
   bool _listShown = false;
   String? _scanMessage;
+  bool _apart = true; // the hub can print a ticket for each station of a printer (one older than that cannot)
 
   @override
   void initState() {
@@ -129,6 +141,8 @@ class _PrintersScreenState extends State<PrintersScreen> {
       row.dispose();
     }
     _rows = [];
+    // A hub that can says so on every printer; one with no printer yet is taken at its word once it has one.
+    _apart = settings.printers.every((p) => p.tickets != null);
     for (final p in settings.printers) {
       final row = _PrinterRow(
         id: p.id ?? _freshId(),
@@ -137,6 +151,8 @@ class _PrintersScreenState extends State<PrintersScreen> {
         dialect: p.dialect,
         detected: p.detected,
         fallbacks: p.fallbacks,
+        tickets: _apart ? p.tickets : null,
+        groups: p.groups,
       );
       // Two printers saved with one address (an older app let that be) are one printer with both stations.
       final same = row.where.isEmpty ? null : _rows.where((r) => r.where == row.where).firstOrNull;
@@ -163,6 +179,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
       address: address,
       dialect: autoDialect,
       detected: identity?.dialect,
+      tickets: _apart ? oneTicket : null,
     )..identity = identity;
     setState(() {
       _rows.add(row);
@@ -277,9 +294,12 @@ class _PrintersScreenState extends State<PrintersScreen> {
   Future<void> _test(_PrinterRow row) async {
     setState(() => _message = null);
     try {
-      await widget.api.testPrint(row.id);
+      final queued = await widget.api.testPrint(row.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Demo ticket queued for the ${_title(row)}')));
+      // a printer that prints a ticket for each station prints the demo once for each, headed as they will be
+      final count = (queued['tickets'] as num?)?.toInt() ?? 1;
+      final what = count > 1 ? '$count demo tickets' : 'Demo ticket';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$what queued for the ${_title(row)}')));
     } on ApiException catch (err) {
       if (!mounted) return;
       final unknown = err.status == 404;
@@ -725,6 +745,7 @@ class _PrintersScreenState extends State<PrintersScreen> {
               ],
             ),
             _stationsField(context, row),
+            if (row.tickets != null && row.stations.length > 1) _ticketsField(context, row),
             const SizedBox(height: 12),
             Padding(padding: const EdgeInsets.only(right: 8), child: _addressField(context, row)),
             const SizedBox(height: 12),
@@ -796,7 +817,12 @@ class _PrintersScreenState extends State<PrintersScreen> {
                         isExpanded: true,
                         hint: const Row(
                           mainAxisSize: MainAxisSize.min,
-                          children: [Icon(Icons.add, size: 18), SizedBox(width: 4), Text('Add fallback')],
+                          children: [
+                            Icon(Icons.add, size: 18),
+                            SizedBox(width: 4),
+                            // (beside Test print on a narrow phone with large type, the words give way)
+                            Flexible(child: Text('Add fallback', overflow: TextOverflow.ellipsis)),
+                          ],
                         ),
                         items: [for (final other in others) _fallbackChoice(context, row, other)],
                         onChanged: (picked) => setState(() {
@@ -847,7 +873,10 @@ class _PrintersScreenState extends State<PrintersScreen> {
                   key: ValueKey('printer-station:${row.id}:$code'),
                   label: Text(_nameOf(code)),
                   deleteButtonTooltipMessage: 'Take ${_nameOf(code)} off this printer',
-                  onDeleted: () => setState(() => row.stations.remove(code)),
+                  onDeleted: () => setState(() {
+                    row.stations.remove(code);
+                    row.groups = keptGroups(row.stations, row.groups); // and out of the group it was in
+                  }),
                 ),
               if (!typed)
                 DropdownButtonHideUnderline(
@@ -914,6 +943,131 @@ class _PrintersScreenState extends State<PrintersScreen> {
         ],
       ),
     );
+  }
+
+  /// "Wok 1 + Wok 2", as a ticket for those stations is headed ("Wok 1 + 3 more" past three).
+  String _head(List<String> stations) {
+    final names = stations.map(_nameOf).toList();
+    return names.length <= 3 ? names.join(' + ') : '${names.first} + ${names.length - 1} more';
+  }
+
+  /// How a printer for several stations prints one send: every dish on one ticket, or a ticket for each
+  /// station. With a ticket each, the stations that share one all the same: each group a chip with its own
+  /// bin (a tap changes it), and a button to group more.
+  Widget _ticketsField(BuildContext context, _PrinterRow row) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final each = row.tickets == eachTicket;
+    final groups = keptGroups(row.stations, row.groups);
+    final loose = [
+      for (final code in row.stations)
+        if (!groups.any((g) => g.contains(code))) code,
+    ];
+    final sets = row.sets;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 12, 8, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text('Tickets', style: theme.textTheme.labelLarge),
+              ChoiceChip(
+                key: ValueKey('printer-tickets-one:${row.id}'),
+                showCheckmark: false,
+                label: const Text('One for all'),
+                selected: !each,
+                onSelected: (_) => setState(() => row.tickets = oneTicket),
+              ),
+              ChoiceChip(
+                key: ValueKey('printer-tickets-each:${row.id}'),
+                showCheckmark: false,
+                label: const Text('One per station'),
+                selected: each,
+                onSelected: (_) => setState(() => row.tickets = eachTicket),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              each
+                  ? 'A ticket for each of: ${sets.map(_head).join(' · ')}'
+                  : 'Their dishes come out on one ticket, headed ${_head(row.stations)}.',
+              key: ValueKey('printer-tickets-note:${row.id}'),
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+          // Two stations grouped are one ticket for all, which the choice above already says.
+          if (each && row.stations.length > 2)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text('Print together', style: theme.textTheme.labelLarge),
+                  for (final group in groups)
+                    InputChip(
+                      key: ValueKey('printer-group:${row.id}:${group.first}'),
+                      label: Text(group.map(_nameOf).join(' + ')),
+                      tooltip: 'Change which stations print together',
+                      onPressed: () => _group(row, group),
+                      deleteButtonTooltipMessage: 'Print ${group.map(_nameOf).join(' and ')} apart',
+                      onDeleted: () => setState(() {
+                        row.groups = [
+                          for (final other in groups)
+                            if (other.first != group.first) other,
+                        ];
+                      }),
+                    ),
+                  if (loose.length > 1)
+                    ActionChip(
+                      key: ValueKey('printer-group-add:${row.id}'),
+                      avatar: const Icon(Icons.add, size: 18),
+                      label: const Text('Group stations'),
+                      onPressed: () => _group(row, null),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Asks which of the printer's stations print together on one ticket: a new group, or [group] changed.
+  /// The stations of its other groups are not offered; a station is on one ticket.
+  Future<void> _group(_PrinterRow row, List<String>? group) async {
+    final groups = keptGroups(row.stations, row.groups);
+    // which group it is, by its first station: the lists themselves are made anew on every build
+    final at = group == null ? -1 : groups.indexWhere((g) => g.first == group.first);
+    final others = {
+      for (var i = 0; i < groups.length; i++)
+        if (i != at) ...groups[i],
+    };
+    final picked = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => _GroupDialog(
+        stations: [
+          for (final code in row.stations)
+            if (!others.contains(code)) code,
+        ],
+        picked: at < 0 ? const [] : groups[at],
+        nameOf: _nameOf,
+      ),
+    );
+    if (picked == null || !mounted || !_rows.contains(row)) return;
+    setState(() {
+      row.groups = keptGroups(row.stations, [
+        for (var i = 0; i < groups.length; i++) i == at ? picked : groups[i],
+        if (at < 0) picked,
+      ]);
+    });
   }
 
   /// The printer's address: typed, with the magnifier that turns the field into a list of the printers on
@@ -1168,4 +1322,69 @@ class _PrintersScreenState extends State<PrintersScreen> {
 
   static const _other = '\u0000other';
   static const _again = '\u0000again';
+}
+
+/// Which of a printer's stations print together on one ticket: a button for each station it could be,
+/// ticked for the ones picked. Two or more make a group; it pops with them, or with nothing when closed.
+class _GroupDialog extends StatefulWidget {
+  const _GroupDialog({required this.stations, required this.picked, required this.nameOf});
+
+  final List<String> stations;
+  final List<String> picked;
+  final String Function(String code) nameOf;
+
+  @override
+  State<_GroupDialog> createState() => _GroupDialogState();
+}
+
+class _GroupDialogState extends State<_GroupDialog> {
+  late final Set<String> _picked = {...widget.picked};
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final together = [
+      for (final code in widget.stations)
+        if (_picked.contains(code)) code,
+    ];
+    return AlertDialog(
+      title: const Text('Print together'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'The stations ticked share one ticket, headed with all their names. The rest keep a ticket each.',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final code in widget.stations)
+                  FilterChip(
+                    key: ValueKey('group-station:$code'),
+                    label: Text(widget.nameOf(code)),
+                    selected: _picked.contains(code),
+                    onSelected: (on) => setState(() => on ? _picked.add(code) : _picked.remove(code)),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          key: const ValueKey('group-save'),
+          // one station is no group: the bin on the group's chip takes a group apart
+          onPressed: together.length < 2 ? null : () => Navigator.of(context).pop(together),
+          child: const Text('Group'),
+        ),
+      ],
+    );
+  }
 }

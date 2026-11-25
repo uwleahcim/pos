@@ -1,6 +1,7 @@
 /// Kitchen printers as the location's setting: each prints for one station or several (wok1, fryer, bar,
 /// takeout), speaks ESC/POS or StarPRNT (set, or found out from the printer: "auto") and names the printers
-/// that take its tickets when it fails, in order. The hub
+/// that take its tickets when it fails, in order. One that prints for several stations puts a send on one
+/// ticket or on a ticket for each station, with the stations grouped on it sharing one. The hub
 /// keeps them (`GET/PUT /settings/printers`; a manager sets them under Location settings › Printers) and
 /// routes every ticket by them; `GET /print/stations` says which stations the menu prints at and which have
 /// no printer yet.
@@ -18,9 +19,55 @@ const dialectShort = {'escpos': 'ESC/POS', 'star': 'Star'};
 /// speak ([PrinterConfig.detected]).
 const autoDialect = 'auto';
 
+/// How a printer that prints for several stations prints one send ([PrinterConfig.tickets]): every dish on
+/// one ticket, headed with all its stations, or a ticket for each station, headed with that station alone.
+const oneTicket = 'one';
+const eachTicket = 'each';
+
+/// The stations of each ticket a printer prints for one send, in the order they stand on it, as the hub
+/// reckons them: all of [stations] on one ticket, or with [tickets] `each` every station on its own, the
+/// stations of a group in [groups] together where the first of them stands. A group counts the stations the
+/// printer still prints for, and is no group once fewer than two of them are left.
+List<List<String>> ticketSets(List<String> stations, String? tickets, List<List<String>> groups) {
+  if (tickets != eachTicket || stations.length < 2) return [List.of(stations)];
+  final sets = <List<String>>[];
+  final placed = <String>{};
+  for (final station in stations) {
+    if (placed.contains(station)) continue;
+    final group = groups.where((g) => g.contains(station)).firstOrNull ?? const <String>[];
+    final together = [
+      for (final code in stations)
+        if (code == station || (group.contains(code) && !placed.contains(code))) code,
+    ];
+    sets.add(together);
+    placed.addAll(together);
+  }
+  return sets;
+}
+
+/// [groups] as a printer for [stations] can keep them: each with the stations still on the printer, in the
+/// order they stand there, a station in the first group that names it, and no group of fewer than two.
+List<List<String>> keptGroups(List<String> stations, List<List<String>> groups) {
+  final placed = <String>{};
+  final kept = <List<String>>[];
+  for (final group in groups) {
+    final members = [
+      for (final code in stations)
+        if (group.contains(code) && !placed.contains(code)) code,
+    ];
+    if (members.length < 2) continue;
+    kept.add(members);
+    placed.addAll(members);
+  }
+  return kept;
+}
+
 /// One printer: its id (the hub's, once saved; the other printers' fallbacks name it), the stations it prints
 /// for, its address (host or IP, with :port when it is not 9100), its language ([dialect]: `escpos`, `star`,
-/// or `auto` with [detected], what the printer itself answered) and its fallbacks in order.
+/// or `auto` with [detected], what the printer itself answered) and its fallbacks in order. And how it prints
+/// a send when it prints for several stations: [tickets] is [oneTicket] or [eachTicket], with [groups] the
+/// stations that share a ticket all the same; [tickets] is null from a hub that prints one ticket a printer
+/// and knows no other way, which gets no word about either back.
 @immutable
 class PrinterConfig {
   const PrinterConfig({
@@ -30,6 +77,8 @@ class PrinterConfig {
     this.dialect = autoDialect,
     this.detected,
     this.fallbacks = const [],
+    this.tickets,
+    this.groups = const [],
   });
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
@@ -45,6 +94,10 @@ class PrinterConfig {
       dialect: json['dialect'] as String? ?? 'escpos',
       detected: json['detected'] as String?,
       fallbacks: [for (final f in json['fallbacks'] as List? ?? const []) f as String],
+      tickets: json['tickets'] as String?,
+      groups: [
+        for (final group in json['groups'] as List? ?? const []) [for (final code in group as List) code as String],
+      ],
     );
   }
 
@@ -54,6 +107,11 @@ class PrinterConfig {
   final String dialect;
   final String? detected;
   final List<String> fallbacks;
+  final String? tickets;
+  final List<List<String>> groups;
+
+  /// The stations of each ticket it prints for one send ([ticketSets]).
+  List<List<String>> get sets => ticketSets(stations, tickets, groups);
 
   /// The first station it prints for; empty when it has none yet.
   String get station => stations.isEmpty ? '' : stations.first;
@@ -66,6 +124,8 @@ class PrinterConfig {
     'dialect': dialect,
     'detected': detected,
     'fallbacks': fallbacks,
+    'tickets': ?tickets,
+    if (tickets != null) 'groups': groups,
   };
 
   @override
@@ -76,10 +136,22 @@ class PrinterConfig {
       other.address == address &&
       other.dialect == dialect &&
       other.detected == detected &&
-      listEquals(other.fallbacks, fallbacks);
+      listEquals(other.fallbacks, fallbacks) &&
+      other.tickets == tickets &&
+      other.groups.length == groups.length &&
+      [for (var i = 0; i < groups.length; i++) listEquals(other.groups[i], groups[i])].every((same) => same);
 
   @override
-  int get hashCode => Object.hash(id, Object.hashAll(stations), address, dialect, detected, Object.hashAll(fallbacks));
+  int get hashCode => Object.hash(
+    id,
+    Object.hashAll(stations),
+    address,
+    dialect,
+    detected,
+    Object.hashAll(fallbacks),
+    tickets,
+    Object.hashAll([for (final group in groups) Object.hashAll(group)]),
+  );
 }
 
 /// The printers as the hub keeps them, in the order they stand (the first takes whatever has no printer of
