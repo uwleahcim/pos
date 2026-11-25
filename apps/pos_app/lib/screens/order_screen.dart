@@ -20,6 +20,7 @@ import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../phone.dart';
+import '../points.dart';
 import '../photos.dart';
 import '../pricing.dart';
 import '../printers.dart';
@@ -2994,7 +2995,8 @@ class _ReadyStrip extends StatelessWidget {
 /// the tags a manager put on them, each a small label ("VIP"), then the line of the note ("no MSG, side
 /// door"). A table's check has no number: its strip says who the host seated on it, from their reservation
 /// or the waitlist: each party on a line of its own, by its name, with the tags its number carries and the
-/// note written on the reservation or the party ("Window table, birthday"). It is for whoever takes the
+/// note written on the reservation or the party ("Window table, birthday"), and, where the owner set a rate
+/// (docs/points.md), the points that party's guest has ("99 pts"). It is for whoever takes the
 /// order; none of it prints, in the kitchen or on the bill. One line where it all fits, as the note alone
 /// always was; on a narrow screen a note goes under the labels, so neither hides the other. The strip is
 /// never more than a quarter of the screen's height, so the check and the menu keep their room: many
@@ -3127,6 +3129,8 @@ class _CustomerStripState extends State<_CustomerStrip> {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w700),
                 ),
+              // what the guest has earned (docs/points.md): a count, where the owner set a rate
+              if (party.points case final points?) _points(theme, ValueKey('seated-points:$at'), points),
               for (final tag in party.tags) GuestTagMark(tag, key: ValueKey('seated-tag:$at:$tag')),
               if (party.note.isNotEmpty)
                 Text(
@@ -3139,6 +3143,17 @@ class _CustomerStripState extends State<_CustomerStrip> {
       ],
     );
   }
+
+  /// A guest's points, small and quiet beside who they are: "1,240 pts".
+  Widget _points(ThemeData theme, Key key, int points) => Row(
+    key: key,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(Icons.stars_outlined, size: 13, color: theme.colorScheme.onSurfaceVariant),
+      const SizedBox(width: 2),
+      Text(pointsShort(points), style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+    ],
+  );
 
   /// The name of a party that can be the one who pays: a tap opens a menu of one line, "Linda Chen pays",
   /// ticked when they do. The one who pays carries a "Pays" label beside the name. The little arrow says

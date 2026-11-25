@@ -763,13 +763,14 @@ def test_the_tags_at_the_table_go_on_no_order_and_no_bill_and_change_nothing(mon
 
 def seated_at(h: Hub, order_id: str) -> dict:
     """Who the hub says sits on this check, as the screen with a table's check open asks (no token). What
-    the answer says about who pays the check is left out here: it has tests of its own (test_who_pays.py)."""
+    the answer says about who pays the check is left out here: it has tests of its own (test_who_pays.py).
+    So have a guest's points (test_points.py)."""
     answer = h.c.get(f"/orders/{order_id}/seated")
     assert answer.status_code == 200, answer.text
     told = answer.json()
     assert told.pop("payer") is True
     told["parties"] = [
-        {key: value for key, value in party.items() if key not in ("key", "listed", "pays")}
+        {key: value for key, value in party.items() if key not in ("key", "listed", "pays", "points")}
         for party in told["parties"]
     ]
     return told
@@ -1051,6 +1052,7 @@ def no_visit(phone: str, name: str, tags: list[str], **more) -> dict:
         "lapsed": False,
         "new": False,
         "favourites": [],
+        "points": 0,
         **more,
     }
 

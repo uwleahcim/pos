@@ -1320,15 +1320,23 @@ def create_app(
         order), `orders` (how many, voided ones apart), `first_ms` and `last_ms`, the `note` kept about
         them, the `tags` a manager put on them in the guest list, and `recent`, their latest orders with
         dishes, each with its `total` and `items`. Numbers match by their digits. `known` is false for a
-        number that never ordered and has no note and no tag."""
+        number that never ordered and has no note and no tag. `points` is how many points they have
+        (`pos.orders.points`), or null where the owner never set a rate."""
         store: OpStore | PgOpStore = app.state.store
-        return customer_card(
+        card = customer_card(
             store,
             app.state.customers,
             phone,
             total=lambda state: check_for(state, app.state.taxes, app.state.pricing)["total"],
             tags=app.state.guest_tags,
         )
+        # how many points they have, where the owner set a rate (docs/points.md); null where none was ever set
+        try:
+            card["points"] = app.state.points_of(card["phone"])
+        except Exception:  # noqa: BLE001 - the card is told whether or not the points can be read
+            log.exception("a customer's points could not be read")
+            card["points"] = None
+        return card
 
     @app.get("/customers/tags")
     def read_customer_tags(phone: str = Query(min_length=1, max_length=40)) -> dict[str, Any]:

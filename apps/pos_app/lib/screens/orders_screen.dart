@@ -19,6 +19,7 @@ import '../moves.dart';
 import '../online_orders.dart';
 import '../outbox.dart';
 import '../phone.dart';
+import '../points.dart';
 import '../photos.dart';
 import '../powers.dart';
 import '../print_relay.dart';
@@ -2565,6 +2566,13 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
       children: [
         const SizedBox(height: 6),
         Text(customer.summary(now), key: const ValueKey('customer-summary'), style: faint),
+        // what they have earned (docs/points.md): said only where the owner set a rate
+        if (customer.points case final points?)
+          Text(
+            points > 0 ? 'They have ${pointsWords(points)}' : 'No points yet',
+            key: const ValueKey('customer-points'),
+            style: faint,
+          ),
         // read here, written in the guest list: who they are to the house, before the first word is said
         if (customer.tags.isNotEmpty)
           Padding(

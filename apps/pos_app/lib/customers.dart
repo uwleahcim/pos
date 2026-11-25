@@ -81,6 +81,7 @@ class CustomerCard {
     this.recent = const [],
     this.address = '',
     this.addressNote = '',
+    this.points,
   });
 
   factory CustomerCard.fromJson(Map<String, dynamic> json) => CustomerCard(
@@ -99,6 +100,7 @@ class CustomerCard {
     recent: [for (final o in json['recent'] as List? ?? const []) PastOrder.fromJson(o as Map<String, dynamic>)],
     address: json['address'] as String? ?? '',
     addressNote: json['address_note'] as String? ?? '',
+    points: json['points'] is num ? (json['points'] as num).toInt() : null,
   );
 
   /// The number's digits, as the hub keeps them.
@@ -128,6 +130,10 @@ class CustomerCard {
   /// than deliveries.
   final String address;
   final String addressNote;
+
+  /// The points they have now (docs/points.md): earned on the checks they paid. Null where no rate was
+  /// ever set, and from a hub older than points: nothing is said then.
+  final int? points;
 
   /// One line on how well the restaurant knows them: `12 orders since Mar 2025, the last on 3 Nov`.
   String summary(DateTime now) {

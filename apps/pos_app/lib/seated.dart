@@ -17,6 +17,7 @@ class SeatedParty {
     this.key = '',
     this.listed = false,
     this.pays = false,
+    this.points,
   });
 
   factory SeatedParty.fromJson(Map<String, dynamic> json) => SeatedParty(
@@ -32,6 +33,7 @@ class SeatedParty {
     key: json['key'] is String ? json['key'] as String : '',
     listed: json['listed'] == true,
     pays: json['pays'] == true,
+    points: json['points'] is num ? (json['points'] as num).toInt() : null,
   );
 
   /// The name on the reservation or on the line of the waitlist.
@@ -62,6 +64,10 @@ class SeatedParty {
   /// Somebody said this party pays the check: its money counts for them in the guest list.
   final bool pays;
 
+  /// The points the party's guest has now (docs/points.md): a count, and nothing else of them. Null where
+  /// no rate was ever set, for a party that left no number, and from a hub older than points.
+  final int? points;
+
   /// Whether there is anything of this party to show.
   bool get says => name.isNotEmpty || note.isNotEmpty || tags.isNotEmpty;
 
@@ -75,10 +81,11 @@ class SeatedParty {
       other.key == key &&
       other.listed == listed &&
       other.pays == pays &&
+      other.points == points &&
       listEquals(other.tags, tags);
 
   @override
-  int get hashCode => Object.hash(name, size, note, booked, key, listed, pays, Object.hashAll(tags));
+  int get hashCode => Object.hash(name, size, note, booked, key, listed, pays, points, Object.hashAll(tags));
 }
 
 /// The guests of one table's check: the parties seated on it, the first to sit first, and their tags

@@ -32,6 +32,7 @@ import 'orders_ahead.dart';
 import 'paid_checks.dart';
 import 'prep_list.dart';
 import 'phone.dart';
+import 'points.dart';
 import 'powers.dart';
 import 'pricing.dart';
 import 'printers.dart';
@@ -1305,6 +1306,31 @@ class PosApi {
   /// with no such key.
   Future<AddressListTry> tryAddressList(String token) async => AddressListTry.fromJson(
     await _post('/settings/address_list/try', const <String, dynamic>{}, headers: _bearer(token)),
+  );
+
+  /// The rules of the points as the location has them (docs/points.md): how many points a dollar earns,
+  /// what earns and how long points last. Nobody earns until somebody sets a rate. Null from a hub older
+  /// than points.
+  Future<PointsRules?> pointsRules() async {
+    try {
+      return PointsRules.fromJson(await _get('/settings/points'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets the rules of the points. What earns counts from today: a
+  /// check of an earlier day keeps what it earned. It writes the setting and nothing else. Throws
+  /// [ApiException] 422 `bad_value` with the hub's words for a rate or a number of days it does not take.
+  Future<PointsRules> savePoints(String token, PointsChange change) async => PointsRules.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/points'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(change.toJson()),
+      ),
+    ),
   );
 
   /// The one-tap notes as this terminal last read them, for a dish's sheet opened before the hub answers

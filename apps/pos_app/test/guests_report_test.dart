@@ -302,7 +302,8 @@ void main() {
       final same = [one('beth', '3'), one('Adam', '2'), one('Carl', '1', day: 9), one('Dora', '4', visits: 3)];
       expect([for (final guest in sortedGuests(same, GuestSort.spent)) guest.name], ['Dora', 'Carl', 'Adam', 'beth']);
       expect([for (final guest in sortedGuests(same, GuestSort.latest)) guest.name], ['Carl', 'Dora', 'Adam', 'beth']);
-      expect(GuestSort.values.map((sort) => sort.words), ['Spent', 'Visits', 'Latest']);
+      // by points too, where the list says points (docs/points.md, test/points_test.dart)
+      expect(GuestSort.values.map((sort) => sort.words), ['Spent', 'Visits', 'Latest', 'Points']);
     });
 
     test('a guest is found by the words of their name, or by digits of their number', () {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../day_report.dart' show dollars, kindLabel;
 import '../guests_report.dart';
+import '../points.dart';
 import '../sales_report.dart' show Change;
 import 'check_history_screen.dart';
 import 'guest_edit_dialog.dart';
@@ -23,7 +24,9 @@ import 'who_paid.dart';
 /// says so in place of visits and money, and their tags and note are changed like anybody's. One more thing
 /// is said from here: who paid a check that several guests sat on, where nobody tapped it on the check
 /// (`who_paid.dart`). The list says how many such checks wait, and a visit at such a table opens its check's
-/// guests.
+/// guests. Where the owner set a rate (docs/points.md), the list says each guest's points too: beside the
+/// guest, as an order to put the list in, and under an open guest with what each visit earned. Until a
+/// rate is set there is no word about points anywhere on it.
 class GuestsScreen extends StatefulWidget {
   const GuestsScreen({super.key, required this.api, required this.token});
 
@@ -79,6 +82,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
     final report = _report;
     // a tag nobody of the list carries any more is no list to stay on
     if (report != null && _tag != null && report.carried.every((tag) => tag.tag != _tag)) _tag = null;
+    // and points are an order to stand in only where the list says points
+    if (report != null && _sort == GuestSort.points && !report.hasPoints) _sort = GuestSort.spent;
     _shown = report == null
         ? const []
         : sortedGuests(guestsNamed(guestsTagged(guestsOf(report.everyone, _list), _tag), _find.text), _sort);
@@ -235,6 +240,18 @@ class _GuestsScreenState extends State<GuestsScreen> {
       ' A guest who carries a tag and has no order in that time is listed too, after the others: nothing of '
       'theirs is in the visits or in what the guests spent.';
 
+  /// The rules the points were earned by, for the line under their sum: "1 point a dollar · they last a
+  /// year", or that nobody earns now.
+  static String _pointsRule(PointsRules rules) => [
+    rules.on ? rateWords(rules.earning.perDollar) : 'nobody earns now',
+    'they last ${lastWords(rules.days)}',
+  ].join(' · ');
+
+  /// What the foot of the list says about points, where the list says points.
+  static String _pointsNote(PointsRules rules) =>
+      ' Points are earned by the guest who pays a check, once it is closed, at the rate of its day; a '
+      'check\'s points count for ${lastWords(rules.days)} from its day.';
+
   /// What a list means, in the hub's own numbers.
   String _meaning(GuestsReport report) => switch (_list) {
     GuestList.all => '',
@@ -347,6 +364,15 @@ class _GuestsScreenState extends State<GuestsScreen> {
           strong: true,
           underWide: true,
         ),
+        if (report.hasPoints)
+          ReportLine(
+            key: const ValueKey('guests-points'),
+            'Their points',
+            _many(totals.points),
+            under: _pointsRule(report.points!),
+            strong: true,
+            underWide: true,
+          ),
         if (report.saysPaid && report.waiting > 0)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -391,10 +417,11 @@ class _GuestsScreenState extends State<GuestsScreen> {
           style: const ButtonStyle(visualDensity: VisualDensity.compact),
           segments: [
             for (final sort in GuestSort.values)
-              ButtonSegment(
-                value: sort,
-                label: Text(sort.words, key: ValueKey('guests-by:${sort.name}')),
-              ),
+              if (sort != GuestSort.points || report.hasPoints)
+                ButtonSegment(
+                  value: sort,
+                  label: Text(sort.words, key: ValueKey('guests-by:${sort.name}')),
+                ),
           ],
           selected: {_sort},
           onSelectionChanged: (picked) => _relay(() => _sort = picked.first),
@@ -532,6 +559,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
               key: ValueKey('guest-rate:${listed.phone}'),
               style: small,
             ),
+            if (report.hasPoints)
+              Text(_pointsOf(guest, detail), key: ValueKey('guest-points:${listed.phone}'), style: small),
             if (guest.favourites.isNotEmpty) ...[
               label('Favourite dishes'),
               for (final dish in guest.favourites)
@@ -575,7 +604,11 @@ class _GuestsScreenState extends State<GuestsScreen> {
                   ].join(' · '),
                   // a visit at a table somebody else paid says so where its money would stand
                   visit.unpaidWords ?? dollars(visit.net),
-                  under: visit.dishWords,
+                  // what the visit earned the guest, or why nothing, where the list says points
+                  under: [
+                    if (visit.dishWords.isNotEmpty) visit.dishWords,
+                    if (report.hasPoints) ?visit.pointsSaid,
+                  ].join(' · '),
                   underWide: true,
                 ),
               ),
@@ -598,6 +631,18 @@ class _GuestsScreenState extends State<GuestsScreen> {
         ],
       ),
     );
+  }
+
+  /// What an open guest's line says of their points: how many, and of those the ones that stop counting
+  /// first with their last day.
+  String _pointsOf(Guest guest, GuestDetail? detail) {
+    if (guest.points <= 0) return 'No points now';
+    final next = detail?.pointsNext;
+    if (next == null) return pointsWords(guest.points);
+    final until = _dayWords(next.until); // with its year when that is not this one
+    return next.points >= guest.points
+        ? '${pointsWords(guest.points)} · they count until $until'
+        : '${pointsWords(guest.points)} · ${_many(next.points)} of them count until $until';
   }
 
   Widget _guest(BuildContext context, Guest guest, int rank, GuestsReport report) {
@@ -643,6 +688,7 @@ class _GuestsScreenState extends State<GuestsScreen> {
                           if (guest.name.isNotEmpty) guest.number,
                           guest.ordered ? 'last ${_dayWords(guest.last)}' : _noOrder(guest, report),
                           if (guest.isNew) 'new',
+                          if (report.hasPoints && guest.points > 0) pointsWords(guest.points),
                         ].join(' · '),
                         change: standing,
                         underWide: true,
@@ -715,7 +761,8 @@ class _GuestsScreenState extends State<GuestsScreen> {
                 '${report.lapsedDays} days. A new guest placed their first order ever in the last '
                 '${report.newDays} days.'
                 '${report.keeps ? ' Open a guest to put a tag on them or to write their note.' : ''}'
-                '${report.tagged.isEmpty ? '' : _taggedToo}',
+                '${report.tagged.isEmpty ? '' : _taggedToo}'
+                '${report.hasPoints ? _pointsNote(report.points!) : ''}',
                 key: const ValueKey('guests-note'),
                 style: small,
               ),
