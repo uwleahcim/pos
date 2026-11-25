@@ -434,9 +434,18 @@ def test_a_manager_types_mapbox_s_and_azure_maps_keys_and_the_list_of_addresses_
     gone = {key["name"]: key for key in api.delete("/hub/keys/maps_mapbox", headers=auth).json()["keys"]}
     assert (gone["maps_mapbox"]["set"], gone["maps_mapbox"]["removed"]) == (False, True)
     assert suggester.names == ["google", "azure"]
-    # the delivery's distance is asked of neither: they are for the list of addresses alone
+    # the hub has them for a delivery's drive too, with the same keys and without a restart; neither is asked
+    # it until a manager turns it on (tests/orders/test_drive_lookups.py)
     status = api.get("/maps/status").json()
     assert status["service"] == "google" and status["fallback"] is None
+    assert [one["service"] for one in status["others"]] == ["azure"]
+    assert [(one["name"], one["key"], one["asks"]) for one in status["distance"]] == [
+        ("geocodio", False, False),
+        ("google", True, True),
+        ("mapbox", False, False),
+        ("azure", True, False),
+    ]
+    assert api.get("/settings/delivery_fee").json()["services"] == ["google"]
 
 
 def test_mapbox_s_and_azure_maps_keys_can_stand_in_the_hub_s_own_file():

@@ -85,7 +85,7 @@ from ..keys import (
     UnknownKey,
     slot_for,
 )
-from ..maps import Lookups, fallback_from_env, maps_from_env
+from ..maps import Lookups, fallback_from_env, maps_from_env, others_from_env
 from ..online.accounts import MAIN, SETTING, Account, account_of_slot, accounts_of, clean_accounts, name_of, new_id
 from ..online.gloriafood import GloriaFood
 from ..online.service import OnlineOrders
@@ -219,9 +219,10 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
     # a further account's key (`online:<id>`) is GloriaFood's like the first
     wanted = {ONLINE if account_of_slot(name) else name for name in (SLOTS if names is None else names)}
     env = await run_in_threadpool(keys.environ)
-    if wanted & {MAPS, MAPS_GOOGLE}:
+    if wanted & {MAPS, MAPS_GOOGLE, MAPS_MAPBOX, MAPS_AZURE}:
+        # Mapbox and Azure Maps can be asked the drive too, with the keys the list of addresses uses
         lookups: Lookups = app.state.lookups
-        lookups.use(maps_from_env(env), fallback_from_env(env))
+        lookups.use(maps_from_env(env), fallback_from_env(env), *others_from_env(env))
     if wanted & {MAPS, MAPS_GOOGLE, MAPS_MAPBOX, MAPS_AZURE}:
         # the list of addresses asks with Google's key too, and with Mapbox's and Azure Maps' after it
         app.state.suggester.use(*services_from_env(env))

@@ -297,15 +297,18 @@ case "${1:-status}" in
   maps)
     # hubctl maps key                puts a map service's key on the hub (asked for and not shown, never on the command line), restarts the API
     # hubctl maps google             puts a Google Maps key on the hub the same way: Google is asked when the first service gives no distance
-    # hubctl maps status             whether the hub has a key, whether the restaurant's own address is set, how often it asked today
-    #                                and how often it did not have to (a customer's own earlier order said how far); the same of Google,
-    #                                and whether live traffic is on and how often the roads were asked about
+    # hubctl maps status             the map services in the order they are asked how far a delivery goes (Geocodio, Google, Mapbox,
+    #                                Azure Maps, as the app's Location, Delivery fee has them): of each whether it is on and has a key,
+    #                                and how often it was asked today, of how many; the same for the drive right now, and whether
+    #                                live traffic is on; how often nobody had to be asked (a customer's own earlier order said how
+    #                                far); whether the restaurant's own address is set;
     #                                and of each map service the list of addresses while typing can ask (Google, then Mapbox, then
     #                                Azure Maps; their keys are typed in the app): whether it is on, and how often it was asked
     #                                this month, of how many
     # hubctl maps test "<address>"   asks how far an address is, as a delivery's form does, and says which service answered;
     #                                where live traffic is on, also how long the drive is right now
-    # hubctl maps test google "<address>"   asks Google alone, to try its key (geocodio in its place asks the first alone)
+    # hubctl maps test google "<address>"   asks Google alone, to try its key, whether it is turned on or not (geocodio, mapbox
+    #                                or azure in its place asks that one alone; Mapbox's and Azure Maps' keys are typed in the app)
     # hubctl maps forget             removes the first service's key
     # hubctl maps forget google      removes Google's key
     unset_env() {
@@ -329,9 +332,17 @@ case "${1:-status}" in
     }
     maps_status() {
       curl -fsS http://127.0.0.1:8000/maps/status 2> /dev/null | jq -r '
-        (if .configured then "map service: \(.service); asked \(.asked_today) times today (at most \(.daily_most)), \(.failed_today) gave no distance" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "map service: none (hubctl maps key)" end),
-        (if .fallback then "second map service: \(.fallback.service), asked when the first gives no distance; asked \(.fallback.asked_today) times today (at most \(.fallback.daily_most)), \(.fallback.failed_today) gave no distance" + (if .fallback.last_failure then " (last: \(.fallback.last_failure))" else "" end) elif .configured and has("fallback") and .service != "google" then "second map service: none (hubctl maps google)" else empty end),
-        (if .traffic then "live traffic for the promised time: " + (if .traffic.enabled then "on" else "off (in the app: Location, Live traffic)" end) + "; \(.traffic.service) was asked about the roads \(.traffic.asked_today) times today (at most \(.traffic.daily_most)), \(.traffic.failed_today) gave no answer" + (if .traffic.last_failure then " (last: \(.traffic.last_failure))" else "" end) else empty end),
+        def stands(what; where): if .key | not then "no key on the hub (in the app: Location, Keys and connections)" elif .on then "on; asked \(.asked_today) times today (at most \(.daily_most), \(.left) left), \(.failed_today) gave no \(what)" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "off (in the app: Location, \(where))" end;
+        (if has("distance") then
+          "how far a delivery goes, in the order the services are asked:",
+          (.distance | to_entries[] | "  \(.key + 1). \(.value.title): " + (.value | stands("distance"; "Delivery fee"))),
+          "live traffic for the promised time: " + (if .live then "on" else "off (in the app: Location, Live traffic)" end) + "; the drive right now, in the order the services are asked:",
+          (.drive_now | to_entries[] | "  \(.key + 1). \(.value.title): " + (.value | stands("answer"; "Live traffic")))
+        else
+          (if .configured then "map service: \(.service); asked \(.asked_today) times today (at most \(.daily_most)), \(.failed_today) gave no distance" + (if .last_failure then " (last: \(.last_failure))" else "" end) else "map service: none (hubctl maps key)" end),
+          (if .fallback then "second map service: \(.fallback.service), asked when the first gives no distance; asked \(.fallback.asked_today) times today (at most \(.fallback.daily_most)), \(.fallback.failed_today) gave no distance" + (if .fallback.last_failure then " (last: \(.fallback.last_failure))" else "" end) elif .configured and has("fallback") and .service != "google" then "second map service: none (hubctl maps google)" else empty end),
+          (if .traffic then "live traffic for the promised time: " + (if .traffic.enabled then "on" else "off (in the app: Location, Live traffic)" end) + "; \(.traffic.service) was asked about the roads \(.traffic.asked_today) times today (at most \(.traffic.daily_most)), \(.traffic.failed_today) gave no answer" + (if .traffic.last_failure then " (last: \(.traffic.last_failure))" else "" end) else empty end)
+        end),
         ((.suggests // [.suggest // empty]) | to_entries[] | .key as $place | .value | "the list of addresses while typing" + (if $place == 0 then "" else ", when the one before it gives no list" end) + ": \(.service), " + (if .enabled then "on" else "off (in the app: Location, Address list)" end) + (if .monthly_most != null then "; asked \(.asked_month) times this month (at most \(.monthly_most), \(.left) left), \(.asked_today) today" else "; asked \(.asked_today) times today (at most \(.daily_most))" end) + ", \(.failed_today) gave no list" + (if .last_failure then " (last: \(.last_failure))" else "" end) + (if .resting then "; left alone for a moment after it gave no answer" else "" end) + (if .placed == true then "; knows where the restaurant is" elif .placed == false then "; does not know where the restaurant is yet" else "" end)),
         (if .configured and .saved_today != null then "not asked, because the customer\u0027s own earlier order said how far: \(.saved_today) times today" else empty end),
         (if .origin_set then "the restaurant\u0027s own address: set" else "the restaurant\u0027s own address: not set (in the app: Location, Delivery fee)" end)' || echo "the API is not answering, or is older than the lookup (hubctl update)"
@@ -375,10 +386,10 @@ case "${1:-status}" in
       test)
         # with a service's name before the address, that service alone is asked
         case "${3:-}" in
-          geocodio | google) via="$3" address="${4:-}" ;;
+          geocodio | google | mapbox | azure) via="$3" address="${4:-}" ;;
           *) via="" address="${3:-}" ;;
         esac
-        [[ -n "$address" ]] || { echo 'usage: hubctl maps test [geocodio|google] "<address>"' >&2; exit 2; }
+        [[ -n "$address" ]] || { echo 'usage: hubctl maps test [geocodio|google|mapbox|azure] "<address>"' >&2; exit 2; }
         jq -n --arg address "$address" --arg via "$via" '{address: $address} + (if $via == "" then {now: true} else {via: $via} end)' \
           | curl -sS -X POST -H 'content-type: application/json' -d @- http://127.0.0.1:8000/delivery/distance \
           | jq -r 'if (.detail | type) == "object" then .detail.message elif .detail then (.detail | tostring) else "\(.miles) mi, \(.minutes) min" + (if .band then ": $\(.band.fee) (up to \(.band.up_to) \(.by))" elif .beyond then ": further than the prices reach" else ": no fee is charged" end) + (if .credit then " [\(.credit)]" elif .service then " [\(.service)]" else "" end) + (if .drive_now then "; the drive right now: \(.drive_now.minutes) min" + (if .drive_now.credit then " [\(.drive_now.credit)]" else "" end) else "" end) end'
@@ -404,7 +415,7 @@ case "${1:-status}" in
         fi
         ;;
       *)
-        echo 'usage: hubctl maps key | google | status | test [geocodio|google] "<address>" | forget [google]' >&2
+        echo 'usage: hubctl maps key | google | status | test [geocodio|google|mapbox|azure] "<address>" | forget [google]' >&2
         exit 2
         ;;
     esac

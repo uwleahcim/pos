@@ -425,31 +425,37 @@ def _quiet(base: str) -> None:
         logger.addFilter(_unlogged)
 
 
-def _answered(ask: Callable[[], httpx.Response], *, who: str, nothing: Collection[int] = (404,)) -> Mapping[str, Any]:
+def _answered(
+    ask: Callable[[], httpx.Response],
+    *,
+    who: str,
+    nothing: Collection[int] = (404,),
+    what: str = "the address list's map service",
+) -> Mapping[str, Any]:
     """What a service answered, read. Raises LookupFailed for anything but an answer; `nothing` are the
     statuses this service says "no such address" with. The log says which service and how it went, and
-    never what it was asked."""
+    never what it was asked; `what` is what the log calls the asking."""
     try:
         answer = ask()
     except httpx.HTTPError as err:
-        log.warning("the address list's map service (%s) did not answer (%s)", who, type(err).__name__)
+        log.warning("%s (%s) did not answer (%s)", what, who, type(err).__name__)
         raise LookupFailed("unreachable") from None
     status = answer.status_code
     if status in (401, 403):  # a wrong key, the service not turned on for it, or billing not set up
-        log.warning("the address list's map service (%s) refused the key (%d)", who, status)
+        log.warning("%s (%s) refused the key (%d)", what, who, status)
         raise LookupFailed("refused", status)
     if status == 429:
-        log.warning("the address list's map service (%s) says the account is at its limit (%d)", who, status)
+        log.warning("%s (%s) says the account is at its limit (%d)", what, who, status)
         raise LookupFailed("limit", status)
     if status in nothing:
         raise LookupFailed("not_found", status)
     if status >= 400:
-        log.warning("the address list's map service (%s) answered %d", who, status)
+        log.warning("%s (%s) answered %d", what, who, status)
         raise LookupFailed("unreachable", status)
     try:
         data = answer.json()
     except ValueError:
-        log.warning("the address list's map service's (%s) answer could not be read", who)
+        log.warning("%s (%s) gave an answer that could not be read", what, who)
         raise LookupFailed("unreachable") from None
     return data if isinstance(data, Mapping) else {}
 
@@ -1003,6 +1009,30 @@ class Suggester:
             with self._lock:
                 listing.rests_until = 0.0
         return told
+
+    def spend(self, name: str, askings: int) -> bool:
+        """Counts askings of a service's search that something else on the hub is about to make, against the
+        same month's free amount as the list's own (`pos.roads`: where a delivery's address stands, before
+        Mapbox or Azure Maps can say the drive to it). False where the month has no room for them, and they
+        are then not made. Counted the same whether the hub lists with that service or not."""
+        if askings <= 0:
+            return True
+        with self._lock:
+            self._turned()
+            listing = next((one for one in self._listings if one.service.name == name), None)
+            most = listing.monthly if listing is not None else self.most(name)
+            had = listing.month if listing is not None else self._counts.of(self._month).get(name, 0)
+            if had + askings > most:
+                return False
+            counted = self._counts.add(name, self._month, askings)
+            if counted > most:  # the other hub asked meanwhile
+                self._counts.add(name, self._month, -askings)
+                if listing is not None:
+                    listing.month = max(listing.month, counted - askings)
+                return False
+            if listing is not None:
+                listing.month = max(listing.month + askings, counted)
+            return True
 
     def place_with(self, placer: Callable[[str], tuple[float, float] | None] | None) -> None:
         """Who says where the restaurant stands for a service that is never asked that itself (Mapbox):

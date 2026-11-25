@@ -47,7 +47,17 @@ HOME = "1 Restaurant Row, Winchester, MA"
 OAK = "4 Oak Rd, Woburn, MA"
 LINDA = "(781) 555-0142"
 FROM_HOME = origin_mark(HOME)
-SAID = {"service": "atlas", "credit": None, "keep": True, "from": FROM_HOME, "saved": False, "drive_now": None}
+SAID = {
+    "service": "atlas",
+    "credit": None,
+    "keep": True,
+    "from": FROM_HOME,
+    "saved": False,
+    "drive_now": None,
+    # for the badge beside the figures: what a screen calls the service, and its day's most
+    "title": "atlas",
+    "daily_most": 500,
+}
 """What an answer says beside the distance when the service was asked."""
 MARKS = {"service": "atlas", "from": FROM_HOME}
 """Who measured a distance and from where, as a form sends it back with its pick."""
@@ -139,6 +149,7 @@ def test_an_address_is_told_how_far_it_is_and_the_band_it_falls_in():
         "band": {"up_to": "4.5", "fee": "5.00"},
         "beyond": False,
         **SAID,
+        "left": 499,  # of the day's 500, by the hub's own count
     }
     # only the two addresses went out: where it starts and where it goes
     assert atlas.asked == [(HOME, ELM)]
@@ -236,12 +247,25 @@ def test_the_hub_asks_no_more_in_a_day_than_it_was_told_to():
         "daily_most": 3,
         "last_failure": "limit",
         "fallback": None,
+        "others": [],
         "traffic": None,
+        "traffics": [],
         "origin_set": True,
         # the list of addresses while typing: no key for any of its services on this hub (test_address_list.py)
         "suggest": None,
         "suggests": [],
+        # every service a location can order, for the distance and for the drive right now
+        # (test_drive_lookups.py): this hub has a key for none of them
+        "distance": status["distance"],
+        "drive_now": status["drive_now"],
+        "live": False,
     }
+    assert [(one["name"], one["key"]) for one in status["distance"]] == [
+        ("geocodio", False),
+        ("google", False),
+        ("mapbox", False),
+        ("azure", False),
+    ]
     assert "Elm" not in str(status)  # no address is in it
     now[0] += 24 * 3600
     assert far(c, "5 Elm St").status_code == 200
@@ -362,6 +386,9 @@ def test_a_customer_who_orders_again_to_the_same_address_is_not_looked_up():
         "from": FROM_HOME,
         "saved": True,
         "drive_now": None,
+        "title": "atlas",
+        "left": 500,  # nobody was asked
+        "daily_most": 500,
     }
     assert atlas.asked == []
     # the number and the address as anybody types them
@@ -508,6 +535,9 @@ def test_the_second_service_is_asked_only_when_the_first_gives_no_distance():
         "from": FROM_HOME,
         "saved": False,
         "drive_now": None,
+        "title": "Google Maps",
+        "left": 99,
+        "daily_most": 100,
     }
     # it is sent the two addresses too, and nothing else
     assert first.asked == [(HOME, ELM), (HOME, NEW)] and second.asked == [(HOME, NEW)]
@@ -527,6 +557,7 @@ def test_whatever_the_first_says_the_second_is_tried(reason):
         "asked_today": 1,
         "failed_today": 0,
         "daily_most": 100,
+        "left": 99,
         "last_failure": None,
     }
 
@@ -563,6 +594,7 @@ def test_what_the_second_service_says_is_not_remembered_and_is_asked_no_more_tha
         "asked_today": 3,
         "failed_today": 0,
         "daily_most": 3,
+        "left": 0,
         "last_failure": "limit",
     }
     # what the first says is remembered for the day, as before
@@ -854,7 +886,16 @@ def test_only_a_manager_sets_it_and_the_minutes_are_whole_and_sane():
 def test_a_delivery_for_now_is_told_the_drive_as_it_is_and_the_fee_does_not_go_by_it():
     c, first, roads = jammed()
     told = far(c, now=True).json()
-    assert told["drive_now"] == {"minutes": 14, "before": 25, "credit": "Google Maps"}
+    assert told["drive_now"] == {
+        "minutes": 14,
+        "before": 25,
+        "credit": "Google Maps",
+        # who said it, and what it has left today, for the badge beside the figure
+        "service": "google",
+        "title": "Google Maps",
+        "left": 149,
+        "daily_most": 150,
+    }
     # the fee goes by the usual drive, as the first service measured it
     assert (told["miles"], told["minutes"], told["service"], told["keep"]) == ("3.2", 9, "atlas", True)
     assert told["band"] == {"up_to": "4.5", "fee": "5.00"}
@@ -914,6 +955,7 @@ def test_the_roads_are_asked_about_each_time_and_no_more_in_a_day_than_set():
         "asked_today": 2,
         "failed_today": 0,
         "daily_most": 2,
+        "left": 0,
         "last_failure": "limit",
         "enabled": True,
     }
