@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../address_list.dart';
 import '../api.dart';
-import 'fee_lookup.dart';
+import 'service_badge.dart';
 
 /// The list of addresses under a box that is being typed in, as a manager sets it for the location
-/// (docs/delivery.md, "A list of addresses while typing"): whether a map service is asked as well as the
+/// (docs/delivery.md, "A list of addresses while typing"): which map services are asked as well as the
 /// restaurant's own earlier deliveries. Saved on the hub; every screen lists by it from the next letter.
 ///
-/// It says what leaves the building when it is on, lets the manager try the service before turning it on,
-/// and says what is missing when the hub has no key for it.
+/// The services stand in the order they are asked: the first that is turned on and has a key, and the next
+/// one only once the one before it has used up its free lookups for the month, or is not answering. Each
+/// has its own switch, a line on how it stands (what it has left free this month, or that the hub has no
+/// key for it) and, where the hub has a key, a button that tries it before it is turned on.
 class AddressListDialog extends StatefulWidget {
   const AddressListDialog({super.key, required this.api, required this.token, required this.setting});
 
@@ -20,9 +22,18 @@ class AddressListDialog extends StatefulWidget {
   /// One line on the list for the Location screen.
   static String summary(AddressListSetting? setting) {
     if (setting == null) return 'The hub has not answered about the list of addresses (an older hub: update it)';
-    if (!setting.google) return 'Your own earlier deliveries are listed while an address is typed';
-    if (!setting.service) return 'On, but not used yet: this hub has no Google Maps key';
-    return 'Your own earlier deliveries, then ${setting.credit}, are listed while an address is typed';
+    final on = setting.on, asking = setting.asking;
+    if (on.isEmpty) return 'Your own earlier deliveries are listed while an address is typed';
+    if (asking.isEmpty) {
+      final missing = [for (final service in on) service.title].join(' or ');
+      return on.length == 1 && on.single.name == 'google'
+          ? 'On, but not used yet: this hub has no Google Maps key'
+          : 'On, but not used yet: this hub has no key for $missing';
+    }
+    final after = [for (final service in asking.skip(1)) service.title];
+    final first = 'Your own earlier deliveries, then ${asking.first.title}, are listed while an address is typed';
+    if (after.isEmpty) return first;
+    return '$first. ${after.join(' and ')} ${after.length == 1 ? 'takes' : 'take'} over when it gives no list';
   }
 
   @override
@@ -30,46 +41,51 @@ class AddressListDialog extends StatefulWidget {
 }
 
 class _AddressListDialogState extends State<AddressListDialog> {
-  late bool _google = widget.setting.google;
+  late final Map<String, bool> _on = {for (final service in widget.setting.services) service.name: service.on};
+
+  /// What the hub said the lookups left free are, where a try just told it anew.
+  final Map<String, int> _left = {};
+  final Map<String, ({String words, bool well})> _tried = {};
   String? _message;
-  String? _tried;
-  bool _triedWell = false;
-  bool _busy = false;
+  String? _busy; // the service that is being tried, or `save`
 
   Future<void> _save() async {
     setState(() {
-      _busy = true;
+      _busy = 'save';
       _message = null;
     });
     try {
-      final saved = await widget.api.saveAddressList(widget.token, AddressListSetting(google: _google));
+      final saved = await widget.api.saveAddressList(widget.token, widget.setting.turned(_on));
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (err) {
       if (mounted) {
         setState(() {
-          _busy = false;
+          _busy = null;
           _message = err.detail?['message'] as String? ?? err.message;
         });
       }
     }
   }
 
-  Future<void> _try() async {
+  Future<void> _try(AddressService service) async {
+    final who = service.title;
     setState(() {
-      _busy = true;
-      _tried = null;
+      _busy = service.name;
+      _tried.remove(service.name);
     });
     String said;
     var well = false;
+    int? left;
     try {
-      final tried = await widget.api.tryAddressList(widget.token);
+      final tried = await widget.api.tryAddressList(widget.token, service: service.name);
       well = tried.ok;
+      left = tried.left;
       said = tried.ok
           ? tried.found == 0
-                ? 'Google answered, and listed nothing for the restaurant\'s own address.'
-                : 'Google answered: it lists addresses for this hub.'
+                ? '$who answered, and listed nothing for the restaurant\'s own address.'
+                : '$who answered: it lists addresses for this hub.'
           : tried.message.isEmpty
-          ? 'Google gave no list.'
+          ? '$who gave no list.'
           : tried.message;
     } on ApiException catch (err) {
       said = err.status == null
@@ -78,10 +94,87 @@ class _AddressListDialogState extends State<AddressListDialog> {
     }
     if (!mounted) return;
     setState(() {
-      _busy = false;
-      _tried = said;
-      _triedWell = well;
+      _busy = null;
+      _tried[service.name] = (words: said, well: well);
+      if (left != null) _left[service.name] = left;
     });
+  }
+
+  /// One service: its place in the order and its name with the switch, how it stands, and the button that
+  /// tries it where the hub has a key for it.
+  Widget _service(BuildContext context, int place, AddressService service) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final on = _on[service.name] ?? false;
+    final left = _left[service.name];
+    final now = AddressService(
+      name: service.name,
+      title: service.title,
+      credit: service.credit,
+      on: on,
+      key: service.key,
+      left: left ?? service.left,
+      monthlyMost: service.monthlyMost,
+      usedUp: left == null ? service.usedUp : left < 1,
+      resting: service.resting && !(_tried[service.name]?.well ?? false),
+    );
+    final tried = _tried[service.name];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          key: ValueKey('address-list-${service.name}'),
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.trailing,
+          // the badge a list shows when this service answered it, with the same ring
+          secondary: ServiceBadge(
+            key: ValueKey('address-list-badge:${service.name}'),
+            service: service.name,
+            title: service.title,
+            share: !service.key || now.left == null || now.monthlyMost == null
+                ? null
+                : (now.left! / now.monthlyMost!).clamp(0.0, 1.0),
+            words: service.key ? now.words : null,
+          ),
+          value: on,
+          onChanged: (to) => setState(() => _on[service.name] = to),
+          title: Text('$place. ${service.title}'),
+          subtitle: Text(
+            now.words,
+            key: ValueKey('address-list-state:${service.name}'),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: service.key && (now.usedUp || (on && now.resting)) ? scheme.error : scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        if (service.key)
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                key: ValueKey('address-list-try:${service.name}'),
+                style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                onPressed: _busy != null ? null : () => _try(service),
+                icon: const Icon(Icons.play_arrow_outlined, size: 18),
+                label: const Text('Try it'),
+              ),
+              if (_busy == service.name)
+                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            ],
+          ),
+        if (tried != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              tried.words,
+              key: ValueKey('address-list-tried:${service.name}'),
+              style: theme.textTheme.bodyMedium?.copyWith(color: tried.well ? null : scheme.error),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -89,12 +182,13 @@ class _AddressListDialogState extends State<AddressListDialog> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
-    final service = widget.setting.service;
-    final name = widget.setting.credit;
+    final services = widget.setting.services;
+    final several = services.length > 1;
+    final any = _on.values.any((on) => on);
     return AlertDialog(
       title: const Text('Address list'),
       content: SizedBox(
-        width: 360,
+        width: 380,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -107,59 +201,33 @@ class _AddressListDialogState extends State<AddressListDialog> {
                 key: const ValueKey('address-list-says'),
                 style: theme.textTheme.bodyMedium,
               ),
-              const SizedBox(height: 4),
-              SwitchListTile(
-                key: const ValueKey('address-list-google'),
-                contentPadding: EdgeInsets.zero,
-                value: _google,
-                onChanged: (on) => setState(() => _google = on),
-                title: Text('Ask $name for new addresses'),
-                subtitle: Text(
-                  _google
-                      ? 'What is typed in an address box is sent to Google, from the fourth letter'
-                      : 'Off: nothing that is typed leaves the building',
-                ),
-              ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               Text(
-                !service
-                    ? 'This hub has no Google Maps key yet (Keys and connections, on this screen). It can be '
-                          'turned on now, and is used from the day the key is there. The key has to be allowed '
-                          'to use Places API (New).'
-                    : 'Google is sent the letters typed, and once the restaurant\'s own address so that streets '
-                          'nearby come first. Nothing else: no name, no phone number, nothing of the order. Its '
-                          'answers are shown with its name and are not kept. Google may charge for it beyond '
-                          'what it gives away each month, so the hub asks at most a few hundred times a day. '
-                          'The hub\'s Google key has to be allowed to use Places API (New).',
+                several
+                    ? 'For new addresses a map service is asked. They are asked in this order: the next one '
+                          'only once the one before it has used up its free lookups for the month, or is not '
+                          'answering.'
+                    : 'For new addresses a map service is asked.',
+                key: const ValueKey('address-list-order'),
+                style: theme.textTheme.bodyMedium,
+              ),
+              for (final (index, service) in services.indexed) ...[
+                if (index > 0) const Divider(height: 12),
+                _service(context, index + 1, service),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                !any
+                    ? 'All off: nothing that is typed leaves the building.'
+                    : 'Whichever is asked is sent the letters typed, from the fourth letter, and nothing else: '
+                          'no name, no phone number, nothing of the order. Google and Azure Maps are also asked '
+                          'once where the restaurant\'s own address is, so that streets nearby come first. '
+                          'Answers are shown with the service\'s name and are not kept. The hub counts what it '
+                          'asks and stops a little short of what each gives away free each month, so the list '
+                          'costs nothing. The line under a list says who answered and what it has left.',
                 key: const ValueKey('address-list-sent'),
                 style: quiet,
               ),
-              if (service) ...[
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    OutlinedButton.icon(
-                      key: const ValueKey('address-list-try'),
-                      onPressed: _busy ? null : _try,
-                      icon: const Icon(Icons.play_arrow_outlined, size: 18),
-                      label: const Text('Try it'),
-                    ),
-                    MapCredit(name, mark: const ValueKey('address-list-credit')),
-                  ],
-                ),
-                if (_tried != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      _tried!,
-                      key: const ValueKey('address-list-tried'),
-                      style: theme.textTheme.bodyMedium?.copyWith(color: _triedWell ? null : scheme.error),
-                    ),
-                  ),
-              ],
               if (_message != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -177,7 +245,7 @@ class _AddressListDialogState extends State<AddressListDialog> {
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
           key: const ValueKey('address-list-save'),
-          onPressed: _busy ? null : _save,
+          onPressed: _busy != null ? null : _save,
           child: const Text('Save'),
         ),
       ],

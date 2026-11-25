@@ -20,7 +20,9 @@ from pos.api.keys import use_keys, watch_keys
 from pos.identity.staff import Directory, Staff
 from pos.keys import (
     MAPS,
+    MAPS_AZURE,
     MAPS_GOOGLE,
+    MAPS_MAPBOX,
     ONLINE,
     PUSH_APPLE,
     HubKeys,
@@ -44,6 +46,8 @@ DSN = os.environ.get("POS_TEST_DATABASE_URL")
 GEOCODIO_KEY = "made-up-geocodio-key-0123456789abcd"
 GOOGLE_KEY = "AIzaMadeUpGoogleKey0123456789wxyz"
 FOOD_KEY = "made-up-gloriafood-key-9876"
+MAPBOX_KEY = "pk.madeUpMapboxTokenPart0123456789.madeUpEnding_qrst"
+AZURE_KEY = "MadeUpAzureMapsKey0123456789abcdefghijklmn"
 """Nobody's keys."""
 
 
@@ -130,6 +134,8 @@ def test_a_key_from_the_hub_s_own_file_is_in_force_and_shown_by_its_ending_only(
     assert [v["name"] for v in keys.views()] == [
         "maps",
         "maps_google",
+        "maps_mapbox",
+        "maps_azure",
         "online",
         "online_push",
         "online_tunnel",
@@ -191,6 +197,10 @@ def test_a_short_key_shows_nothing_of_itself():
         (MAPS, {"key": "too-short"}, "does not look like a key"),
         (MAPS, {"key": "has spaces inside it which a key never has!"}, "does not look like a key"),
         (ONLINE, {"key": "x" * 201}, "does not look like a key"),
+        (MAPS_MAPBOX, {"key": "MadeUpAzureMapsKey0123456789abcdefghijklmn"}, "a Mapbox token starts with pk."),
+        (MAPS_MAPBOX, {"key": "pk.only-one-part-of-a-token-0123456789"}, "a Mapbox token starts with pk."),
+        (MAPS_AZURE, {"key": "too-short-for-azure-maps"}, "letters and digits, 32 or more"),
+        (MAPS_AZURE, {"key": "pk.madeUpMapboxTokenPart0123456789.madeUpEnding_qrst"}, "32 or more"),
         (PUSH_APPLE, {"key": "hello", "key_id": "ABC123DEFG", "team_id": "N46M58VZD4"}, "not Apple's key file"),
     ],
 )
@@ -365,7 +375,7 @@ def test_a_manager_types_the_map_keys_and_the_hub_asks_with_them_at_once():
     api, _ = wired()
     auth = token(api)
     before = api.get("/hub/keys", headers=auth).json()
-    assert [key["set"] for key in before["keys"]] == [False] * 6 and before["kept"] is True
+    assert [key["set"] for key in before["keys"]] == [False] * 8 and before["kept"] is True
     assert api.get("/maps/status").json()["configured"] is False
     saved = api.put("/hub/keys/maps", json={"key": GEOCODIO_KEY}, headers=auth)
     assert saved.status_code == 200 and GEOCODIO_KEY not in saved.text
@@ -385,6 +395,59 @@ def test_a_manager_types_the_map_keys_and_the_hub_asks_with_them_at_once():
     assert (gone["set"], gone["removed"], gone["by"]) == (False, True, "Mike")
     status = api.get("/maps/status").json()
     assert status["service"] == "google" and status["fallback"] is None, "Google's key alone: the one service"
+
+
+def test_a_manager_types_mapbox_s_and_azure_maps_keys_and_the_list_of_addresses_has_them_to_ask():
+    api, keys = wired()
+    auth = token(api)
+    suggester = api.app.state.suggester
+    assert suggester.names == []
+    saved = api.put("/hub/keys/maps_azure", json={"key": f" {AZURE_KEY}\n"}, headers=auth)
+    assert saved.status_code == 200 and AZURE_KEY not in saved.text
+    assert suggester.names == ["azure"], "no restart"
+    saved = api.put("/hub/keys/maps_mapbox", json={"key": MAPBOX_KEY}, headers=auth)
+    assert saved.status_code == 200 and MAPBOX_KEY not in saved.text and "pk." not in saved.text
+    told = {key["name"]: key for key in saved.json()["keys"]}
+    assert (told["maps_mapbox"]["set"], told["maps_mapbox"]["source"], told["maps_mapbox"]["ending"]) == (
+        True,
+        "app",
+        "qrst",
+    )
+    assert (told["maps_azure"]["set"], told["maps_azure"]["ending"], told["maps_azure"]["by"]) == (True, "klmn", "Mike")
+    assert suggester.names == ["mapbox", "azure"], "in the order they are asked"
+    api.put("/hub/keys/maps_google", json={"key": GOOGLE_KEY}, headers=auth)
+    assert suggester.names == ["google", "mapbox", "azure"]
+    env = keys.environ()
+    assert (env["POS_MAPS_MAPBOX_KEY"], env["POS_MAPS_AZURE_KEY"]) == (MAPBOX_KEY, AZURE_KEY)
+    # the setting of the list says which of them the hub has a key for; each is off until a manager turns it on
+    listed = api.get("/settings/address_list").json()["services"]
+    assert [(one["name"], one["key"], one["on"]) for one in listed] == [
+        ("google", True, False),
+        ("mapbox", True, False),
+        ("azure", True, False),
+    ]
+    # a token that is none is refused in words that do not repeat it, and nothing changes
+    refused = api.put("/hub/keys/maps_mapbox", json={"key": "sk-not-a-mapbox-token-at-all-0000"}, headers=auth)
+    assert refused.status_code == 422 and "sk-not" not in refused.text and "starts with pk." in refused.text
+    assert suggester.names == ["google", "mapbox", "azure"]
+    # removed: nobody is asked with it any more, and the others stay
+    gone = {key["name"]: key for key in api.delete("/hub/keys/maps_mapbox", headers=auth).json()["keys"]}
+    assert (gone["maps_mapbox"]["set"], gone["maps_mapbox"]["removed"]) == (False, True)
+    assert suggester.names == ["google", "azure"]
+    # the delivery's distance is asked of neither: they are for the list of addresses alone
+    status = api.get("/maps/status").json()
+    assert status["service"] == "google" and status["fallback"] is None
+
+
+def test_mapbox_s_and_azure_maps_keys_can_stand_in_the_hub_s_own_file():
+    keys = hub({"POS_MAPS_MAPBOX_KEY": MAPBOX_KEY, "POS_MAPS_AZURE_KEY": AZURE_KEY})
+    mapbox, azure = keys.view(MAPS_MAPBOX), keys.view(MAPS_AZURE)
+    assert (mapbox["set"], mapbox["source"], mapbox["ending"]) == (True, "hub", "qrst")
+    assert (azure["set"], azure["source"], azure["ending"]) == (True, "hub", "klmn")
+    assert MAPBOX_KEY not in json.dumps(keys.views()) and AZURE_KEY not in json.dumps(keys.views())
+    keys.remove(MAPS_AZURE, by="Mike")
+    env = keys.environ()
+    assert env["POS_MAPS_MAPBOX_KEY"] == MAPBOX_KEY and "POS_MAPS_AZURE_KEY" not in env
 
 
 def test_a_manager_types_gloriafood_s_key_and_the_hub_has_someone_to_ask():
@@ -499,6 +562,8 @@ def test_a_manager_adds_a_second_gloriafood_account_and_the_hub_asks_both():
     assert [key["name"] for key in added.json()["keys"]] == [
         MAPS,
         MAPS_GOOGLE,
+        MAPS_MAPBOX,
+        MAPS_AZURE,
         ONLINE,
         "online_push",
         "online_tunnel",

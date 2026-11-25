@@ -15,7 +15,8 @@ and a customer who orders again to the same address is not looked up a second ti
 [Customers who order again](#customers-who-order-again)). Where a manager turned it on, a delivery for now
 is promised by the roads as they are at that minute (see [Live traffic](#live-traffic)). While an address
 is typed, a list under the box says what it could become, the restaurant's own earlier deliveries first
-(see [A list of addresses while typing](#a-list-of-addresses-while-typing)).
+(see [A list of addresses while typing](#a-list-of-addresses-while-typing)), with Mapbox and Azure Maps
+behind Google once its free lookups are used up.
 Nothing else here is about money: there is no tip yet, and a delivery is a sale like any other, counted in
 every report as a to-go order is.
 
@@ -443,13 +444,24 @@ Delivery fee.
 - **The customer's own lead the list.** With their number on the form, the addresses they had deliveries
   brought to before stand at the top, with a small person on a pin before each. Another customer's address
   has a clock arrow before it and is listed as an address and nothing else: no name, no number.
-- **Google Maps comes after them, where a manager turned that on**
+- **A map service comes after them, where a manager turned that on**
   ([Turning Google on for the list](#turning-google-on-for-the-list)). It is for an address the restaurant
-  never delivered to. Its lines have a pin before them, the street in bold and the town beside it, and the
-  words **Google Maps** stand under the list.
+  never delivered to. Its lines have a pin before them, the street in bold and the town beside it.
+- **Google Maps is asked first; Mapbox and Azure Maps take over** once Google's free lookups for the month
+  are used up, or while Google is not answering, each where it has a key and is turned on
+  ([Mapbox and Azure Maps behind Google](#mapbox-and-azure-maps-behind-google)). One service answers a
+  list, never two.
+- **Who answered stands at the top of the list**: a tiny round badge with the service's letter (G, M or A)
+  and a ring around it for how much of that service's free lookups are left this month, and its name
+  beside it ("Google Maps", "© Mapbox © OpenStreetMap", "Azure Maps"). The ring is whole at the start of a
+  month and unwinds counter-clockwise to twelve o'clock as lookups are used, like a table's countdown on
+  the floor plan; it turns amber when a fifth is left and red when nearly none is. A tap on the badge (or
+  the mouse over it) says it in words: "Mapbox: 94,988 of 95,000 free lookups left this month". The badge
+  stands under the box, in the column of the lines' little pictures, so it does not move while the list
+  and its addresses change.
 - **The list comes once the typing pauses**, about a third of a second: from the second letter for your
-  own deliveries, from the fourth for Google. Six lines at most. When Google adds its own, three of yours
-  stand above them.
+  own deliveries, from the fourth for a map service. Six lines at most. When a map service adds its own,
+  three of yours stand above them.
 - **How the letters are read.** Every word typed in full has to be a word of the address, and the word
   still being typed has to begin one. "12 el" lists 12 Elm St and not 120 Elmwood Ave. "elm" lists every
   Elm Street the restaurant went to, whatever the number. An address that begins with what was typed comes
@@ -464,12 +476,12 @@ Delivery fee.
   customer's last one, is not asked about.
 - **The box stays in sight.** The form scrolls the list up into view under the box. On a screen too short
   for both, the box goes to the top and the list shows as far as there is room; the rest is a scroll away.
-- **A list is a help and no more.** When the hub or Google does not answer there is no list and no word
-  about it, and the address is typed in full as before. A list never holds a form up, and never makes a
+- **A list is a help and no more.** When the hub or the map services do not answer there is no list and
+  no word about it, and the address is typed in full as before. A list never holds a form up, and never makes a
   screen turn away from its hub.
-- **Google is not asked** about fewer than four letters, about a number alone ("12"), or about an address
-  the restaurant already has in full.
-- **The restaurant's own address** lists Google's answers alone, where Google is on. No customer's address
+- **No map service is asked** about fewer than four letters, about a number alone ("12"), or about an
+  address the restaurant already has in full.
+- **The restaurant's own address** lists a map service's answers alone, where one is on. No customer's address
   is offered for it.
 - **A delivery taken now is on the list about a minute later**, for the next customer in the same street.
 - **An address that was tapped is the customer's address**, typed with fewer letters. It goes on the order
@@ -477,23 +489,31 @@ Delivery fee.
 
 ### What the list sends out
 
-- **With Google off, nothing.** The list is made on the hub from the restaurant's own orders.
-- **With Google on, the letters typed in an address box**, from the fourth letter, each time the typing
-  pauses. Nothing else: no name, no phone number, nothing of an order.
+- **With every map service off, nothing.** The list is made on the hub from the restaurant's own orders.
+- **With one on, the letters typed in an address box**, from the fourth letter, each time the typing
+  pauses, to the one service whose turn it is. Nothing else: no name, no phone number, nothing of an order.
 - **The customer's phone number stays on the hub.** The form sends it with the letters so the hub can put
-  that customer's own addresses first. It is never sent to Google.
-- **The restaurant's own address, once**, so that Google lists streets nearby first. Google answers where
-  that is, and the hub keeps it in memory for under thirty days and writes it nowhere. (Until Google
-  answered, it goes by where the hub's internet connection is.)
-- **What Google answers is shown and then gone.** The hub keeps none of it, and neither does the app. Its
-  terms do not let a list be kept.
-- **The key travels in a header of the request, and the letters in its body**, never in an address a log
-  could show. The hub's log names no address and no key.
+  that customer's own addresses first. It is never sent to a map service.
+- **The restaurant's own address, once, to Google and to Azure Maps**, so that streets nearby come first.
+  Each answers where that is, and the hub keeps it in memory for under thirty days and writes it nowhere.
+  (Until then Google goes by where the hub's internet connection is, and Azure Maps by the whole country.)
+  Mapbox is never told it: its terms let none of its answers be kept, so it always goes by where the hub's
+  internet connection is.
+- **What a service answers is shown and then gone.** The hub keeps none of it, and neither does the app.
+  Their terms do not let a list be kept.
+- **Keys and letters.** Google's key travels in a header and the letters in the body of the request. Azure
+  Maps' key travels in a header and the letters in the address of the request; Mapbox takes both, the token
+  and the letters, in the address of the request alone. The hub keeps every one of those requests out of
+  its log: the log names no address and no key.
+- **The hub counts how often it asked each service this month**, in its database: the service's name, the
+  month and a number, nothing else.
 - **Anybody on the restaurant's network can ask the hub for a list**, as for a distance. The answer holds
   addresses and no names. With a phone number sent along it also says which of them were that customer's,
   like the card a form shows for a number.
-- **Google keeps its own records** of what it is asked, under its own terms
-  (<https://cloud.google.com/maps-platform/terms>) and privacy policy (<https://policies.google.com/privacy>).
+- **Each service keeps its own records** of what it is asked, under its own terms: Google
+  (<https://cloud.google.com/maps-platform/terms>, <https://policies.google.com/privacy>), Mapbox
+  (<https://www.mapbox.com/legal/tos>, <https://www.mapbox.com/legal/privacy>) and Microsoft for Azure Maps
+  (<https://www.microsoft.com/licensing/terms>, <https://privacy.microsoft.com>).
 
 ### Turning Google on for the list
 
@@ -516,35 +536,114 @@ The Google account and its card are the owner's. What follows is what Google's o
    lists addresses for this hub." says the key works. "Google refused the hub's key. Is Places API (New)
    turned on for it?" says step 2 or 3 is not done, or that Google needs a few more minutes. Trying asks
    Google about the restaurant's own address, never a customer's, and turns nothing on.
-5. **Turn on "Ask Google Maps for new addresses"** and **Save**. From the next letter typed, every screen
-   lists Google's answers under your own.
+5. **Turn on "1. Google Maps"** and **Save**. From the next letter typed, every screen lists Google's
+   answers under your own.
+
+The dialog lists the three services in the order they are asked, each with its own switch, its badge, a
+line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No key on this hub yet",
+"Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
 
 The row under Location says how it stands: "Your own earlier deliveries are listed while an address is
-typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed". On a hub
-with no Google key the switch can be turned on all the same and is used from the day the key is there; the
-row then says "On, but not used yet: this hub has no Google Maps key".
+typed", or "Your own earlier deliveries, then Google Maps, are listed while an address is typed. Mapbox and
+Azure Maps take over when it gives no list". On a hub with no key for a service its switch can be turned
+on all the same and is used from the day the key is there; the row then says "On, but not used yet: this
+hub has no Google Maps key".
 
-Turning it off is the same switch. Nothing typed leaves the building from then on.
+Turning one off is the same switch. With all three off, nothing typed leaves the building.
 
-`sudo hubctl maps status` has a line for it: "the list of addresses while typing: asks google too; asked
-212 times today (at most 300), 1 gave no list".
+### Mapbox and Azure Maps behind Google
 
-**What it costs.** Google's price list said on 2026-11-25 that the first 10,000 of these requests in a
-month are free and each 1,000 after that are $2.83. Google counts every time a list is asked for, which
-is every pause in the typing, so one new address is often three or four. The hub asks at most 300 times a
-day (`POS_MAPS_SUGGEST_DAILY` in `/opt/pos/.env`), about 9,000 a month, which stays inside the free
-10,000. Past the day's 300 the list holds your own deliveries alone until the next day. A restaurant that
-runs out raises the number and pays Google for what goes over. A day's limit set on Google's side
-(**Google Maps Platform › Quotas**) holds whatever the hub does.
+Google gives a set number of lookups away each month. Once those are used up, or while Google is not
+answering, the hub asks **Mapbox**, and after it **Azure Maps** (the owner's words, 2026-11-25: they are a
+fall back once the free Google usage is used up, or if Google is down). The order is fixed: Google, Mapbox,
+Azure Maps. A service that is off, or that the hub has no key for, is passed over.
 
-**Google's rules.** Its name stands under every list that holds one of its answers, and nothing it answers
-is kept (<https://developers.google.com/maps/documentation/places/web-service/policies>). The rule about
-terms of use and a privacy policy the public can read
-([above](#google-maps-as-the-second-service)) is in these rules too. Whether and how it applies is the
-owner's to settle, with a lawyer where in doubt. Nothing here is legal advice.
+- **The next one is asked only when the one before it gave no answer**: its month is used up, it did not
+  answer within two seconds, it refused the key, or it said itself that it is asked too often. A service
+  that answers with no address has answered, and nobody else is asked about the same letters.
+- **A service that gave no answer is left alone for a while**: a minute when it did not answer, five when
+  it refused the key or said it was asked too often. Somebody typing does not wait for it again at every
+  letter. **Try it** asks it all the same, and an answer ends the wait.
+- **All of them together are waited for no longer than three and a half seconds**, inside the four a form
+  waits for the hub. Past that the list holds your own deliveries alone.
+- **Mapbox's "Address Autofill"** is a kit for web pages and has no call a hub can make. The hub uses the
+  call of Mapbox's that lists addresses while they are typed and that a server may make: its Geocoding API
+  (version 6, with autocomplete).
 
-The hub's side was written from Google's pages and has not been tried against Google itself: **Try it**
-under Location is the first real try. If it reads oddly, its words say why.
+The accounts and their cards are the owner's. What follows is what the services' own pages said on
+2026-11-25; the pages are theirs to change. Nothing of either was tried from here: the cloud this was built
+in may not reach Mapbox or Azure, and there was no key. **Try it** is the first real try.
+
+**Mapbox:**
+
+1. Make an account at <https://www.mapbox.com>.
+2. On the account page, under **Tokens**, copy the **Default public token**. It starts with `pk.`. A token
+   restricted to web addresses (URL restrictions) does not work from the hub: leave that empty, or make a
+   new public token without it.
+3. In the app: Location › **Keys and connections** › **Mapbox** › **Type the key**, paste it, **Save**.
+   **Try it** on the card asks Mapbox about the restaurant's own address.
+4. Location › **Address list** › turn on **2. Mapbox** › **Save**.
+
+**Azure Maps:**
+
+1. In the Azure portal (<https://portal.azure.com>), with an Azure account and a subscription, **Create a
+   resource** › **Azure Maps** (pricing tier Gen2).
+2. Open the new Maps account › **Settings › Authentication**, and copy the **Primary Key**.
+3. In the app: Location › **Keys and connections** › **Azure Maps** › **Type the key**, paste it, **Save**,
+   and **Try it**.
+4. Location › **Address list** › turn on **3. Azure Maps** › **Save**.
+
+Neither key is typed in the hub's terminal: there is no hubctl command for them. A hub's own file may hold
+them all the same (`POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` in `/opt/pos/.env`); a key typed in the app
+wins.
+
+`sudo hubctl maps status` has a line for each service: "the list of addresses while typing: google, on;
+asked 9500 times this month (at most 9500, 0 left), 40 today, 2 gave no list (last: limit)", then "the
+list of addresses while typing, when the one before it gives no list: mapbox, on; ...".
+
+### What the list costs
+
+Nothing, as the hub is set: it asks each service a little less often in a month than the service gives
+away free, and the next one past that.
+
+| Service | Free each month (their pages, 2026-11-25) | Past the free amount | The hub asks at most |
+| --- | --- | --- | --- |
+| Google Maps, Places API (New) Autocomplete | 10,000 requests | $2.83 for each 1,000 | 9,500 (`POS_MAPS_SUGGEST_MONTHLY`) |
+| Mapbox, Geocoding API (temporary) | 100,000 requests | $0.75 for each 1,000 | 95,000 (`POS_MAPS_MAPBOX_MONTHLY`) |
+| Azure Maps, Search (Geocode Autocomplete) | 5,000 transactions; ten lookups are one | not shown on the page when this was written: see <https://azure.microsoft.com/pricing/details/azure-maps/> | 47,500 lookups (`POS_MAPS_AZURE_MONTHLY`) |
+
+- **Every pause in the typing is one lookup**, so one new address is often three or four.
+- **The hub stops a twentieth short** of each free amount: its month and a service's own do not turn at
+  the same hour, and the hub counts only what it asked itself. Its month turns at midnight, Pacific time.
+- **The count is kept in the hub's database**, so a hub that restarts goes on counting where it stopped,
+  and two hubs count as one. Where the database does not answer, the hub counts in its memory meanwhile.
+- **Finding where the restaurant stands** is two lookups of Google's and one transaction (ten lookups) of
+  Azure's, once in about a month.
+- **The numbers in `/opt/pos/.env` change what the hub asks at most** (`sudo hubctl update` puts a changed
+  file in force). A restaurant that wants more raises one and pays the service for what goes over. A limit
+  set on the service's own side (Google: **Google Maps Platform › Quotas**) holds whatever the hub does.
+- **The badge counts what this hub asked**, not what the service's own bill says. The service's own page
+  is the bill.
+
+Until 2026-11-25 the hub asked Google at most 300 times a day (`POS_MAPS_SUGGEST_DAILY`); that number is no
+longer read.
+
+### Their rules
+
+- **Google**: its name stands with every list that holds one of its answers, and nothing it answers is kept
+  (<https://developers.google.com/maps/documentation/places/web-service/policies>). The rule about terms of
+  use and a privacy policy the public can read ([above](#google-maps-as-the-second-service)) is in these
+  rules too.
+- **Mapbox**: "© Mapbox © OpenStreetMap" stands with its lists, and its temporary answers are not kept.
+  Mapbox's pages do not say the same thing everywhere about showing its answers without a Mapbox map: one
+  says they are for use with a Mapbox map, another that they may be shown in a user interface. Read
+  <https://www.mapbox.com/legal/tos> or ask Mapbox before turning it on.
+- **Azure Maps**: its name stands with its lists; the hub keeps only where the restaurant stands, in memory.
+- Whether and how any of this applies is the owner's to settle, with a lawyer where in doubt. Nothing here
+  is legal advice.
+
+The hub's side was written from the services' pages and has not been tried against any of them: **Try it**
+is the first real try. If it reads oddly, its words say why.
 
 ## The papers
 
@@ -806,21 +905,37 @@ saved distances are further down):
   hub never asks for a place's details after a pick, so each request is billed by itself. `locate` is one
   autocomplete for the place id and `GET /v1/places/{id}` with the mask `location`. 401 and 403 are
   `refused`, 429 `limit`, 404 `not_found`, anything else `unreachable` (`pos.maps.LookupFailed`).
-- `pos.addresses.Suggester`: the day's most (`POS_MAPS_SUGGEST_DAILY`, 300), two seconds for an answer,
-  the restaurant's place found on a thread of its own and held under 25 days, `status()` for
-  `/maps/status` (`suggest`, with `enabled` from the setting). `POS_MAPS_GOOGLE_KEY` is the key;
-  `pos.api.keys.use_keys` hands a key typed in the app to it at once.
-- The setting `address_list` (`pos.settings`): `google`, false until a manager sets it. `GET/PUT
-  /settings/address_list` (the PUT needs a manager) answers it with `service` (the hub has a key), `asks`
-  (both) and `credit`. `POST /settings/address_list/try` (a manager) asks once about the restaurant's own
-  address, or "1 Main St" where none is set: `{ok, found, reason, message}`, 409 `no_service` with no key.
-- `POST /addresses/suggest` `{typed, phone, own}`: `{typed, suggestions, credit}`. No token, like
-  `/delivery/distance`. Own addresses always; the service only with the setting on, a key, four letters
-  with a letter among them, and no known address equal to what was typed. With answers of the service the
-  own lines are cut to three and the list to six. A failure of the service is a shorter list, never an
-  error. `own: false` lists no delivery and sends no place.
-- App: `lib/address_list.dart` (`AddressSuggestion`, `AddressSuggestions`, `AddressSource`,
-  `AddressListSetting`, `AddressListTry`); `PosApi.suggestAddresses` through `_aside`, which asks the hub
+- `pos.addresses.Mapbox`: Geocoding API v6, `GET /search/geocode/v6/forward` with `q`, `autocomplete=true`,
+  `types=address,street`, `country=us`, `language=en`, `limit=5`, `proximity=ip` and `access_token`. The
+  state is shortened by `context.region.region_code`. 422 is `not_found` too. `locate` is never asked.
+- `pos.addresses.Azure`: `GET /geocode:autocomplete?api-version=2026-01-01` with `query`, `countryRegion=US`,
+  `resultTypeGroups=Address`, `top=5` and `coordinates` (or `bbox` of the whole country until the place is
+  known); the key in `subscription-key`. `locate` is `GET /geocode` with `top=1`, counted as ten lookups.
+- `pos.addresses.Suggester`: the services in `ORDER` (google, mapbox, azure), the next only after
+  `LookupFailed` that is not `not_found`; `REST` after a failure; `CHAIN_SECONDS` 3.5 in all and
+  `SUGGEST_SECONDS` 2 for each. The month's most per service (`MONTHLY_MOST`, 95% of `FREE`; env
+  `POS_MAPS_SUGGEST_MONTHLY`, `POS_MAPS_MAPBOX_MONTHLY`, `POS_MAPS_AZURE_MONTHLY`), counted in `Asked` /
+  `PgAsked` (table `map_asked(service, month, asked)`, months by Pacific time, counted before each asking
+  and taken back where the other hub filled the month meanwhile). `statuses()` for `/maps/status`
+  (`suggests`, and `suggest` = the first, each with `enabled`). `POS_MAPS_GOOGLE_KEY`,
+  `POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` are the keys (`pos.keys` slots `maps_google`, `maps_mapbox`,
+  `maps_azure`); `pos.api.keys.use_keys` hands a key typed in the app to it at once.
+- The setting `address_list` (`pos.settings`): `google`, `mapbox`, `azure`, each false until a manager sets
+  it. `GET/PUT /settings/address_list` (the PUT needs a manager; a service left out stays as it is) answers
+  them with `services` (each `{name, title, credit, on, key, asks, left, monthly_most, used_up, resting}`)
+  and, for an older app, `service`, `asks` and `credit` of Google. `POST /settings/address_list/try`
+  `{service}` (a manager; Google unless named) asks that one service once about the restaurant's own
+  address, or "1 Main St" where none is set: `{ok, found, reason, message, service, left}`, 409
+  `no_service` with no key, 422 `bad_value` for a name that is no service's.
+- `POST /addresses/suggest` `{typed, phone, own}`: `{typed, suggestions, credit, service, title, left,
+  monthly_most}`. No token, like `/delivery/distance`. Own addresses always; a service only with its
+  setting on, a key, four letters with a letter among them, and no known address equal to what was typed.
+  With answers of a service the own lines are cut to three and the list to six. A failure of every service
+  is a shorter list, never an error. `own: false` lists no delivery and sends no place.
+- App: `lib/address_list.dart` (`AddressSuggestion`, `AddressSuggestions` with `share` and `leftWords`,
+  `AddressSource`, `AddressService`, `AddressListSetting`, which reads an older hub's answer as Google alone,
+  `AddressListTry`); `lib/screens/service_badge.dart` (`ServiceBadge`, at the top of the list and in the
+  dialog); `PosApi.suggestAddresses` through `_aside`, which asks the hub
   the terminal talks to, waits four seconds and never changes `connection`, and leaves a hub that answered
   404 alone for ten minutes; `addressList`, `saveAddressList`, `tryAddressList`.
   `lib/screens/address_box.dart`: `AddressBox` around the text box and its list (a `Focus` around both, so
@@ -829,8 +944,8 @@ saved distances are further down):
   `EventFields` (`addresses:`, handed in by the to-go form and by `WhenDialog`) and of `fee-origin` in
   `DeliveryFeeDialog`. `_bringUp` scrolls the form to the list's end, and no further than the box at the
   top. `AddressListDialog` and the row `address-list` under Location.
-- Tests: `backend/tests/orders/test_address_list.py` (Google's side against `httpx.MockTransport`; Google
-  itself is never called) and `apps/pos_app/test/address_list_test.dart`.
+- Tests: `backend/tests/orders/test_address_list.py` (all three services against `httpx.MockTransport`; none
+  of them is ever called) and `apps/pos_app/test/address_list_test.dart`.
 
 Live traffic:
 
