@@ -238,6 +238,7 @@ def test_the_hub_asks_no_more_in_a_day_than_it_was_told_to():
         "fallback": None,
         "traffic": None,
         "origin_set": True,
+        "suggest": None,  # the list of addresses while typing: no Google key on this hub (test_address_list.py)
     }
     assert "Elm" not in str(status)  # no address is in it
     now[0] += 24 * 3600

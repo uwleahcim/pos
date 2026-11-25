@@ -68,6 +68,9 @@
   the cooking and getting it out of the door. The promise is then `before` and the drive right now, in place
   of the minutes set for Delivery. It needs a map service that knows the roads right now; the fee never
   goes by it.
+- `address_list`: whether the list of addresses under a box that is being typed in (`pos.addresses`, "A list
+  of addresses while typing" in docs/delivery.md) asks a map service as well: `google`, off until a manager
+  turns it on. The restaurant's own earlier deliveries are listed either way.
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
@@ -181,6 +184,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # Off: asking a map service about every delivery costs money, and how long the kitchen needs is the
     # owner's to say.
     "live_drive": {"enabled": False, "before": 25},
+    # Off: it sends what is typed in an address box to Google, and that is the owner's to decide.
+    "address_list": {"google": False},
     # A short list to start with; the location makes it its own.
     "kitchen_notes": {"notes": STANDARD_KITCHEN_NOTES},
     # Why food went into the waste log. A dish given to a guest is not here: that is a comp, on the check.
@@ -553,6 +558,15 @@ def clean_live_drive(data: Mapping[str, Any]) -> dict[str, Any]:
         "enabled": enabled,
         "before": _whole(data.get("before", 25), "the minutes before the drive", LIVE_BEFORE_MAX),
     }
+
+
+def clean_address_list(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The list of addresses as the app may set it, checked: `google`, whether the map service is asked as
+    well as the restaurant's own deliveries. Raises ValueError on a bad value."""
+    google = data.get("google", False)
+    if not isinstance(google, bool):
+        raise ValueError("google is true or false")
+    return {"google": google}
 
 
 def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:

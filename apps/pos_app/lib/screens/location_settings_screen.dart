@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../address_list.dart';
 import '../api.dart';
 import '../contests.dart';
 import '../bag.dart';
@@ -25,6 +26,7 @@ import '../timeclock.dart';
 import '../voids.dart';
 import '../waste.dart';
 import 'adjustments_screen.dart';
+import 'address_list_dialog.dart';
 import 'bag_question_dialog.dart';
 import 'bill_dialog.dart';
 import 'contests_screen.dart';
@@ -173,6 +175,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
   LiveDrive? _live; // live traffic for deliveries, as the hub has it; null until it answers (an older hub)
+  AddressListSetting? _addressList; // the list of addresses while typing; null until the hub answers
   KitchenNotes? _kitchenNotes; // the one-tap notes as the hub has them; null until it answers (an older hub)
   WasteReasons? _wasteReasons; // the waste log's reasons; null until the hub answers (an older hub)
   ContestList? _contests; // the contests the location keeps (docs/contests.md); null from an older hub
@@ -282,6 +285,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       // nothing answered about the delivery fee: the row says so
     }
     await _readLive();
+    await _readAddressList();
     try {
       final notes = await widget.api.kitchenNotes();
       if (mounted) setState(() => _kitchenNotes = notes);
@@ -807,6 +811,26 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Live traffic saved')));
   }
 
+  /// The list of addresses as the hub has it, with whether the hub has a map service for it.
+  Future<void> _readAddressList() async {
+    try {
+      final setting = await widget.api.addressList();
+      if (mounted) setState(() => _addressList = setting);
+    } on ApiException {
+      // nothing answered about the list of addresses: the row says so
+    }
+  }
+
+  Future<void> _addressListSetting() async {
+    final saved = await showDialog<AddressListSetting>(
+      context: context,
+      builder: (_) => AddressListDialog(api: widget.api, token: widget.token, setting: _addressList!),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _addressList = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Address list saved')));
+  }
+
   Future<void> _kitchenNotesList() async {
     final saved = await showDialog<KitchenNotes>(
       context: context,
@@ -942,6 +966,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (!mounted) return;
     unawaited(_readOnline());
     unawaited(_readLive());
+    unawaited(_readAddressList());
   }
 
   /// One line on the staff: how many, and whether anybody still signs in with a PIN from the guide.
@@ -1436,6 +1461,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     subtitle: Text(_liveSummary),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _live == null ? null : _liveTraffic,
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    key: const ValueKey('address-list'),
+                    leading: const Icon(Icons.format_list_bulleted),
+                    title: const Text('Address list'),
+                    subtitle: Text(AddressListDialog.summary(_addressList)),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _addressList == null ? null : _addressListSetting,
                   ),
                   const Divider(height: 1),
                   ListTile(

@@ -249,6 +249,69 @@ class Hub {
   };
   static const secondSays = {'service': 'google', 'from': '0a1b2c3d', 'credit': 'Google Maps', 'keep': false};
 
+  /// The list of addresses while typing (`POST /addresses/suggest`): what the hub lists for the letters
+  /// typed, by those letters on one line and in small letters. Null is a hub older than the list. Every
+  /// body it was asked with is in [addressAsks]; [addressWaits], when set, holds each answer back until it
+  /// completes; [addressesDown] fails the call as if no hub answered. For the restaurant's own address
+  /// (`own` false) only a map service's lines are listed.
+  Map<String, List<Map<String, dynamic>>>? addressLists;
+  final addressAsks = <Map<String, dynamic>>[];
+  Completer<void>? addressWaits;
+  bool addressesDown = false;
+
+  /// One line of such a list, as the hub says it.
+  static Map<String, dynamic> addressLine(String address, {String from = 'orders', String? main, String rest = ''}) => {
+    'address': address,
+    'main': main ?? address,
+    'rest': rest,
+    'from': from,
+  };
+
+  /// A hub that knows Elm Street from its own orders and two more from Google, for "12 el" and "12 elm".
+  static Map<String, List<Map<String, dynamic>>> get elmLists {
+    final listed = [
+      addressLine('12 Elm St, Winchester', from: 'customer'),
+      addressLine('12 Elm Ct, Woburn'),
+      addressLine('12 Elm Street, Medford, MA', from: 'google', main: '12 Elm Street', rest: 'Medford, MA'),
+      addressLine('12 Elmwood Road, Winchester, MA', from: 'google', main: '12 Elmwood Road', rest: 'Winchester, MA'),
+    ];
+    return {'12 el': listed, '12 elm': listed, '12 elm s': listed.sublist(0, 3)};
+  }
+
+  /// The list's setting (`GET/PUT /settings/address_list`) and the token the last save carried; null is a
+  /// hub older than the list. [addressTry] is what a try of the map service says (`POST
+  /// /settings/address_list/try`), and [addressTries] how often it was tried.
+  Map<String, dynamic>? addressList;
+  String? addressListAuth;
+  Map<String, dynamic> addressTry = {'ok': true, 'found': 3, 'reason': null, 'message': ''};
+  int addressTries = 0;
+  static Map<String, dynamic> get addressListOff => {
+    'google': false,
+    'service': true,
+    'asks': false,
+    'credit': 'Google Maps',
+  };
+
+  Future<http.Response> _suggest(http.Request request) async {
+    final lists = addressLists;
+    if (lists == null) return json({'detail': 'Not Found'}, 404);
+    if (addressesDown) throw const SocketException('down');
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    addressAsks.add(body);
+    await addressWaits?.future;
+    final typed = '${body['typed']}'.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final listed = lists[typed.toLowerCase()] ?? const <Map<String, dynamic>>[];
+    final shown = [
+      for (final one in listed)
+        if (body['own'] != false || one['from'] == 'google') one,
+    ];
+    return json({
+      'typed': typed,
+      'suggestions': shown,
+      'credit': shown.any((one) => one['from'] == 'google') ? 'Google Maps' : null,
+    });
+  }
+
   Future<http.Response> _distance(http.Request request) async {
     final fees = deliveryFees;
     if (fees == null || !fees.containsKey('lookup')) return json({'detail': 'Not Found'}, 404);
@@ -3863,6 +3926,27 @@ class Hub {
         return json(deliveryFees!);
       case '/delivery/distance':
         return _distance(request);
+      case '/addresses/suggest':
+        return _suggest(request);
+      case '/settings/address_list':
+        if (addressList == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          addressListAuth = request.headers['authorization'];
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final had = addressList!;
+          final google = body['google'] == true;
+          addressList = {...had, 'google': google, 'asks': google && had['service'] == true};
+        }
+        return json(addressList!);
+      case '/settings/address_list/try':
+        if (addressList == null) return json({'detail': 'Not Found'}, 404);
+        addressTries++;
+        if (addressList!['service'] != true) {
+          return json({
+            'detail': {'error': 'no_service', 'message': 'this hub has no Google Maps key'},
+          }, 409);
+        }
+        return json(addressTry);
       case '/settings/live_drive':
         if (liveDrive == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {
