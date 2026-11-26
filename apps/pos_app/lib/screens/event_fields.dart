@@ -104,6 +104,7 @@ class EventFields extends StatelessWidget {
     this.onFee,
     this.asker,
     this.onAddressDone,
+    this.onAddressChosen,
     this.onLookUp,
     this.addresses,
     this.wholeAddress,
@@ -133,9 +134,12 @@ class EventFields extends StatelessWidget {
   final ValueChanged<String>? onFee;
 
   /// Where the hub looks the distance up: [onAddressDone] when the address is done being typed (Enter, or
-  /// the box is left), [onLookUp] when somebody asks for the distance by hand.
+  /// the box is left), [onAddressChosen] when it was chosen off the list of addresses (then the fee for
+  /// its distance is picked whatever was picked before; null: as [onAddressDone]), [onLookUp] when
+  /// somebody asks for the distance by hand.
   final DistanceAsker? asker;
   final VoidCallback? onAddressDone;
+  final VoidCallback? onAddressChosen;
   final LookUp? onLookUp;
 
   /// How the hub is asked what the letters typed in the address could become (`PosApi.suggestAddresses`):
@@ -207,6 +211,7 @@ class EventFields extends StatelessWidget {
             homeState: AddressParts.stateOf(fees?.origin ?? ''),
             onChanged: onChanged,
             onDone: onAddressDone,
+            onChosen: onAddressChosen,
             onLeft: () {
               // a form that is closing takes the focus away too: that is nobody done with the address
               if (context.mounted && (ModalRoute.of(context)?.isCurrent ?? true)) onAddressDone?.call();
@@ -320,9 +325,14 @@ class _WhenDialogState extends State<WhenDialog> {
   /// the website charged, which the customer was told and may have paid: only a tap does.
   late bool _feeByHand = widget.fee?.onWebsite ?? false;
 
-  /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand.
-  Future<void> _lookUp({bool again = false, bool fresh = false}) async {
+  /// Asks how far the address is, and picks the band it falls in unless somebody picked by hand. An
+  /// address [chosen] off the list is another place to go (Mike, 2026-11-26: when an address is selected,
+  /// the fee for its distance is selected): a price tapped for the address before it does not stand for
+  /// it, and the price for its distance is picked.
+  Future<void> _lookUp({bool again = false, bool fresh = false, bool chosen = false}) async {
     if (!mounted || widget.event == null || _handover != 'delivery') return;
+    // (never a fee the website charged: the customer was told it, and may have paid it)
+    if (chosen && _asker.can && !(widget.fee?.onWebsite ?? false)) _feeByHand = false;
     final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: widget.live))?.band;
     if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
   }
@@ -424,6 +434,7 @@ class _WhenDialogState extends State<WhenDialog> {
                   }),
                   asker: _asker,
                   onAddressDone: _lookUp,
+                  onAddressChosen: () => _lookUp(chosen: true),
                   onLookUp: ({fresh = false}) => _lookUp(again: true, fresh: fresh),
                   addresses: widget.addresses,
                   wholeAddress: widget.wholeAddress,

@@ -17,8 +17,8 @@ import 'package:pos_app/screens/text_arrows.dart';
 import 'package:pos_app/screens/theme.dart';
 
 import 'catering_test.dart' show dataOf, tapKey;
-import 'delivery_distance_test.dart' show mapKept, said;
-import 'delivery_fee_test.dart' show carried, delivery, picked, pumpForm, pumpOrder;
+import 'delivery_distance_test.dart' show main9, mapKept, said;
+import 'delivery_fee_test.dart' show carried, delivery, picked, pumpForm, pumpOrder, websiteFee;
 import 'delivery_test.dart' show addressOn, created, elm, key, lindaDigits, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
@@ -59,8 +59,8 @@ Future<void> press(WidgetTester tester, LogicalKeyboardKey pressed) async {
   await tester.pumpAndSettle();
 }
 
-/// An address box by itself over a hub, with another box under it to leave it for, and what it told the
-/// form around it.
+/// An address box by itself over a hub, with another box over it to leave it for and one under it for its
+/// list to lie on, and what it told the form around it.
 class Box {
   Box(this.t);
 
@@ -98,6 +98,9 @@ Future<Box> pumpBox(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // over the address, where its list does not lie on it
+              const TextField(key: ValueKey('other')),
+              const SizedBox(height: 8),
               AddressBox(
                 fieldKey: const ValueKey('address'),
                 controller: box.controller,
@@ -107,7 +110,7 @@ Future<Box> pumpBox(
                 onDone: () => box.done++,
                 onLeft: () => box.left++,
               ),
-              const TextField(key: ValueKey('other')),
+              const TextField(key: ValueKey('under')),
             ],
           ),
         ),
@@ -741,6 +744,99 @@ void main() {
       expect((inBox(tester, 'address'), lines(tester).length, box.left), (true, 4, 0));
     });
 
+    testWidgets('the list drops down over what stands under the box, and moves nothing', (tester) async {
+      final box = await pumpBox(tester);
+      final address = tester.getRect(key('address')), under = tester.getRect(key('under'));
+      await type(tester, '12 el', box: 'address');
+      // the box and the one under it stand where they stood
+      expect((tester.getRect(key('address')), tester.getRect(key('under'))), (address, under));
+      // the list is as wide as the box, starts under it and lies over the box below
+      final list = tester.getRect(key('address-list'));
+      expect((list.left, list.right), (address.left, address.right));
+      expect(list.top, inInclusiveRange(address.bottom, address.bottom + 8));
+      expect(list.bottom, greaterThan(under.bottom));
+      expect(key('under').hitTestable(), findsNothing);
+      for (var line = 0; line < 4; line++) {
+        expect(key('address-suggestion:$line').hitTestable(), findsOneWidget);
+      }
+      // a tap on a line takes it, and what the list lay over is there again
+      await tapKey(tester, 'address-suggestion:1');
+      expect((box.controller.text, lines(tester).length), (elmCt, 0));
+      expect(key('under').hitTestable(), findsOneWidget);
+      expect(tester.getRect(key('under')), under);
+    });
+
+    testWidgets('a touch on anything else puts the list away, and the box keeps what was typed', (tester) async {
+      final box = await pumpBox(tester);
+      await type(tester, '12 el', box: 'address');
+      expect(lines(tester), hasLength(4));
+      await tester.tapAt(const Offset(400, 560)); // nothing there
+      await tester.pumpAndSettle();
+      expect((lines(tester).length, box.controller.text, box.done), (0, '12 el', 0));
+      expect(key('under').hitTestable(), findsOneWidget); // what it lay over can be reached
+      // and typing on lists again
+      await type(tester, '12 elm', box: 'address');
+      expect(lines(tester), hasLength(4));
+    });
+
+    testWidgets('a list with less room than its lines scrolls in itself, under the name of who answered', (
+      tester,
+    ) async {
+      final listed = [
+        ...Hub.elmLists['12 el']!,
+        Hub.addressLine('12 Ellis Street, Woburn, MA', from: 'google'),
+        Hub.addressLine('12 Elder Road, Stoneham, MA', from: 'google'),
+      ];
+      // a screen with room for three lines under the box, and a form too short to scroll
+      final box = await pumpBox(tester, lists: {'12 el': listed}, size: const Size(800, 300));
+      await type(tester, '12 el', box: 'address');
+      expect(lines(tester), hasLength(6));
+      final list = tester.getRect(key('address-list'));
+      expect(list.bottom, lessThanOrEqualTo(300 - 8)); // it ends over the bottom of the screen
+      expect(list.top, greaterThanOrEqualTo(tester.getRect(key('address')).bottom));
+      expect(key('address-suggestion:0').hitTestable(), findsOneWidget);
+      expect(key('address-suggestion:5').hitTestable(), findsNothing);
+      expect(tester.takeException(), isNull);
+      // the last line is a scroll away, in the list itself; the service's name stays over the lines
+      final credit = tester.getRect(key('address-credit'));
+      await tapKey(tester, 'address-suggestion:5');
+      expect(box.controller.text, '12 Elder Road, Stoneham, MA');
+      await type(tester, '12 el', box: 'address');
+      await tester.drag(key('address-suggestion:1'), const Offset(0, -200));
+      await tester.pumpAndSettle();
+      expect(lines(tester), hasLength(6)); // a finger on the list is not a touch elsewhere
+      expect(key('address-suggestion:5').hitTestable(), findsOneWidget);
+      expect(tester.getRect(key('address-credit')), credit);
+      expect(key('address-credit').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('with a keyboard the arrows go down a list longer than its room, line by line', (tester) async {
+      final listed = [
+        ...Hub.elmLists['12 el']!,
+        Hub.addressLine('12 Ellis Street, Woburn, MA', from: 'google'),
+        Hub.addressLine('12 Elder Road, Stoneham, MA', from: 'google'),
+      ];
+      final box = await pumpBox(tester, lists: {'12 el': listed}, size: const Size(800, 300), keys: true);
+      await type(tester, '12 el', box: 'address');
+      for (var line = 0; line < 6; line++) {
+        await press(tester, LogicalKeyboardKey.arrowDown);
+        // never the box under the list: the line, scrolled into sight
+        expect(key('address-suggestion:$line').hitTestable(), findsOneWidget, reason: 'line $line');
+        expect(tester.widget<InkWell>(key('address-suggestion:$line')).focusNode!.hasPrimaryFocus, isTrue);
+      }
+      await press(tester, LogicalKeyboardKey.arrowDown); // the last line is the last
+      await press(tester, LogicalKeyboardKey.enter);
+      expect((box.controller.text, box.left), ('12 Elder Road, Stoneham, MA', 0));
+      // and up again, line by line, to the box
+      await type(tester, '12 el', box: 'address');
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      await press(tester, LogicalKeyboardKey.arrowUp);
+      expect(tester.widget<InkWell>(key('address-suggestion:0')).focusNode!.hasPrimaryFocus, isTrue);
+      await press(tester, LogicalKeyboardKey.arrowUp);
+      expect((inBox(tester, 'address'), lines(tester).length), (true, 6));
+    });
+
     testWidgets('a click with the mouse on a Mac takes the line: the press is not a click away from the box', (
       tester,
     ) async {
@@ -859,6 +955,65 @@ void main() {
       await stop(tester);
     });
 
+    testWidgets('the list lies over the form and moves none of it; it goes with the box when the form scrolls', (
+      tester,
+    ) async {
+      final t = await pumpForm(tester, fees: Hub.mapFees, size: const Size(390, 640));
+      t.hub.addressLists = Hub.elmLists;
+      await tapKey(tester, 'channel:phone');
+      await tapKey(tester, 'handover:delivery');
+      await tester.ensureVisible(key('event-address'));
+      await tester.pumpAndSettle();
+      final form = Scrollable.of(tester.element(key('event-address'))).position;
+      final start = form.pixels;
+      double top(String name) => tester.getRect(key(name)).top;
+      final (city, note) = (top('event-address:city'), top('event-note'));
+      await type(tester, '12 el');
+      final moved = form.pixels - start; // the form may bring the box up to make room; nothing else moves
+      expect((top('event-address:city'), top('event-note')), (city - moved, note - moved));
+      final list = tester.getRect(key('address-list'));
+      expect(list.top, greaterThanOrEqualTo(tester.getRect(key('event-address')).bottom));
+      expect(list.bottom, greaterThan(top('event-address:city')));
+      // the form scrolled under the mouse's wheel: the list goes with its box
+      form.jumpTo(form.pixels + 30);
+      await tester.pump();
+      expect(tester.getRect(key('address-list')).top, list.top - 30);
+      expect(lines(tester), hasLength(4));
+      // with the box scrolled out of sight its list is not left hanging, and it is back with the box
+      form.jumpTo(form.minScrollExtent);
+      await tester.pump();
+      expect(key('address-list'), findsNothing);
+      form.jumpTo(start + moved);
+      await tester.pump();
+      expect(tester.getRect(key('address-list')), list);
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('an address chosen off the list picks the fee for its distance, over a price tapped by hand', (
+      tester,
+    ) async {
+      final t = await pumpForm(tester, fees: Hub.mapFees);
+      t.hub.addressLists = Hub.elmLists;
+      await tester.enterText(key('takeout-name'), 'Linda');
+      await tapKey(tester, 'channel:phone');
+      await tapKey(tester, 'handover:delivery');
+      await tapKey(tester, 'fee:none'); // tapped before there was an address
+      await type(tester, '12 el');
+      await tapKey(tester, 'address-suggestion:0');
+      expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
+      expect((picked(tester, '4.5'), picked(tester, 'none')), (true, false));
+      // a price tapped for this address stays, as it did: the map does not take it back
+      await tapKey(tester, 'fee:none');
+      await tester.showKeyboard(key('event-address:city'));
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+      expect((picked(tester, 'none'), picked(tester, '4.5')), (true, false));
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {'up_to': null, 'measured': mapKept});
+      await stop(tester);
+    });
+
     testWidgets('where there is room, the form scrolls the whole list into sight under the box', (tester) async {
       final t = await pumpForm(tester, fees: Hub.mapFees, size: const Size(390, 844));
       t.hub.addressLists = Hub.elmLists;
@@ -892,6 +1047,45 @@ void main() {
       expect([for (final ask in t.hub.distanceAsks) ask['address']], ['4 Oak Rd, Woburn']);
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1')['address'], '4 Oak Rd, Woburn');
+      await stop(tester);
+    });
+
+    testWidgets('an address chosen off the list picks its fee on the order too, over a price tapped by hand', (
+      tester,
+    ) async {
+      final t = await pumpOrder(tester, delivery(fee: carried('4.5', '5.00')), fees: Hub.mapFees);
+      t.hub.addressLists = {
+        '9 ma': [Hub.addressLine(main9, from: 'customer')],
+      };
+      await tapKey(tester, 'when-strip');
+      await tapKey(tester, 'fee:none'); // no charge, said for the address it had
+      await type(tester, '9 ma');
+      await tapKey(tester, 'address-suggestion:0');
+      expect(said(tester, 'fee-lookup-found'), '1.1 mi · 4 min drive');
+      expect((picked(tester, '2'), picked(tester, 'none')), (true, false));
+      await tapKey(tester, 'when-save');
+      final data = dataOf(t.hub, 'set_field', 'o1');
+      expect(data['address'], main9);
+      expect(data['delivery_fee'], {
+        'up_to': '2',
+        'measured': {'miles': '1.1', 'minutes': 4, ...Hub.mapMark},
+      });
+      await stop(tester);
+    });
+
+    testWidgets('a fee the website charged is not moved by an address chosen off the list', (tester) async {
+      final t = await pumpOrder(tester, delivery(fee: websiteFee), fees: Hub.mapFees);
+      t.hub.addressLists = {
+        '9 ma': [Hub.addressLine(main9, from: 'customer')],
+      };
+      await tapKey(tester, 'when-strip');
+      await type(tester, '9 ma');
+      await tapKey(tester, 'address-suggestion:0');
+      expect(said(tester, 'fee-lookup-found'), '1.1 mi · 4 min drive'); // it says how far, and a tap picks
+      expect((picked(tester, 'kept'), picked(tester, '2')), (true, false));
+      await tapKey(tester, 'when-save');
+      final data = dataOf(t.hub, 'set_field', 'o1');
+      expect((data['address'], data.containsKey('delivery_fee')), (main9, false));
       await stop(tester);
     });
   });
