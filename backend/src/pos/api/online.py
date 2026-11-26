@@ -4,7 +4,8 @@
   for pushes in the `Authorization` header. The body is what it answers when asked: `{"count": 1, "orders":
   [...]}` (one order by itself and a bare list are read too). The orders are written down and put on the
   POS before it is answered: 200 `{"received": n}`. An order that is here already, because the hub's asking
-  brought it first or GloriaFood sent it twice, is the same order and nothing happens. Turned away: 404 on
+  brought it first or GloriaFood sent it twice, is the same order and nothing happens (but one that was
+  here unanswered and comes accepted now goes on the POS: `pos.online.inbox.Inbox.again`). Turned away: 404 on
   a hub with no key for pushes, 401 `refused` without the key (the body is not read), 413 `too_big`, 422
   `unreadable` (kept as it came, for a person), 503 `standby` on a hub that cannot write orders down, 503
   `not_written` when the database would not take one (it is held, and written at the next round). Nothing

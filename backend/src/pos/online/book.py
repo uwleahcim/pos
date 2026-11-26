@@ -37,7 +37,7 @@ from typing import Any
 from .. import localtime
 from ..reservations import NOTE_MAX, WEBSITE, Refused
 from ..waitlist import MOST_GUESTS, NAME_MAX, _phone
-from .place import CannotPlace, NotAnOrder, _line, _ms, ext_id_of
+from .place import CannotPlace, NotAnOrder, _line, _ms, ext_id_of, unaccepted
 
 RESERVATION_TYPES = ("table_reservation", "order_ahead")
 """What GloriaFood calls a booked table: one by itself, and one with its dishes ordered ahead."""
@@ -101,9 +101,9 @@ def wanted(order: Mapping[str, Any], *, now_ms: int) -> Wanted:
     kind = str(order.get("type") or "")
     if kind not in RESERVATION_TYPES:
         raise NotAnOrder("it is not a table that was booked")
-    status = str(order.get("status") or "accepted")
-    if status != "accepted":
-        raise NotAnOrder(f"it was not accepted ({status})")
+    refused = unaccepted(order)
+    if refused is not None:
+        raise refused
 
     size = _guests(order.get("persons"))
     if size is None:
