@@ -19,7 +19,7 @@ import 'package:pos_app/screens/theme.dart';
 import 'catering_test.dart' show dataOf, tapKey;
 import 'delivery_distance_test.dart' show mapKept, said;
 import 'delivery_fee_test.dart' show carried, delivery, picked, pumpForm, pumpOrder;
-import 'delivery_test.dart' show created, elm, key, lindaDigits, typeNumber, typed;
+import 'delivery_test.dart' show addressOn, created, elm, key, lindaDigits, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -788,7 +788,7 @@ void main() {
       expect(lines(tester).first, elm);
       expect(t.hub.distanceAsks, isEmpty); // a list is no lookup
       await tapKey(tester, 'address-suggestion:0');
-      expect((typed(tester, 'event-address'), lines(tester).length), (elm, 0));
+      expect((addressOn(tester), lines(tester).length), (elm, 0));
       // the address is done: how far it is was asked once, and its band is picked
       expect([for (final ask in t.hub.distanceAsks) ask['address']], [elm]);
       expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
@@ -815,7 +815,7 @@ void main() {
       expect(lines(tester), hasLength(4));
       await tester.tap(key('takeout-name'));
       await tester.pumpAndSettle();
-      expect((lines(tester).length, typed(tester, 'event-address')), (0, '12 el'));
+      expect((lines(tester).length, addressOn(tester)), (0, '12 el'));
       expect([for (final ask in t.hub.distanceAsks) ask['address']], ['12 el']);
       await stop(tester);
     });
@@ -854,7 +854,7 @@ void main() {
       }
       // the rest of the list is a scroll away
       await tapKey(tester, 'address-suggestion:4');
-      expect(typed(tester, 'event-address'), '12 Ellis Street, Woburn, MA');
+      expect(addressOn(tester), '12 Ellis Street, Woburn, MA');
       expect(tester.takeException(), isNull);
       await stop(tester);
     });
@@ -888,7 +888,7 @@ void main() {
         {'typed': '4 oa', 'phone': lindaDigits},
       ]);
       await tapKey(tester, 'address-suggestion:0');
-      expect(typed(tester, 'event-address'), '4 Oak Rd, Woburn');
+      expect(addressOn(tester), '4 Oak Rd, Woburn');
       expect([for (final ask in t.hub.distanceAsks) ask['address']], ['4 Oak Rd, Woburn']);
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1')['address'], '4 Oak Rd, Woburn');

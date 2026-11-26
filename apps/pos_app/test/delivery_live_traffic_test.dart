@@ -10,7 +10,8 @@ import 'package:pos_app/takeout.dart';
 import 'catering_test.dart' show dataOf, enabled, tapKey;
 import 'delivery_distance_test.dart' show lindaTo, main9, mapKept, mapSaid, newbuild, oak, said, typeAddress;
 import 'delivery_fee_test.dart' show carried, delivery, picked, pumpForm, pumpOrder;
-import 'delivery_test.dart' show created, elm, key, linda, lindaDigits, order, soon, stand, typeNumber, typed;
+import 'delivery_test.dart'
+    show created, elm, enterAddress, key, linda, lindaDigits, order, soon, stand, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -176,7 +177,7 @@ void main() {
       final t = await pumpForm(tester, fees: Hub.liveFees);
       await lindaTo(tester, elm);
       expect(said(tester, 'takeout-quote'), 'There in about 39 min, with traffic');
-      await tester.enterText(key('event-address'), oak);
+      await enterAddress(tester, oak);
       await tester.pump();
       expect(said(tester, 'takeout-quote'), 'There in about 45 min');
       expect(key('fee-lookup-now'), findsNothing);

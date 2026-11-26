@@ -30,6 +30,7 @@ from pos.addresses import (
     Asked,
     Azure,
     Mapbox,
+    Parts,
     PgAsked,
     Places,
     Suggester,
@@ -100,16 +101,21 @@ def prediction(text: str, main: str = "", rest: str = "", place: str = "") -> di
 class World:
     """Google's Places API as far as the hub uses it, and everything it was asked."""
 
-    def __init__(self, *predictions: dict, status: int = 200, place: dict | None = STANDS) -> None:
+    def __init__(
+        self, *predictions: dict, status: int = 200, place: dict | None = STANDS, components: object = None
+    ) -> None:
         self.predictions = list(predictions)
         self.status = status
         self.place = place
+        self.components = components  # the parts of a place's address, as a Place Details says them
         self.seen: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.seen.append(request)
         if self.status != 200:
             return httpx.Response(self.status, json={"error": {"status": "PERMISSION_DENIED"}})
+        if request.method == "GET" and request.headers["x-goog-fieldmask"] == "addressComponents":
+            return httpx.Response(200, json={} if self.components is None else {"addressComponents": self.components})
         if request.method == "GET":
             return httpx.Response(200, json={"location": self.place} if self.place else {})
         asked = json.loads(request.content)
@@ -131,6 +137,23 @@ WINCHESTER = (
     prediction("12 Elm Street, Winchester, MA, USA", "12 Elm Street", "Winchester, MA, USA"),
     prediction("12 Elmwood Road, Winchester, MA, USA", "12 Elmwood Road", "Winchester, MA, USA"),
 )
+
+
+def component(long: str, short: str, *kinds: str) -> dict:
+    return {"longText": long, "shortText": short, "types": list(kinds), "languageCode": "en"}
+
+
+ELM_PARTS = [
+    component("12", "12", "street_number"),
+    component("Elm Street", "Elm St", "route"),
+    component("Winchester", "Winchester", "locality", "political"),
+    component("Middlesex County", "Middlesex County", "administrative_area_level_2", "political"),
+    component("Massachusetts", "MA", "administrative_area_level_1", "political"),
+    component("United States", "US", "country", "political"),
+    component("01890", "01890", "postal_code"),
+    component("2704", "2704", "postal_code_suffix"),
+]
+"""12 Elm Street as a Place Details says its parts."""
 
 
 def asking(h: Hub, world: World, *, on: bool = True, origin: str = HOME, **more) -> Suggester:
@@ -367,7 +390,8 @@ def test_google_is_sent_the_letters_typed_and_nothing_else(caplog):
     }
     assert asked.headers["x-goog-api-key"] == "AIza-key-456"
     assert asked.headers["x-goog-fieldmask"] == (
-        "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat"
+        "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,"
+        "suggestions.placePrediction.placeId"  # its own name for the place: what a tap asks the ZIP by
     )
     # no name, no number, nothing of an order: not in any request, and the log names no address and no key
     sent = b" ".join(request.content + str(request.url).encode() for request in world.seen)
@@ -578,6 +602,117 @@ def test_what_google_answers_is_read_with_care():
     assert World(place=None).places().locate(HOME) is None
 
 
+def test_a_tap_on_one_of_googles_lines_asks_google_once_more_for_its_zip(caplog):
+    # Google's lists name the street, the town and the state and no ZIP: a line carries Google's own name
+    # for the place, and the form whose line was tapped asks the hub for the parts of that one address
+    h = delivered()
+    world = World(
+        prediction("12 Elm Street, Winchester, MA, USA", "12 Elm Street", "Winchester, MA, USA", place="ChIJ-elm_12"),
+        prediction("12 Elmwood Road, Winchester, MA, USA", "12 Elmwood Road", "Winchester, MA, USA", place="no/name"),
+        components=ELM_PARTS,
+    )
+    suggester = asking(h, world, origin="")
+    listed_now = typed(h, "12 Elm S")["suggestions"]
+    told = [one for one in listed_now if one["from"] == "google"]  # after the restaurant's own Elm Street
+    assert [(one["address"], one.get("ref"), "parts" in one) for one in told] == [
+        ("12 Elm Street, Winchester, MA", "ChIJ-elm_12", False),
+        ("12 Elmwood Road, Winchester, MA", None, False),  # a name that could not go in a request is none
+    ]
+    left = suggester.left("google")
+    with caplog.at_level(logging.INFO):
+        whole = h.c.post("/addresses/whole", json={"service": "google", "ref": "ChIJ-elm_12"})
+    assert whole.status_code == 200
+    assert whole.json() == {
+        "parts": {"street": "12 Elm St", "unit": "", "city": "Winchester", "state": "MA", "zip": "01890"}
+    }
+    # one request, for the parts of that place and nothing else of it; the key in a header
+    asked = world.seen[-1]
+    assert (asked.method, str(asked.url)) == ("GET", "https://places.googleapis.com/v1/places/ChIJ-elm_12")
+    assert asked.headers["x-goog-fieldmask"] == "addressComponents" and asked.content == b""
+    assert asked.headers["x-goog-api-key"] == "AIza-key-456"
+    assert suggester.left("google") == left - 1  # counted against the same month as the lists
+    assert "ChIJ" not in caplog.text and "AIza" not in caplog.text and "Elm" not in caplog.text
+    # nothing was kept of it: the list is what it was, and no line of it has a ZIP
+    assert typed(h, "12 Elm S")["suggestions"] == listed_now
+
+
+def test_the_parts_of_a_place_are_read_with_care():
+    def whole(components: object) -> Parts | None:
+        return World(components=components).places().whole("ChIJ-elm_12")
+
+    assert whole(ELM_PARTS) == Parts("12 Elm St", "", "Winchester", "MA", "01890")
+    # an apartment; and a town that is no "locality" to Google, as many in New England are
+    flat = [
+        component("3B", "3B", "subpremise"),
+        component("4", "4", "street_number"),
+        component("Oak Road", "Oak Rd", "route"),
+        component("Reading", "Reading", "administrative_area_level_3", "political"),
+        component("Massachusetts", "MA", "administrative_area_level_1", "political"),
+        component("01867", "01867", "postal_code"),
+    ]
+    assert whole(flat) == Parts("4 Oak Rd", "3B", "Reading", "MA", "01867")
+    # a street with no number, a state it does not shorten to two letters, a ZIP that is none
+    odd = [
+        component("Elm Street", "", "route"),
+        component("Winchester", "Winchester", "sublocality", "political"),
+        component("Massachusetts", "Mass.", "administrative_area_level_1"),
+        component("0189", "0189", "postal_code"),
+    ]
+    assert whole(odd) == Parts("Elm Street", "", "Winchester", "", "")
+    # nothing but a street says no more than the line did; and what is no list of parts says nothing
+    assert whole([component("12", "12", "street_number"), component("Elm Street", "Elm St", "route")]) is None
+    for nothing in (None, [], "nonsense", [7, None, {"types": "locality"}, {"longText": "x"}]):
+        assert whole(nothing) is None
+    # a name that could not go in the address of a request is asked about nowhere
+    world = World(components=ELM_PARTS)
+    assert world.places().whole("../v1/places:autocomplete") is None and world.seen == []
+    for status, reason in ((403, "refused"), (429, "limit"), (404, "not_found"), (500, "unreachable")):
+        with pytest.raises(LookupFailed) as failed:
+            World(status=status).places().whole("ChIJ-elm_12")
+        assert failed.value.reason == reason
+
+
+def test_the_parts_of_a_tapped_line_never_fail_a_form():
+    h = delivered()
+    world = World(*WINCHESTER, components=ELM_PARTS)
+    suggester = asking(h, world, origin="", monthly=2)
+
+    def whole(service: str = "google", ref: str = "ChIJ-elm_12") -> object:
+        answer = h.c.post("/addresses/whole", json={"service": service, "ref": ref})
+        assert answer.status_code == 200, answer.text
+        return answer.json()["parts"]
+
+    # a service that says every part with its list is asked nothing, nor is one nobody knows
+    assert whole("mapbox") is None and whole("azure") is None and whole("bing") is None
+    # a name that could not go in the address of a request
+    assert whole(ref="../../v1/places:autocomplete") is None and whole(ref="") is None
+    assert world.seen == []
+    assert whole()["zip"] == "01890" and len(world.seen) == 1
+    # a place it says nothing of
+    world.components = None
+    assert whole() is None and len(world.seen) == 2
+    # the month is used up: it is not asked, and the form keeps what the line said
+    world.components = ELM_PARTS
+    assert whole() is None and len(world.seen) == 2
+    # and a failure here says nothing about its lists: it does not rest for it
+    assert suggester.status()["resting"] is False
+    # Google turned off for the list: not asked, though the hub has its key
+    h2 = delivered()
+    world2 = World(components=ELM_PARTS)
+    asking(h2, world2, on=False, origin="")
+    assert h2.c.post("/addresses/whole", json={"service": "google", "ref": "ChIJ-elm_12"}).json() == {"parts": None}
+    assert world2.seen == []
+    # down, or the key refused: no parts and no error, and the lists go on as they were
+    h3 = delivered()
+    world3 = World(*WINCHESTER, status=403)
+    third = asking(h3, world3, origin="")
+    assert h3.c.post("/addresses/whole", json={"service": "google", "ref": "ChIJ-elm_12"}).json() == {"parts": None}
+    assert third.status()["resting"] is False and third.status()["failed_today"] == 1
+    # a hub with no key at all
+    h4 = delivered()
+    assert h4.c.post("/addresses/whole", json={"service": "google", "ref": "ChIJ-elm_12"}).json() == {"parts": None}
+
+
 def test_the_hubs_own_file_says_whether_there_is_a_service_and_how_often_it_is_asked():
     assert places_from_env({}) is None and places_from_env({"POS_MAPS_GOOGLE_KEY": "  "}) is None
     assert places_from_env({"POS_MAPS_GOOGLE_KEY": "AIza-key-456"}).name == "google"
@@ -669,7 +804,12 @@ def feature(name: str, place: str = WINCHESTER_MA, state: str = "Massachusetts",
             "name": name,
             "place_formatted": f"{place}, United States",
             "full_address": f"{name}, {place}, United States",
-            "context": {"region": {"name": state, "region_code": code, "region_code_full": f"US-{code}"}},
+            "context": {
+                "postcode": {"name": place.rsplit(" ", 1)[-1]},
+                "place": {"name": place.split(",")[0]},
+                "region": {"name": state, "region_code": code, "region_code_full": f"US-{code}"},
+                "country": {"name": "United States", "country_code": "US"},
+            },
         },
     }
 
@@ -701,6 +841,9 @@ def found(line: str, rest: str = "Winchester, MA 01890") -> dict:
             "typeGroup": "Address",
             "address": {
                 "addressLine": line,
+                "locality": rest.split(",")[0],
+                "adminDistricts": [{"name": "Massachusetts", "shortName": "MA"}, {"name": "Middlesex County"}],
+                "postalCode": rest.rsplit(" ", 1)[-1],
                 "formattedAddress": f"{line}, {rest}, United States",
                 "countryRegion": {"ISO": "US", "name": "United States"},
             },
@@ -769,12 +912,15 @@ def test_mapbox_is_sent_the_letters_typed_and_nothing_else(caplog):
             "main": "12 Elm Street",
             "rest": "Winchester, MA 01890",
             "from": "mapbox",
+            # and each part by itself, for a form that asks for them in boxes of their own
+            "parts": {"street": "12 Elm Street", "unit": "", "city": "Winchester", "state": "MA", "zip": "01890"},
         },
         {
             "address": "12 Elmwood Road, Winchester, MA 01890",
             "main": "12 Elmwood Road",
             "rest": "Winchester, MA 01890",
             "from": "mapbox",
+            "parts": {"street": "12 Elmwood Road", "unit": "", "city": "Winchester", "state": "MA", "zip": "01890"},
         },
     ]
     # one request: it is never asked where the restaurant stands, because nothing it answers may be kept
@@ -810,11 +956,38 @@ def test_what_mapbox_answers_is_read_with_care():
         "nonsense",
     )
     assert world.mapbox().suggest("12 Elm") == [
-        Suggestion("12 Elm Street, Winchester, MA 01890", "12 Elm Street", "Winchester, MA 01890", "mapbox"),
-        Suggestion("5 Broadway, New York, NY 10004", "5 Broadway", "New York, NY 10004", "mapbox"),
+        Suggestion(
+            "12 Elm Street, Winchester, MA 01890",
+            "12 Elm Street",
+            "Winchester, MA 01890",
+            "mapbox",
+            Parts("12 Elm Street", "", "Winchester", "MA", "01890"),
+        ),
+        Suggestion(
+            "5 Broadway, New York, NY 10004",
+            "5 Broadway",
+            "New York, NY 10004",
+            "mapbox",
+            Parts("5 Broadway", "", "New York", "NY", "10004"),
+        ),
+        # nothing said of the parts: a form reads them off the line
         Suggestion("Elm Street, Winchester, Massachusetts", "Elm Street", "Winchester, Massachusetts", "mapbox"),
         Suggestion("9 Birch Lane, Stoneham, Massachusetts 02180", "", "", "mapbox"),
     ]
+    # the parts, read with care: a town that is its "locality", a state that is no two letters, a ZIP that is none
+    odd = feature("7 Pine St")
+    odd["properties"]["context"] = {
+        "locality": {"name": "  Montvale "},
+        "region": {"name": "Massachusetts", "region_code": "Mass"},
+        "postcode": {"name": "0189"},
+    }
+    bare = feature("8 Pine St")
+    bare["properties"]["context"] = {"postcode": 1890, "place": "Woburn", "region": None}
+    assert [one.parts for one in MapboxWorld(odd, bare).mapbox().suggest("pine")] == [
+        Parts("7 Pine St", "", "Montvale", "", ""),
+        None,
+    ]
+    assert world.mapbox().whole("abc") is None  # its list says every part: it is asked nothing more
     assert MapboxWorld().mapbox().suggest("12 Elm") == []  # an answer with nothing in it
     answer = httpx.Response(200, json=["no", "collection"])
     assert Mapbox(TOKEN, client=httpx.Client(transport=httpx.MockTransport(lambda _: answer))).suggest("12 Elm") == []
@@ -851,12 +1024,14 @@ def test_azure_maps_is_sent_the_letters_typed_and_where_the_restaurant_stands(ca
             "main": "12 Elm St",
             "rest": "Winchester, MA 01890",
             "from": "azure",
+            "parts": {"street": "12 Elm St", "unit": "", "city": "Winchester", "state": "MA", "zip": "01890"},
         },
         {
             "address": "12 Elmwood Rd, Winchester, MA 01890",
             "main": "12 Elmwood Rd",
             "rest": "Winchester, MA 01890",
             "from": "azure",
+            "parts": {"street": "12 Elmwood Rd", "unit": "", "city": "Winchester", "state": "MA", "zip": "01890"},
         },
     ]
     (first,) = [request for request in world.seen if request.url.path == "/geocode:autocomplete"]
@@ -913,6 +1088,22 @@ def test_what_azure_maps_answers_is_read_with_care():
         Suggestion("Oak Road 4, Woburn, MA", "", "", "azure"),  # it does not begin with the street: one part
     ]
     assert AzureWorld().azure().suggest("12 Elm") == []  # an answer with nothing in it
+    # the parts, where it names them: the state by its letters, or by a name that is two letters and no other;
+    # a line with no street has none, and neither has one whose town, state and ZIP are all unsaid
+    told = [
+        {"addressLine": "12 Elm St", "locality": " Winchester ", "adminDistricts": [{"shortName": "ma"}]},
+        {"addressLine": "3 Ash St", "postalCode": "01801-1234", "adminDistricts": [{"name": "Massachusetts"}]},
+        {"locality": "Woburn", "postalCode": "01801", "formattedAddress": "Woburn, MA 01801"},
+        {"addressLine": "5 Fir St", "locality": 7, "postalCode": "1801", "adminDistricts": "MA"},
+    ]
+    parts = AzureWorld(*({"properties": {"address": where}} for where in told)).azure().suggest("st")
+    assert [one.parts for one in parts] == [
+        Parts("12 Elm St", "", "Winchester", "MA", ""),
+        Parts("3 Ash St", "", "", "", "01801-1234"),
+        None,
+        None,
+    ]
+    assert world.azure().whole("abc") is None  # its list says every part: it is asked nothing more
     for status, reason in (
         (401, "refused"),
         (403, "refused"),

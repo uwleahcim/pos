@@ -1032,6 +1032,7 @@ class _OrderScreenState extends State<OrderScreen> {
             : null,
         live: live,
         addresses: (typed) => widget.api.suggestAddresses(typed, phone: order.phone),
+        wholeAddress: widget.api.wholeAddress,
       ),
     );
     if (asked == null || !mounted) return;

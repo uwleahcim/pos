@@ -397,13 +397,25 @@ class Hub {
   Completer<void>? addressWaits;
   bool addressesDown = false;
 
-  /// One line of such a list, as the hub says it.
-  static Map<String, dynamic> addressLine(String address, {String from = 'orders', String? main, String rest = ''}) => {
-    'address': address,
-    'main': main ?? address,
-    'rest': rest,
-    'from': from,
-  };
+  /// One line of such a list, as the hub says it. [parts] are the address's parts where the map service
+  /// told them apart (`street`, `unit`, `city`, `state`, `zip`), and [ref] the service's own name for the
+  /// place where its list leaves the ZIP out and the hub can be asked for it ([addressWholes]).
+  static Map<String, dynamic> addressLine(
+    String address, {
+    String from = 'orders',
+    String? main,
+    String rest = '',
+    Map<String, String>? parts,
+    String? ref,
+  }) => {'address': address, 'main': main ?? address, 'rest': rest, 'from': from, 'parts': ?parts, 'ref': ?ref};
+
+  /// The parts of a tapped line that its list left out (`POST /addresses/whole`), by the service's own name
+  /// for the place. A name that is not in it gets `parts` null, as from a service that did not answer.
+  /// Every body the hub was asked with is in [wholeAsks]; [wholeWaits], when set, holds each answer back
+  /// until it completes. A hub older than the parts ([addressWholes] null) has no such call.
+  Map<String, Map<String, String>>? addressWholes = {};
+  final wholeAsks = <Map<String, dynamic>>[];
+  Completer<void>? wholeWaits;
 
   /// A hub that knows Elm Street from its own orders and two more from Google, for "12 el" and "12 elm".
   static Map<String, List<Map<String, dynamic>>> get elmLists {
@@ -4276,6 +4288,14 @@ class Hub {
         return _driveLookups(request);
       case '/addresses/suggest':
         return _suggest(request);
+      case '/addresses/whole':
+        final wholes = addressWholes;
+        if (wholes == null) return json({'detail': 'Not Found'}, 404);
+        if (addressesDown) throw const SocketException('down');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        wholeAsks.add(body);
+        await wholeWaits?.future;
+        return json({'parts': wholes[body['ref']]});
       case '/settings/address_list':
         if (addressList == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

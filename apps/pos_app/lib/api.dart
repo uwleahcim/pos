@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'address_list.dart';
+import 'address_parts.dart';
 import 'allergies.dart';
 import 'bag.dart';
 import 'cache.dart';
@@ -1303,6 +1304,20 @@ class PosApi {
     });
     if (status == 404 || status == 405) _noAddressListUntil = DateTime.now().add(const Duration(minutes: 10));
     return answer == null ? null : AddressSuggestions.fromJson(answer);
+  }
+
+  /// The parts of an address a map service listed without all of them (docs/delivery.md, "The address in
+  /// its parts"): Google's list names the street, the town and the state and no ZIP, and the hub asks it
+  /// once more about the one line somebody tapped ([AddressSuggestion.ref]). Null for a line with nothing
+  /// more to ask, and when the hub gave none, whatever the reason: a help, like the list itself.
+  Future<AddressParts?> wholeAddress(AddressSuggestion picked) async {
+    final ref = picked.ref;
+    if (ref == null || picked.own) return null;
+    final (_, answer) = await _aside('/addresses/whole', {
+      'service': picked.from,
+      'ref': ref,
+    }, timeout: const Duration(seconds: 3));
+    return AddressParts.of(answer?['parts']);
   }
 
   /// Which map services the list of addresses asks as well as the restaurant's own deliveries, as the

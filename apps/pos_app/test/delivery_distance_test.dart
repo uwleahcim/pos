@@ -12,7 +12,7 @@ import 'package:pos_app/screens/theme.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, tapKey;
 import 'delivery_fee_test.dart' show carried, delivery, offered, picked, pumpForm, pumpOrder, websiteFee;
-import 'delivery_test.dart' show created, elm, key, linda, lindaDigits, typeNumber, typed;
+import 'delivery_test.dart' show addressOn, created, elm, enterAddress, key, linda, lindaDigits, typeNumber, typed;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -47,8 +47,8 @@ double contrast(Color ink, Color paper) {
 
 /// The address typed into a form that is a delivery, and the box left as Enter leaves it.
 Future<void> typeAddress(WidgetTester tester, String address) async {
-  await tester.enterText(key('event-address'), address);
-  await tester.pump();
+  await enterAddress(tester, address);
+  await tester.showKeyboard(key('event-address:zip')); // the last of its boxes: Enter there says it is done
   await tester.testTextInput.receiveAction(TextInputAction.done);
   await tester.pumpAndSettle();
 }
@@ -237,7 +237,7 @@ void main() {
       await tester.enterText(key('takeout-name'), 'Linda');
       await tapKey(tester, 'channel:phone');
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pump();
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
@@ -286,7 +286,7 @@ void main() {
       await tapKey(tester, 'handover:delivery');
       await tester.tap(key('event-address'));
       await tester.pump();
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pump();
       expect(t.hub.distanceAsks, isEmpty);
       await tester.tap(key('event-note')); // on to the note for the driver
@@ -303,7 +303,7 @@ void main() {
       await tapKey(tester, 'handover:delivery');
       await tester.tap(key('event-address'));
       await tester.pump();
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pump();
       expect(t.hub.distanceAsks, isEmpty); // not while it is being typed
       await tester.tap(find.text('Cancel'));
@@ -327,7 +327,7 @@ void main() {
       await lindaTo(tester, elm);
       await typeAddress(tester, elm); // left again as it was
       expect(t.hub.distanceAsks.length, 1);
-      await tester.enterText(key('event-address'), main9);
+      await enterAddress(tester, main9);
       await tester.pump();
       // what the map said was about the other address: it is gone until this one is asked
       expect(key('fee-lookup-found'), findsNothing);
@@ -398,7 +398,7 @@ void main() {
       await typeNumber(tester, '781 555 0101');
       expect(t.hub.distanceAsks, isEmpty); // a pickup goes nowhere
       await tapKey(tester, 'handover:delivery');
-      expect(typed(tester, 'event-address'), elm);
+      expect(addressOn(tester), elm);
       // with the number, so the hub can look at her own earlier deliveries first
       expect(t.hub.distanceAsks, [
         {'address': elm, 'phone': '7815550101'},
@@ -414,7 +414,7 @@ void main() {
       await tapKey(tester, 'channel:phone');
       await tapKey(tester, 'handover:delivery');
       await typeNumber(tester, '781 555 0101');
-      expect(typed(tester, 'event-address'), elm);
+      expect(addressOn(tester), elm);
       expect([for (final ask in t.hub.distanceAsks) ask['address']], [elm]);
       expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive');
       await stop(tester);
@@ -502,7 +502,7 @@ void main() {
 
     testWidgets('her distance is not looked up again: the form says so and picks the price', (tester) async {
       final t = await pumpLinda(tester);
-      expect(typed(tester, 'event-address'), elm);
+      expect(addressOn(tester), elm);
       expect(said(tester, 'fee-lookup-found'), '3.2 mi · 9 min drive, as last time');
       expect(key('fee-lookup-again'), findsOneWidget);
       expect(picked(tester, '4.5'), isTrue);
