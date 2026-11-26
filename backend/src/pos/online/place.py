@@ -9,7 +9,8 @@ that sends it to the kitchen. Nothing here stores or prints: the hub does that w
 reservation, an order placed from a table, one that was not accepted: `NotAnOrder`, with why. They stay
 where they are, in GloriaFood's own app. So does one that nobody at the restaurant has answered yet
 (`WAITS`): GloriaFood hands it over again when it is accepted, and then it is an order
-(`pos.online.inbox.Inbox.again`).
+(`pos.online.inbox.Inbox.again`). What GloriaFood says of an order after it is on the POS (it was marked
+ready, it was cancelled) is `pos.online.after`.
 
 **The dishes.** The menu on the POS was imported from GloriaFood's and kept its ids (`pos.menu.gloriafood`):
 a dish knows GloriaFood's number for it, a size and a choice are coded by theirs. So a dish sold online is
@@ -52,6 +53,10 @@ or it was never wanted, and a ticket now would have it cooked twice. One whose t
 was accepted on an earlier day is not put on the POS at all (`NotAnOrder`, `old`): it would count in the
 wrong day's sales. It is reported, never dropped quietly, and it is in GloriaFood's own records.
 
+**An order that reaches the hub made.** One GloriaFood says was marked ready in its own app before the hub
+ever had it (`ready`: the hub was off, and the restaurant worked from GloriaFood's app) goes on the POS for
+the check, as ready, and is not sent to the kitchen either (`MADE`).
+
 Nothing of the customer but the name, the number, the address of a delivery and what they wrote is put on
 the order: no e-mail, no card, no consent to marketing.
 """
@@ -89,6 +94,18 @@ ROUNDED = "Rounding"
 ORDER_TYPES = ("pickup", "delivery")
 WAITS = "it waits to be accepted in GloriaFood's app"
 """What is said of an order that was handed over before anybody at the restaurant answered it."""
+NOT_ACCEPTED = {
+    PENDING: WAITS,
+    "rejected": "it was rejected in GloriaFood's app",
+    "canceled": "it was cancelled in GloriaFood",
+    "cancelled": "it was cancelled in GloriaFood",
+}
+"""What is said of an order that is not for the POS, by GloriaFood's word for what became of it."""
+MISSED = "it was missed: nobody answered it in GloriaFood's app in time"
+MISSED_UNREACHED = "it was missed: GloriaFood could not reach its app at the restaurant"
+"""The two ways GloriaFood says an order went unanswered (`timed_out`, with `missed_reason`)."""
+MADE = "it was already marked ready in GloriaFood's app"
+"""What is said of an order that reaches the hub made: it is not sent to the kitchen a second time."""
 KEPT_WORDS = {
     "table_reservation": "a table reservation",
     "order_ahead": "a table booked with its dishes ordered ahead",
@@ -135,7 +152,11 @@ def unaccepted(order: Mapping[str, Any]) -> NotAnOrder | None:
     status = status_of(order)
     if status == ACCEPTED:
         return None
-    return NotAnOrder(WAITS if status == PENDING else f"it was not accepted ({status})")
+    if status == "timed_out":
+        # GloriaFood says why nobody answered: its app at the restaurant was not reached, or was and waited
+        unreached = str(order.get("missed_reason") or "").upper() == "NO_CONNECTION"
+        return NotAnOrder(MISSED_UNREACHED if unreached else MISSED)
+    return NotAnOrder(NOT_ACCEPTED.get(status) or f"it was not accepted ({status})")
 
 
 class CannotPlace(Exception):
@@ -155,7 +176,7 @@ class Placed:
     as_written: tuple[str, ...] = ()  # the dishes that went on under GloriaFood's own name
     difference: Decimal = ZERO  # GloriaFood's total less what the POS reckoned, before the row that evens them
     notes: tuple[str, ...] = ()  # whatever else a person should know of it
-    late: bool = False  # it reached the hub after its time: on the POS, not sent to the kitchen
+    late: bool = False  # it reached the hub after its time, or made: on the POS, not sent to the kitchen
 
     @property
     def look(self) -> bool:
@@ -260,6 +281,7 @@ def ops_for(
     if not dishes:
         raise CannotPlace("it has no dishes")
     late = _late(order, now_ms)
+    made_already = order.get("ready") is True  # in GloriaFood's app, before the hub ever had it
 
     order_id = order_id_for(ext_id)
     delivery = kind == "delivery"
@@ -274,7 +296,7 @@ def ops_for(
     fields: dict[str, Any] = {
         "order_type": "takeout",
         "channel": "online",
-        "stage": "new",
+        "stage": "ready" if made_already else "new",
         "customer_name": _name_of(order),
         "phone": _line(order.get("client_phone"), 40),
         **_times(order, minutes or {}, delivery=delivery, now_ms=now_ms),
@@ -400,11 +422,12 @@ def ops_for(
             notes.append("it was paid in more than one way on the website: GloriaFood says what is still to collect")
         else:
             notes.append("how it was paid on the website cannot be read: GloriaFood says what is still to collect")
-    if late:
-        notes.append(f"{late}: it is on the POS for the check and was not sent to the kitchen")
+    unsent = late or (MADE if made_already else "")
+    if unsent:
+        notes.append(f"{unsent}: it is on the POS for the check and was not sent to the kitchen")
     else:
         write("fire", "fire", {"course": "*", "by": BY})
-    return Placed(order_id, tuple(made), tuple(as_written), difference, tuple(notes), late=bool(late))
+    return Placed(order_id, tuple(made), tuple(as_written), difference, tuple(notes), late=bool(unsent))
 
 
 KNOWN = frozenset({"item", "delivery_fee", "tip", "cash_discount"}) | PROMOTIONS | SERVICE_FEES

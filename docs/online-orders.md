@@ -52,9 +52,13 @@ steps. The first is yours alone: the key is made in your GloriaFood account.
 1. **Make the key.** In GloriaFood's restaurant admin, open the list of integrations (under "Others",
    "Third party integrations" as GloriaFood's pages describe it; the labels may read a little differently
    in your admin), add a custom integration, and pick the template **Poll Accepted Order v2**. Where the
-   form asks which **order status** to send, tick **Accepted** and nothing else, and for how often, once,
-   when the order is accepted. (With Pending ticked too, GloriaFood hands every order over before anybody
-   accepted it: see [An order that comes before it is accepted](#an-order-that-comes-before-it-is-accepted).)
+   form asks which **order status** to send, tick **Accepted** and nothing else. (With Pending ticked too,
+   GloriaFood hands every order over before anybody accepted it: see
+   [An order that comes before it is accepted](#an-order-that-comes-before-it-is-accepted).) Where it asks
+   how often, pick one of two: **once, when the order is accepted**, and the POS hears of an order one
+   time; or **Send every time an order is updated**, and the POS also hears when the order is marked ready
+   or cancelled in GloriaFood afterwards
+   ([What GloriaFood says of an order afterwards](#what-gloriafood-says-of-an-order-afterwards)).
    Saving it shows a key. Copy it.
 2. **Give it to the hub.** In the app: Location › **Keys and connections** › GloriaFood (online orders) ›
    **Type the key**, paste it, Save. The hub starts asking at once, and **Try it** on the same card asks
@@ -226,15 +230,20 @@ order while the asking is on.
   [several accounts](#several-accounts): it is how the hub tells which account a pushed order is from. If
   it does not, the hub goes by GloriaFood's number for the restaurant, which it learns from the first order
   it asked that account for.
-- **Whether GloriaFood sends anything a second time when an order changes** after it was accepted. The
-  first arrival stands; a later one with the same number changes nothing on the POS.
+- **What GloriaFood sends a second time when an order changes** after it was accepted, with "Send every
+  time an order is updated". Its pages name what an order says of itself (`status`, `ready`) and do not
+  say which changes make it hand the order over again, nor in which order copies arrive. The hub takes
+  ready and cancelled from a later copy
+  ([What GloriaFood says of an order afterwards](#what-gloriafood-says-of-an-order-afterwards)); no real
+  one had been seen when that was built (November 2026).
 - **How a booked table reads.** GloriaFood's pages say `persons` is how many sit down. They do not say in so
   many words that `fulfill_at` is the time of the table, though it is the only time a reservation carries.
   Hold the first few reservations in the book against GloriaFood's app: the name, how many, and above all
   the time.
 - **Whether GloriaFood tells the hub when a guest changes or cancels a table.** Its pages do not say that
-  it does. Until a real one shows otherwise, a change or a cancellation made on the website does not reach
-  the book.
+  it does. If it hands a booked table over again as cancelled, the hub cancels it in the book
+  ([Tables booked on the website](#tables-booked-on-the-website)); a change of its time or size does not
+  reach the book.
 
 ## Several accounts
 
@@ -344,11 +353,67 @@ when somebody accepts it. The hub takes that as it comes:
   by hand if it was made. (The other case is an order for later, placed while the restaurant was shut:
   nobody could answer it yet, and it goes on the POS when somebody does.)
 
-An order that is on the POS stays there whatever GloriaFood says of it later (cancelled in its app, say):
-taking it off is a void, by a person, with its reason.
-
 The plainest setting is the one under [Turning it on](#turning-it-on): Accepted alone. Then every order
-reaches the hub once, when it is accepted, and nothing waits.
+reaches the hub when it is accepted, and nothing waits.
+
+### What GloriaFood says of an order afterwards
+
+Since 26 November 2026. With the integration set to **Send every time an order is updated**, GloriaFood
+hands an order over again when something of it changes after it was accepted. The POS takes two things
+from such a later copy, and nothing has to be turned on for it:
+
+- **Ready.** An order marked ready in GloriaFood's app is **Ready on the POS** too, as if somebody had
+  pressed Ready at the counter: it moves on in the list of to-go orders and on the pickup board. Nothing
+  prints and nobody is alerted. The POS sends the customer no text of its own for it: GloriaFood tells its
+  own customers. Only forward: an order that is already out with a driver, picked up or closed stays where
+  it is, and one that is ready is never made not ready again.
+- **Cancelled** (or rejected, or missed, after it had been accepted). The POS **voids the order**. Every
+  dish the kitchen has is voided with the reason "Cancelled in GloriaFood", so each station that had it
+  gets its VOID ticket and the dishes are in the report of voids. The check is voided, so it leaves the
+  lists and the day's sales. A slip prints where the to-go orders print, ONLINE ORDER CANCELLED, a
+  manager's screen is alerted, and the screen Online orders lists it: "it was cancelled in GloriaFood: the
+  POS voided it". Nobody types a PIN for this void: the POS takes GloriaFood's word, and says so to a
+  manager at once. (This is the restaurant's choice: void it and tell the kitchen.)
+
+Three cancelled orders are **not voided by themselves**, because somebody here has already done something
+with them that a void would undo behind their back:
+
+- one that **money was taken for at the POS** (cash or a card at the counter),
+- one that was **picked up**, or has **left with a driver**,
+- one whose check is **closed**.
+
+Such an order stays exactly as it is. The slip and the list say why ("it was cancelled in GloriaFood, and
+it was picked up: it is still on the POS"), and a manager decides what becomes of it.
+
+**The money the website took** for a cancelled order is not given back by the POS: it cannot. The payment
+"Paid online" stays on the voided check, the day's report counts it under money taken on voided checks,
+and the alert names the amount. Whoever cancelled the order gives the money back where it was taken, in
+GloriaFood or with the card company behind it.
+
+More that is worth knowing:
+
+- **An order that was cancelled before it went on the POS** (accepted and cancelled within the same
+  minute, say) never goes on. It is listed as "it was cancelled in GloriaFood".
+- **An order that arrives already marked ready** (the hub was off while it was accepted and made from
+  GloriaFood's app) goes on the POS as Ready, so the sale is recorded, and is **not sent to the kitchen**.
+  A slip says so, as for an order that reached the hub late.
+- **An order for later whose tickets have not printed yet** and that is cancelled never prints them. Only
+  the slip prints.
+- **A dish that is counted down** (5 left) goes back on its number when its order is cancelled.
+- **It is one way.** The POS tells GloriaFood nothing: an order marked Ready at the POS is not ready in
+  GloriaFood's app, and an order voided at the POS is not cancelled there.
+- **Only ready and cancelled are taken.** If an order's dishes, time or address are changed in GloriaFood
+  after it went on the POS, the check stays as it was. The order as GloriaFood sent it last can be read
+  on the hub: `sudo hubctl online show <GloriaFood's number>`.
+- **An older copy never undoes a newer one.** A copy that says "accepted" and arrives after the one that
+  said "cancelled" changes nothing.
+- **A word the POS does not know changes nothing.** GloriaFood's pages list five things an order can say
+  became of it (accepted, pending, rejected, timed out, cancelled). If a later copy of an order that is on
+  the POS says anything else, the POS leaves the order alone: it voids nothing on a word nobody here has
+  read. The hub's log names the word.
+
+With the integration set to send once, none of this happens, and nothing is different from before: an
+order on the POS stays as it is, and taking it off is a void by a person.
 
 ### The dishes
 
@@ -441,9 +506,11 @@ When it does not go as it should:
 | **It is for a day that is over** | It is not put in the book: there is nothing left to do about it. It is listed under To look at that day, and no slip prints |
 | **The book cannot be written just then** | It is tried again each minute, five times, like an order |
 | **A host cancelled it in the book, and GloriaFood hands it over again** | Nothing: the first one stands as the host left it |
+| **GloriaFood hands it over again as cancelled** (with "Send every time an order is updated") | It is **cancelled in the book**, as a host would cancel it, and listed under To look at: "it was cancelled in GloriaFood: it is out of the book". A manager's screen is alerted; no slip prints. If the party is seated already it stays in the book and the list says so. One whose day is over is left alone |
 
-Not built: a change or a cancellation the guest makes on the website afterwards does not reach the book
-(cancel it there by hand); the dishes of a table booked with them going on the POS by themselves; a table
+Not built: a change the guest makes on the website afterwards (another time, more people) does not reach
+the book, and whether GloriaFood sends a cancelled table at all has not been seen on a real one (if it does
+not, cancel it in the book by hand); the dishes of a table booked with them going on the POS by themselves; a table
 that reached the hub before it was updated to this (it is in GloriaFood's app and is not put in the book
 afterwards; one that came earlier on the day of the update is listed under To look at as "Not in the
 book"); and telling the guest anything back.
@@ -555,6 +622,8 @@ where the to-go orders print, alerts a manager's screen, and is listed on the sc
 | **An order from an earlier day** reaches the hub (the key was put on days after the integration was made, or the hub was off overnight) | It is **not put on the POS**: it would land in the wrong day's sales. The slip says NOT ON THE POS and it is listed. It is in GloriaFood's own records; ring it in by hand if it should be in the POS's sales. Several of them at once share one slip |
 | **An order cannot be put on the POS** (something in it this build cannot read) | It is tried again each minute, five times. Then the slip says NOT ON THE POS: look at it in GloriaFood's app and ring it in by hand |
 | **Orders are listed as "it waits to be accepted in GloriaFood's app"** and stay that way after they were accepted | GloriaFood hands them over when they are placed and does not say again that they were accepted. Nothing of them is on the POS; after a quarter of an hour each alerts a manager. In GloriaFood's admin, set the integration's order status to **Accepted** alone ([An order that comes before it is accepted](#an-order-that-comes-before-it-is-accepted)); ring in by hand the ones that were made meanwhile |
+| **An order is cancelled in GloriaFood after it went on the POS** (with "Send every time an order is updated") | The POS voids it: VOID tickets at the stations that had it, a slip ONLINE ORDER CANCELLED where the to-go orders print, an alert for a manager. Money the website took for it is not given back by the POS. See [What GloriaFood says of an order afterwards](#what-gloriafood-says-of-an-order-afterwards) |
+| **It is cancelled in GloriaFood, and it was already paid at the POS, picked up, out with a driver, or closed** | Nothing of it is voided. The slip and the list say that it was cancelled and why it is still on the POS: a manager decides |
 | **GloriaFood's answer cannot be read at all** | It is kept as it came, and a slip says to look at GloriaFood's app (at most one slip a quarter of an hour) |
 | **GloriaFood does not answer** when asked | Nothing is lost: it keeps the orders until the hub asks again. `hubctl online status` says since when and why ("refused the key", "did not answer in time") |
 | **Pushes are turned away** (the key in GloriaFood's admin is not the one on the hub) | Nothing of them is read or kept. The orders arrive by the asking, a minute later than they could. `hubctl online status` counts the pushes turned away, and says so in plain words when orders come only by asking while pushes are turned away. Replace the key on the card GloriaFood push key (or `sudo hubctl online push key`) with the one in GloriaFood's admin, or make a new one and put it into both |
@@ -621,7 +690,9 @@ If the same order comes twice, by either way or both, it is one order on the POS
   with the order; a dish's own note is typed as before.
 - For a table booked on the website: what is listed at the end of
   [Tables booked on the website](#tables-booked-on-the-website).
-- Telling GloriaFood anything back (that an order is ready, that a dish ran out).
+- Telling GloriaFood anything back (that an order is ready, that it was voided, that a dish ran out).
+- Taking a change of an order's dishes, time or address made in GloriaFood after it went on the POS: only
+  ready and cancelled are taken. Giving back the money the website took for a cancelled order.
 - A second built-in way in beside the tunnel (a small receiver in the cloud that the hub collects from).
 - Noticing that the door or the tunnel is down. The hub cannot see either from where it runs, so no screen
   says so: the orders arrive by the asking, and `sudo hubctl online status` and
@@ -687,15 +758,45 @@ how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
   (`inbox.status_of`: no status reads as `accepted`), and the arrival does not say `pending`, the arrival's
   `raw` and `kind` are written over the row's and its state goes back to `new`, so the same round puts it
   on the POS or into the book; `fetched_ms`, `via` and `account` stay. It is then not counted as `known`.
-  A row that is `placed`, `booked` or `failed` is never touched, and an order never goes back to pending.
+  A row that is `placed` or `booked` is never touched here (what a later copy says of it is the next
+  point), and an order never goes back to pending. Since November 2026 a `failed` row is taken again the
+  same way when its status changes (one given up on that was cancelled since), a `new` row also when only
+  `ready` changed, and never an arrival whose `updated_at` is older than the row's (both must say it).
   `place.unaccepted(order)` words an order that is not accepted, for `place.ops_for` and `book.wanted`:
-  `place.WAITS` for `pending`, "it was not accepted (<status>)" otherwise. In the status a `kept` row whose
+  `place.WAITS` for `pending`, `place.NOT_ACCEPTED` and `place.MISSED` (`MISSED_UNREACHED` where
+  `missed_reason` is `NO_CONNECTION`) for the words GloriaFood's pages list, "it was not accepted
+  (<status>)" for any other. In the status a `kept` row whose
   `raw` says `pending` is listed (`look`) and is `new` only from `service.UNANSWERED_MS` (15 minutes)
   after it came, until somebody looks. Tests: `backend/tests/online/test_pending.py`, `test_inbox.py`.
   This was found on the restaurant's hub in November 2026: every order of an evening had come as `pending`
   with `accepted_at` and `fulfill_at` empty, seconds after it was placed. GloriaFood's pages list the
   statuses (`accepted`, `rejected`, `timed_out`, `pending`, `canceled`) and do not say when each is sent;
   that the accepted order follows the pending one is from other integrators' reports, not from its pages.
+
+- **What GloriaFood says of an order afterwards.** An arrival that was here already and is no news for the
+  inbox (`add` and `again` both False) is handed to `OnlineOrders._after`. For a row that is `placed` or
+  `booked` it calls `OnlineOrders.change(row, raw)`, which `pos.api.online` sets. For an order,
+  `after.ops_after(order, state, stamp=)` gives the operations, each with a fixed id so a copy sent
+  twice is written once: `gf-<id>:ready` (`set_field` `stage: ready`, only from `new` on an open check that
+  carries no `online.status`); for a status that is not accepted (`after.off`), `gf-<id>:status-<status>`
+  (`set_field` on the hub-only field `online`, which screens cannot write), then, unless `after.stands`
+  names a reason to leave it (a payment other than `gf-<id>:paid`, stage `picked_up` or `out`, a closed
+  check), `gf-<id>:off-<n>` (`void_line` with `reason: online_cancelled`, `reason_name` and `by`, for
+  every active line that was fired) and `gf-<id>:off` (`void_order`). They are stored through
+  `counts.count_ops` (a counted dish goes back) and printed by `printing.on_ops`; `Notifier.on_ops` is not
+  called for them, and `put` skips it for an order that arrives with `ready: true` (which `place.ops_for`
+  creates with `stage: ready` and no `fire`, `place.MADE`). For a booked table, `unbook` calls
+  `Reservations.cancel("gf-<id>", "cancelled", by="the website")` unless it is seated or its day is over.
+  A `status` that is none of the five GloriaFood's pages list (`after.unknown`) changes nothing and is
+  logged by its word. What comes back is an `After` (`ops`, `said`, `slip`, `voided`). Whatever it is,
+  `Inbox.heard` writes the copy's `raw` over the row's (unless the row's `updated_at` is the later one),
+  and when there is something `said` the row is settled again with it and the time, which
+  makes it news in `/online/status` (`look`, `news`); with `slip`, `notice` prints `after.slip_words` under
+  the job key `online:gloriafood:<id>:off`. While the inbox cannot be written the copy is held in memory
+  and tried at the next round; any other error drops the copy and logs the error's type, never its words.
+  Tests: `backend/tests/online/test_after.py`, `test_inbox.py`. No real update of GloriaFood's had been
+  seen when this was built: its pages give `ready` (a boolean, "marked as ready") and `status`
+  (`canceled`, with one l) and nothing on when an order is sent again.
 
 - **A booked table.** An arrival whose `type` is `table_reservation` or `order_ahead`
   (`book.RESERVATION_TYPES`) is handed to `OnlineOrders.book` instead of `put`. `book.wanted(order,

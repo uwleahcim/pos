@@ -32,7 +32,10 @@ def groups_of(item: dict[str, Any], category: dict[str, Any], size: dict[str, An
     return [*(category.get("groups") or ()), *(item.get("groups") or ()), *((size or {}).get("groups") or ())]
 
 
-_ids = iter(range(240_000_000, 250_000_000))
+_ids = (number for number in range(240_000_000, 250_000_000) if "555" not in str(number))
+"""GloriaFood's own number for each row of an order. None of them holds "555": the customer's phone number
+does (`client_phone` below), and a test that looks for a piece of it in what a person is shown must not
+find one in a row's number, which depends only on how many rows the tests before it made."""
 
 
 def row(

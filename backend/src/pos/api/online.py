@@ -54,6 +54,10 @@
 
 Putting an order on the POS is this module's too (`add_online_orders` sets `OnlineOrders.put`): the
 operations `pos.online.place` makes are numbered, stored and printed as a screen's are, by the same steps.
+So is telling the POS what GloriaFood says of an order later (`OnlineOrders.change`, `pos.online.after`):
+an order marked ready in GloriaFood's app is ready on the POS, one that was cancelled is voided and its
+VOID tickets print, and a booked table that was cancelled is cancelled in the book. The customer is sent
+no text of the POS's for an order GloriaFood marked ready: GloriaFood tells its own customers.
 So is writing a table that was booked on the website into the reservation book (`OnlineOrders.book`): what
 `pos.online.book` reads of it is handed to `Reservations.take`, once, and the screens that show the book are
 told. No call here writes a reservation: a screen cannot make one up as the website's.
@@ -61,6 +65,7 @@ told. No call here writes a reservation: a screen cannot make one up as the webs
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -69,6 +74,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from ..online.after import After, off, ops_after, slip_words, unknown
 from ..online.book import BY as BOOKED_BY
 from ..online.book import RESERVATION_TYPES, Booked, wanted
 from ..online.door import body_of
@@ -77,10 +83,13 @@ from ..online.inbox import Arrival
 from ..online.place import DEVICE, CannotPlace, Placed, ext_id_of, hidden, ops_for, order_id_for
 from ..online.service import SEVERAL, UNREADABLE, OnlineOrders, PushRefused
 from ..orders.check import check_for
-from ..orders.counts import holds
-from ..reservations import Refused, Reservations
+from ..orders.counts import count_ops, holds
+from ..reservations import WEBSITE, Refused, Reservations
 from ..sync.hlc import Clock
+from ..sync.oplog import is_delivery
 from ..sync.pgstore import ReadOnlyError
+
+log = logging.getLogger("pos.online")
 
 SEEN = "online_seen"
 """The setting that keeps when somebody last looked at the online orders to look at, and who."""
@@ -146,7 +155,10 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         if accepted:
             app.state.feed.poke()  # the screens hear of it now, before the tickets print
             app.state.printing.on_ops(store.for_order, list(accepted))
-            app.state.notifier.on_ops(store.for_order, list(accepted))
+            if order.get("ready") is not True:
+                # one that comes marked ready already goes on as ready, and GloriaFood told its customer
+                # so itself: no text of the POS's on top
+                app.state.notifier.on_ops(store.for_order, list(accepted))
         return placed
 
     def book(order: Mapping[str, Any]) -> Booked:
@@ -173,10 +185,59 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         app.state.feed.changed(BOOK_TOPIC)  # the book and the floor map read it now
         return Booked(booking.booking_id, want.said, late=want.late)
 
+    def change(arrival: Arrival, order: Mapping[str, Any]) -> After | None:
+        """What GloriaFood says now of an order that is on the POS, or of a table that is in the book, is
+        told to the POS. Gives what was done; nothing when the POS said it already."""
+        word = unknown(order)
+        if word:
+            # nothing is done on a word nobody here has read; it is named, so that somebody can read it
+            log.warning("online order %s: GloriaFood now says %r, which the POS does not know", arrival.ext_id, word)
+            return None
+        if arrival.state == "booked":
+            return unbook(arrival, order)
+        store = app.state.store
+        if arrival.order_id is None or store.entry(arrival.order_id) is None:
+            return None
+        after = ops_after(order, store.state(arrival.order_id), stamp=clock.now)
+        if not after.ops:
+            return None
+        menu = app.state.menu
+        # stored like a screen's operations; a counted dish that is voided goes back on its number
+        with menu.counting():
+            ops, _, given_back = count_ops(menu, store, list(after.ops))
+            accepted = store.append(ops)
+            menu.take(given_back)
+        if not accepted:
+            return None  # it is in the log already: said before
+        app.state.feed.poke()  # the screens hear of it now, before the tickets print
+        app.state.printing.on_ops(store.for_order, list(accepted))
+        return after
+
+    def unbook(arrival: Arrival, order: Mapping[str, Any]) -> After | None:
+        """A table booked on the website that GloriaFood says is cancelled is cancelled in the book, as a
+        host would cancel it, unless the party sat down already or its day is over."""
+        word = off(order)
+        if not word:
+            return None
+        reservations: Reservations = app.state.reservations
+        booking_id = f"{WEBSITE}{arrival.ext_id}"
+        booking = reservations.store.get(booking_id)
+        if booking is None or booking.status not in ("booked", "seated") or booking.day < reservations.today():
+            return None  # out of the book already, or a day that is over: nothing to do, and nothing to say
+        was = f"it was {word} in GloriaFood"
+        if booking.status == "seated":
+            said = f"{was}, and the party has a table already: it stays in the book"
+            return None if arrival.said == said else After(said=said)
+        reservations.cancel(booking_id, "cancelled", by=BOOKED_BY)
+        app.state.feed.changed(BOOK_TOPIC)  # the book and the floor map read it now
+        return After(said=f"{was}: it is out of the book")
+
     def notice(arrival: Arrival, said: str) -> None:
         """The slip for an order somebody has to look at: one that is not on the POS, or is on it and was
-        not sent to the kitchen; and for a booked table that is not in the book, or came after its time."""
+        not sent to the kitchen, or was cancelled after it went on; and for a booked table that is not in
+        the book, or came after its time."""
         number = f"Online order {arrival.ext_id}{store_of(arrival)}"
+        key = f"online:{arrival.source}:{arrival.ext_id}"
         if arrival.kind == UNREADABLE:
             words = [
                 "ONLINE ORDERS: LOOK",
@@ -203,15 +264,22 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             order_no = state.fields.get("order_no") if state is not None else None
             if isinstance(order_no, int):
                 number = f"Online order #{order_no} ({arrival.ext_id}){store_of(arrival)}"
-            words = [
-                "NOT SENT TO THE KITCHEN",
-                f"{number}: {said}.",
-                "Send it from the order if it still has to be cooked. If it was rung in by hand meanwhile, "
-                "void one of the two.",
-            ]
+            if arrival.raw is not None and off(arrival.raw):
+                # cancelled after it went on the POS: a slip of its own, beside any it had when it came
+                voided = state is not None and state.status == "void"
+                delivery = state is not None and is_delivery(state.fields)
+                words = slip_words(number, said, voided=voided, delivery=delivery)
+                key = f"{key}:off"
+            else:
+                words = [
+                    "NOT SENT TO THE KITCHEN",
+                    f"{number}: {said}.",
+                    "Send it from the order if it still has to be cooked. If it was rung in by hand meanwhile, "
+                    "void one of the two.",
+                ]
         else:
             words = ["NOT ON THE POS", f"{number}: {said}.", f"{LOOK} Ring it in by hand if it still has to be made."]
-        app.state.printing.notice(words, key=f"online:{arrival.source}:{arrival.ext_id}")
+        app.state.printing.notice(words, key=key)
 
     def seen_ms() -> int:
         """When somebody last looked; never, where the settings cannot be read (everything is new then)."""
@@ -230,6 +298,7 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
 
     online.put = put
     online.book = book
+    online.change = change
     online.notice = notice
     online.news = lambda: app.state.feed.changed(TOPIC)  # the screens hear that there is something to look at
 

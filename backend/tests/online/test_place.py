@@ -481,8 +481,14 @@ def test_an_order_from_an_earlier_day_is_not_put_on_today_s_sales():
         ({"type": "order_ahead"}, "it is a table booked with its dishes ordered ahead"),
         ({"type": "dine_in"}, "it is an order placed from a table"),
         ({"type": "drone"}, "it is of a kind the POS does not take (drone)"),
-        ({"status": "rejected"}, "it was not accepted (rejected)"),
-        ({"status": "canceled"}, "it was not accepted (canceled)"),
+        ({"status": "rejected"}, "it was rejected in GloriaFood's app"),
+        ({"status": "canceled"}, "it was cancelled in GloriaFood"),
+        ({"status": "timed_out"}, "it was missed: nobody answered it in GloriaFood's app in time"),
+        (
+            {"status": "timed_out", "missed_reason": "NO_CONNECTION"},
+            "it was missed: GloriaFood could not reach its app at the restaurant",
+        ),
+        ({"status": "on_hold"}, "it was not accepted (on_hold)"),  # a word of GloriaFood's this does not know
         ({"status": "pending"}, "it waits to be accepted in GloriaFood's app"),  # it may be yet
         ({"tax_type": "GROSS"}, "its prices have the tax in them, which this POS does not take"),
         ({"id": None}, "it has no number"),
