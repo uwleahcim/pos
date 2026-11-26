@@ -7,7 +7,9 @@ that sends it to the kitchen. Nothing here stores or prints: the hub does that w
 
 **What becomes an order.** An order GloriaFood says was accepted, for pickup or for delivery. A table
 reservation, an order placed from a table, one that was not accepted: `NotAnOrder`, with why. They stay
-where they are, in GloriaFood's own app.
+where they are, in GloriaFood's own app. So does one that nobody at the restaurant has answered yet
+(`WAITS`): GloriaFood hands it over again when it is accepted, and then it is an order
+(`pos.online.inbox.Inbox.again`).
 
 **The dishes.** The menu on the POS was imported from GloriaFood's and kept its ids (`pos.menu.gloriafood`):
 a dish knows GloriaFood's number for it, a size and a choice are coded by theirs. So a dish sold online is
@@ -75,6 +77,7 @@ from ..orders.delivery_fee import ONLINE
 from ..sync.hlc import HLC
 from ..sync.oplog import Op, OrderState, replay
 from .gloriafood import NAME
+from .inbox import ACCEPTED, PENDING, status_of
 
 DEVICE = "online"
 """The device an online order's operations are written by, and the node of the clock that stamps them."""
@@ -84,6 +87,8 @@ DIFFERENCE = "Online total difference"
 ROUNDED = "Rounding"
 """The row for a difference of a few cents: two ways of rounding the same tax."""
 ORDER_TYPES = ("pickup", "delivery")
+WAITS = "it waits to be accepted in GloriaFood's app"
+"""What is said of an order that was handed over before anybody at the restaurant answered it."""
 KEPT_WORDS = {
     "table_reservation": "a table reservation",
     "order_ahead": "a table booked with its dishes ordered ahead",
@@ -122,6 +127,15 @@ class NotAnOrder(Exception):
         super().__init__(reason)
         self.reason = reason
         self.old = old
+
+
+def unaccepted(order: Mapping[str, Any]) -> NotAnOrder | None:
+    """Why an order is nothing for the POS yet, or at all, by what GloriaFood says became of it: one that
+    still waits to be accepted, one that was turned down, missed or cancelled. None for an accepted one."""
+    status = status_of(order)
+    if status == ACCEPTED:
+        return None
+    return NotAnOrder(WAITS if status == PENDING else f"it was not accepted ({status})")
 
 
 class CannotPlace(Exception):
@@ -234,9 +248,9 @@ def ops_for(
     if ext_id is None:
         raise NotAnOrder("it has no number")
     kind = str(order.get("type") or "")
-    status = str(order.get("status") or "accepted")
-    if status != "accepted":
-        raise NotAnOrder(f"it was not accepted ({status})")
+    refused = unaccepted(order)
+    if refused is not None:
+        raise refused
     if kind not in ORDER_TYPES:
         raise NotAnOrder(f"it is {KEPT_WORDS.get(kind, f'of a kind the POS does not take ({kind})')}")
     if str(order.get("tax_type") or "NET").upper() == "GROSS":

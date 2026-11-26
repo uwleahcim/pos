@@ -51,8 +51,11 @@ steps. The first is yours alone: the key is made in your GloriaFood account.
 
 1. **Make the key.** In GloriaFood's restaurant admin, open the list of integrations (under "Others",
    "Third party integrations" as GloriaFood's pages describe it; the labels may read a little differently
-   in your admin), add a custom integration, and pick the template **Poll Accepted Order v2**. Saving it
-   shows a key. Copy it.
+   in your admin), add a custom integration, and pick the template **Poll Accepted Order v2**. Where the
+   form asks which **order status** to send, tick **Accepted** and nothing else, and for how often, once,
+   when the order is accepted. (With Pending ticked too, GloriaFood hands every order over before anybody
+   accepted it: see [An order that comes before it is accepted](#an-order-that-comes-before-it-is-accepted).)
+   Saving it shows a key. Copy it.
 2. **Give it to the hub.** In the app: Location › **Keys and connections** › GloriaFood (online orders) ›
    **Type the key**, paste it, Save. The hub starts asking at once, and **Try it** on the same card asks
    GloriaFood now (`hub-keys.md`). Or in the hub's terminal, after `sudo hubctl update`:
@@ -317,7 +320,35 @@ website's menu is not built.
 reservation book ([Tables booked on the website](#tables-booked-on-the-website)). Nothing else:
 
 - An order placed from a table (a QR code on the table) is left where it is, in GloriaFood's app.
-- An order nobody accepted, or one that was rejected, never reaches the hub.
+- An order nobody accepted, or one that was rejected, is never put on the POS. With the integration set to
+  send accepted orders only, it never reaches the hub at all.
+
+### An order that comes before it is accepted
+
+GloriaFood's integration can be set to send more than accepted orders: with **Pending** among its order
+statuses, it hands an order to the hub the moment the customer places it, and the same order a second time
+when somebody accepts it. The hub takes that as it comes:
+
+- The order as it was placed is written down and **not put on the POS**: nobody accepted it yet, and it may
+  still be turned down. The screen Online orders lists it as "it waits to be accepted in GloriaFood's app".
+  No alert, no slip: this is an order on its way, not one that went wrong.
+- When GloriaFood hands the same order over again as **accepted**, it goes on the POS and to the kitchen
+  like any accepted order, once, and leaves the list. A table that was booked goes into the book the same
+  way.
+- When it comes again as rejected, or as missed (nobody answered it in GloriaFood's app in time), the list
+  says so, and it stays off the POS.
+- An order that still waits **a quarter of an hour** after it came alerts a manager. An order for now is
+  answered in GloriaFood's app within minutes, or missed there. So one that still waits was most likely
+  answered and the hub was never told: the integration hands orders over when they are placed and not
+  again when they are accepted. Tick **Accepted** alone in the integration, as above, and ring the order in
+  by hand if it was made. (The other case is an order for later, placed while the restaurant was shut:
+  nobody could answer it yet, and it goes on the POS when somebody does.)
+
+An order that is on the POS stays there whatever GloriaFood says of it later (cancelled in its app, say):
+taking it off is a void, by a person, with its reason.
+
+The plainest setting is the one under [Turning it on](#turning-it-on): Accepted alone. Then every order
+reaches the hub once, when it is accepted, and nothing waits.
 
 ### The dishes
 
@@ -522,6 +553,7 @@ where the to-go orders print, alerts a manager's screen, and is listed on the sc
 | **The hub was off, or the internet was**, and an order reaches it more than 15 minutes after its time, the same day | It goes on the POS, so the sale is recorded, but it is **not sent to the kitchen**: it was probably made from GloriaFood's app already. The slip says NOT SENT TO THE KITCHEN. Send it from the order if it still has to be cooked; if somebody rang it in by hand meanwhile, void one of the two |
 | **An order from an earlier day** reaches the hub (the key was put on days after the integration was made, or the hub was off overnight) | It is **not put on the POS**: it would land in the wrong day's sales. The slip says NOT ON THE POS and it is listed. It is in GloriaFood's own records; ring it in by hand if it should be in the POS's sales. Several of them at once share one slip |
 | **An order cannot be put on the POS** (something in it this build cannot read) | It is tried again each minute, five times. Then the slip says NOT ON THE POS: look at it in GloriaFood's app and ring it in by hand |
+| **Orders are listed as "it waits to be accepted in GloriaFood's app"** and stay that way after they were accepted | GloriaFood hands them over when they are placed and does not say again that they were accepted. Nothing of them is on the POS; after a quarter of an hour each alerts a manager. In GloriaFood's admin, set the integration's order status to **Accepted** alone ([An order that comes before it is accepted](#an-order-that-comes-before-it-is-accepted)); ring in by hand the ones that were made meanwhile |
 | **GloriaFood's answer cannot be read at all** | It is kept as it came, and a slip says to look at GloriaFood's app (at most one slip a quarter of an hour) |
 | **GloriaFood does not answer** when asked | Nothing is lost: it keeps the orders until the hub asks again. `hubctl online status` says since when and why ("refused the key", "did not answer in time") |
 | **Pushes are turned away** (the key in GloriaFood's admin is not the one on the hub) | Nothing of them is read or kept. The orders arrive by the asking, a minute later than they could. `hubctl online status` counts the pushes turned away, and says so in plain words when orders come only by asking while pushes are turned away. Replace the key on the card GloriaFood push key (or `sudo hubctl online push key`) with the one in GloriaFood's admin, or make a new one and put it into both |
@@ -646,6 +678,23 @@ how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
   `makePushKey` and the page's own look at a tunnel on its way (`lib/screens/hub_keys_screen.dart`). Tests:
   `backend/tests/online/test_wayin.py`, `test_tunnel.py`, `apps/pos_app/test/hub_keys_test.dart` ("the way
   in for GloriaFood's pushes"), and CI's step "The hub's services together" runs the compose file.
+
+- **An order that comes before it is accepted.** The inbox keys an order by GloriaFood's number, and a
+  second arrival with a number it has is nothing (`Inbox.add` answers False). One exception:
+  `Inbox.again(arrival)`, tried by `OnlineOrders._write_down` for every arrival that was here already. Where
+  the row is `kept` or still `new`, its stored `raw` says another `status` than the arrival
+  (`inbox.status_of`: no status reads as `accepted`), and the arrival does not say `pending`, the arrival's
+  `raw` and `kind` are written over the row's and its state goes back to `new`, so the same round puts it
+  on the POS or into the book; `fetched_ms`, `via` and `account` stay. It is then not counted as `known`.
+  A row that is `placed`, `booked` or `failed` is never touched, and an order never goes back to pending.
+  `place.unaccepted(order)` words an order that is not accepted, for `place.ops_for` and `book.wanted`:
+  `place.WAITS` for `pending`, "it was not accepted (<status>)" otherwise. In the status a `kept` row whose
+  `raw` says `pending` is listed (`look`) and is `new` only from `service.UNANSWERED_MS` (15 minutes)
+  after it came, until somebody looks. Tests: `backend/tests/online/test_pending.py`, `test_inbox.py`.
+  This was found on the restaurant's hub in November 2026: every order of an evening had come as `pending`
+  with `accepted_at` and `fulfill_at` empty, seconds after it was placed. GloriaFood's pages list the
+  statuses (`accepted`, `rejected`, `timed_out`, `pending`, `canceled`) and do not say when each is sent;
+  that the accepted order follows the pending one is from other integrators' reports, not from its pages.
 
 - **A booked table.** An arrival whose `type` is `table_reservation` or `order_ahead`
   (`book.RESERVATION_TYPES`) is handed to `OnlineOrders.book` instead of `put`. `book.wanted(order,

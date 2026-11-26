@@ -11,6 +11,11 @@ it came, and only then turned into a check; what became of it is written beside 
   `said` tells why. Nothing is lost: it is still in the website's own app;
 - `failed`: it could not be put on the POS; `said` tells why, and it is tried again a few times.
 
+The website's service can also be set to hand an order over before the restaurant answered it, and again
+when it did (an integration of GloriaFood's with "Pending" among its statuses). So an order that is here,
+not on the POS, and comes again saying something else of itself is taken as it comes now (`Inbox.again`):
+the one that waited to be accepted goes on the POS when it is.
+
 An order as it came holds the customer's name, number, address and e-mail. It is kept `KEEP_DAYS` days, so
 that an order that went wrong can be looked at and put right, and then only what became of it stays: the
 website's number for it, the day, and the POS order it turned into. Nothing here is sent anywhere.
@@ -32,6 +37,13 @@ MOST_TRIES = 5
 KEEP_DAYS = 30
 """How long an order is kept as it came, with the customer's details; after that only what became of it."""
 SAID_MAX = 300
+ACCEPTED, PENDING = "accepted", "pending"
+"""What an order says became of it at the restaurant (`status_of`): `ACCEPTED`, and `PENDING` while nobody
+there has answered it. The website's service has more words (rejected, timed_out, canceled); they are read
+as they come."""
+RETAKEN = ("kept", "new")
+"""The states in which an order that comes again saying something else of itself is taken as it comes now:
+it is not on the POS, and nobody has given up on it."""
 
 
 class ReadOnlyError(RuntimeError):
@@ -105,6 +117,29 @@ class Inbox:
             self._rows[key] = arrival
             return True
 
+    def again(self, arrival: Arrival) -> bool:
+        """An order that is here comes again, and says something else became of it than it said when it was
+        written down: it was handed over while it waited to be accepted, and now it is accepted (or turned
+        down, or missed). Then what came now is written in place of what came then, and the order waits to
+        be looked at as a new one does. True when that was so.
+
+        Only an order that is not on the POS: one that was kept, or is written down and not looked at yet.
+        One that is on the POS, in the book, or given up on stays as it is whatever is sent after it. An
+        order never goes back to waiting either: one that comes again unanswered says nothing new. When it
+        came first, how, and from which account stay as they were written down."""
+        told = None if arrival.raw is None else status_of(arrival.raw)
+        if told is None or told == PENDING:
+            return False
+        with self._lock:
+            key = (arrival.source, arrival.ext_id)
+            here = self._rows.get(key)
+            if here is None or here.raw is None or here.state not in RETAKEN or status_of(here.raw) == told:
+                return False
+            self._rows[key] = replace(
+                here, raw=arrival.raw, kind=arrival.kind, state="new", order_id=None, said="", tries=0, settled_ms=None
+            )
+            return True
+
     def settle(self, arrival: Arrival) -> None:
         """Writes what became of an order that is here: its state, the POS order, what is said of it and
         how often it was tried. The order as it came, and when, stay as they were written down."""
@@ -164,6 +199,12 @@ class Inbox:
 
 def _restaurant(raw: Mapping[str, Any]) -> str:
     return restaurant_of(raw) or ""
+
+
+def status_of(order: Mapping[str, Any]) -> str:
+    """What an order says became of it at the restaurant, in the website's service's own word. One that
+    says nothing was accepted: only accepted orders were handed over when the API was first written."""
+    return str(order.get("status") or ACCEPTED)
 
 
 def restaurant_of(order: Mapping[str, Any]) -> str | None:
@@ -302,6 +343,27 @@ class PgInbox(Inbox):
                 )
                 row = done.fetchone()
                 return row is not None and bool(row[0])
+        except errors.ReadOnlySqlTransaction as err:
+            raise ReadOnlyError("this database is a standby") from err
+
+    def again(self, arrival: Arrival) -> bool:
+        from psycopg import errors
+        from psycopg.types.json import Jsonb
+
+        told = None if arrival.raw is None else status_of(arrival.raw)
+        if told is None or told == PENDING:
+            return False
+        try:
+            with self._pool.connection() as conn:
+                done = conn.execute(
+                    "UPDATE online_order SET raw = %s, kind = %s, state = 'new', order_id = NULL, said = '', "
+                    "tries = 0, settled_ms = NULL "
+                    "WHERE source = %s AND ext_id = %s AND state = ANY(%s) AND raw IS NOT NULL "
+                    # what it said of itself when it was written down, read as `status_of` reads it
+                    "AND COALESCE(NULLIF(raw ->> 'status', ''), %s) <> %s",
+                    (Jsonb(arrival.raw), arrival.kind, arrival.source, arrival.ext_id, list(RETAKEN), ACCEPTED, told),
+                )
+                return done.rowcount == 1
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
 

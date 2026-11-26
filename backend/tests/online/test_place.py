@@ -451,7 +451,8 @@ def test_an_order_from_an_earlier_day_is_not_put_on_today_s_sales():
         ({"type": "dine_in"}, "it is an order placed from a table"),
         ({"type": "drone"}, "it is of a kind the POS does not take (drone)"),
         ({"status": "rejected"}, "it was not accepted (rejected)"),
-        ({"status": "pending"}, "it was not accepted (pending)"),
+        ({"status": "canceled"}, "it was not accepted (canceled)"),
+        ({"status": "pending"}, "it waits to be accepted in GloriaFood's app"),  # it may be yet
         ({"tax_type": "GROSS"}, "its prices have the tax in them, which this POS does not take"),
         ({"id": None}, "it has no number"),
     ],

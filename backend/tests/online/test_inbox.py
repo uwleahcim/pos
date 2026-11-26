@@ -49,6 +49,62 @@ def test_an_order_is_written_down_once_however_often_it_comes(inbox):
     assert inbox.get("elsewhere", "7") is None  # another service's number 7 is another order
 
 
+PLACED = {**RAW, "status": "pending", "accepted_at": None}
+"""An order as GloriaFood hands it over the moment the customer places it: nobody has answered it yet."""
+ACCEPTED = {**RAW, "status": "accepted", "accepted_at": "2027-01-15T23:00:00.000Z"}
+
+
+def test_an_order_kept_before_it_was_answered_is_taken_as_it_comes_again(inbox):
+    inbox.add(came("7", raw=PLACED))
+    inbox.settle(replace(came("7"), state="kept", said="it waits to be accepted", settled_ms=1500))
+    assert inbox.again(came("7", at=2000, raw=PLACED)) is False  # it says of itself what it said: nothing new
+    assert inbox.get("gloriafood", "7").state == "kept"
+    # accepted now: what came now stands in place of what came then, and it waits as a new one does
+    assert inbox.again(came("7", at=3000, raw=ACCEPTED, kind="delivery", via="push", account="main")) is True
+    taken = inbox.get("gloriafood", "7")
+    assert (taken.raw, taken.kind, taken.state, taken.said, taken.settled_ms) == (ACCEPTED, "delivery", "new", "", None)
+    assert (taken.fetched_ms, taken.via, taken.account) == (1000, "poll", "")  # when and how it came first
+    assert [row.ext_id for row in inbox.waiting()] == ["7"]
+    assert inbox.again(came("7", at=4000, raw=ACCEPTED)) is False  # and once
+
+
+def test_one_that_is_written_down_and_not_looked_at_yet_is_taken_as_it_comes_again_too(inbox):
+    # placed and accepted between two askings: GloriaFood hands both over in one answer
+    inbox.add(came("7", raw=PLACED))
+    assert inbox.again(came("7", raw=ACCEPTED)) is True
+    assert inbox.get("gloriafood", "7").raw == ACCEPTED
+    # the other way round, the order that says it is still waiting says nothing new: it never goes back
+    inbox.add(came("8", raw=ACCEPTED))
+    assert inbox.again(came("8", raw=PLACED)) is False
+    inbox.settle(replace(came("8"), state="kept", said="it reached the hub a day late", settled_ms=1500))
+    assert inbox.again(came("8", raw=PLACED)) is False
+    assert inbox.get("gloriafood", "8").raw == ACCEPTED
+
+
+def test_an_order_on_the_pos_or_given_up_on_is_never_taken_again(inbox):
+    canceled = {**RAW, "status": "canceled"}
+    for n, state in (("1", "placed"), ("2", "booked"), ("3", "failed")):
+        inbox.add(came(n, raw=ACCEPTED))
+        inbox.settle(replace(came(n), state=state, order_id=f"gf-{n}", tries=MOST_TRIES, settled_ms=1500))
+        assert inbox.again(came(n, at=2000, raw=canceled)) is False
+        here = inbox.get("gloriafood", n)
+        assert (here.raw, here.state, here.order_id, here.settled_ms) == (ACCEPTED, state, f"gf-{n}", 1500)
+    assert inbox.again(came("9", raw=ACCEPTED)) is False  # one that is not here
+    assert inbox.get("gloriafood", "9") is None
+    # one whose details were dropped long ago: what it said of itself then is not known any more
+    inbox.add(came("4", raw=PLACED))
+    inbox.settle(replace(came("4"), state="kept", said="it waits to be accepted", settled_ms=1500))
+    assert inbox.forget_before(5000) == 4
+    assert inbox.again(came("4", at=9000, raw=ACCEPTED)) is False
+
+
+def test_an_order_that_says_nothing_of_itself_counts_as_accepted(inbox):
+    inbox.add(came("7"))  # no status at all: an accepted order, as the API was first written
+    inbox.settle(replace(came("7"), state="kept", said="an order placed from a table", settled_ms=1500))
+    assert inbox.again(came("7", raw=ACCEPTED)) is False
+    assert inbox.again(came("7", raw={**RAW, "status": "canceled"})) is True
+
+
 def test_what_became_of_it_is_written_beside_it(inbox):
     for n in ("1", "2", "3", "4"):
         inbox.add(came(n, at=1000 + int(n)))

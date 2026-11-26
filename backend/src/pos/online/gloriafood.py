@@ -14,6 +14,12 @@ takes both (docs/online-orders.md):
 Either way the hub writes down every order it is given before it does anything else with it
 (`pos.online.inbox`), and an order that came both ways is one order.
 
+**Not only accepted orders.** Every order says what became of it (`status`: `accepted`, `pending`,
+`rejected`, `timed_out`, `canceled`), and which of them an integration sends is set in GloriaFood's admin.
+One that sends pending orders too hands an order over the moment the customer places it (`accepted_at` and
+`fulfill_at` empty) and again when it is accepted. Nothing is filtered here: what is done with each is
+`pos.online.place.unaccepted` and `pos.online.inbox.Inbox.again`.
+
 What leaves the building: the key the hub asks with, in the `Authorization` header. No order, no customer,
 nothing of the POS. Both keys are this restaurant's own integrations in GloriaFood's admin ("Poll Accepted
 Order v2" and "Push Accepted Order"); they live in `/opt/pos/.env` (`POS_GLORIAFOOD_KEY`, put there by

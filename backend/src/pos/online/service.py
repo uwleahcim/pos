@@ -15,6 +15,12 @@ Either way the same three things happen, in this order:
    came, before anything else is done with it. One that is already there is the same order come the other
    way, or sent twice: the first stands and the second is nothing. One that cannot be written down now is
    held in memory and written at the next round.
+
+   One thing an order that is already there can still bring: what became of it. GloriaFood can be set to
+   hand an order over the moment the customer places it, before anybody at the restaurant answered it, and
+   again when it is accepted. The first is kept and not put on the POS (`pos.online.place.WAITS`); the
+   second is taken in its place (`Inbox.again`) and goes on. An order that is on the POS stays as it is
+   whatever is said of it later: taking it off is a person's doing.
 2. **Put on the POS.** Every order written down and not yet dealt with is turned into a to-go order
    (`pos.online.place`) and handed to `put`, which the API sets: it stores the operations, numbers the
    order and prints its tickets, as it does for a screen's. What became of the order is written beside it.
@@ -55,7 +61,7 @@ from .. import localtime
 from .accounts import MAIN, Account
 from .book import RESERVATION_TYPES, Booked
 from .gloriafood import NAME, FetchFailed, allowed
-from .inbox import KEEP_DAYS, MOST_TRIES, POLL, PUSH, Arrival, Inbox, restaurant_of
+from .inbox import KEEP_DAYS, MOST_TRIES, PENDING, POLL, PUSH, Arrival, Inbox, restaurant_of, status_of
 from .place import ORDER_TYPES, CannotPlace, NotAnOrder, Placed, ext_id_of
 
 log = logging.getLogger("pos.online")
@@ -81,6 +87,14 @@ LISTED = 10
 """How many orders to look at `status` names."""
 STALE_MS = 5 * 60_000
 """Asking that has failed for this long is trouble to tell a person of: one answer that did not come is not."""
+UNANSWERED_MS = 15 * 60_000
+"""How long an order that was handed over before it was accepted may wait before a person is told of it.
+While the restaurant may still be answering it, it is nothing to alert anybody to. An order for now is
+answered in GloriaFood's app within minutes or missed there, so one that still waits here after this long
+was most likely answered, and the hub was not told: the integration hands orders over when they are placed
+and not again when they are accepted (docs/online-orders.md, "An order that comes before it is accepted").
+The other case is an order for later placed while the restaurant is shut, which nobody can answer yet. The
+figure is a guess."""
 REFUSAL_LOG_MS = 60_000
 """A push that is turned away is counted every time and logged at most this often: the way in is open to
 the internet, and whoever knocks must not fill the hub's log."""
@@ -510,13 +524,16 @@ class OnlineOrders:
             self._tell(unread, unread.said)
 
     def _write_down(self) -> list[Arrival]:
-        """Writes down what is held in memory. Gives the ones that were here already: the same order sent
-        twice, or come the other way first. One that cannot be written now stays in memory."""
+        """Writes down what is held in memory. Gives the ones that were here already and brought nothing
+        new: the same order sent twice, or come the other way first. One that cannot be written now stays
+        in memory."""
         left: list[Arrival] = []
         known: list[Arrival] = []
         for arrival in self._unwritten:
             try:
-                if not self.inbox.add(arrival):
+                # one that is here and comes again saying it was accepted since is no second order, and
+                # not nothing either: it is taken as it comes now, and waits to be put on the POS
+                if not self.inbox.add(arrival) and not self.inbox.again(arrival):
                     known.append(arrival)
             except Exception:  # noqa: BLE001 - whatever the database says, the order is kept for the next round
                 log.error("online order %s could not be written down; it is kept in memory", arrival.ext_id)
@@ -627,7 +644,7 @@ class OnlineOrders:
                 look.setdefault((row.source, row.ext_id), row)
         listed = sorted(look.values(), key=lambda row: row.fetched_ms, reverse=True)[:LISTED]
         looked = [
-            {**row.about(), **self._store(row.account), "at_ms": _since(row), "new": self._news(row, seen_ms)}
+            {**row.about(), **self._store(row.account), "at_ms": _since(row), "new": self._news(row, seen_ms, now)}
             for row in listed
         ]
         orders = [row for row in today if row.kind != UNREADABLE]
@@ -701,12 +718,19 @@ class OnlineOrders:
             )
         return out
 
-    def _news(self, row: Arrival, seen_ms: int) -> bool:
+    def _news(self, row: Arrival, seen_ms: int, now: int) -> bool:
         """Whether one to look at is news to a person: it is as it is since after somebody last looked. Not
         one the hub is still trying to put on (it may go on yet), and not a push that could not be read on a
-        hub that also asks: its orders come by the asking, and nobody is to ring them in a second time."""
+        hub that also asks: its orders come by the asking, and nobody is to ring them in a second time.
+
+        An order that waits to be accepted is no news while the restaurant may still be answering it. One
+        that still waits after `UNANSWERED_MS` is, from then on: most likely it was answered, and nothing
+        told the hub."""
         if row.waiting or (row.kind == UNREADABLE and row.via == PUSH and self.configured):
             return False
+        if _unanswered(row):
+            overdue = row.fetched_ms + UNANSWERED_MS
+            return now >= overdue > seen_ms
         return _since(row) > seen_ms
 
     def _trouble(
@@ -787,6 +811,12 @@ def _since(row: Arrival) -> int:
     return row.settled_ms if row.settled_ms is not None else row.fetched_ms
 
 
+def _unanswered(row: Arrival) -> bool:
+    """Whether an order is here only as the customer placed it: GloriaFood has not said since that the
+    restaurant accepted it, turned it down or missed it."""
+    return row.state == "kept" and row.raw is not None and status_of(row.raw) == PENDING
+
+
 def _to_look_at(row: Arrival) -> bool:
     """Whether a person should look at an order: one that failed, one that went on the POS or into the
     reservation book with something to say of it, and one the hub would take, as an order or as a booked
@@ -798,4 +828,14 @@ def _to_look_at(row: Arrival) -> bool:
     return row.state == "kept" and row.kind in (*ORDER_TYPES, *RESERVATION_TYPES)
 
 
-__all__ = ["ASK_GAP_MS", "INTERVAL_SECONDS", "NAME", "SEVERAL", "UNREADABLE", "OnlineOrders", "PushRefused", "Source"]
+__all__ = [
+    "ASK_GAP_MS",
+    "INTERVAL_SECONDS",
+    "NAME",
+    "SEVERAL",
+    "UNANSWERED_MS",
+    "UNREADABLE",
+    "OnlineOrders",
+    "PushRefused",
+    "Source",
+]
