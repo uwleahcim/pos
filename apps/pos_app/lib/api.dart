@@ -1759,7 +1759,8 @@ class PosApi {
   }
 
   /// A manager typed the key [name]: `key`, and for Apple's the text of the .p8 file with `key_id`,
-  /// `team_id` and `bundle_id`. The hub checks it, seals it and uses it at once. Answers how every key
+  /// `team_id` and `bundle_id`; for the Twilio account (`texts`) the Auth Token with `account`, `sender` and
+  /// `key_sid`. The hub checks it, seals it and uses it at once. Answers how every key
   /// stands after it. 422 with words for the dialog in its detail when the hub does not take it for a key.
   Future<HubKeys> saveHubKey(String token, String name, Map<String, String> typed) async => HubKeys.fromJson(
     await _withFailover(
@@ -1826,6 +1827,21 @@ class PosApi {
         Uri.parse('$base/hub/online/push/try'),
         headers: {'content-type': 'application/json', ..._bearer(token)},
         body: '{}',
+      ),
+      timeout: const Duration(seconds: 45),
+    ),
+  );
+
+  /// One text to [to] now, through the Twilio account the hub holds (docs/texts.md): a manager's try of it.
+  /// Answers how the keys stand, with what the try came to in [HubKeys.textTried]. The hub waits a few
+  /// seconds to hear from the phone company. 409 on a hub without a Twilio account, 404 from one older
+  /// than texts that really go out. The number is used for that one text and kept nowhere.
+  Future<HubKeys> tryTexts(String token, String to) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(
+        Uri.parse('$base/hub/texts/try'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'to': to}),
       ),
       timeout: const Duration(seconds: 45),
     ),

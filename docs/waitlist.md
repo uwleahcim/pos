@@ -196,9 +196,9 @@ it as any check opened by mistake.
 
 ## Not built
 
-- **A text when the table is ready**, and the guest's reply to confirm or cancel. It needs a texting
-  service the hub can send through, and the hub has none yet (its texts go to its log). Called is the mark
-  for a call made by voice or by phone.
+- **A text when the table is ready**, and the guest's reply to confirm or cancel. The hub can send texts
+  through Twilio now (`texts.md`), but only a to-go order's; none is built for the waitlist, and the hub
+  reads no replies. Called is the mark for a call made by voice or by phone.
 - Dragging a party onto a table (it is Seat, then a tap on the table).
 - A suggested wait that knows the tables: which are about to pay, which are booked. The suggestion goes by
   how tonight's parties waited.

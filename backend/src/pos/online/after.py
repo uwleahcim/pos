@@ -12,6 +12,12 @@ comes back (`pos.api.online`), as it does with a screen's operations.
 picked up or closed stays where it is, and one that is ready is never made not ready by a later copy. It is
 one way, too: the POS can tell GloriaFood nothing, so an order marked ready on the POS is not ready there.
 
+**And its customer is texted.** GloriaFood sends no text message when an order is marked ready, so the POS
+sends its own ready text, the one an order gets when Ready is pressed at the counter (`pos.messaging`,
+docs/texts.md; Mike, 2026-11-26: "For ready orders, send a SMS text since gloriafood does not send SMS
+text"). Only while it is news (`news`): a hub that hears hours later that an order was ready, because it was
+off or had no internet, makes the order ready on the POS and texts nobody, who has long since eaten.
+
 **Cancelled.** An order GloriaFood says is cancelled (or rejected, or missed: the words in `OFF`) after it
 went on the POS is **voided**: every dish the kitchen has is voided with the reason "Cancelled in
 GloriaFood", so the stations that had it get their VOID tickets and it is in the report of voids, and then
@@ -47,7 +53,7 @@ from typing import Any
 from ..sync.hlc import HLC
 from ..sync.oplog import Op, OrderState
 from .inbox import ACCEPTED, PENDING, status_of
-from .place import BY, DEVICE
+from .place import BY, DEVICE, LATE_MS, UNTIMED_MS, _ms
 
 REASON = "online_cancelled"
 """The reason a dish voided here carries, where a person's void carries one from the location's list."""
@@ -57,6 +63,8 @@ OFF = {"canceled": "cancelled", "cancelled": "cancelled", "rejected": "rejected"
 """What GloriaFood calls an order that is not to be made (any more), and the word a person is told."""
 HANDED_OVER = {"picked_up": "it was picked up", "out": "it has left with a driver"}
 """The stages a cancelled order is left in, with why, in words."""
+NEWS_MS = 15 * 60_000
+"""How long after GloriaFood last changed an order what it says of it is still news to the customer."""
 
 
 def off(order: Mapping[str, Any]) -> str:
@@ -75,6 +83,19 @@ def unknown(order: Mapping[str, Any]) -> str:
     if status in (ACCEPTED, PENDING) or status in OFF:
         return ""
     return re.sub(r"[^a-z0-9_]", "", status)[:30] or "?"
+
+
+def news(order: Mapping[str, Any], now_ms: int) -> bool:
+    """Whether what this copy says of an order is news its customer can still be texted: GloriaFood changed
+    the order (`updated_at`) no longer than a quarter of an hour ago. A copy that does not say when it was
+    changed is news until the order's own time is a quarter of an hour past, which is how long the hub sends
+    a late order to the kitchen (`pos.online.place`)."""
+    changed = _ms(order.get("updated_at"))
+    if changed is not None:
+        return now_ms - changed <= NEWS_MS
+    promised, accepted = _ms(order.get("fulfill_at")), _ms(order.get("accepted_at"))
+    due = promised if promised is not None else None if accepted is None else accepted + UNTIMED_MS
+    return due is None or now_ms <= due + LATE_MS
 
 
 @dataclass(frozen=True)
@@ -165,4 +186,17 @@ def slip_words(number: str, after_said: str, *, voided: bool, delivery: bool = F
     return ["ONLINE ORDER CANCELLED", f"{number}: {after_said}.", last]
 
 
-__all__ = ["CANCELLED", "NOTHING", "OFF", "REASON", "After", "off", "ops_after", "slip_words", "stands", "unknown"]
+__all__ = [
+    "CANCELLED",
+    "NEWS_MS",
+    "NOTHING",
+    "OFF",
+    "REASON",
+    "After",
+    "news",
+    "off",
+    "ops_after",
+    "slip_words",
+    "stands",
+    "unknown",
+]

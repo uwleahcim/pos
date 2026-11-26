@@ -96,7 +96,7 @@ names; the address works everywhere. Run the backend's own test suite against th
 | What | Where |
 | --- | --- |
 | Secrets (database password, node name) and `POS_PRINTERS` | `/opt/pos/.env`, readable by root only |
-| `POS_LOCATION` (the restaurant's name in texts to customers, and at the top of the guest's bill until a manager types a heading under Location settings) and `POS_MESSAGING` (`log` until a provider is wired in; see `docs/counter-mode.md`) | `/opt/pos/.env`, optional |
+| `POS_LOCATION` (the restaurant's name in texts to customers, and at the top of the guest's bill until a manager types a heading under Location settings) and `POS_MESSAGING` (always `log`: the texts go out through Twilio once a manager types the account in the app, not through this file; see `docs/texts.md`) | `/opt/pos/.env`, optional |
 | `POS_TIMEZONE` (the restaurant's time zone, `America/New_York` unless set: menu hours, the day order numbers count through, "today" for a caller's order, the times on tickets and in texts) | `/opt/pos/.env`, optional |
 | The link to the PBX for desk phones (`POS_PBX_SSH`, `POS_AMI_HOST`, `POS_AMI_USER`, `POS_AMI_SECRET`, and `pbx` among `COMPOSE_PROFILES`; see `docs/desk-phones.md`), written by `hubctl pbx link` | `/opt/pos/.env`, optional |
 | The hub's SSH key for the PBX and the PBX's host key | `/opt/pos/pbx/`, made by `hubctl pbx key` |

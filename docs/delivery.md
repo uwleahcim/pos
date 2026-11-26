@@ -915,7 +915,8 @@ may be sent to the kitchen unpaid (a phone order), that choice is called **At th
 - A delivery whose time is pushed back gets a text that says when it will be there, not when to come for
   it. An order that was just changed from pickup to delivery gets none: the customer asked for that.
 
-(Texts go to the hub's log until a texting service is set up; none is connected yet.)
+(Texts go out through the restaurant's Twilio account once a manager has typed it in the app, and only to
+the hub's log until then: `texts.md`.)
 
 A delivery is **not on the pickup board** (`pickup-board.md`): nobody stands at the shelf waiting for it.
 
@@ -960,8 +961,9 @@ On the list of checks, a delivery that is **Ready** has the button **Out**. Tap 
 from that minute.
 
 - The customer is texted once that the order is **on its way**. The text says nothing of the address or of
-  who brings it. (Like every text, it goes to the hub's log until a texting service is connected.) An
-  order with no phone number gets none, and one that came back and leaves again gets no second text.
+  who brings it. (Like every text, it goes out through Twilio once the account is typed in the app, and to
+  the hub's log until then: `texts.md`.) An order with no phone number gets none, and one that came back and
+  leaves again gets no second text.
 - The order leaves the **kitchen screens**: it is no longer the kitchen's.
 - A text about a delay is no longer sent once it is out.
 - The order itself says "out with Tom since 18:40" on the line under its bar.

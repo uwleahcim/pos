@@ -2,8 +2,9 @@
 
 With "Send every time an order is updated" its integration hands an order over again whenever something of
 it changes: it was marked ready in GloriaFood's app, or it was cancelled. An order that is on the POS takes
-that: ready is ready on the POS, and a cancelled one is voided and the kitchen told. What GloriaFood says of
-an order that never went on the POS is listed in plain words."""
+that: ready is ready on the POS and its customer gets the POS's ready text (GloriaFood sends none), and a
+cancelled one is voided and the kitchen told. What GloriaFood says of an order that never went on the POS is
+listed in plain words."""
 
 from __future__ import annotations
 
@@ -11,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from pos.online.after import CANCELLED, REASON
+from pos.online.after import CANCELLED, REASON, news
 from pos.online.place import BY
 
-from .hub import MINUTE, Hub
+from .hub import MINUTE, NOW, Hub
 from .orders import order, reservation, row
 
 CHICKEN = ("Sweet & Sour Chicken", 2)
@@ -40,6 +41,13 @@ def ready(told: dict[str, Any]) -> dict[str, Any]:
 def cancelled(told: dict[str, Any]) -> dict[str, Any]:
     """The same order as GloriaFood hands it over again once it was cancelled."""
     return {**told, "status": "canceled", "updated_at": LATER}
+
+
+def texts(hub: Hub) -> list[tuple[str, str, str]]:
+    """The texts the POS sent its customers (a hub with no texting service keeps what would have gone), the
+    oldest first: for which order, of which kind, and the words."""
+    sent = hub.client.get("/messages").json()["messages"]
+    return [(text["order_id"], text["kind"], text["body"]) for text in reversed(sent)]
 
 
 def tickets(hub: Hub) -> list[str]:
@@ -84,8 +92,6 @@ def test_an_order_marked_ready_in_gloriafoods_app_is_ready_on_the_pos():
     assert tickets(hub) == TICKETS and hub.slips() == []
     status = hub.status()
     assert (status["look"], status["news"]) == ([], 0)
-    # GloriaFood tells its customer itself: the POS sends no text of its own on top
-    assert hub.client.get("/messages").json()["messages"] == []
     # the order as it came last is the one kept, for whoever looks at what GloriaFood sent
     arrival = hub.inbox.get("gloriafood", "301")
     assert (arrival.state, arrival.raw, arrival.said) == ("placed", ready(told), "")
@@ -93,6 +99,81 @@ def test_an_order_marked_ready_in_gloriafoods_app_is_ready_on_the_pos():
     before = ops(hub)
     assert hub.accept(ready(told)) == AGAIN
     assert ops(hub) == before
+
+
+def test_the_customer_of_an_order_marked_ready_in_gloriafoods_app_gets_the_ready_text():
+    # GloriaFood sends no text message for it, so the POS sends its own: the one Ready at the counter sends
+    hub = Hub()
+    told = lunch()
+    hub.accept(told)
+    assert texts(hub) == []
+    hub.clock += 5 * MINUTE
+    hub.accept(ready(told))
+    words = "Hi Pat Example, order #1 is ready for pickup at The Restaurant. Please pay at pickup."
+    assert texts(hub) == [("gf-301", "ready", words)]
+    assert hub.client.get("/messages").json()["messages"][0]["to"] == "+1 781 555 0142"
+    # once: the same copy again, and a later copy that changes nothing, text nobody
+    hub.accept(ready(told))
+    hub.clock += MINUTE
+    hub.accept({**ready(told), "instructions": "No onions", "updated_at": "2027-01-15T23:07:00.000Z"})
+    assert len(texts(hub)) == 1
+    # one that was paid on the website is not asked to pay at the counter
+    paid = lunch(302, payment="ONLINE")
+    hub.accept(paid)
+    hub.accept({**ready(paid), "updated_at": "2027-01-15T23:07:30.000Z"})
+    assert texts(hub)[1] == ("gf-302", "ready", "Hi Pat Example, order #2 is ready for pickup at The Restaurant.")
+
+
+def test_a_delivery_marked_ready_is_told_nothing_until_it_leaves_with_its_driver():
+    # nobody is told to come for an order that is brought: it hears "on its way" when a driver takes it
+    hub = Hub()
+    told = lunch(kind="delivery")
+    hub.accept(told)
+    hub.clock += 5 * MINUTE
+    hub.accept(ready(told))
+    assert hub.order(301)["fields"]["stage"] == "ready" and texts(hub) == []
+    write(hub, 301, ("set_field", {"stage": "out"}))
+    assert [(order_id, kind) for order_id, kind, _ in texts(hub)] == [("gf-301", "out")]
+
+
+def test_an_order_without_a_number_is_made_ready_and_nobody_is_texted():
+    hub = Hub()
+    told = lunch(client_phone=None)
+    hub.accept(told)
+    hub.clock += 5 * MINUTE
+    hub.accept(ready(told))
+    assert hub.order(301)["fields"]["stage"] == "ready" and texts(hub) == []
+
+
+def test_ready_heard_too_late_to_be_news_is_ready_on_the_pos_and_texts_nobody():
+    # the hub had no internet for the evening: the order was made ready in GloriaFood's app at 18:06, and
+    # the hub hears of it at 21:01. The customer has eaten: a text now would tell them to come for it
+    hub = Hub()
+    told = lunch()
+    hub.accept(told)
+    hub.clock += 180 * MINUTE
+    hub.accept(ready(told))
+    assert hub.order(301)["fields"]["stage"] == "ready" and texts(hub) == []
+    # a quarter of an hour is still news: the hub's minute came round late, or its internet blinked
+    hub = Hub()
+    hub.accept(told)
+    hub.clock += 19 * MINUTE  # 18:20, and it was marked ready at 18:06
+    hub.accept(ready(told))
+    assert [order_id for order_id, _, _ in texts(hub)] == ["gf-301"]
+
+
+def test_what_is_news_goes_by_when_gloriafood_changed_the_order_and_else_by_the_order_s_own_time():
+    told = lunch()  # accepted at 18:00 for 18:25, changed last at 18:00
+    assert news(ready(told), NOW + 5 * MINUTE)  # changed at 18:06, heard at 18:06
+    assert news(ready(told), NOW + 20 * MINUTE) and not news(ready(told), NOW + 21 * MINUTE)
+    assert news(ready(told), NOW - 30 * MINUTE), "a clock that is a little off never makes news old"
+    # a copy that does not say when it was changed: until a quarter of an hour after the order's time
+    bare = {**told, "ready": True, "updated_at": None}
+    assert news(bare, NOW + 39 * MINUTE) and not news(bare, NOW + 40 * MINUTE)
+    # nor that: an hour after it was accepted stands for its time, as it does for the kitchen
+    asap = {**bare, "fulfill_at": None}
+    assert news(asap, NOW + 74 * MINUTE) and not news(asap, NOW + 75 * MINUTE)
+    assert news({**asap, "accepted_at": None}, NOW + 600 * MINUTE), "nothing to tell its age by"
 
 
 def test_ready_never_takes_an_order_back_from_where_it_already_is():
@@ -121,10 +202,16 @@ def test_an_order_that_comes_already_made_is_on_the_pos_ready_and_is_not_sent_to
     assert tickets(hub) == []
     (slip,) = hub.slips()
     assert "NOT SENT TO THE KITCHEN" in slip and "already marked ready in GloriaFood's app" in slip
-    assert hub.client.get("/messages").json()["messages"] == []  # GloriaFood told its customer itself
+    # nobody told its customer (GloriaFood sends no text): the POS does, as for any order made ready
+    assert [(order_id, kind) for order_id, kind, _ in texts(hub)] == [("gf-301", "ready")]
     # accepted and marked ready between two askings: the same
     assert hub.accept(lunch(302), ready(lunch(302))) == {**NONE, "came": 2, "placed": 1}
     assert (hub.order(302)["fields"]["stage"], hub.order(302)["fired"]) == ("ready", {})
+    assert [order_id for order_id, _, _ in texts(hub)] == ["gf-301", "gf-302"]
+    # one that was made ready long before the hub came back is on the POS ready, and texts nobody
+    hub.clock += 120 * MINUTE
+    assert hub.accept(ready(lunch(303))) == {**NONE, "came": 1, "placed": 1}
+    assert hub.order(303)["fields"]["stage"] == "ready" and len(texts(hub)) == 2
 
 
 # --- cancelled ---------------------------------------------------------------------------------
