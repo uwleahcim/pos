@@ -4,6 +4,9 @@
 - `POST /addresses/suggest` `{typed, phone, own}`: what the letters typed so far could become. Anyone at a
   terminal may ask it, like how far an address is. The letters go in the body, never in the address of the
   request, which a log could show.
+- `POST /addresses/whole` `{service, ref}`: the parts of one address a map service listed, where its list
+  leaves a part out (Google's names no ZIP): asked once, when somebody taps that line, so a form can fill
+  every box.
 - `GET /settings/address_list`, `PUT /settings/address_list` (manager token): which map services are asked as
   well as the restaurant's own deliveries (`google`, `mapbox`, `azure`, each off until a manager turns it
   on), the order they are asked in (`order`, their names; Google, Mapbox, Azure Maps unless a manager put
@@ -31,6 +34,7 @@ from ..addresses import (
     NEAR_METERS,
     ORDER,
     OWN_MOST,
+    REF,
     SERVICE,
     TITLE,
     AddressBook,
@@ -74,6 +78,14 @@ class TypedIn(BaseModel):
         True,
         description="false for the restaurant's own address: no customer's delivery is listed for it",
     )
+
+
+class WholeIn(BaseModel):
+    """One line of a list that was tapped: which map service listed it, and that service's own name for the
+    place, as the list said it (`ref`)."""
+
+    service: str = Field(max_length=20)
+    ref: str = Field(max_length=300)
 
 
 class AddressListIn(BaseModel):
@@ -277,3 +289,24 @@ def add_address_list(app: FastAPI, book: AddressBook | None = None) -> None:
             "left": suggester.left(answered) if answered else None,
             "monthly_most": suggester.most(answered) if answered else None,
         }
+
+    @app.post("/addresses/whole")
+    def whole_address(body: WholeIn) -> dict[str, Any]:
+        """The parts of one address a map service listed, for the form whose line was tapped: `parts`,
+        `{street, unit, city, state, zip}`, or null. A form asks for an address in its parts (docs/
+        delivery.md, "The address in its parts"), and Google's lists name no ZIP: its lines carry `ref`,
+        Google's own name for the place, and this asks Google once about that one place. It is sent that
+        name and nothing else, and what it answers is not kept. Counted against the same month's free
+        amount as the lists.
+
+        A list is a help, and so is this: a service that is turned off, has no key, has its month used up
+        or does not answer gives `parts` null and no error, and the form keeps what the line said."""
+        settings: SettingStore = app.state.settings
+        suggester: Suggester = app.state.suggester
+        parts = None
+        if settings.get("address_list").get(body.service) is True and REF.fullmatch(body.ref):
+            try:
+                parts = suggester.whole(body.service, body.ref)
+            except LookupFailed:
+                parts = None  # counted by the suggester; a form is told nothing
+        return {"parts": parts.as_json() if parts is not None else None}

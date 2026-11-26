@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pos_app/address_parts.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/check_history.dart';
 import 'package:pos_app/customers.dart';
@@ -150,6 +151,34 @@ Future<Terminal> pumpOrder(
 Finder key(String name) => find.byKey(ValueKey(name));
 
 String typed(WidgetTester tester, String name) => tester.widget<TextField>(key(name)).controller!.text;
+
+/// The boxes a delivery's address is typed in (docs/delivery.md, "The address in its parts"): the street's,
+/// and after it the unit's, the town's, the state's and the ZIP's.
+const addressBoxes = [
+  'event-address',
+  'event-address:unit',
+  'event-address:city',
+  'event-address:state',
+  'event-address:zip',
+];
+
+/// What the address's boxes hold, the street's first.
+List<String> addressParts(WidgetTester tester) => [for (final box in addressBoxes) typed(tester, box)];
+
+/// The address the form holds, as its boxes say it on one line.
+String addressOn(WidgetTester tester) {
+  final [street, unit, city, state, zip] = addressParts(tester);
+  return AddressParts(street: street, unit: unit, city: city, state: state, zip: zip).line;
+}
+
+/// Types an address into its boxes, each part into its own: whatever a box held is typed over.
+Future<void> enterAddress(WidgetTester tester, String address) async {
+  final parts = AddressParts.parse(address);
+  for (final (index, part) in [parts.street, parts.unit, parts.city, parts.state, parts.zip].indexed) {
+    if (typed(tester, addressBoxes[index]) != part) await tester.enterText(key(addressBoxes[index]), part);
+  }
+  await tester.pump();
+}
 
 String label(WidgetTester tester, String name) => tester.widget<TextField>(key(name)).decoration!.labelText!;
 
@@ -365,7 +394,7 @@ void main() {
       await tapKey(tester, 'channel:phone');
       // Delivery looked at and put back: nothing of it stays
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.enterText(key('event-note'), bell);
       await tapKey(tester, 'handover:pickup');
       expect(said(tester, 'takeout-quote'), 'Ready in about 20 min');
@@ -385,7 +414,7 @@ void main() {
       expect(typed(tester, 'takeout-name'), 'Linda Chen');
       expect(key('event-address'), findsNothing); // nothing is asked until it is a delivery
       await tapKey(tester, 'handover:delivery');
-      expect((typed(tester, 'event-address'), typed(tester, 'event-note')), (elm, bell));
+      expect((addressOn(tester), typed(tester, 'event-note')), (elm, bell));
       expect(key('address-needed'), findsNothing);
       expect(enabled(tester, 'takeout-start'), isTrue);
       await tapKey(tester, 'takeout-start');
@@ -398,15 +427,15 @@ void main() {
       final t = await pumpForm(tester, customer: linda());
       await tapKey(tester, 'handover:delivery');
       await typeNumber(tester, '781 555 0101');
-      expect((typed(tester, 'event-address'), typed(tester, 'event-note')), (elm, bell));
+      expect((addressOn(tester), typed(tester, 'event-note')), (elm, bell));
       // the number was somebody else's after all: Linda's street is not theirs
       await typeNumber(tester, '781 555 0199');
-      expect((typed(tester, 'event-address'), typed(tester, 'event-note')), ('', ''));
+      expect((addressOn(tester), typed(tester, 'event-note')), ('', ''));
       expect(enabled(tester, 'takeout-start'), isFalse);
       // an address somebody typed stays, whoever the number turns out to be
-      await tester.enterText(key('event-address'), '4 Oak Rd, Woburn');
+      await enterAddress(tester, '4 Oak Rd, Woburn');
       await typeNumber(tester, '781 555 0101');
-      expect(typed(tester, 'event-address'), '4 Oak Rd, Woburn');
+      expect(addressOn(tester), '4 Oak Rd, Woburn');
       expect(typed(tester, 'event-note'), bell); // nobody typed a note: hers is offered
       await tester.enterText(key('takeout-name'), 'Linda');
       await tapKey(tester, 'takeout-start');
@@ -419,7 +448,7 @@ void main() {
       await tester.enterText(key('takeout-name'), 'Linda');
       await tapKey(tester, 'channel:phone');
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tapKey(tester, 'takeout-later');
       await tapKey(tester, 'day:tomorrow');
       await tapKey(tester, 'takeout-time');
@@ -442,7 +471,7 @@ void main() {
       await tapKey(tester, 'handover:delivery');
       expect(said(tester, 'takeout-quote'), 'The kitchen gets its ticket 60 min before its time.');
       expect(label(tester, 'event-note'), 'Note for the event');
-      expect(typed(tester, 'event-address'), elm); // where their last delivery went
+      expect(addressOn(tester), elm); // where their last delivery went
       expect(typed(tester, 'event-note'), ''); // what was said for a driver is not about an event
       expect(key('address-needed'), findsNothing); // it may be given later: the event is days away
       await stop(tester);
@@ -468,7 +497,7 @@ void main() {
       await typeNumber(tester, '781 555 0101');
       await tapKey(tester, 'channel:phone');
       await tapKey(tester, 'handover:delivery');
-      expect(typed(tester, 'event-address'), elm);
+      expect(addressOn(tester), elm);
       expect(tester.takeException(), isNull);
       await stop(tester);
     });
@@ -519,7 +548,7 @@ void main() {
       await tapKey(tester, 'handover:delivery');
       expect(key('address-needed'), findsOneWidget);
       expect(enabled(tester, 'when-save'), isFalse);
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.enterText(key('event-note'), bell);
       await tester.pumpAndSettle();
       await tapKey(tester, 'when-save');
@@ -544,7 +573,7 @@ void main() {
       expect(find.text('Delivery · $elm · $bell'), findsOneWidget);
       await tapKey(tester, 'when-strip');
       expect(find.text('Pickup or delivery'), findsOneWidget);
-      expect((typed(tester, 'event-address'), typed(tester, 'event-note')), (elm, bell));
+      expect((addressOn(tester), typed(tester, 'event-note')), (elm, bell));
       await tapKey(tester, 'handover:pickup');
       expect(key('event-address'), findsNothing);
       await tapKey(tester, 'when-save');
@@ -565,7 +594,7 @@ void main() {
     testWidgets('only the address changed: nothing else is written', (tester) async {
       final t = await pumpOrder(tester, order(delivery: true));
       await tapKey(tester, 'leaving-chip');
-      await tester.enterText(key('event-address'), '4 Oak Rd, Woburn');
+      await enterAddress(tester, '4 Oak Rd, Woburn');
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1'), {'address': '4 Oak Rd, Woburn', 'by': 'Amy', 'by_id': 's1'});
       expect(key('leaving-said'), findsNothing);
@@ -580,7 +609,7 @@ void main() {
       final t = await pumpOrder(tester, order(sent: true));
       await tapKey(tester, 'leaving-chip');
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pumpAndSettle();
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1'), {'handover': 'delivery', 'address': elm, 'by': 'Amy', 'by_id': 's1'});
@@ -596,7 +625,7 @@ void main() {
       expect(key('day:today'), findsOneWidget); // its day and time, and how it leaves
       expect(key('delivery-fields'), findsOneWidget);
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pumpAndSettle();
       await tapKey(tester, 'when-save');
       expect(dataOf(t.hub, 'set_field', 'o1'), {

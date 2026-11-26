@@ -3,23 +3,40 @@
 /// much of its free amount for the month is left, and which map services the location turned on for it.
 library;
 
+import 'address_parts.dart';
+
 /// One line of the list. [address] is what a tap puts in the box; [main] and [rest] are the same in two
 /// parts where they are told apart ("12 Elm Street" and "Winchester, MA"). [from] says where it is from:
 /// `customer` (an earlier delivery of the customer on the form), `orders` (another delivery of the
 /// restaurant's) or the name of a map service.
+///
+/// On a form that asks for an address in its parts (docs/delivery.md, "The address in its parts") a tap
+/// fills every box: with [parts] where the map service told the town, the state and the ZIP apart, and
+/// with what [address] reads as where it did not ([boxes]). [ref] is the service's own name for the place
+/// where its list leaves a part out (Google's names no ZIP), and the hub can be asked for it ([AddressWhole]).
 class AddressSuggestion {
-  const AddressSuggestion({required this.address, this.main = '', this.rest = '', this.from = 'orders'});
+  const AddressSuggestion({
+    required this.address,
+    this.main = '',
+    this.rest = '',
+    this.from = 'orders',
+    this.parts,
+    this.ref,
+  });
 
   /// Null for a line with no address in it.
   static AddressSuggestion? of(Object? json) {
     if (json is! Map) return null;
     final address = json['address'], main = json['main'], rest = json['rest'], from = json['from'];
+    final ref = json['ref'];
     if (address is! String || address.trim().isEmpty) return null;
     return AddressSuggestion(
       address: address.trim(),
       main: main is String && main.trim().isNotEmpty ? main.trim() : address.trim(),
       rest: rest is String ? rest.trim() : '',
       from: from is String ? from : 'orders',
+      parts: AddressParts.of(json['parts']),
+      ref: ref is String && ref.isNotEmpty ? ref : null,
     );
   }
 
@@ -27,6 +44,17 @@ class AddressSuggestion {
   final String main;
   final String rest;
   final String from;
+
+  /// The address in its parts as the map service said them; null where it said none (one of the
+  /// restaurant's own, Google's, a hub older than the parts).
+  final AddressParts? parts;
+
+  /// The map service's own name for the place, by which the hub can ask it for the parts its list left
+  /// out; null where there is nothing more to ask.
+  final String? ref;
+
+  /// What a tap puts in a form's boxes.
+  AddressParts get boxes => parts ?? AddressParts.parse(address);
 
   /// One of the restaurant's own earlier deliveries, not a map service's answer.
   bool get own => from == 'customer' || from == 'orders';
@@ -115,6 +143,10 @@ class AddressSuggestions {
 /// How a box asks for its list: the letters typed so far. Null when there is nothing to list from (an
 /// older hub).
 typedef AddressSource = Future<AddressSuggestions?> Function(String typed);
+
+/// How a form asks for the parts a tapped line left out (`PosApi.wholeAddress`): the line, which names its
+/// service and that service's name for the place. Null when the hub says none: a help, like the list.
+typedef AddressWhole = Future<AddressParts?> Function(AddressSuggestion picked);
 
 /// One map service the list can ask, as the hub says it stands (`services` of `/settings/address_list`).
 class AddressService {

@@ -38,6 +38,13 @@ nothing of it is remembered or written down (their terms keep answers out of any
 stands under a list that holds one of its answers (`credit_of`). An address somebody tapped is the
 customer's own address, typed with fewer letters, and goes on the order like one typed in full.
 
+A form asks for an address in its parts, and a tap on a line fills them all (docs/delivery.md, "The address
+in its parts"). Mapbox and Azure Maps say the town, the state and the ZIP of every line each by itself, and
+the hub hands them on with the line (`Suggestion.parts`). Google's lists name the street, the town and the
+state and no ZIP: the line carries Google's own name for the place (`Suggestion.ref`), and a tap asks
+Google once more, for the parts of that one address (`Suggester.whole`: one Place Details, counted against
+the same month). A line of the restaurant's own is read into its parts by the form.
+
 Where the restaurant stands is asked of Google and of Azure Maps once, each of its own (`locate`): the
 restaurant's own address as that service reads it, as coordinates, kept in the hub's memory for under thirty
 days and never written down, as their terms allow. Until it is known Google goes by where the hub's own
@@ -161,6 +168,10 @@ NEAR_AGAIN = 3600.0
 """After the coordinates could not be had, how long until they are asked for again."""
 KINDS = ("street_address", "premise", "subpremise", "route")
 """What Google is asked to list: addresses and streets, no shops and no towns."""
+SUGGEST_MASK = (
+    "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.placeId"
+)
+"""What Google is asked to say of each line: the address, its two parts, and its own name for the place."""
 MAPBOX_KINDS = ("address", "street")
 """The same of Mapbox, in its words."""
 US_BOX = "-179.9,18.9,-66.9,71.4"
@@ -204,20 +215,81 @@ def credit_of(source: object) -> str | None:
     return CREDIT.get(source) if isinstance(source, str) else None
 
 
+PART_MOST = {"street": 120, "unit": 20, "city": 60, "state": 2, "zip": 10}
+"""The longest each part of an address is told to a form."""
+REF = re.compile(r"[A-Za-z0-9_-]{1,300}")
+"""What a service's own name for a place may look like (`Suggestion.ref`): it goes in the address of a
+request, so nothing else is let through."""
+_STATE = re.compile(r"[A-Z]{2}")
+_ZIP = re.compile(r"\d{5}(?:-\d{4})?")
+
+
+@dataclass(frozen=True)
+class Parts:
+    """An address in the parts a form asks for (docs/delivery.md, "The address in its parts"): the number and
+    the street, the apartment or unit, the town, the state by its two letters and the ZIP. A part nobody
+    said is empty. An order still carries its address as one line: these are what a tap on a list puts in
+    a form's boxes, where the service told them apart."""
+
+    street: str = ""
+    unit: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
+
+    @classmethod
+    def of(cls, *, street: Any = "", unit: Any = "", city: Any = "", state: Any = "", zip: Any = "") -> Parts:
+        """The parts as a service said them, each on one line and no longer than a form takes; a state that
+        is not two letters and a ZIP that is none are left out."""
+        said_state, said_zip = _line(state).upper(), _line(zip)
+        return cls(
+            street=_line(street)[: PART_MOST["street"]],
+            unit=_line(unit)[: PART_MOST["unit"]],
+            city=_line(city)[: PART_MOST["city"]],
+            state=said_state if _STATE.fullmatch(said_state) else "",
+            zip=said_zip if _ZIP.fullmatch(said_zip) else "",
+        )
+
+    @property
+    def told(self) -> bool:
+        """Whether this says more than a street: a town, a state or a ZIP."""
+        return bool(self.city or self.state or self.zip)
+
+    def as_json(self) -> dict[str, str]:
+        return {"street": self.street, "unit": self.unit, "city": self.city, "state": self.state, "zip": self.zip}
+
+
 @dataclass(frozen=True)
 class Suggestion:
-    """One line of a list: `address` is what goes into the box, `main` and `rest` the same in two parts where
-    the service told them apart ("12 Elm St" and "Winchester, MA"), and `source` where it is from: `customer`
-    (this customer's own earlier delivery), `orders` (another delivery of the restaurant's) or the name of
-    the map service."""
+    """One line of a list: `address` is the whole of it on one line, `main` and `rest` the same in two parts
+    where the service told them apart ("12 Elm St" and "Winchester, MA"), and `source` where it is from:
+    `customer` (this customer's own earlier delivery), `orders` (another delivery of the restaurant's) or
+    the name of the map service.
+
+    `parts` is the same address as a form's boxes take it, where the service said its town, state and ZIP
+    each by itself (Mapbox, Azure Maps); None where it did not, and the form reads them off the line.
+    `ref` is the service's own name for the place where its list leaves a part out and one more asking
+    gives it (Google's lists carry no ZIP: `Suggester.whole`); empty otherwise."""
 
     address: str
     main: str = ""
     rest: str = ""
     source: str = "orders"
+    parts: Parts | None = None
+    ref: str = ""
 
     def as_json(self) -> dict[str, Any]:
-        return {"address": self.address, "main": self.main or self.address, "rest": self.rest, "from": self.source}
+        told: dict[str, Any] = {
+            "address": self.address,
+            "main": self.main or self.address,
+            "rest": self.rest,
+            "from": self.source,
+        }
+        if self.parts is not None:
+            told["parts"] = self.parts.as_json()
+        if self.ref:
+            told["ref"] = self.ref
+        return told
 
 
 _BREAKS = " \t\n,.;#"
@@ -468,6 +540,9 @@ class Lists(Protocol):
     """How many requests finding where the restaurant stands is; 0 for a service that is not asked that."""
     locate_counts: int
     """How many askings of the month's free amount that finding is counted as."""
+    wholes: int
+    """How many requests telling the parts of an address it listed is (`whole`); 0 for a service that says
+    them with its list, and is never asked."""
 
     def suggest(
         self, typed: str, near: tuple[float, float] | None = None, reach: float = NEAR_METERS
@@ -481,6 +556,11 @@ class Lists(Protocol):
         """Where an address stands, or None when the service reads it as no place. Raises LookupFailed."""
         ...
 
+    def whole(self, ref: str) -> Parts | None:
+        """The parts of an address it listed, by the name it gave the place (`Suggestion.ref`); None when it
+        says none. Raises LookupFailed."""
+        ...
+
 
 class Places:
     """Google's Places API (New): Autocomplete for the list, and one Place Details for where the restaurant
@@ -491,6 +571,7 @@ class Places:
     name = SERVICE
     locates = 2
     locate_counts = 2
+    wholes = 1
 
     def __init__(
         self,
@@ -512,19 +593,63 @@ class Places:
         """What the letters typed could become, the likeliest first, those within `reach` meters of `near`
         before the others. Raises LookupFailed."""
         out: list[Suggestion] = []
-        for told in self._predictions(
-            typed,
-            near,
-            "suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat",
-            reach=reach,
-        ):
+        for told in self._predictions(typed, near, SUGGEST_MASK, reach=reach):
             address = _here(_text(told.get("text")))
             parts = told.get("structuredFormat")
             parts = parts if isinstance(parts, Mapping) else {}
             if address and len(address) <= ADDRESS_MAX:
                 main = _text(parts.get("mainText"))
-                out.append(Suggestion(address, main, _here(_text(parts.get("secondaryText"))) if main else "", SERVICE))
+                place = told.get("placeId")
+                out.append(
+                    Suggestion(
+                        address,
+                        main,
+                        _here(_text(parts.get("secondaryText"))) if main else "",
+                        SERVICE,
+                        # its list names no ZIP: the place's own name, for the one asking that does (`whole`)
+                        ref=place if isinstance(place, str) and REF.fullmatch(place) else "",
+                    )
+                )
         return out
+
+    def whole(self, ref: str) -> Parts | None:
+        """The parts of an address this service listed, by its own name for the place: one Place Details
+        that asks for the address's components and nothing else. Its lists name the street, the town and
+        the state and leave the ZIP out; this is where a form gets it. None for a name that is none, and
+        when it says no part. Raises LookupFailed."""
+        if not REF.fullmatch(ref):
+            return None
+        data = _answered(
+            lambda: self._client.get(f"{self._base}/v1/places/{ref}", headers=self._headers("addressComponents")),
+            who=self.name,
+        )
+        listed = data.get("addressComponents")
+        said: dict[str, tuple[str, str]] = {}
+        for one in listed if isinstance(listed, list) else []:
+            if not isinstance(one, Mapping):
+                continue
+            kinds = one.get("types")
+            words = (_line(one.get("longText")), _line(one.get("shortText")))
+            for kind in kinds if isinstance(kinds, list) else []:
+                if isinstance(kind, str):
+                    said.setdefault(kind, words)
+
+        def part(*kinds: str, short: bool = False) -> str:
+            for kind in kinds:
+                long_words, short_words = said.get(kind, ("", ""))
+                if words := (short_words or long_words) if short else (long_words or short_words):
+                    return words
+            return ""
+
+        parts = Parts.of(
+            street=" ".join(word for word in (part("street_number"), part("route", short=True)) if word),
+            unit=part("subpremise"),
+            # a town in New England is often no "locality" to it, and stands a level or two further down
+            city=part("locality", "postal_town", "sublocality_level_1", "sublocality", "administrative_area_level_3"),
+            state=part("administrative_area_level_1", short=True),
+            zip=part("postal_code"),
+        )
+        return parts if parts.told else None
 
     def locate(self, address: str) -> tuple[float, float] | None:
         """Where an address stands, as latitude and longitude: the first place the service reads it as. None
@@ -596,6 +721,27 @@ def _state_short(place: str, context: Any) -> str:
     return f"{place[:at]}{code}{place[at + len(name) :]}"
 
 
+def _named(context: Any, *levels: str, key: str = "name") -> str:
+    """What Mapbox's context says of the first of these levels that it names ("place", "postcode")."""
+    for level in levels:
+        held = context.get(level) if isinstance(context, Mapping) else None
+        if isinstance(held, Mapping) and (words := _line(held.get(key))):
+            return words
+    return ""
+
+
+def _mapbox_parts(street: str, context: Any) -> Parts | None:
+    """An address of Mapbox's in a form's parts: the town, the state's two letters and the ZIP as its
+    context names each by itself. None where it names none of them."""
+    parts = Parts.of(
+        street=street,
+        city=_named(context, "place", "locality"),
+        state=_named(context, "region", key="region_code"),
+        zip=_named(context, "postcode"),
+    )
+    return parts if parts.told else None
+
+
 class Mapbox:
     """Mapbox's Geocoding API, version 6: forward, with autocomplete, which reads what it is sent as the
     start of an address (https://docs.mapbox.com/api/search/geocoding/). It takes the letters and the token
@@ -608,6 +754,7 @@ class Mapbox:
     name = "mapbox"
     locates = 0
     locate_counts = 0
+    wholes = 0
 
     def __init__(
         self,
@@ -652,12 +799,31 @@ class Mapbox:
             rest = _state_short(_here(_line(told.get("place_formatted"))), told.get("context"))
             whole = f"{main}, {rest}" if main and rest else main or _here(_line(told.get("full_address")))
             if whole and len(whole) <= ADDRESS_MAX:
-                out.append(Suggestion(whole, main if rest else "", rest if main else "", self.name))
+                parts = _mapbox_parts(main, told.get("context")) if main and rest else None
+                out.append(Suggestion(whole, main if rest else "", rest if main else "", self.name, parts))
         return out
 
     def locate(self, address: str) -> tuple[float, float] | None:
         """Never asked: its terms do not let where the restaurant stands be kept."""
         return None
+
+    def whole(self, ref: str) -> Parts | None:
+        """Never asked: its list says every part."""
+        return None
+
+
+def _azure_parts(street: str, where: Mapping[str, Any]) -> Parts | None:
+    """An address of Azure Maps' in a form's parts: the town, the state's two letters and the ZIP as it
+    names each by itself. None for one with no street, and where it names none of them."""
+    districts = where.get("adminDistricts")
+    first = districts[0] if isinstance(districts, list) and districts and isinstance(districts[0], Mapping) else {}
+    parts = Parts.of(
+        street=street,
+        city=where.get("locality"),
+        state=first.get("shortName") or first.get("name"),
+        zip=where.get("postalCode"),
+    )
+    return parts if street and parts.told else None
 
 
 class Azure:
@@ -670,6 +836,7 @@ class Azure:
     name = "azure"
     locates = 1
     locate_counts = 10  # one transaction of its Search, which ten askings for a list come to
+    wholes = 0
 
     def __init__(self, key: str, *, base: str = AZURE, client: httpx.Client | None = None) -> None:
         self._key = key
@@ -710,8 +877,12 @@ class Azure:
             # the street and the rest of it, where the whole begins with the street
             rest = whole[len(main) :].lstrip(" ,") if main and whole.casefold().startswith(main.casefold()) else ""
             if whole and len(whole) <= ADDRESS_MAX:
-                out.append(Suggestion(whole, main if rest else "", rest, self.name))
+                out.append(Suggestion(whole, main if rest else "", rest, self.name, _azure_parts(main, where)))
         return out
+
+    def whole(self, ref: str) -> Parts | None:
+        """Never asked: its list says every part."""
+        return None
 
     def locate(self, address: str) -> tuple[float, float] | None:
         """Where an address stands, as latitude and longitude: the first place the service reads it as. None
@@ -1151,6 +1322,18 @@ class Suggester:
             raise LookupFailed("unreachable")
         raise LookupFailed(*reasons[0])
 
+    def whole(self, name: str, ref: str) -> Parts | None:
+        """The parts of an address that service listed (`Suggestion.ref`): the one asking a tap on a line
+        costs where the service's list leaves the ZIP out. Counted against the same month's free amount
+        as its lists. None when the service says no part. Raises LookupFailed: a hub with no key for it, a
+        service that says every part with its list, a month used up, no answer. Whether it answers decides
+        nothing about its lists: it rests no sooner and no later for it."""
+        with self._lock:
+            listing = next((one for one in self._listings if one.service.name == name), None)
+        if listing is None or listing.service.wholes < 1 or not REF.fullmatch(ref):
+            raise LookupFailed("not_found")
+        return self._ask(listing, lambda service: service.whole(ref), requests=listing.service.wholes, rests=False)
+
     def left(self, name: str) -> int | None:
         """How many askings this service has left for the month, by the hub's own count; None for a service
         this hub has no key for."""
@@ -1254,6 +1437,7 @@ __all__ = [
     "MONTHLY_MOST",
     "ORDER",
     "OWN_MOST",
+    "REF",
     "REST",
     "SAID",
     "SERVICE",
@@ -1263,6 +1447,7 @@ __all__ = [
     "Azure",
     "Lists",
     "Mapbox",
+    "Parts",
     "PgAsked",
     "Places",
     "Suggester",

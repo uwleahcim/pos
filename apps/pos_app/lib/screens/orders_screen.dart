@@ -2818,6 +2818,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onAddressDone: _askDistance,
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                   addresses: _addresses,
+                  wholeAddress: widget.api.wholeAddress,
                 ),
                 if (_nowhere)
                   Padding(
@@ -2896,6 +2897,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onAddressDone: _askDistance,
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                   addresses: _addresses,
+                  wholeAddress: widget.api.wholeAddress,
                 ),
               ],
             ],

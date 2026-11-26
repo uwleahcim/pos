@@ -36,7 +36,9 @@ On the list of checks, tap **To go**. Under the channels (Counter, Phone, Cateri
 
 Tap **Delivery** and the form asks for:
 
-- **Deliver to**: the address. The order cannot start without one.
+- **Deliver to**: the address, in five boxes: the number and street, the apartment or unit, the city, the
+  state and the ZIP ([The address in its parts](#the-address-in-its-parts)). The order cannot start
+  without one, and the state by itself is none.
 - **Note for the driver**: whatever helps at the door ("ring twice, side door"). It can be left empty.
 
 The phone number is the one the driver calls from the door, and the form says so. It is not required, but
@@ -49,6 +51,44 @@ as on any quote. For an order **for later**, the time the customer named is the 
 kitchen starts that many minutes before it. (With [live traffic](#live-traffic) turned on, a delivery for
 now is promised the kitchen's minutes and the drive to that address as it is right then, in place of the
 45.)
+
+### The address in its parts
+
+The address is typed in five boxes (the owner's words, 2026-11-26: break the address up into its core
+fields, and the list of addresses fills all of them):
+
+| Box | What goes in it |
+| --- | --- |
+| **Deliver to** | The number and the street: "12 Elm St". The [list of addresses](#a-list-of-addresses-while-typing) opens under this one. |
+| **Apt / unit** | The apartment, unit, suite or floor: "3B", "Apt 3B", "Ste 200". Empty for a house. |
+| **City** | The town. |
+| **State** | Two letters. It starts on the restaurant's own state (read off the restaurant's address under Location › **Delivery fee**), since nearly every delivery stays in it. Type over it for another. |
+| **ZIP** | Five digits, or nine with a dash. |
+
+- **Where they stand.** On a phone the street has a line to itself, the unit and the city share the next,
+  and the state and the ZIP the third. On a tablet or a Mac the unit stands beside the street and the
+  city, the state and the ZIP share the second line. Large type takes the lines it needs, and the unit's
+  box is named "Apt" where "Apt / unit" does not fit.
+- **A tap on a line of the list fills every box**, and none keeps what it held before
+  ([A list of addresses while typing](#a-list-of-addresses-while-typing)).
+- **Enter goes to the next box** (Next on a phone's keyboard). Once the street has its city or its ZIP,
+  Enter also has the distance looked up, where the hub looks distances up; Enter in the ZIP's box, the
+  last one, does that whatever is typed.
+- **A whole address typed in the first box still works.** "12 Elm St, Apt 3B, Winchester, MA 01890", typed
+  with its commas as it used to be, goes to its boxes when that box is left.
+- **The order carries one line, as it always did**: "12 Elm St #3B, Winchester, MA 01890". The bill, the
+  kitchen's ticket, the bag labels, the driver's list, the delivery fee's distance, live traffic and the
+  customer's card all read that line and none of them changed. A unit that is its number alone is written
+  with a number sign ("#3B"); one typed with its word is written as typed ("Apt 3B").
+- **An older order's address is read into the boxes** as far as its parts can be told apart: a street, a
+  unit named by its word or a number sign, a city, a state, a ZIP. What cannot be told apart stays in the
+  street's box as it was written, so nothing of it is lost. The address stays exactly as it was written
+  until somebody changes a box: opening an order and saving it never rewrites where it goes.
+- **An order from the website** comes with its address on one line from GloriaFood, and reads into the
+  boxes the same way when its dialog is opened.
+- **The state alone is no address.** A form with nothing but the restaurant's state in its box still asks
+  for the address.
+- **The restaurant's own address** (Location › Delivery fee) is still one box.
 
 ### A customer who had one before
 
@@ -146,8 +186,9 @@ has a key for the map service and the restaurant's own address is typed in** (se
 
 ### On the form
 
-- Tap **Delivery**, type the address, and press Enter (Done on a phone's keyboard) or go on to the next
-  box. A line over the prices says "Looking up how far it is…", then what the map said: **3.2 mi · 9 min
+- Tap **Delivery**, type the address in its boxes, and press Enter (Done on a phone's keyboard) in the
+  ZIP's box, or go on to the note or anything else on the form. Enter in an earlier box asks too, once
+  the street has its city or its ZIP. A line over the prices says "Looking up how far it is…", then what the map said: **3.2 mi · 9 min
   drive**. The price that distance falls in is picked: with $3.00 up to 2 mi and $5.00 up to 4.5 mi, 3.2
   miles is $5.00. A distance right at a price's reach is that price (4.5 miles is "up to 4.5 mi"). Until
   the address has been asked about, the line is a button, **Look up the distance**, that asks.
@@ -582,9 +623,16 @@ does, in the order as it is saved, and ends with the name of the one that answer
 ## A list of addresses while typing
 
 Wherever the app asks for a street address, a list opens under the box while somebody types: what the
-letters typed so far could become. **A tap puts one in the box.** It is under **Deliver to** on the to-go
-form and on an order's own dialog (a catering order's too), and under **Restaurant address** in Location ›
-Delivery fee.
+letters typed so far could become. **A tap fills the address in.** It is under **Deliver to**, the
+street's box, on the to-go form and on an order's own dialog (a catering order's too), and under
+**Restaurant address** in Location › Delivery fee.
+
+- **A tap fills every box of the address**: the street, the unit, the city, the state and the ZIP
+  ([The address in its parts](#the-address-in-its-parts)). A box the line has nothing for is emptied, so
+  nothing of another address is left standing. One of your own earlier deliveries is read into the boxes
+  as it was written. Mapbox and Azure Maps say each part with their line. **Google's list names no ZIP**,
+  so the hub asks Google once more about the one line that was tapped and the ZIP is in its box a moment
+  later; if Google does not answer, the boxes keep what the line said and the ZIP is typed by hand.
 
 - **Your own deliveries come first.** The addresses the restaurant delivered to in the past year, read off
   its own orders. That costs nothing and asks nobody outside the building.
@@ -626,10 +674,11 @@ Delivery fee.
   still being typed has to begin one. "12 el" lists 12 Elm St and not 120 Elmwood Ave. "elm" lists every
   Elm Street the restaurant went to, whatever the number. An address that begins with what was typed comes
   before one that has it further on, and of two like that the newer delivery comes first.
-- **Nothing is put in the box by itself.** What was typed stands until somebody taps a line. **Enter** (Done
-  on a phone's keyboard) says the address is done as it was typed, and takes no line.
-- **A tap is the address done.** The line is in the box, the list closes, the keyboard stays in the box,
-  and where the hub looks distances up, how far it is is asked at once, as after Enter.
+- **Nothing is put in the box by itself.** What was typed stands until somebody taps a line. **Enter**
+  (Next on a phone's keyboard) closes the list, takes no line, and goes on to the next box.
+- **A tap is the address done.** Its parts are in the boxes, the list closes, the keyboard stays in the
+  street's box, and where the hub looks distances up, how far it is is asked at once, as after Enter. For
+  one of Google's lines that is once the ZIP has come, so the whole address is asked about, one time.
 - **With a keyboard**: the arrow down goes into the list, Enter takes the line the focus is on, the arrow
   up from the top line is back in the box, and Escape closes the list and leaves what was typed.
 - **The list goes when the box is left.** An address the form filled in by itself, such as a returning
@@ -652,6 +701,9 @@ Delivery fee.
 - **With every map service off, nothing.** The list is made on the hub from the restaurant's own orders.
 - **With one on, the letters typed in an address box**, from the fourth letter, each time the typing
   pauses, to the one service whose turn it is. Nothing else: no name, no phone number, nothing of an order.
+- **A tap on one of Google's lines sends Google its own name for that place**, a code Google gave with
+  the line, and Google answers with the address's parts. Nothing else goes with it. A tap on any other
+  line sends nothing.
 - **The customer's phone number stays on the hub.** The form sends it with the letters so the hub can put
   that customer's own addresses first. It is never sent to a map service.
 - **The restaurant's own address, once, to Google and to Azure Maps**, so that streets nearby come first.
@@ -792,6 +844,11 @@ away free, and the next one past that.
 | Azure Maps, Search (Geocode Autocomplete) | 5,000 transactions; ten lookups are one | not shown on the page when this was written: see <https://azure.microsoft.com/pricing/details/azure-maps/> | 47,500 lookups (`POS_MAPS_AZURE_MONTHLY`) |
 
 - **Every pause in the typing is one lookup**, so one new address is often three or four.
+- **A tap on one of Google's lines is one more**, for the ZIP its list leaves out. Google bills that one
+  as Place Details Essentials: 10,000 free each month and $5.00 for each 1,000 past them (their page,
+  2026-11-26). The hub counts it with the list's lookups, so the two together stay under 9,500 a month and
+  neither goes past what Google gives away. The Places API (New) that the list needs covers it: there is
+  nothing more to turn on. A tap on a line of Mapbox's or Azure's costs nothing more.
 - **The hub stops a twentieth short** of each free amount: its month and a service's own do not turn at
   the same hour, and the hub counts only what it asked itself. Its month turns at midnight, Pacific time.
 - **The count is kept in the hub's database**, so a hub that restarts goes on counting where it stopped,
@@ -1051,6 +1108,10 @@ The fee likewise: on a hub from before the fee, the forms show no prices, and th
 "The hub has not answered about the delivery fee (an older hub: update it)". An app from before the fee on
 a new hub shows the fee on the check and cannot pick one; a tap on that line does nothing there.
 
+The address's parts likewise: an app with the five boxes on a hub from before them works, and a tap on
+one of Google's lines fills the boxes with what the line says and leaves the ZIP to be typed. An app from
+before the boxes on a new hub has its one box, and the address reads the same on both.
+
 The lookup likewise: on a hub from before the lookup the forms have no line about the distance and the
 dialog under Location has no box for the restaurant's address. An app from before the lookup on a new hub
 picks the price by hand; saving the prices from it keeps the address the hub has.
@@ -1136,7 +1197,23 @@ saved distances are further down):
   monthly_most}`. No token, like `/delivery/distance`. Own addresses always; a service only with its
   setting on, a key, four letters with a letter among them, and no known address equal to what was typed.
   With answers of a service the own lines are cut to three and the list to six. A failure of every service
-  is a shorter list, never an error. `own: false` lists no delivery and sends no place.
+  is a shorter list, never an error. `own: false` lists no delivery and sends no place. A service's line
+  may carry `parts` `{street, unit, city, state, zip}` (Mapbox, Azure: `pos.addresses.Parts`, the state
+  two letters, the ZIP five digits or nine) and `ref`, the service's own name for the place where its
+  list has no ZIP (Google's `placeId`).
+- `POST /addresses/whole` `{service, ref}`: `{parts}` or `{parts: null}`. No token. One Place Details
+  (New) with the field mask `addressComponents`, for a service that is on, has a key and has more to say
+  (`Lists.wholes`: Google 1, the others 0), counted in the service's month like a lookup. Every failure
+  is `parts: null`, never an error (`Suggester.whole`, `Places.whole`).
+- The address in its parts, app: `lib/address_parts.dart` (`AddressParts`: `parse` reads a line, `line`
+  writes one, `of` reads the hub's `parts`, `stateOf` the restaurant's state);
+  `lib/screens/address_fields.dart` (`AddressFields`: five boxes around the form's one `address`
+  controller, which every reader of the form still reads; a line stays as written while the boxes say
+  what it was read as; `_apart` tells a whole address typed in the first box into its parts);
+  `AddressBox` takes `onPicked`, `onNext` and `beside` for it; `PosApi.wholeAddress` through `_aside`.
+  No order, no setting and no table changed: the order's `address` is one line of at most 200 letters.
+  Tests: `test/address_parts_test.dart`, `test/address_fields_test.dart`; other tests type an address
+  with `enterAddress` and read it with `addressOn` (`test/delivery_test.dart`).
 - App: `lib/address_list.dart` (`AddressSuggestion`, `AddressSuggestions` with `share` and `leftWords`,
   `AddressSource`, `AddressService`, `AddressListSetting`, which reads an older hub's answer as Google alone,
   `AddressListTry`); `lib/screens/service_badge.dart` (`ServiceBadge`, at the top of the list and in the

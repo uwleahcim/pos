@@ -31,9 +31,13 @@ class AddressBox extends StatefulWidget {
     this.fieldKey,
     this.decoration = const InputDecoration(),
     this.maxLength,
+    this.inputFormatters,
     this.onChanged,
     this.onDone,
     this.onLeft,
+    this.onPicked,
+    this.onNext,
+    this.beside,
     this.wait = const Duration(milliseconds: 300),
   });
 
@@ -46,6 +50,7 @@ class AddressBox extends StatefulWidget {
   final Key? fieldKey;
   final InputDecoration decoration;
   final int? maxLength;
+  final List<TextInputFormatter>? inputFormatters;
 
   /// Something was typed, or a line was tapped.
   final VoidCallback? onChanged;
@@ -55,6 +60,17 @@ class AddressBox extends StatefulWidget {
 
   /// The box and its list were left for something else on the screen.
   final VoidCallback? onLeft;
+
+  /// A line was tapped, on a form that has more boxes than this one for an address ([AddressFields]): the
+  /// line is handed over, and nothing is put in this box by itself. [onChanged] and [onDone] are then the
+  /// form's to call.
+  final ValueChanged<AddressSuggestion>? onPicked;
+
+  /// Enter goes on to the next box of the address, and does not say that the address is done.
+  final VoidCallback? onNext;
+
+  /// A box that stands beside this one, on the same line: the list opens under both.
+  final Widget? beside;
 
   /// How long the typing pauses before the hub is asked.
   final Duration wait;
@@ -138,6 +154,12 @@ class _AddressBoxState extends State<AddressBox> {
 
   void _pick(AddressSuggestion picked) {
     _focus.requestFocus(); // before the line that was tapped is gone, so the box and its list are not left
+    final onPicked = widget.onPicked;
+    if (onPicked != null) {
+      _close();
+      onPicked(picked);
+      return;
+    }
     widget.controller.value = TextEditingValue(
       text: picked.address,
       selection: TextSelection.collapsed(offset: picked.address.length),
@@ -150,6 +172,32 @@ class _AddressBoxState extends State<AddressBox> {
   @override
   Widget build(BuildContext context) {
     final list = _list;
+    final onNext = widget.onNext, beside = widget.beside;
+    final box = TextField(
+      key: widget.fieldKey,
+      focusNode: _focus,
+      controller: widget.controller,
+      maxLength: widget.maxLength,
+      inputFormatters: widget.inputFormatters,
+      textCapitalization: TextCapitalization.words,
+      keyboardType: TextInputType.streetAddress,
+      textInputAction: onNext == null ? null : TextInputAction.next,
+      decoration: widget.decoration,
+      onChanged: _typed,
+      // the next box of the address, named by the form: the list's own lines are not it
+      onEditingComplete: onNext == null
+          ? null
+          : () {
+              _close();
+              onNext();
+            },
+      onSubmitted: onNext != null
+          ? null
+          : (_) {
+              _close();
+              widget.onDone?.call();
+            },
+    );
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
@@ -171,20 +219,17 @@ class _AddressBoxState extends State<AddressBox> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(
-              key: widget.fieldKey,
-              focusNode: _focus,
-              controller: widget.controller,
-              maxLength: widget.maxLength,
-              textCapitalization: TextCapitalization.words,
-              keyboardType: TextInputType.streetAddress,
-              decoration: widget.decoration,
-              onChanged: _typed,
-              onSubmitted: (_) {
-                _close();
-                widget.onDone?.call();
-              },
-            ),
+            if (beside == null)
+              box
+            else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: box),
+                  const SizedBox(width: 8),
+                  beside,
+                ],
+              ),
             if (list != null)
               // a click on a line is not a click away from the box: the box keeps the keyboard
               TextFieldTapRegion(

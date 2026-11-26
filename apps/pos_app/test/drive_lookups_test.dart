@@ -10,7 +10,7 @@ import 'package:pos_app/screens/service_badge.dart';
 import 'catering_test.dart' show enabled, tapKey;
 import 'delivery_distance_test.dart' show lindaTo, mapSaid, newbuild, oak, said;
 import 'delivery_fee_test.dart' show pumpForm;
-import 'delivery_test.dart' show elm, key;
+import 'delivery_test.dart' show elm, enterAddress, key;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -549,7 +549,7 @@ void main() {
       expect(badge.right, lessThan(tester.getRect(key('fee-lookup-found')).left));
       expect((badge.width, badge.height), (ServiceBadge.size, ServiceBadge.size));
       // a street the first one does not know: the next one measured it, and its badge stands in the same place
-      await tester.enterText(key('event-address'), newbuild);
+      await enterAddress(tester, newbuild);
       await tester.pump();
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
@@ -558,7 +558,7 @@ void main() {
       expect(said(tester, 'fee-lookup-credit'), 'Google Maps');
       expect(tester.getRect(key('fee-lookup-by')).left, badge.left);
       // and a longer line leaves it where it is
-      await tester.enterText(key('event-address'), oak);
+      await enterAddress(tester, oak);
       await tester.pump();
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();

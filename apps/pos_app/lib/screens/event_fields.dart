@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../address_list.dart';
+import '../address_parts.dart';
 import '../delivery_fee.dart';
 import '../takeout.dart';
-import 'address_box.dart';
+import 'address_fields.dart';
 import 'fee_lookup.dart';
 import 'fee_picker.dart';
 
@@ -84,10 +85,10 @@ class WhenPicker extends StatelessWidget {
 }
 
 /// How a to-go order leaves, on its form: whether it is picked up or delivered, and for a delivery the
-/// address. A catering order ([guests] given) says how many guests too, and has a note for the kitchen or
-/// the driver about its event (docs/catering.md). Any other order has no guests to count, and its note is
-/// for the driver: asked only of a delivery (docs/delivery.md). Where the location charges for delivery
-/// ([fees]), a delivery also picks what it costs, under the note.
+/// address, in its parts ([AddressFields]). A catering order ([guests] given) says how many guests too,
+/// and has a note for the kitchen or the driver about its event (docs/catering.md). Any other order has
+/// no guests to count, and its note is for the driver: asked only of a delivery (docs/delivery.md). Where
+/// the location charges for delivery ([fees]), a delivery also picks what it costs, under the note.
 class EventFields extends StatelessWidget {
   const EventFields({
     super.key,
@@ -105,10 +106,14 @@ class EventFields extends StatelessWidget {
     this.onAddressDone,
     this.onLookUp,
     this.addresses,
+    this.wholeAddress,
   });
 
   /// The guests of a catering order's event; null on any other order.
   final TextEditingController? guests;
+
+  /// The address on one line, as the order carries it. The form shows it in its parts, each in a box of
+  /// its own, and those boxes keep this line.
   final TextEditingController address;
   final TextEditingController note;
   final String handover;
@@ -134,8 +139,12 @@ class EventFields extends StatelessWidget {
   final LookUp? onLookUp;
 
   /// How the hub is asked what the letters typed in the address could become (`PosApi.suggestAddresses`):
-  /// the list under the box. Null where there is none.
+  /// the list under the street. Null where there is none.
   final AddressSource? addresses;
+
+  /// How the hub is asked for the parts a tapped line of that list left out (`PosApi.wholeAddress`); null
+  /// where it is not asked.
+  final AddressWhole? wholeAddress;
 
   /// What the boxes hold, as an order carries it. With no [guests] box it is no catering order: the note is
   /// the driver's, and an order the customer comes for has none.
@@ -190,16 +199,12 @@ class EventFields extends StatelessWidget {
         ),
         if (handover == 'delivery') ...[
           const SizedBox(height: 8),
-          AddressBox(
-            fieldKey: const ValueKey('event-address'),
-            controller: address,
+          AddressFields(
+            address: address,
             source: addresses,
-            maxLength: eventTextMax,
-            decoration: const InputDecoration(
-              labelText: 'Deliver to',
-              prefixIcon: Icon(Icons.place_outlined),
-              counterText: '',
-            ),
+            whole: wholeAddress,
+            // nearly every delivery stays in the restaurant's own state
+            homeState: AddressParts.stateOf(fees?.origin ?? ''),
             onChanged: onChanged,
             onDone: onAddressDone,
             onLeft: () {
@@ -265,6 +270,7 @@ class WhenDialog extends StatefulWidget {
     this.distance,
     this.live = false,
     this.addresses,
+    this.wholeAddress,
   });
 
   /// The time an order for later is for; null on an order for now, whose time is not the customer's.
@@ -291,8 +297,10 @@ class WhenDialog extends StatefulWidget {
   /// delivery.md, "Live traffic"): the hub is then also asked how long the drive is at this minute.
   final bool live;
 
-  /// How the hub is asked for the list under the address box (`PosApi.suggestAddresses`); null for none.
+  /// How the hub is asked for the list under the address's street (`PosApi.suggestAddresses`); null for
+  /// none. And for the parts a tapped line left out (`PosApi.wholeAddress`).
   final AddressSource? addresses;
+  final AddressWhole? wholeAddress;
 
   @override
   State<WhenDialog> createState() => _WhenDialogState();
@@ -418,6 +426,7 @@ class _WhenDialogState extends State<WhenDialog> {
                   onAddressDone: _lookUp,
                   onLookUp: ({fresh = false}) => _lookUp(again: true, fresh: fresh),
                   addresses: widget.addresses,
+                  wholeAddress: widget.wholeAddress,
                 ),
               ],
               if (!nowhere && unpriced)

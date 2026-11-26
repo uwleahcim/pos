@@ -601,10 +601,9 @@ void main() {
       await tapKey(tester, 'when-strip');
       expect(find.text('The event'), findsOneWidget);
       expect(tester.widget<TextField>(find.byKey(const ValueKey('event-guests'))).controller!.text, '30');
-      expect(
-        tester.widget<TextField>(find.byKey(const ValueKey('event-address'))).controller!.text,
-        '12 Main St, Winchester',
-      );
+      // the address in its parts: the street in its box, the town in its own
+      String box(String name) => tester.widget<TextField>(find.byKey(ValueKey(name))).controller!.text;
+      expect((box('event-address'), box('event-address:city')), ('12 Main St', 'Winchester'));
 
       // saved as it stands: nothing is written
       await tapKey(tester, 'when-save');

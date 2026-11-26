@@ -12,7 +12,7 @@ import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, platters, tapKey;
-import 'delivery_test.dart' show bell, created, elm, key, order, stand;
+import 'delivery_test.dart' show bell, created, elm, enterAddress, key, order, stand;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -99,7 +99,7 @@ Future<void> typeDelivery(WidgetTester tester) async {
   await tester.enterText(key('takeout-name'), 'Linda');
   await tapKey(tester, 'channel:phone');
   await tapKey(tester, 'handover:delivery');
-  await tester.enterText(key('event-address'), elm);
+  await enterAddress(tester, elm);
   await tester.pumpAndSettle();
 }
 
@@ -262,7 +262,7 @@ void main() {
       expect(offered(tester), [r'$3.00, Up to 2 mi', r'$5.00, Up to 4.5 mi', r'$8.50, Up to 8 mi', 'No fee']);
       expect(key('address-needed'), findsOneWidget); // first things first
       expect(key('fee-needed'), findsNothing);
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.pumpAndSettle();
       expect(key('fee-needed'), findsOneWidget);
       expect(enabled(tester, 'takeout-start'), isFalse);
@@ -411,7 +411,7 @@ void main() {
       await tapKey(tester, 'leaving-chip');
       expect(key('fee-picker'), findsNothing);
       await tapKey(tester, 'handover:delivery');
-      await tester.enterText(key('event-address'), elm);
+      await enterAddress(tester, elm);
       await tester.enterText(key('event-note'), bell);
       await tester.pumpAndSettle();
       expect(enabled(tester, 'when-save'), isFalse);
