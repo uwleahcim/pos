@@ -32,6 +32,7 @@ class AddressFields extends StatefulWidget {
     this.homeState = '',
     this.onChanged,
     this.onDone,
+    this.onChosen,
     this.onLeft,
     this.wait = const Duration(milliseconds: 300),
   });
@@ -55,6 +56,11 @@ class AddressFields extends StatefulWidget {
   /// The address is done, as far as it is typed: a line was tapped, or Enter in a box once the street has
   /// its town or its ZIP, or Enter in the last box.
   final VoidCallback? onDone;
+
+  /// A line of the list was tapped and its address is whole: said in place of [onDone] where a form does
+  /// more for an address somebody chose than for one that was typed (it picks the delivery fee for it
+  /// whatever was picked before). Null: [onDone] is told, as of any address that is done.
+  final VoidCallback? onChosen;
 
   /// All of the boxes were left for something else on the screen.
   final VoidCallback? onLeft;
@@ -222,7 +228,7 @@ class _AddressFieldsState extends State<AddressFields> {
         }
       }
     }
-    widget.onDone?.call();
+    (widget.onChosen ?? widget.onDone)?.call();
   }
 
   /// Somebody typed the whole address in the first box, commas and all, as it used to be typed: what its

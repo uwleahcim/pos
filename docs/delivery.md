@@ -59,7 +59,7 @@ fields, and the list of addresses fills all of them):
 
 | Box | What goes in it |
 | --- | --- |
-| **Deliver to** | The number and the street: "12 Elm St". The [list of addresses](#a-list-of-addresses-while-typing) opens under this one. |
+| **Deliver to** | The number and the street: "12 Elm St". The [list of addresses](#a-list-of-addresses-while-typing) drops down from this one, over the boxes under it. |
 | **Apt / unit** | The apartment, unit, suite or floor: "3B", "Apt 3B", "Ste 200". Empty for a house. |
 | **City** | The town. |
 | **State** | Two letters. It starts on the restaurant's own state (read off the restaurant's address under Location › **Delivery fee**), since nearly every delivery stays in it. Type over it for another. |
@@ -70,7 +70,9 @@ fields, and the list of addresses fills all of them):
   city, the state and the ZIP share the second line. Large type takes the lines it needs, and the unit's
   box is named "Apt" where "Apt / unit" does not fit.
 - **A tap on a line of the list fills every box**, and none keeps what it held before
-  ([A list of addresses while typing](#a-list-of-addresses-while-typing)).
+  ([A list of addresses while typing](#a-list-of-addresses-while-typing)). Where the hub looks distances
+  up, the tap also picks the delivery fee for how far that address is
+  ([Looking the distance up](#looking-the-distance-up)).
 - **Enter goes to the next box** (Next on a phone's keyboard). Once the street has its city or its ZIP,
   Enter also has the distance looked up, where the hub looks distances up; Enter in the ZIP's box, the
   last one, does that whatever is typed.
@@ -195,9 +197,15 @@ has a key for the map service and the restaurant's own address is typed in** (se
 - **A returning customer's address** is asked about as soon as the order is a delivery, without a tap.
   Where they had a delivery brought there before, the map service is not asked at all (see
   [Customers who order again](#customers-who-order-again)).
-- **Any other price can still be tapped**, and No fee too. **A price tapped by hand stays.** From that tap
-  on the map only says how far, on this form: it does not move the price when its answer comes late, nor
-  when the address is typed again. Nobody's "No fee" turns into a charge by itself.
+- **An address chosen off the list picks its price** (the owner's words, 2026-11-26: when an address is
+  selected, the delivery fee for its distance is selected by itself). A tap on a line of the
+  [list of addresses](#a-list-of-addresses-while-typing) fills the boxes, asks how far it is, and picks
+  the price that distance falls in, without Enter and without another tap. It does so even after a price
+  was tapped by hand for whatever stood in the boxes before: another address is another distance.
+- **Any other price can still be tapped**, and No fee too. **A price tapped by hand stays** for the
+  address it was tapped for. From that tap on the map only says how far: it does not move the price when
+  its answer comes late, nor when the address is typed over or a box of it is changed. Nobody's "No fee"
+  turns into a charge by itself. Only another address chosen off the list is priced anew, as above.
 - **Too far**: "9.3 mi · 21 min drive: further than the prices reach". Nothing is picked. Whoever takes
   the order decides (the last price, No fee, or no delivery that far), and the order cannot start until a
   price is tapped.
@@ -214,7 +222,10 @@ has a key for the map service and the restaurant's own address is typed in** (se
 
 On the order (**Pickup or delivery**) it is the same line. Opening it asks nothing, and the order keeps the
 fee it has. Type another address and that one is looked up and its price picked (unless a price was tapped
-there first); or tap **Look up the distance** to ask about the address as it stands.
+there first); choose one off the list and its price is picked whatever was tapped before; or tap **Look up
+the distance** to ask about the address as it stands. A fee the website charged is the one exception: the
+customer was told it and may have paid it, so no address moves it, typed or chosen. The line says how far
+the new address is, and a tap picks another price.
 
 The lookup gives both the miles and the minutes whichever the fee goes by, and the price is picked by the
 one the fee goes by. Miles are along the road, to a tenth of a mile. Minutes are the usual drive, to the
@@ -622,10 +633,15 @@ does, in the order as it is saved, and ends with the name of the one that answer
 
 ## A list of addresses while typing
 
-Wherever the app asks for a street address, a list opens under the box while somebody types: what the
+Wherever the app asks for a street address, a list drops down under the box while somebody types: what the
 letters typed so far could become. **A tap fills the address in.** It is under **Deliver to**, the
 street's box, on the to-go form and on an order's own dialog (a catering order's too), and under
 **Restaurant address** in Location › Delivery fee.
+
+- **The list lies over the form and moves nothing** (the owner's words, 2026-11-26: the list should not
+  push the other fields down, it should drop down over them). It hangs from the box like a menu, as wide
+  as the box and what stands beside it, with a shadow under it. The boxes and buttons it covers stay
+  where they are and are back the moment it closes.
 
 - **A tap fills every box of the address**: the street, the unit, the city, the state and the ZIP
   ([The address in its parts](#the-address-in-its-parts)). A box the line has nothing for is emptied, so
@@ -658,7 +674,7 @@ street's box, on the to-go form and on an order's own dialog (a catering order's
   the floor plan; it turns amber when a fifth is left and red when nearly none is. A tap on the badge (or
   the mouse over it) says it in words: "Mapbox: 94,988 of 95,000 free lookups left this month". The badge
   stands under the box, in the column of the lines' little pictures, so it does not move while the list
-  and its addresses change.
+  and its addresses change, and it stays there while a long list's lines scroll under it.
 - **The list comes once the typing pauses**, about a third of a second: from the second letter for your
   own deliveries, from the fourth for a map service. Six lines at most. When a map service adds its own,
   three of yours stand above them.
@@ -677,14 +693,24 @@ street's box, on the to-go form and on an order's own dialog (a catering order's
 - **Nothing is put in the box by itself.** What was typed stands until somebody taps a line. **Enter**
   (Next on a phone's keyboard) closes the list, takes no line, and goes on to the next box.
 - **A tap is the address done.** Its parts are in the boxes, the list closes, the keyboard stays in the
-  street's box, and where the hub looks distances up, how far it is is asked at once, as after Enter. For
-  one of Google's lines that is once the ZIP has come, so the whole address is asked about, one time.
-- **With a keyboard**: the arrow down goes into the list, Enter takes the line the focus is on, the arrow
-  up from the top line is back in the box, and Escape closes the list and leaves what was typed.
-- **The list goes when the box is left.** An address the form filled in by itself, such as a returning
-  customer's last one, is not asked about.
-- **The box stays in sight.** The form scrolls the list up into view under the box. On a screen too short
-  for both, the box goes to the top and the list shows as far as there is room; the rest is a scroll away.
+  street's box, and where the hub looks distances up, how far it is is asked at once and the delivery fee
+  for that distance is picked, also over a price tapped earlier
+  ([On the form](#on-the-form)). For one of Google's lines that is once the ZIP has come, so the whole
+  address is asked about, one time.
+- **With a keyboard**: the arrow down goes into the list and on from line to line, Enter takes the line
+  the focus is on, the arrow up goes back a line and from the top line into the box, and Escape closes the
+  list and leaves what was typed. A list longer than its room scrolls along with the arrows.
+- **The list goes when the box is left, and at a touch on anything else.** A tap beside the list, or on
+  what shows around it, puts the list away and leaves what was typed; the next tap reaches what it lay
+  over. An address the form filled in by itself, such as a returning customer's last one, is not asked
+  about.
+- **The box stays in sight, and the list takes the room under it.** Where there is less room under the box
+  than the list has lines for (a phone with its keyboard up), the form brings the box up by as much as is
+  missing, at most to the top. If that is still not enough, the list is as tall as the room and its lines
+  scroll inside it, under the name of the service that answered. Nothing of it is ever under the keyboard
+  or off the bottom of the screen.
+- **The list goes with its box.** When the form is scrolled the list moves along, and while the box is
+  scrolled out of sight its list is not shown; it is back when the box is.
 - **A list is a help and no more.** When the hub or the map services do not answer there is no list and
   no word about it, and the address is typed in full as before. A list never holds a form up, and never makes a
   screen turn away from its hub.
@@ -1221,11 +1247,23 @@ saved distances are further down):
   the terminal talks to, waits four seconds and never changes `connection`, and leaves a hub that answered
   404 alone for ten minutes; `addressList`, `saveAddressList`, `tryAddressList`.
   `lib/screens/address_box.dart`: `AddressBox` around the text box and its list (a `Focus` around both, so
-  the focus going into the list is not the box being left; the list in a `TextFieldTapRegion`, so a click
-  on a Mac is not a click away; a pause of 300 ms, answers for other letters dropped). It is the box of
+  the focus going into the list is not the box being left; a pause of 300 ms, answers for other letters
+  dropped). The list is no child of the form's column: it is drawn in the screen's `Overlay` by
+  `OverlayPortal.overlayChildLayoutBuilder` (`_float`, the way Flutter's own `RawAutocomplete` does it),
+  moved to under the box by the box's paint transform, so it lays out nothing around it and follows the
+  box through a scroll frame by frame. `_float` gives it the room down to the keyboard
+  (`MediaQueryData.fromView`, since a `Dialog` hides the keyboard's inset from its children) and shows
+  nothing while the box's lower edge is outside the form's `Scrollable`. Its lines scroll in `_rolls`
+  under the credit row; `_onKey` says which line an arrow goes to (the list overlaps other boxes, so
+  where things stand on the screen cannot say it). The list is in a `TextFieldTapRegion`, so a click on
+  a line is not a click away from the box, and its `onTapOutside` closes it. It is the box of
   `EventFields` (`addresses:`, handed in by the to-go form and by `WhenDialog`) and of `fee-origin` in
-  `DeliveryFeeDialog`. `_bringUp` scrolls the form to the list's end, and no further than the box at the
-  top. `AddressListDialog` and the row `address-list` under Location.
+  `DeliveryFeeDialog`. `_bringUp` scrolls the form by what the list lacks, and no further than the box
+  at the top. `AddressListDialog` and the row `address-list` under Location.
+- The fee after a chosen address: `AddressFields.onChosen` (a line of the list was tapped and its parts
+  are in the boxes) is `EventFields.onAddressChosen`; the to-go form's `_askDistance(chosen: true)` and
+  `WhenDialog._lookUp(chosen: true)` forget `_feeByHand` before they ask, the dialog not for a fee the
+  website charged. `onAddressDone` (Enter, the box left) asks as before and leaves `_feeByHand` alone.
 - Tests: `backend/tests/orders/test_address_list.py` (all three services against `httpx.MockTransport`; none
   of them is ever called) and `apps/pos_app/test/address_list_test.dart`.
 

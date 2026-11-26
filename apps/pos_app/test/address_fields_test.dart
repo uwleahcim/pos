@@ -440,12 +440,16 @@ void main() {
       expect((c.top, d.top, c.left, e.right), (d.top, e.top, 0, 400));
       expect(c.width, greaterThan(e.width));
       expect(e.width, greaterThan(d.width)); // two letters need the least
-      // the list opens under the street and the unit beside it, as wide as the form
+      // the list drops down under the street and the unit beside it, as wide as the form
       await type(tester, '12 el');
       final list = tester.getRect(key('address-list'));
       expect((list.left, list.right), (0, 400));
       expect(list.top, greaterThanOrEqualTo(a.bottom));
-      expect(tester.getRect(key(city)).top, greaterThan(list.bottom)); // and the other boxes move down under it
+      // over the other boxes, which stay where they stood
+      expect([for (final box in addressBoxes) tester.getRect(key(box))], [a, b, c, d, e]);
+      expect(list.bottom, greaterThan(c.bottom));
+      expect(key(city).hitTestable(), findsNothing);
+      expect(key('address-suggestion:0').hitTestable(), findsOneWidget);
     });
 
     testWidgets('large type takes the lines it needs, and names the unit shortly', (tester) async {

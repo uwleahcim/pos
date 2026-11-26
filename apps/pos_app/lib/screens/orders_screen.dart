@@ -2391,8 +2391,11 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// Where live traffic is on, a delivery for now is also told how long the drive is at this minute
   /// ("Live traffic"), and the form promises by it. An order for later is not asked about: the roads now
   /// say nothing of then.
-  Future<void> _askDistance({bool again = false, bool fresh = false}) async {
+  Future<void> _askDistance({bool again = false, bool fresh = false, bool chosen = false}) async {
     if (!mounted || _handover != 'delivery' || !_asker.can) return;
+    // an address chosen off the list is another place to go: a price tapped for the one before it does
+    // not stand for it (Mike, 2026-11-26: when an address is selected, the fee for its distance is)
+    if (chosen) _feeByHand = false;
     final now = (_fees?.live ?? false) && _delivery && !_named;
     final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: now))?.band;
     if (!mounted) return;
@@ -2816,6 +2819,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onFee: _pickFee,
                   asker: _asker,
                   onAddressDone: _askDistance,
+                  onAddressChosen: () => _askDistance(chosen: true),
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                   addresses: _addresses,
                   wholeAddress: widget.api.wholeAddress,
@@ -2895,6 +2899,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   onFee: _pickFee,
                   asker: _asker,
                   onAddressDone: _askDistance,
+                  onAddressChosen: () => _askDistance(chosen: true),
                   onLookUp: ({fresh = false}) => _askDistance(again: true, fresh: fresh),
                   addresses: _addresses,
                   wholeAddress: widget.api.wholeAddress,
