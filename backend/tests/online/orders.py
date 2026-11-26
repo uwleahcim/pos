@@ -192,7 +192,8 @@ def order(
         "client_marketing_consent": True,
         "client_language": "en",
         "fulfillment_option": None,
-        "used_payment_methods": 1,
+        # every way it was paid, as GloriaFood names them: one, or two for a payment that was split
+        "used_payment_methods": [payment],
         "latitude": "42.45" if delivery else None,
         "longitude": "-71.13" if delivery else None,
         "coupons": [],

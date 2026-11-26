@@ -383,7 +383,8 @@ The check on the POS comes to what the customer was charged on the website, to t
 | The delivery fee | The order's delivery fee (`delivery.md`), marked as charged on the website. It is taxed or not as the website taxed it |
 | A tip | A charge named **Tip**, kept apart from the sales as a gratuity, never taxed |
 | A service fee | A charge of that name |
-| Paid on the website | A payment, **Paid online**, recorded on the day as money taken outside the POS. The ticket says PAID |
+| Paid on the website, whichever way it took the money: a card, Apple Pay, Google Pay, PayPal | A payment, **Paid online**, recorded on the day as money taken outside the POS. The ticket says PAID |
+| Paid in more than one way (GloriaFood names two ways of paying on the order) | No payment: the hub does not guess how much each part was. The order is listed to look at, and GloriaFood's app says what is still to collect |
 | Cash or card at the door | No payment: the ticket says NOT PAID and what is owed, and it is paid on the POS when the customer comes |
 
 A charge the POS would add by itself to a to-go order is left off: the customer was not charged it.
@@ -803,6 +804,13 @@ how an order is stored, numbered and printed). Tests: `backend/tests/online/`.
   choices.
 - **Charges.** The evening rows use the tax class `untaxed` (`orders/check.py`), codes `online_rounding`
   and `online_difference`.
+- **The website's payment.** GloriaFood sends `payment` (`ONLINE`, `CASH`, `CARD`, `CARD_PHONE`) and
+  `used_payment_methods`, a **list of those same words**: one as a rule, two for a payment that was split
+  (`place._ways_paid` takes both together). `gateway_type` ("Apple Pay") is only the name of how the
+  website took it. Nothing but `ONLINE`: the `pay` operation `:paid`, for the order's whole total.
+  `ONLINE` beside another way, or beside something that is none of GloriaFood's words: no payment is
+  written, and the order says which of the two it is. The list was once read as a count, and every order
+  paid on the website came out not paid.
 - **Calls.** `POST /online/push`, `GET /online/status` (with `push`: `configured`, `pushed_ms`, `refused`;
   `today.by_push`, `today.by_poll`, `today.unread`), `POST /online/fetch` (409 `no_key`; `known` counts the
   orders that were here already; `answered` and `reason` say whether GloriaFood answered; `soon` is a
