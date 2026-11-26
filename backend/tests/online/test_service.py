@@ -314,7 +314,7 @@ def test_what_is_no_order_for_the_pos_is_kept_without_a_slip():
     assert hub.accept(from_a_table, turned_down) == {**NONE, "came": 2, "kept": 2}
     assert not on_the_pos(hub, 301) and not on_the_pos(hub, 302)
     assert hub.inbox.get("gloriafood", "301").said == "it is an order placed from a table"
-    assert hub.inbox.get("gloriafood", "302").said == "it was not accepted (rejected)"
+    assert hub.inbox.get("gloriafood", "302").said == "it was rejected in GloriaFood's app"
     status = hub.status()
     # an order from a table is nothing to look at; an order the POS would take and did not is
     assert [look["id"] for look in status["look"]] == ["302"] and hub.slips() == [] and tickets(hub) == []

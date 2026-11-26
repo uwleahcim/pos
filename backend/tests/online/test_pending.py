@@ -112,8 +112,8 @@ def test_one_that_was_turned_down_or_missed_says_so_and_is_news():
     assert not on_the_pos(hub, 301) and not on_the_pos(hub, 302) and tickets(hub) == [] and hub.slips() == []
     status = hub.status()
     assert {look["id"]: (look["said"], look["new"]) for look in status["look"]} == {
-        "301": ("it was not accepted (rejected)", True),
-        "302": ("it was not accepted (timed_out)", True),
+        "301": ("it was rejected in GloriaFood's app", True),
+        "302": ("it was missed: nobody answered it in GloriaFood's app in time", True),
     }
     assert status["news"] == 2
 
@@ -140,15 +140,17 @@ def test_an_order_nobody_answered_for_a_quarter_of_an_hour_is_news_once():
     assert on_the_pos(hub, 301) and not hub.order(301)["fired"]
 
 
-def test_an_order_on_the_pos_stays_as_it_is_whatever_gloriafood_says_of_it_later():
+def test_an_order_on_the_pos_is_not_taken_off_by_a_copy_that_says_it_still_waits():
     hub = Hub()
     told = lunch()
     hub.accept(told)
     before = (len(hub.store.for_order("gf-301")), tickets(hub))
     hub.clock += MINUTE
-    # taking an order off the POS is a person's doing: a void, with its reason
-    assert hub.accept(lunch(status="canceled"), unanswered(lunch())) == {**NONE, "came": 2, "known": 2}
-    assert (len(hub.store.for_order("gf-301")), tickets(hub)) == before
+    # the copy from before it was accepted, come late, and the accepted one once more: neither says
+    # anything the POS does not say already (what a cancelled one does is in test_after)
+    assert hub.accept(unanswered(lunch()), told) == {**NONE, "came": 2, "known": 2}
+    assert (len(hub.store.for_order("gf-301")), tickets(hub)) == before and hub.slips() == []
+    assert hub.order(301)["status"] == "open" and hub.status()["look"] == []
     arrival = hub.inbox.get("gloriafood", "301")
     assert (arrival.state, arrival.raw) == ("placed", told)
 

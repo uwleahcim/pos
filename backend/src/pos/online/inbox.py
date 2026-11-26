@@ -12,9 +12,12 @@ it came, and only then turned into a check; what became of it is written beside 
 - `failed`: it could not be put on the POS; `said` tells why, and it is tried again a few times.
 
 The website's service can also be set to hand an order over before the restaurant answered it, and again
-when it did (an integration of GloriaFood's with "Pending" among its statuses). So an order that is here,
-not on the POS, and comes again saying something else of itself is taken as it comes now (`Inbox.again`):
-the one that waited to be accepted goes on the POS when it is.
+when it did (an integration of GloriaFood's with "Pending" among its statuses), or every time something of
+it changes ("Send every time an order is updated"). So an order that is here, not on the POS, and comes
+again saying something else of itself is taken as it comes now (`Inbox.again`): the one that waited to be
+accepted goes on the POS when it is, and one that was cancelled meanwhile never does. What is said later of
+an order that is on the POS is the POS's to take (`pos.online.after`); here only the order as it came last
+is kept in place of the one before (`Inbox.heard`).
 
 An order as it came holds the customer's name, number, address and e-mail. It is kept `KEEP_DAYS` days, so
 that an order that went wrong can be looked at and put right, and then only what became of it stays: the
@@ -41,9 +44,10 @@ ACCEPTED, PENDING = "accepted", "pending"
 """What an order says became of it at the restaurant (`status_of`): `ACCEPTED`, and `PENDING` while nobody
 there has answered it. The website's service has more words (rejected, timed_out, canceled); they are read
 as they come."""
-RETAKEN = ("kept", "new")
-"""The states in which an order that comes again saying something else of itself is taken as it comes now:
-it is not on the POS, and nobody has given up on it."""
+RETAKEN = ("kept", "new", "failed")
+"""The states in which an order that comes again saying something else became of it is taken as it comes
+now: it is not on the POS. One that is written down and not looked at yet (`new`) is also taken when it
+only says it is ready now: nothing was done with it, so the newest word of it is the one to go by."""
 
 
 class ReadOnlyError(RuntimeError):
@@ -120,25 +124,47 @@ class Inbox:
     def again(self, arrival: Arrival) -> bool:
         """An order that is here comes again, and says something else became of it than it said when it was
         written down: it was handed over while it waited to be accepted, and now it is accepted (or turned
-        down, or missed). Then what came now is written in place of what came then, and the order waits to
-        be looked at as a new one does. True when that was so.
+        down, or missed, or cancelled). Then what came now is written in place of what came then, and the
+        order waits to be looked at as a new one does. True when that was so.
 
-        Only an order that is not on the POS: one that was kept, or is written down and not looked at yet.
-        One that is on the POS, in the book, or given up on stays as it is whatever is sent after it. An
-        order never goes back to waiting either: one that comes again unanswered says nothing new. When it
-        came first, how, and from which account stay as they were written down."""
+        Only an order that is not on the POS: one that was kept, one that would not go on, or one that is
+        written down and not looked at yet (that one also when it only says it is ready now). One that is
+        on the POS or in the book stays as it is here whatever is sent after it. An order never goes back
+        to waiting either: one that comes again unanswered says nothing new. Nor does an older copy take
+        the place of a newer one (`updated_at`, where both say it): a cancelled order is not accepted again
+        by a copy that was on its way. When it came first, how, and from which account stay as they were
+        written down."""
         told = None if arrival.raw is None else status_of(arrival.raw)
-        if told is None or told == PENDING:
+        if arrival.raw is None or told is None or told == PENDING:
             return False
         with self._lock:
             key = (arrival.source, arrival.ext_id)
             here = self._rows.get(key)
-            if here is None or here.raw is None or here.state not in RETAKEN or status_of(here.raw) == told:
+            if here is None or here.raw is None or here.state not in RETAKEN:
+                return False
+            news = status_of(here.raw) != told or (here.state == "new" and _ready(here.raw) != _ready(arrival.raw))
+            if not news or (_updated(arrival.raw) and _updated(here.raw) > _updated(arrival.raw)):
                 return False
             self._rows[key] = replace(
                 here, raw=arrival.raw, kind=arrival.kind, state="new", order_id=None, said="", tries=0, settled_ms=None
             )
             return True
+
+    def heard(self, arrival: Arrival) -> None:
+        """An order that is on the POS or in the book came again (`pos.online.after`): the order as it came
+        now is kept in place of the one before, for whoever looks at what was sent. Nothing else of it
+        changes. Not for one whose details were dropped already (they stay dropped), and never an older
+        copy in place of a newer one (`updated_at`, where both say it)."""
+        if arrival.raw is None:
+            return
+        with self._lock:
+            key = (arrival.source, arrival.ext_id)
+            here = self._rows.get(key)
+            if here is None or here.raw is None or here.raw == arrival.raw:
+                return
+            if _updated(arrival.raw) and _updated(here.raw) > _updated(arrival.raw):
+                return
+            self._rows[key] = replace(here, raw=arrival.raw)
 
     def settle(self, arrival: Arrival) -> None:
         """Writes what became of an order that is here: its state, the POS order, what is said of it and
@@ -205,6 +231,19 @@ def status_of(order: Mapping[str, Any]) -> str:
     """What an order says became of it at the restaurant, in the website's service's own word. One that
     says nothing was accepted: only accepted orders were handed over when the API was first written."""
     return str(order.get("status") or ACCEPTED)
+
+
+def _ready(order: Mapping[str, Any]) -> bool:
+    """Whether an order says it was marked ready in the website's own app."""
+    return order.get("ready") is True
+
+
+def _updated(order: Mapping[str, Any]) -> str:
+    """When an order says it was last changed, as the website's service writes it
+    ("2027-01-15T23:06:00.000Z": always UTC and of one shape, so the later one is the greater text); nothing
+    for one that does not say."""
+    value = order.get("updated_at")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def restaurant_of(order: Mapping[str, Any]) -> str | None:
@@ -351,19 +390,51 @@ class PgInbox(Inbox):
         from psycopg.types.json import Jsonb
 
         told = None if arrival.raw is None else status_of(arrival.raw)
-        if told is None or told == PENDING:
+        if arrival.raw is None or told is None or told == PENDING:
             return False
+        updated = _updated(arrival.raw)
         try:
             with self._pool.connection() as conn:
                 done = conn.execute(
                     "UPDATE online_order SET raw = %s, kind = %s, state = 'new', order_id = NULL, said = '', "
                     "tries = 0, settled_ms = NULL "
                     "WHERE source = %s AND ext_id = %s AND state = ANY(%s) AND raw IS NOT NULL "
-                    # what it said of itself when it was written down, read as `status_of` reads it
-                    "AND COALESCE(NULLIF(raw ->> 'status', ''), %s) <> %s",
-                    (Jsonb(arrival.raw), arrival.kind, arrival.source, arrival.ext_id, list(RETAKEN), ACCEPTED, told),
+                    # what it said of itself when it was written down, read as `status_of` and `_ready` read it
+                    "AND (COALESCE(NULLIF(raw ->> 'status', ''), %s) <> %s "
+                    "OR (state = 'new' AND COALESCE(raw -> 'ready' = 'true'::jsonb, false) <> %s)) "
+                    # and never an older copy in place of a newer one, where both say when they were changed
+                    "AND NOT (%s <> '' AND COALESCE(btrim(raw ->> 'updated_at'), '') > %s)",
+                    (
+                        Jsonb(arrival.raw),
+                        arrival.kind,
+                        arrival.source,
+                        arrival.ext_id,
+                        list(RETAKEN),
+                        ACCEPTED,
+                        told,
+                        _ready(arrival.raw),
+                        updated,
+                        updated,
+                    ),
                 )
                 return done.rowcount == 1
+        except errors.ReadOnlySqlTransaction as err:
+            raise ReadOnlyError("this database is a standby") from err
+
+    def heard(self, arrival: Arrival) -> None:
+        from psycopg import errors
+        from psycopg.types.json import Jsonb
+
+        if arrival.raw is None:
+            return
+        raw, updated = Jsonb(arrival.raw), _updated(arrival.raw)
+        try:
+            with self._pool.connection() as conn:
+                conn.execute(
+                    "UPDATE online_order SET raw = %s WHERE source = %s AND ext_id = %s AND raw IS NOT NULL "
+                    "AND raw <> %s AND NOT (%s <> '' AND COALESCE(btrim(raw ->> 'updated_at'), '') > %s)",
+                    (raw, arrival.source, arrival.ext_id, raw, updated, updated),
+                )
         except errors.ReadOnlySqlTransaction as err:
             raise ReadOnlyError("this database is a standby") from err
 

@@ -154,8 +154,8 @@ def test_a_reservation_of_today_that_reaches_the_hub_after_its_time_is_booked_an
 @pytest.mark.parametrize(
     ("change", "why"),
     [
-        ({"status": "rejected"}, "it was not accepted (rejected)"),
-        ({"status": "canceled"}, "it was not accepted (canceled)"),
+        ({"status": "rejected"}, "it was rejected in GloriaFood's app"),
+        ({"status": "canceled"}, "it was cancelled in GloriaFood"),
         ({"id": None}, "it has no number"),
     ],
 )

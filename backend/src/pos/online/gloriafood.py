@@ -17,8 +17,11 @@ Either way the hub writes down every order it is given before it does anything e
 **Not only accepted orders.** Every order says what became of it (`status`: `accepted`, `pending`,
 `rejected`, `timed_out`, `canceled`), and which of them an integration sends is set in GloriaFood's admin.
 One that sends pending orders too hands an order over the moment the customer places it (`accepted_at` and
-`fulfill_at` empty) and again when it is accepted. Nothing is filtered here: what is done with each is
-`pos.online.place.unaccepted` and `pos.online.inbox.Inbox.again`.
+`fulfill_at` empty) and again when it is accepted. One set to "Send every time an order is updated" hands
+an order over again when something of it changes afterwards: it was marked ready in GloriaFood's own app
+(`ready`, a boolean) or cancelled. Nothing is filtered here: what is done with each is
+`pos.online.place.unaccepted`, `pos.online.inbox.Inbox.again` and, for an order that is on the POS,
+`pos.online.after`.
 
 What leaves the building: the key the hub asks with, in the `Authorization` header. No order, no customer,
 nothing of the POS. Both keys are this restaurant's own integrations in GloriaFood's admin ("Poll Accepted

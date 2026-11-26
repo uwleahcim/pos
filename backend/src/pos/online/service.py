@@ -18,9 +18,13 @@ Either way the same three things happen, in this order:
 
    One thing an order that is already there can still bring: what became of it. GloriaFood can be set to
    hand an order over the moment the customer places it, before anybody at the restaurant answered it, and
-   again when it is accepted. The first is kept and not put on the POS (`pos.online.place.WAITS`); the
-   second is taken in its place (`Inbox.again`) and goes on. An order that is on the POS stays as it is
-   whatever is said of it later: taking it off is a person's doing.
+   again when it is accepted; and to hand it over every time something of it changes. An order that is
+   not on the POS is taken as it comes now (`Inbox.again`): the one that waited goes on when it is
+   accepted, one that was cancelled meanwhile does not. What is said of an order that is on the POS, or of
+   a table that is in the book, is told to the POS (`change`, which the API sets; `pos.online.after`): one
+   marked ready in GloriaFood's app is ready on the POS, and one that was cancelled is voided there. That
+   is written straight to the POS's own log, which is the writing down: while the hub cannot write, the
+   copy is held in memory like any order that cannot be written down, and told at the next round.
 2. **Put on the POS.** Every order written down and not yet dealt with is turned into a to-go order
    (`pos.online.place`) and handed to `put`, which the API sets: it stores the operations, numbers the
    order and prints its tickets, as it does for a screen's. What became of the order is written beside it.
@@ -59,6 +63,7 @@ from typing import Any, Protocol
 
 from .. import localtime
 from .accounts import MAIN, Account
+from .after import After
 from .book import RESERVATION_TYPES, Booked
 from .gloriafood import NAME, FetchFailed, allowed
 from .inbox import KEEP_DAYS, MOST_TRIES, PENDING, POLL, PUSH, Arrival, Inbox, restaurant_of, status_of
@@ -164,11 +169,14 @@ class OnlineOrders:
         self.inbox = inbox if inbox is not None else Inbox()
         self._push_key = push_key or None  # what a push must carry; None: every push is turned away
         # Set by the API: `put` stores an order's operations and prints its tickets; `book` writes a table
-        # that was booked into the reservation book; `notice` prints a slip for an order somebody has to look
-        # at (the arrival, and the words for it); `news` tells the screens that there is something new to
-        # look at, slip or none.
+        # that was booked into the reservation book; `change` tells the POS what a later copy says of an
+        # order that is on it, or of a table that is in the book (the arrival as it is written down, and
+        # the order as it came now), and gives what was done; `notice` prints a slip for an order somebody
+        # has to look at (the arrival, and the words for it); `news` tells the screens that there is
+        # something new to look at, slip or none.
         self.put: Callable[[Mapping[str, Any]], Placed] | None = None
         self.book: Callable[[Mapping[str, Any]], Booked] | None = None
+        self.change: Callable[[Arrival, Mapping[str, Any]], After | None] | None = None
         self.notice: Callable[[Arrival, str], None] | None = None
         self.news: Callable[[], None] | None = None
         self._now = now
@@ -524,22 +532,68 @@ class OnlineOrders:
             self._tell(unread, unread.said)
 
     def _write_down(self) -> list[Arrival]:
-        """Writes down what is held in memory. Gives the ones that were here already and brought nothing
-        new: the same order sent twice, or come the other way first. One that cannot be written now stays
-        in memory."""
+        """Writes down what is held in memory. Gives the ones that were here already: the same order sent
+        twice, or come the other way first, or come again to say what became of it since (that is told to
+        the POS here, `_after`). One that cannot be written now stays in memory."""
         left: list[Arrival] = []
         known: list[Arrival] = []
         for arrival in self._unwritten:
             try:
                 # one that is here and comes again saying it was accepted since is no second order, and
                 # not nothing either: it is taken as it comes now, and waits to be put on the POS
-                if not self.inbox.add(arrival) and not self.inbox.again(arrival):
-                    known.append(arrival)
+                if self.inbox.add(arrival) or self.inbox.again(arrival):
+                    continue
             except Exception:  # noqa: BLE001 - whatever the database says, the order is kept for the next round
                 log.error("online order %s could not be written down; it is kept in memory", arrival.ext_id)
                 left.append(arrival)
+                continue
+            known.append(arrival)
+            if not self._after(arrival):
+                left.append(arrival)
         self._unwritten = left
         return known
+
+    def _after(self, arrival: Arrival) -> bool:
+        """An order that is on the POS, or a table that is in the book, came again: what it says now is
+        told to the POS (`change`), and what a person should know of that is written beside it, printed on
+        a slip and told to the screens. False when it could not be done because the hub cannot write right
+        now: the copy is then held and told at the next round. Whatever else goes wrong is logged, without
+        the words (an error's words can quote a customer), and the copy is dropped: the order stays as it
+        is, and one copy that cannot be read must not be tried every minute for ever."""
+        if self.change is None or arrival.raw is None:
+            return True
+        try:
+            here = self.inbox.get(arrival.source, arrival.ext_id)
+            if here is None or here.state not in ("placed", "booked"):
+                return True
+            done = self.change(here, arrival.raw)
+            self.inbox.heard(arrival)  # whatever it changed: the order as it came last is the one kept
+            if not done or not done.said:
+                return True
+            told = replace(here, raw=arrival.raw, said=done.said, settled_ms=self._now())
+            self.inbox.settle(told)
+        except Exception as err:  # noqa: BLE001 - one copy that goes wrong must not stop the orders after it
+            if not self._writable():
+                log.error("what GloriaFood says of online order %s now is held until the hub can write", arrival.ext_id)
+                return False
+            trace = "".join(traceback.format_tb(err.__traceback__)[-3:])
+            log.error(
+                "what GloriaFood says of online order %s now could not be told to the POS (%s)\n%s",
+                arrival.ext_id,
+                type(err).__name__,
+                trace,
+            )
+            return True
+        if done.slip:
+            self._tell(told, done.said)
+        self._heard()
+        return True
+
+    def _writable(self) -> bool:
+        try:
+            return self.inbox.writable()
+        except Exception:  # noqa: BLE001 - a database that cannot say is one that cannot be written
+            return False
 
     def _waiting(self) -> list[Arrival]:
         try:

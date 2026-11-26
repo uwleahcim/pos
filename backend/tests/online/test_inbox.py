@@ -81,11 +81,11 @@ def test_one_that_is_written_down_and_not_looked_at_yet_is_taken_as_it_comes_aga
     assert inbox.get("gloriafood", "8").raw == ACCEPTED
 
 
-def test_an_order_on_the_pos_or_given_up_on_is_never_taken_again(inbox):
+def test_an_order_on_the_pos_or_in_the_book_is_never_taken_again(inbox):
     canceled = {**RAW, "status": "canceled"}
-    for n, state in (("1", "placed"), ("2", "booked"), ("3", "failed")):
+    for n, state in (("1", "placed"), ("2", "booked")):
         inbox.add(came(n, raw=ACCEPTED))
-        inbox.settle(replace(came(n), state=state, order_id=f"gf-{n}", tries=MOST_TRIES, settled_ms=1500))
+        inbox.settle(replace(came(n), state=state, order_id=f"gf-{n}", settled_ms=1500))
         assert inbox.again(came(n, at=2000, raw=canceled)) is False
         here = inbox.get("gloriafood", n)
         assert (here.raw, here.state, here.order_id, here.settled_ms) == (ACCEPTED, state, f"gf-{n}", 1500)
@@ -94,8 +94,84 @@ def test_an_order_on_the_pos_or_given_up_on_is_never_taken_again(inbox):
     # one whose details were dropped long ago: what it said of itself then is not known any more
     inbox.add(came("4", raw=PLACED))
     inbox.settle(replace(came("4"), state="kept", said="it waits to be accepted", settled_ms=1500))
-    assert inbox.forget_before(5000) == 4
+    assert inbox.forget_before(5000) == 3
     assert inbox.again(came("4", at=9000, raw=ACCEPTED)) is False
+
+
+def test_one_that_would_not_go_on_the_pos_and_was_cancelled_since_is_taken_as_it_comes_now(inbox):
+    # given up on, for a person to ring in by hand: that it was cancelled since is what that person must know
+    inbox.add(came("3", raw=ACCEPTED))
+    given_up = replace(came("3"), state="failed", said="a dish is not on the menu", tries=MOST_TRIES, settled_ms=1500)
+    inbox.settle(given_up)
+    assert inbox.again(came("3", at=2000, raw=ACCEPTED)) is False  # the same again: it stays given up on
+    assert inbox.again(came("3", at=3000, raw={**RAW, "status": "canceled"})) is True
+    here = inbox.get("gloriafood", "3")
+    assert (here.state, here.said, here.tries, here.raw["status"]) == ("new", "", 0, "canceled")
+
+
+READY = {**ACCEPTED, "ready": True}
+"""An order as it comes once it was marked ready in the website's own app."""
+
+
+def test_one_not_looked_at_yet_is_taken_as_it_comes_when_it_only_says_it_is_ready_now(inbox):
+    # accepted and marked ready between two askings: both copies come in one answer
+    inbox.add(came("7", raw=ACCEPTED))
+    assert inbox.again(came("7", raw=READY)) is True
+    assert inbox.get("gloriafood", "7").raw == READY
+    assert inbox.again(came("7", raw=READY)) is False  # and once
+    # one something was done with already is not taken again for that: it is the POS's to say it is ready
+    inbox.add(came("8", raw=ACCEPTED))
+    inbox.settle(replace(came("8"), state="kept", said="it reached the hub a day late", settled_ms=1500))
+    assert inbox.again(came("8", raw=READY)) is False
+    assert inbox.get("gloriafood", "8").raw == ACCEPTED
+    # an order that says nothing of being ready is one that is not
+    inbox.add(came("9", raw={**ACCEPTED, "ready": None}))
+    assert inbox.again(came("9", raw={**ACCEPTED, "ready": False})) is False
+
+
+def test_an_older_copy_never_takes_the_place_of_a_newer_one(inbox):
+    accepted = {**ACCEPTED, "updated_at": "2027-01-15T23:01:00.000Z"}
+    canceled = {**RAW, "status": "canceled", "updated_at": "2027-01-15T23:06:00.000Z"}
+    inbox.add(came("7", raw=canceled))
+    inbox.settle(replace(came("7"), state="kept", said="it was cancelled", settled_ms=1500))
+    assert inbox.again(came("7", at=2000, raw=accepted)) is False  # it was on its way while the order was cancelled
+    assert inbox.get("gloriafood", "7").state == "kept"
+    # a copy that does not say when it was changed is taken at its word, as before
+    assert inbox.again(came("7", at=3000, raw=ACCEPTED)) is True
+    # and the newer one is taken
+    inbox.add(came("8", raw=accepted))
+    inbox.settle(replace(came("8"), state="kept", said="it reached the hub a day late", settled_ms=1500))
+    assert inbox.again(came("8", at=2000, raw=canceled)) is True
+
+
+def test_what_an_order_on_the_pos_says_later_is_kept_in_place_of_what_it_said(inbox):
+    inbox.add(came("1", raw=ACCEPTED))
+    inbox.settle(replace(came("1"), state="placed", order_id="gf-1", settled_ms=1500))
+    inbox.heard(came("1", at=2000, raw=READY, kind="delivery", via="push"))
+    here = inbox.get("gloriafood", "1")
+    assert here.raw == READY
+    # nothing else of it changes
+    assert (here.state, here.order_id, here.settled_ms, here.fetched_ms, here.kind, here.via) == (
+        "placed",
+        "gf-1",
+        1500,
+        1000,
+        "pickup",
+        "poll",
+    )
+    inbox.heard(came("9", raw=READY))  # one that is not here: nothing happens
+    assert inbox.get("gloriafood", "9") is None
+    # an older copy never takes the place of a newer one, where both say when they were changed
+    newer = {**READY, "updated_at": "2027-01-15T23:06:00.000Z"}
+    inbox.heard(came("1", raw=newer))
+    inbox.heard(came("1", raw={**ACCEPTED, "updated_at": "2027-01-15T23:01:00.000Z"}))
+    assert inbox.get("gloriafood", "1").raw == newer
+    inbox.heard(came("1", raw=READY))  # one that does not say is taken at its word
+    assert inbox.get("gloriafood", "1").raw == READY
+    # one whose details were dropped stays without them
+    assert inbox.forget_before(5000) == 1
+    inbox.heard(came("1", at=9000, raw=READY))
+    assert inbox.get("gloriafood", "1").raw is None
 
 
 def test_an_order_that_says_nothing_of_itself_counts_as_accepted(inbox):
