@@ -140,6 +140,7 @@ def test_a_key_from_the_hub_s_own_file_is_in_force_and_shown_by_its_ending_only(
         "online_push",
         "online_tunnel",
         "push_apple",
+        "texts",
     ]
 
 
@@ -375,7 +376,7 @@ def test_a_manager_types_the_map_keys_and_the_hub_asks_with_them_at_once():
     api, _ = wired()
     auth = token(api)
     before = api.get("/hub/keys", headers=auth).json()
-    assert [key["set"] for key in before["keys"]] == [False] * 8 and before["kept"] is True
+    assert [key["set"] for key in before["keys"]] == [False] * 9 and before["kept"] is True
     assert api.get("/maps/status").json()["configured"] is False
     saved = api.put("/hub/keys/maps", json={"key": GEOCODIO_KEY}, headers=auth)
     assert saved.status_code == 200 and GEOCODIO_KEY not in saved.text
@@ -577,6 +578,7 @@ def test_a_manager_adds_a_second_gloriafood_account_and_the_hub_asks_both():
         "online_push",
         "online_tunnel",
         PUSH_APPLE,
+        "texts",
     ], "as an older app reads it"
     online: OnlineOrders = api.app.state.online
     assert [(source.account, type(source)) for source in online.sources] == [

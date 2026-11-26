@@ -3,8 +3,8 @@
 Every call is a manager's (the token from `/admin/session`): no setting hands them out.
 
 - `GET /hub/keys`: every key the hub can hold, as a screen may see it (`pos.keys.HubKeys.views`): `keys`, each
-  with its `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `push_apple`), whether one is
-  in force (`set`), where
+  with its `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `push_apple`, `texts`), whether
+  one is in force (`set`), where
   from (`source`: `app`, `hub` for the hub's own file, or null), its last characters (`ending`), Apple's ids
   (`shown`), who touched it in the app last and when (`by`, `at_ms`), `removed` and `unreadable`. And
   `kept`: false on a hub that has nowhere to keep its sealing secret, where a key typed in the app lasts
@@ -54,8 +54,26 @@ what it needs when a key changes, and neither is restarted.
   nowhere, and a try counts as no push. 409 `no_key` on a hub without a key for pushes. Answers like the
   `GET` beside it.
 
+**Texts to customers** (`pos.twilio`; docs/texts.md). The restaurant's Twilio account is the key `texts`:
+`PUT /hub/keys/texts` with `{"account": "AC...", "key": "<the Auth Token>", "sender": "<a number of the
+account's, or a Messaging Service's SID>"}` and, where the account is used with an API key, that key's SID
+as `key_sid` and its secret as `key`. `shown` is the account, the sender and the API key's SID; the token
+is never shown. From the moment it is typed the POS's texts go out through Twilio, and with it removed they
+go nowhere again.
+
+- `GET /hub/keys` also gives `texts`: `provider` (`log`: no service, the texts are only written to the
+  hub's log; `twilio`), `sender`, `day` (of the last 24 hours: `texts`, `delivered`, `failed`) and
+  `last_failed` (the order, the kind of text, when, and why in words, `said`). Never a customer's number
+  and never the words of a text.
+- `POST /hub/texts/try`: `{"to": "781 555 0142"}`: one text to that number now, to see that the account
+  works, answered with `tried`: `ok`, `state` (`delivered`, `sent`: Twilio took it and the phone company
+  has not said yet, `failed`), Twilio's error number (`code`) and why in words (`said`). The number is used
+  for that one text and kept nowhere. 409 `no_service` on a hub without a Twilio account; 422 `bad_value`
+  for what is no number. Answers like the `GET` beside it.
+
 A key changes the service that uses it in place (`use_keys`): the map lookups keep the day's counts, the
-online orders start asking (or stop) and Apple's sender is exchanged. A hub also looks once a minute whether
+online orders start asking (or stop), Apple's sender is exchanged and so is the messenger the texts go out
+with. A hub also looks once a minute whether
 the keys changed under it (`watch_keys`): typed on the other hub of the location, or taken back by `hubctl`.
 """
 
@@ -81,11 +99,13 @@ from ..keys import (
     ONLINE_TUNNEL,
     PUSH_APPLE,
     SLOTS,
+    TEXTS,
     HubKeys,
     UnknownKey,
     slot_for,
 )
 from ..maps import Lookups, fallback_from_env, maps_from_env, others_from_env
+from ..messaging import Messenger, about_of, messenger_from_env
 from ..online.accounts import MAIN, SETTING, Account, account_of_slot, accounts_of, clean_accounts, name_of, new_id
 from ..online.gloriafood import GloriaFood
 from ..online.service import OnlineOrders
@@ -94,6 +114,7 @@ from ..push.apns import ApnsConfig, ApnsSender
 from ..push.relay import PushRelay
 from ..settings import SettingStore
 from ..sync.pgstore import ReadOnlyError
+from ..twilio import TwilioMessenger, config_of
 from .auth import manager_from
 
 log = logging.getLogger(__name__)
@@ -102,6 +123,8 @@ WATCH_SECONDS = 60.0
 """How often a hub looks whether the keys changed under it."""
 TYPED_MOST = 16_000
 """The most a call may carry in one box: Apple's key file is a few hundred letters."""
+NUMBER_MOST = 40
+"""The most letters a phone number typed for a try may have, however it is spaced."""
 
 
 class KeyIn(BaseModel):
@@ -112,6 +135,9 @@ class KeyIn(BaseModel):
     key_id: str = Field("", description="Apple's key: the ten letters and digits in the file's name")
     team_id: str = Field("", description="Apple's key: the team it belongs to")
     bundle_id: str = Field("", description="Apple's key: the app it pushes to, when not the usual one")
+    account: str = Field("", description="Twilio: the Account SID")
+    sender: str = Field("", description="Twilio: the number the texts are sent from, or a Messaging Service's SID")
+    key_sid: str = Field("", description="Twilio: an API key's SID, when `key` is that key's secret")
 
 
 class AccountIn(BaseModel):
@@ -121,6 +147,12 @@ class AccountIn(BaseModel):
     name: str | None = None
     key: str = ""
     test: bool | None = None
+
+
+class TryTextIn(BaseModel):
+    """The mobile number a manager wants the one text of a try sent to. It is kept nowhere."""
+
+    to: str = ""
 
 
 class AddressIn(BaseModel):
@@ -211,6 +243,39 @@ def sender_for(keys: HubKeys) -> ApnsSender | None:
     return ApnsSender(ApnsConfig(data["key"].encode(), data["key_id"], data["team_id"], data["bundle_id"]))
 
 
+def texts_for(keys: HubKeys, **made_with: Any) -> Messenger:
+    """What the POS's texts go out with: Twilio where the hub holds an account for it, and otherwise the
+    messenger that only writes them to the log. `made_with` is handed to the Twilio messenger (the tests
+    give it a stand-in for the internet)."""
+    config = config_of(keys.data(TEXTS))
+    return TwilioMessenger(config, **made_with) if config is not None else messenger_from_env()
+
+
+def use_texts(app: FastAPI) -> None:
+    """The Twilio account in force now is the one the texts go out with: a new messenger where the account
+    changed, was typed for the first time or was removed, and the same one where it did not (it keeps what
+    it knows of the day's texts, and the ones still in its line). A messenger the hub was handed at its
+    start (the tests) is never exchanged."""
+    if app.state.texts_given:
+        return
+    keys: HubKeys = app.state.keys
+    config = config_of(keys.data(TEXTS))
+    old: Messenger = app.state.messenger
+    if isinstance(old, TwilioMessenger):
+        if old.config == config:
+            return
+    elif config is None:
+        return
+    fresh: Messenger = (
+        TwilioMessenger(config, **app.state.texts_made_with) if config is not None else messenger_from_env()
+    )
+    app.state.messenger = fresh
+    app.state.notifier.messenger = fresh
+    if isinstance(old, TwilioMessenger):
+        old.close()
+    log.warning("texts to customers: %s", "they go out through Twilio" if config is not None else "no service now")
+
+
 async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
     """Puts the keys in force to work, all of them or the ones named: after one was typed or removed, and
     when the keys were found changed. The services are changed where they stand, since the calls that use
@@ -245,6 +310,8 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
         old, relay.sender = relay.sender, fresh
         if old is not None:
             await old.close()
+    if TEXTS in wanted:
+        await run_in_threadpool(use_texts, app)
     app.state.keys_mark = await run_in_threadpool(keys_mark, keys, app.state.settings)
 
 
@@ -272,6 +339,16 @@ def add_hub_keys(app: FastAPI) -> None:
         held = app.state.settings.get(ADDRESS_SETTING).get("address")
         return held if isinstance(held, str) else ""
 
+    def texts() -> dict[str, Any]:
+        """How the texts to customers are doing. The last one that failed is named by its order's number,
+        as the lists of orders show it: never by anything of the customer."""
+        about = about_of(app.state.messenger)
+        failed = about.get("last_failed")
+        if isinstance(failed, dict):
+            state = app.state.store.state(str(failed.get("order_id") or ""))
+            about["last_failed"] = {**failed, "order_no": state.fields.get("order_no")}
+        return about
+
     def said() -> dict[str, Any]:
         keys: HubKeys = app.state.keys
         wayin: WayIn = app.state.wayin
@@ -280,6 +357,7 @@ def add_hub_keys(app: FastAPI) -> None:
             "kept": keys.vault.kept,
             "online_accounts": [{**account.about(), "key": keys.view(account.slot)} for account in accounts()],
             "way_in": {"address": address(), **wayin.about()},
+            "texts": texts(),
         }
 
     def slot_of(name: str) -> str:
@@ -449,3 +527,18 @@ def add_hub_keys(app: FastAPI) -> None:
             word = online.expect()
             outside = {"address": host, **knocked_outside(await wayin.knock(word, host), online.arrived(word))}
         return {**await run_in_threadpool(said), "tried": {"door": door, "outside": outside}}
+
+    @app.post("/hub/texts/try")
+    async def try_texts(body: TryTextIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """One text to the number a manager typed, now, through the Twilio account in force: whether it
+        went, and why not. The number is used for this and kept nowhere."""
+        manager_from(app.state.tokens, authorization)
+        messenger = app.state.messenger
+        if not isinstance(messenger, TwilioMessenger):
+            message = "this hub has no Twilio account yet"
+            raise HTTPException(409, {"error": "no_service", "message": message})
+        if not body.to.strip() or len(body.to) > NUMBER_MOST:
+            raise HTTPException(422, {"error": "bad_value", "message": "type the mobile number to send the text to"})
+        words = f"A test from the POS at {app.state.location}: texts to customers are working."
+        tried = await run_in_threadpool(messenger.try_now, body.to, words)
+        return {**await run_in_threadpool(said), "tried": tried}

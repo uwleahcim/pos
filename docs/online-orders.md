@@ -364,9 +364,12 @@ from such a later copy, and nothing has to be turned on for it:
 
 - **Ready.** An order marked ready in GloriaFood's app is **Ready on the POS** too, as if somebody had
   pressed Ready at the counter: it moves on in the list of to-go orders and on the pickup board. Nothing
-  prints and nobody is alerted. The POS sends the customer no text of its own for it: GloriaFood tells its
-  own customers. Only forward: an order that is already out with a driver, picked up or closed stays where
-  it is, and one that is ready is never made not ready again.
+  prints and nobody is alerted. **Its customer is sent the POS's ready text** ("Hi Pat, order #12 is ready
+  for pickup at ..."), since GloriaFood sends no text message of its own for it (since 26 November 2026,
+  `texts.md`): where the restaurant's Twilio account is typed in, for a pickup with a phone number, and
+  only while it is news, which is a quarter of an hour from when GloriaFood changed the order. A delivery
+  hears "on its way" when a driver takes it instead. Only forward: an order that is already out with a
+  driver, picked up or closed stays where it is, and one that is ready is never made not ready again.
 - **Cancelled** (or rejected, or missed, after it had been accepted). The POS **voids the order**. Every
   dish the kitchen has is voided with the reason "Cancelled in GloriaFood", so each station that had it
   gets its VOID ticket and the dishes are in the report of voids. The check is voided, so it leaves the
@@ -676,8 +679,8 @@ If the same order comes twice, by either way or both, it is one order on the POS
 - **The status, the slips and the hub's log** name no customer: an order is told of by its number.
 - The customer's address is sent to no map service by this. (Staff can look the distance up from the
   order's form, as for any delivery.)
-- The "ready" text goes to an online customer as to any other, where texting is set up
-  (`counter-mode.md`).
+- The "ready" text goes to an online customer as to any other, where texting is set up (`texts.md`): the
+  customer's number and the text itself go to Twilio then, and nothing else of the order.
 
 ## What is not built
 

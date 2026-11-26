@@ -500,12 +500,22 @@ void main() {
       // the keys of the page are as many as they were: an account's key is not one of them
       expect(
         [for (final key in keys.keys) key.name],
-        ['maps', 'maps_google', 'maps_mapbox', 'maps_azure', 'online', 'online_push', 'online_tunnel', 'push_apple'],
+        [
+          'maps',
+          'maps_google',
+          'maps_mapbox',
+          'maps_azure',
+          'online',
+          'online_push',
+          'online_tunnel',
+          'push_apple',
+          'texts',
+        ],
       );
       expect(
         keys.summary,
         'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, Mapbox, Azure Maps, GloriaFood (Testing), '
-        'GloriaFood push, Cloudflare tunnel, Apple push',
+        'GloriaFood push, Cloudflare tunnel, Apple push, Twilio texts',
       );
     });
 
@@ -513,6 +523,7 @@ void main() {
       final hub = Hub()
         ..onlineAccounts = null
         ..wayIn = null
+        ..texts = null
         ..hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz');
       final keys = HubKeys.fromJson(hub.hubKeysSaid());
       expect(keys.onlineAccounts, isNull);
@@ -828,7 +839,9 @@ void main() {
       expect(keys.wayIn!.tunnel.connected, isTrue);
       hub.wayIn = {...hub.wayIn!, 'address': 'orders.example.com'};
       expect(HubKeys.fromJson(hub.hubKeysSaid()).wayIn!.endpoint, 'https://orders.example.com/online/push');
-      hub.wayIn = null;
+      hub
+        ..wayIn = null
+        ..texts = null;
       final older = HubKeys.fromJson(hub.hubKeysSaid());
       expect(older.wayIn, isNull);
       expect(
@@ -853,9 +866,15 @@ void main() {
     });
 
     testWidgets('a hub from before them shows the four cards it always did', (tester) async {
-      await pumpKeys(tester, hub: (hub) => hub.wayIn = null);
+      await pumpKeys(
+        tester,
+        hub: (hub) => hub
+          ..wayIn = null
+          ..texts = null,
+      );
       expect(find.text('GloriaFood push key'), findsNothing);
       expect(find.text('Cloudflare Tunnel (the way in)'), findsNothing);
+      expect(find.text('Texts to customers (Twilio)'), findsNothing);
       for (final title in ['Map service (Geocodio)', 'Google Maps', 'GloriaFood (online orders)', 'Apple push key']) {
         expect(find.text(title), findsOneWidget, reason: title);
       }
@@ -1197,6 +1216,290 @@ void main() {
     });
   });
 
+  group('texts to customers', () {
+    // Made-up names in Twilio's shapes, put together here so that no line of this file reads as a real one.
+    const hex = '0123456789abcdef';
+    const sid = 'AC$hex$hex';
+    const apiKey = 'SK$hex$hex';
+    const service = 'MG$hex$hex';
+    const authToken = '0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+
+    /// A hub whose texts go out through Twilio, from a made-up number.
+    void texting(Hub hub, {int texts = 0, int failed = 0, Map<String, dynamic>? lastFailed}) {
+      hub
+        ..hubKeys!['texts'] = {
+          ...Hub.hubKey('texts'),
+          'source': 'app',
+          'shown': {'account': sid, 'sender': '+17815550100', 'key_sid': ''},
+          'by': 'Mike',
+          'at_ms': hub.keysAtMs,
+        }
+        ..texts = Hub.textsStand(sender: '+17815550100', texts: texts, failed: failed, lastFailed: lastFailed);
+    }
+
+    test('how the texts are doing, in words, with nothing of a customer in them', () {
+      final at = DateTime(2026, 11, 26, 18, 20).millisecondsSinceEpoch;
+      TextsState of(Map<String, dynamic> said) => TextsState.fromJson(said);
+      expect(of(Hub.textsStand()).on, isFalse);
+      final quiet = of(Hub.textsStand(sender: '+17815550100'));
+      expect(quiet.on, isTrue);
+      expect(quiet.dayWords, 'No text has gone out in the last 24 hours.');
+      expect(quiet.failedWords, isNull);
+      expect(of(Hub.textsStand(sender: 'x', texts: 1)).dayWords, '1 text in the last 24 hours. None failed.');
+      final busy = of(
+        Hub.textsStand(
+          sender: 'x',
+          texts: 14,
+          failed: 2,
+          lastFailed: {
+            'at_ms': at,
+            'kind': 'ready',
+            'order_id': 'gf-301',
+            'order_no': 12,
+            'state': 'failed',
+            'code': 30034,
+            'said': 'the number to send from is not registered for business texts yet (Twilio\'s error 30034)',
+          },
+        ),
+      );
+      expect(busy.dayWords, '14 texts in the last 24 hours. 2 did not go.');
+      expect(
+        busy.failedWords,
+        'The last one that did not go: the ready text for order #12, at ${clockTime(at)}. The number to send from is '
+        "not registered for business texts yet (Twilio's error 30034).",
+      );
+      // an order without a number of its own, and a text the app does not know the kind of
+      final bare = of(Hub.textsStand(sender: 'x', texts: 1, failed: 1, lastFailed: {'kind': 'thanks', 'said': ''}));
+      expect(bare.failedWords, 'The last one that did not go: a text.');
+      // a hub from before texts went out says nothing of them
+      expect(HubKeys.fromJson((Hub()..texts = null).hubKeysSaid()).texts, isNull);
+    });
+
+    test('what a try came to, in words', () {
+      TextTried of(Map<String, dynamic> said) => TextTried.fromJson(said);
+      final delivered = of({'ok': true, 'state': 'delivered', 'code': null, 'said': ''});
+      expect(delivered.bad, isFalse);
+      expect(delivered.words, 'Delivered. Look at that phone: the text is there. The account works.');
+      final sent = of({'ok': true, 'state': 'sent', 'code': null, 'said': ''});
+      expect(sent.bad, isFalse);
+      expect(sent.words, startsWith('Twilio took the text, and the phone company has not said yet'));
+      expect(sent.words, contains('A2P 10DLC'));
+      final failed = of({
+        'ok': false,
+        'state': 'failed',
+        'code': 21608,
+        'said':
+            'this Twilio account is a trial: it texts only the numbers verified in its console (Twilio\'s error 21608)',
+      });
+      expect(failed.bad, isTrue);
+      expect(
+        failed.words,
+        'The text did not go. This Twilio account is a trial: it texts only the numbers verified in its console '
+        "(Twilio's error 21608).",
+      );
+      expect(of({'ok': false}).words, 'The text did not go.');
+      // the two tries answer under the same name, and neither is read as the other
+      final hub = Hub();
+      expect(HubKeys.fromJson({...hub.hubKeysSaid(), 'tried': hub.textTried}).tried, isNull);
+      expect(HubKeys.fromJson({...hub.hubKeysSaid(), 'tried': hub.wayTried}).textTried, isNull);
+    });
+
+    testWidgets('the card says no text goes out until the account is typed', (tester) async {
+      await pumpKeys(tester);
+      expect(find.text('Texts to customers (Twilio)'), findsOneWidget);
+      expect(textOf(tester, 'key-texts-state'), 'Not set');
+      expect(find.textContaining('Without it no text goes out'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('key-texts-type')), matching: find.text('Type the account')),
+        findsOne,
+      );
+      expect(find.byKey(const ValueKey('key-texts-try')), findsNothing);
+      expect(find.byKey(const ValueKey('texts-day')), findsNothing);
+    });
+
+    testWidgets('the account is typed in three boxes, and the token is nowhere on the page', (tester) async {
+      final told = <HubKeys>[];
+      final t = await pumpKeys(tester, told: told);
+      await tapKey(tester, 'key-texts-type');
+      expect(find.textContaining("In Twilio's console"), findsOneWidget);
+      expect(textOf(tester, 'key-texts-note'), contains('A2P 10DLC'));
+      expect(find.text('Auth Token'), findsOneWidget);
+      // nothing typed, and then the token alone: nothing is sent
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Paste the Auth Token first.');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), ' $authToken ');
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'Twilio needs the Account SID and the number the texts are sent from.');
+      expect(t.hub.keysTyped, isEmpty);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-field'))).obscureText, isTrue);
+      await tester.enterText(find.byKey(const ValueKey('key-account')), ' $sid ');
+      await tester.enterText(find.byKey(const ValueKey('key-sender')), '781 555 0100');
+      await tapKey(tester, 'key-save');
+      expect(find.byType(HubKeyDialog), findsNothing);
+      expect(t.hub.keysTyped.single.$1, 'texts');
+      expect(t.hub.keysTyped.single.$2, {'key': authToken, 'account': sid, 'sender': '781 555 0100', 'key_sid': ''});
+      expect(textOf(tester, 'key-texts-state'), 'Set · sent from 781 555 0100 · typed here by Mike, today');
+      expect(
+        textOf(tester, 'key-texts-said'),
+        'Saved. Texts to customers go out through Twilio from now on. Try it with your own phone.',
+      );
+      expect(textOf(tester, 'texts-day'), 'No text has gone out in the last 24 hours.');
+      expect(find.textContaining(authToken), findsNothing);
+      expect(told.last.texts!.on, isTrue);
+      // replacing it starts from the account and the number in force, and never from the token
+      await tapKey(tester, 'key-texts-type');
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-account'))).controller!.text, sid);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-sender'))).controller!.text, '781 555 0100');
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-field'))).controller!.text, isEmpty);
+    });
+
+    testWidgets('an API key goes with its SID, and what Twilio\'s account lacks is said in the dialog', (tester) async {
+      final t = await pumpKeys(tester, hub: (hub) => hub.refuseHubKey = 'the Account SID begins with AC');
+      await tapKey(tester, 'key-texts-type');
+      await tester.enterText(find.byKey(const ValueKey('key-account')), 'my login');
+      await tester.enterText(find.byKey(const ValueKey('key-field')), authToken);
+      await tester.enterText(find.byKey(const ValueKey('key-sender')), service);
+      await tester.enterText(find.byKey(const ValueKey('key-sid')), apiKey);
+      await tapKey(tester, 'key-save');
+      expect(textOf(tester, 'key-problem'), 'The Account SID begins with AC.');
+      expect(find.byType(HubKeyDialog), findsOneWidget);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('key-account'))).controller!.text, 'my login');
+      expect(t.hub.keysTyped.single.$2['key_sid'], apiKey);
+      expect(t.hub.keysTyped.single.$2['sender'], service);
+    });
+
+    testWidgets('the card counts the last day, and names the last text that did not go by its order', (tester) async {
+      final at = DateTime.fromMillisecondsSinceEpoch(1795000000000).millisecondsSinceEpoch;
+      await pumpKeys(
+        tester,
+        hub: (hub) => texting(
+          hub,
+          texts: 9,
+          failed: 1,
+          lastFailed: {
+            'at_ms': at,
+            'kind': 'out',
+            'order_id': 'o-77',
+            'order_no': 31,
+            'state': 'failed',
+            'code': 21610,
+            'said': 'the customer answered STOP to an earlier text: Twilio sends them no more (Twilio\'s error 21610)',
+          },
+        ),
+      );
+      expect(textOf(tester, 'key-texts-state'), 'Set · sent from +17815550100 · typed here by Mike, today');
+      expect(textOf(tester, 'texts-day'), '9 texts in the last 24 hours. 1 did not go.');
+      expect(
+        textOf(tester, 'texts-failed'),
+        'The last one that did not go: the "on its way" text for order #31, at ${clockTime(at)}. The customer '
+        "answered STOP to an earlier text: Twilio sends them no more (Twilio's error 21610).",
+      );
+      expect(find.textContaining('Without it no text goes out'), findsNothing);
+    });
+
+    testWidgets('it is tried with one text to a number the manager types', (tester) async {
+      final t = await pumpKeys(tester, hub: texting);
+      await tapKey(tester, 'key-texts-try');
+      expect(find.text('Try it with a text'), findsOneWidget);
+      expect(find.textContaining('The number is kept nowhere.'), findsOneWidget);
+      // nothing typed sends nothing, and Cancel sends nothing
+      await tapKey(tester, 'key-try-send');
+      expect(find.text('Try it with a text'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.textTries, isEmpty);
+      await tapKey(tester, 'key-texts-try');
+      await tester.enterText(find.byKey(const ValueKey('key-try-number')), ' 781 555 0142 ');
+      await tapKey(tester, 'key-try-send');
+      expect(t.hub.textTries, ['781 555 0142']);
+      expect(t.hub.hubKeysAuth, 'Bearer tok-admin');
+      expect(textOf(tester, 'key-texts-said'), 'Delivered. Look at that phone: the text is there. The account works.');
+      expect(find.textContaining('0142'), findsNothing);
+      // what Twilio refuses is said under the card, in the hub's words
+      t.hub.textTried = {
+        'ok': false,
+        'state': 'failed',
+        'code': 20003,
+        'said': "Twilio does not know the key: type it again under Keys and connections (Twilio's error 20003)",
+      };
+      await tapKey(tester, 'key-texts-try');
+      await tester.enterText(find.byKey(const ValueKey('key-try-number')), '781 555 0142');
+      await tapKey(tester, 'key-try-send');
+      expect(
+        textOf(tester, 'key-texts-said'),
+        "The text did not go. Twilio does not know the key: type it again under Keys and connections (Twilio's "
+        'error 20003).',
+      );
+      // a text the phone company has not answered for yet is not called delivered
+      t.hub.textTried = {'ok': true, 'state': 'sent', 'code': null, 'said': ''};
+      await tapKey(tester, 'key-texts-try');
+      await tester.enterText(find.byKey(const ValueKey('key-try-number')), '781 555 0142');
+      await tapKey(tester, 'key-try-send');
+      expect(textOf(tester, 'key-texts-said'), contains('has not said yet whether it arrived'));
+    });
+
+    testWidgets('a hub whose account went meanwhile says so when it is tried', (tester) async {
+      final t = await pumpKeys(tester, hub: texting);
+      t.hub.hubKeys!['texts'] = Hub.noKey('texts');
+      await tapKey(tester, 'key-texts-try');
+      await tester.enterText(find.byKey(const ValueKey('key-try-number')), '781 555 0142');
+      await tapKey(tester, 'key-try-send');
+      expect(textOf(tester, 'key-texts-said'), 'This hub has no Twilio account in force. Type it again here.');
+    });
+
+    testWidgets('removing it asks first, and says the hub stops texting', (tester) async {
+      final t = await pumpKeys(tester, hub: texting);
+      await tapKey(tester, 'key-texts-remove');
+      expect(find.textContaining('The hub stops texting customers.'), findsOneWidget);
+      await tapKey(tester, 'key-remove-sure');
+      expect(t.hub.keysRemoved, ['texts']);
+      expect(textOf(tester, 'key-texts-state'), 'Not set · removed here by Mike, today');
+      expect(find.byKey(const ValueKey('texts-day')), findsNothing);
+      expect(find.byKey(const ValueKey('key-texts-try')), findsNothing);
+    });
+
+    testWidgets('the card and its dialogs fit a 320-wide phone with large text', (tester) async {
+      await pumpKeys(
+        tester,
+        size: const Size(320, 568),
+        textScale: 1.3,
+        hub: (hub) => texting(
+          hub,
+          texts: 120,
+          failed: 3,
+          lastFailed: {
+            'at_ms': hub.keysAtMs,
+            'kind': 'delayed',
+            'order_no': 104,
+            'said':
+                'the number to send from is not registered for business texts yet (A2P 10DLC, in Twilio\'s console) '
+                "(Twilio's error 30034)",
+          },
+        ),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('key-texts-type')),
+        300,
+        scrollable: find.descendant(of: find.byType(HubKeysScreen), matching: find.byType(Scrollable)).first,
+      );
+      expect(tester.takeException(), isNull);
+      for (final key in ['key-texts-type', 'key-texts-try', 'key-texts-remove']) {
+        final button = tester.getRect(find.byKey(ValueKey(key)));
+        expect(button.left >= 0 && button.right <= 320, isTrue, reason: key);
+      }
+      await tapKey(tester, 'key-texts-type');
+      expect(tester.takeException(), isNull);
+      var save = tester.getRect(find.byKey(const ValueKey('key-save')));
+      expect(save.right <= 320 && save.bottom <= 568, isTrue);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'key-texts-try');
+      expect(tester.takeException(), isNull);
+      save = tester.getRect(find.byKey(const ValueKey('key-try-send')));
+      expect(save.right <= 320 && save.bottom <= 568, isTrue);
+    });
+  });
+
   group('Location', () {
     Future<Terminal> pumpLocation(WidgetTester tester, {Set<String>? holds, void Function(Hub hub)? hub}) async {
       final t = await terminal(tester);
@@ -1221,7 +1524,7 @@ void main() {
       expect(
         row(tester),
         'Set: map service · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood, GloriaFood push, Cloudflare tunnel, '
-        'Apple push',
+        'Apple push, Twilio texts',
       );
       await tapKey(tester, 'hub-keys');
       expect(find.byType(HubKeysScreen), findsOneWidget);
@@ -1234,7 +1537,7 @@ void main() {
       expect(
         row(tester),
         'Set: map service, GloriaFood · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, '
-        'Apple push',
+        'Apple push, Twilio texts',
       );
     });
 

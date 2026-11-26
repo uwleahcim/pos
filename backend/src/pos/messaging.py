@@ -1,6 +1,8 @@
-"""Texts to customers (architecture section 12, "Takeout and pickup"): the ready text when a takeout order is
-marked ready, and a new time when a future order is pushed back. Phase 1 ships the adapter and a messenger
-that only logs; a provider (Twilio in the integrations list) plugs in behind the same call in phase 2.
+"""Texts to customers (architecture section 12, "Takeout and pickup"; docs/texts.md): the ready text when a
+takeout order is marked ready, "on its way" when a delivery leaves with its driver, and a new time when an
+order is pushed back. This module words the texts and decides when one is due; a messenger sends it. A hub
+without a texting service has the messenger that only logs; with a Twilio account typed in the app it has
+`pos.twilio.TwilioMessenger`, behind the same call.
 
 The texts are in the customer's language (`locale` on the order) with English as the fallback.
 """
@@ -25,7 +27,7 @@ class Message:
     body: str
     locale: str
     order_id: str
-    kind: str  # ready | delayed
+    kind: str  # ready | delayed | out
 
     def as_json(self) -> dict[str, Any]:
         return {"to": self.to, "body": self.body, "locale": self.locale, "order_id": self.order_id, "kind": self.kind}
@@ -37,7 +39,10 @@ class Messenger(Protocol):
 
 class LogMessenger:
     """Writes every text to the log and keeps the last few hundred, so the bench (`GET /messages`) and the
-    tests see what would have gone out."""
+    tests see what would have gone out. Nothing leaves the hub: it is what a hub has until a texting service
+    is typed in."""
+
+    name = "log"
 
     def __init__(self, *, keep: int = 500) -> None:
         self.sent: list[Message] = []
@@ -49,11 +54,23 @@ class LogMessenger:
         del self.sent[: -self._keep]
 
 
+def about_of(messenger: Messenger) -> dict[str, Any]:
+    """How the texts are doing, for the page Keys and connections: `provider` (`log`: no texting service, the
+    texts go nowhere; `twilio`), and with a service what it sends from (`sender`), the last day's count
+    (`day`) and the last text that failed (`last_failed`). Nothing of a customer."""
+    about = getattr(messenger, "about", None)
+    if callable(about):
+        return dict(about())
+    return {"provider": str(getattr(messenger, "name", "log")), "sender": "", "day": None, "last_failed": None}
+
+
 def messenger_from_env() -> Messenger:
-    """`POS_MESSAGING` names the provider; only `log` exists yet, and anything else logs too, with a warning."""
+    """The messenger of a hub without a texting service: it logs. `POS_MESSAGING` in the hub's own file names
+    no service: Twilio is typed in the app (Location, Keys and connections), and anything but `log` there is
+    warned about once and logs too."""
     provider = os.environ.get("POS_MESSAGING", "log")
     if provider != "log":
-        log.warning("messaging provider %r is not built yet: texts go to the log", provider)
+        log.warning("POS_MESSAGING=%r names no service: Twilio is typed in the app; texts go to the log", provider)
     return LogMessenger()
 
 

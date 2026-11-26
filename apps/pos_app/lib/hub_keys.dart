@@ -10,6 +10,9 @@
 /// Two of the keys are for GloriaFood's own pushes (docs/online-orders.md, "Push"): the key a push must
 /// carry, and the token of the Cloudflare Tunnel that brings pushes in. The hub says how that way in stands
 /// ([WayIn]) and can try it ([WayTried]).
+///
+/// One is the restaurant's Twilio account (`texts`; docs/texts.md), which the texts to customers go out
+/// with. The hub says how the texts are doing ([TextsState]) and can send one to try it ([TextTried]).
 library;
 
 import 'takeout.dart' show clockTime;
@@ -43,8 +46,8 @@ class HubKey {
     unreadable: json['unreadable'] == true,
   );
 
-  /// `maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `online_push`, `online_tunnel` or
-  /// `push_apple`; `online:<id>` for a further account of GloriaFood's.
+  /// `maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `online_push`, `online_tunnel`,
+  /// `push_apple` or `texts`; `online:<id>` for a further account of GloriaFood's.
   final String name;
 
   /// A key is in force on the hub.
@@ -57,8 +60,9 @@ class HubKey {
   /// The key's last characters, to tell one key from another; empty for a short key and for Apple's.
   final String ending;
 
-  /// What belongs to a key and is no secret: Apple's `key_id`, `team_id` and `bundle_id`, and of a tunnel's
-  /// token the start of the tunnel's id at Cloudflare (`tunnel`).
+  /// What belongs to a key and is no secret: Apple's `key_id`, `team_id` and `bundle_id`, of a tunnel's
+  /// token the start of the tunnel's id at Cloudflare (`tunnel`), and of the Twilio account its Account
+  /// SID (`account`), what the texts are sent from (`sender`) and an API key's SID (`key_sid`).
   final Map<String, String> shown;
 
   /// Who typed or removed it in the app last, and when; empty and null when nobody has.
@@ -79,6 +83,7 @@ class HubKey {
     final tail = switch (name) {
       'push_apple' => shown['key_id'] == null ? '' : ' · key ${shown['key_id']}, team ${shown['team_id'] ?? ''}',
       'online_tunnel' => (shown['tunnel'] ?? '').isEmpty ? '' : ' · tunnel ${shown['tunnel']}',
+      'texts' => (shown['sender'] ?? '').isEmpty ? '' : ' · sent from ${shown['sender']}',
       _ => ending.isEmpty ? '' : ' · ends in $ending',
     };
     if (unreadable) {
@@ -294,9 +299,122 @@ class WayTried {
   }
 }
 
+/// How the texts to customers are doing, as the hub says beside its keys (docs/texts.md). Nothing in it is
+/// a customer's: no number and no words of a text.
+class TextsState {
+  const TextsState({this.provider = 'log', this.sender = '', this.texts = 0, this.failed = 0, this.lastFailed});
+
+  factory TextsState.fromJson(Map<String, dynamic> json) {
+    final day = (json['day'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final failed = (json['last_failed'] as Map?)?.cast<String, dynamic>();
+    return TextsState(
+      provider: json['provider'] as String? ?? 'log',
+      sender: json['sender'] as String? ?? '',
+      texts: (day['texts'] as num?)?.toInt() ?? 0,
+      failed: (day['failed'] as num?)?.toInt() ?? 0,
+      lastFailed: failed == null
+          ? null
+          : (
+              orderNo: (failed['order_no'] as num?)?.toInt(),
+              kind: failed['kind'] as String? ?? '',
+              atMs: (failed['at_ms'] as num?)?.toInt(),
+              said: failed['said'] as String? ?? '',
+            ),
+    );
+  }
+
+  /// `twilio` once the hub sends its texts through Twilio; `log` while it only writes them down.
+  final String provider;
+
+  /// What the texts are sent from: a number of the Twilio account's, or a Messaging Service's SID.
+  final String sender;
+
+  /// How many texts the hub was asked to send in the last 24 hours, and how many of those did not go.
+  final int texts;
+  final int failed;
+
+  /// The last text of that day that did not go: for which order, which text, when, and why in words.
+  final ({int? orderNo, String kind, int? atMs, String said})? lastFailed;
+
+  /// The texts really go out.
+  bool get on => provider == 'twilio';
+
+  /// The last day in a line.
+  String get dayWords {
+    if (texts == 0) return 'No text has gone out in the last 24 hours.';
+    final went = texts == 1 ? '1 text' : '$texts texts';
+    if (failed == 0) return '$went in the last 24 hours. None failed.';
+    return '$went in the last 24 hours. $failed did not go.';
+  }
+
+  /// The last text that did not go, in a line; null when none failed.
+  String? get failedWords {
+    final last = lastFailed;
+    if (last == null) return null;
+    final which = switch (last.kind) {
+      'ready' => 'the ready text',
+      'out' => 'the "on its way" text',
+      'delayed' => 'the text with the new time',
+      _ => 'a text',
+    };
+    final order = last.orderNo == null ? '' : ' for order #${last.orderNo}';
+    final at = last.atMs == null ? '' : ', at ${clockTime(last.atMs!)}';
+    final why = last.said.trim();
+    final said = why.isEmpty ? '' : ' ${why[0].toUpperCase()}${why.substring(1)}${why.endsWith('.') ? '' : '.'}';
+    return 'The last one that did not go: $which$order$at.$said';
+  }
+}
+
+/// What a try of the texts came to: one text to a number the manager typed.
+class TextTried {
+  const TextTried({required this.ok, this.state = 'failed', this.code, this.said = ''});
+
+  factory TextTried.fromJson(Map<String, dynamic> json) => TextTried(
+    ok: json['ok'] == true,
+    state: json['state'] as String? ?? 'failed',
+    code: (json['code'] as num?)?.toInt(),
+    said: json['said'] as String? ?? '',
+  );
+
+  final bool ok;
+
+  /// `delivered` (the phone company said it arrived), `sent` (Twilio took it, and the phone company has
+  /// not said yet) or `failed`.
+  final String state;
+
+  /// Twilio's own error number, where it gave one.
+  final int? code;
+
+  /// Why it did not go, in the hub's words.
+  final String said;
+
+  bool get bad => !ok;
+
+  String get words {
+    if (!ok) {
+      final why = said.trim();
+      if (why.isEmpty) return 'The text did not go.';
+      return 'The text did not go. ${why[0].toUpperCase()}${why.substring(1)}${why.endsWith('.') ? '' : '.'}';
+    }
+    if (state == 'delivered') return 'Delivered. Look at that phone: the text is there. The account works.';
+    return 'Twilio took the text, and the phone company has not said yet whether it arrived. Look at that phone. '
+        'If nothing comes, the number the texts are sent from may not be registered for business texts yet '
+        "(A2P 10DLC, in Twilio's console).";
+  }
+}
+
 /// Every key the hub holds, as it stands.
 class HubKeys {
-  const HubKeys({required this.keys, this.kept = true, this.onlineAccounts, this.added, this.wayIn, this.tried});
+  const HubKeys({
+    required this.keys,
+    this.kept = true,
+    this.onlineAccounts,
+    this.added,
+    this.wayIn,
+    this.tried,
+    this.texts,
+    this.textTried,
+  });
 
   factory HubKeys.fromJson(Map<String, dynamic> json) => HubKeys(
     keys: [
@@ -312,7 +430,14 @@ class HubKeys {
         : null,
     added: json['added'] as String?,
     wayIn: json['way_in'] is Map ? WayIn.fromJson((json['way_in'] as Map).cast<String, dynamic>()) : null,
-    tried: json['tried'] is Map ? WayTried.fromJson((json['tried'] as Map).cast<String, dynamic>()) : null,
+    // both tries answer under `tried`: the way in's says how its door fared, the texts' how the text did
+    tried: json['tried'] is Map && (json['tried'] as Map).containsKey('door')
+        ? WayTried.fromJson((json['tried'] as Map).cast<String, dynamic>())
+        : null,
+    texts: json['texts'] is Map ? TextsState.fromJson((json['texts'] as Map).cast<String, dynamic>()) : null,
+    textTried: json['tried'] is Map && (json['tried'] as Map).containsKey('state')
+        ? TextTried.fromJson((json['tried'] as Map).cast<String, dynamic>())
+        : null,
   );
 
   /// The account that was just added, in the answer to adding one.
@@ -323,6 +448,12 @@ class HubKeys {
 
   /// What a try of the way in came to, in the answer to trying it.
   final WayTried? tried;
+
+  /// How the texts to customers are doing; null from a hub older than texts that really go out.
+  final TextsState? texts;
+
+  /// What a try of the texts came to, in the answer to trying them.
+  final TextTried? textTried;
 
   final List<HubKey> keys;
 
@@ -503,5 +634,17 @@ const hubKeyInfo = <String, HubKeyInfo>{
         "In Apple's developer account: Certificates, IDs & Profiles, Keys. The file is named "
         'AuthKey_<key id>.p8 and can be downloaded once.',
     removing: 'The hub stops waking locked iPhones and iPads.',
+  ),
+  'texts': HubKeyInfo(
+    title: 'Texts to customers (Twilio)',
+    short: 'Twilio texts',
+    about:
+        'The hub sends the texts to customers with it: ready for pickup, on its way for a delivery, and the new '
+        'time of an order that runs late. It is your own Twilio account, and Twilio bills it for each text.',
+    without: 'Without it no text goes out: the hub only writes down what it would have sent.',
+    where:
+        "In Twilio's console (console.twilio.com), on the first page: the Account SID and the Auth Token. Send "
+        "from one of the account's own numbers that can text.",
+    removing: 'The hub stops texting customers.',
   ),
 };

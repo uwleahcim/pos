@@ -1199,6 +1199,13 @@ class Hub {
   /// `PUT /hub/online/push/address` remembers the address ([addressesTyped]; [refuseAddress] answers 422
   /// with these words instead), and `POST /hub/online/push/try` answers [wayTried] ([wayTries] counts them),
   /// or 409 while the hub has no key for pushes.
+  ///
+  /// The texts to customers (docs/texts.md): the key `texts` is the restaurant's Twilio account, and beside
+  /// the keys [texts] says how the texts are doing. Null is a hub from before texts really went out: it
+  /// lists no such key, says nothing of the texts and does not know the try. A typed account turns the
+  /// texts on (`provider` becomes `twilio`, sent from what was typed) and a removed one turns them off.
+  /// `POST /hub/texts/try` answers [textTried] ([textTries] keeps the numbers typed), or 409 without an
+  /// account.
   Map<String, Map<String, dynamic>>? hubKeys = {
     for (final name in [
       'maps',
@@ -1209,9 +1216,29 @@ class Hub {
       'online_push',
       'online_tunnel',
       'push_apple',
+      'texts',
     ])
       name: noKey(name),
   };
+  Map<String, dynamic>? texts = textsStand();
+  Map<String, dynamic> textTried = {'ok': true, 'state': 'delivered', 'code': null, 'said': ''};
+  final textTries = <String>[];
+
+  /// How the texts are doing, as the hub says it: off without a [sender], and with one the last day's
+  /// count and the last text that did not go.
+  static Map<String, dynamic> textsStand({
+    String sender = '',
+    int texts = 0,
+    int failed = 0,
+    Map<String, dynamic>? lastFailed,
+  }) => sender.isEmpty
+      ? {'provider': 'log', 'sender': '', 'day': null, 'last_failed': null}
+      : {
+          'provider': 'twilio',
+          'sender': sender,
+          'day': {'texts': texts, 'delivered': texts - failed, 'failed': failed},
+          'last_failed': lastFailed,
+        };
   Map<String, dynamic>? wayIn = {'address': '', 'door': true, 'tunnel_told': true, 'tunnel': tunnelStands('off')};
   final tunnelNext = <Map<String, dynamic>>[];
   String tunnelShown = '6ff42ae2';
@@ -1408,12 +1435,23 @@ class Hub {
     }
     if (request.url.path.startsWith('/hub/online/accounts')) return _accounts(request);
     if (request.url.path.startsWith('/hub/online/push/')) return _wayIn(request);
+    if (request.url.path == '/hub/texts/try') {
+      if (texts == null) return json({'detail': 'Not Found'}, 404);
+      textTries.add((jsonDecode(request.body) as Map<String, dynamic>)['to'] as String);
+      if (hubKeys!['texts']!['set'] != true) {
+        return json({
+          'detail': {'error': 'no_service', 'message': 'this hub has no Twilio account yet'},
+        }, 409);
+      }
+      return json({...hubKeysSaid(), 'tried': textTried});
+    }
     final name = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
     // an account's own key: `online:<id>`, of an account this hub has
     final further = name != null && name.startsWith('online:') ? name.substring(7) : null;
     final ofAccount = further != null && (onlineAccounts ?? const []).any((account) => account['id'] == further);
     final held = ofAccount ? accountKeys : hubKeys!;
-    if (name != null && !ofAccount && (!hubKeys!.containsKey(name) || (wayIn == null && wayInKeys.contains(name)))) {
+    final older = (wayIn == null && wayInKeys.contains(name)) || (texts == null && name == 'texts');
+    if (name != null && !ofAccount && (!hubKeys!.containsKey(name) || older)) {
       return json({
         'detail': {'error': 'unknown_key', 'message': 'this hub holds no key of that name'},
       }, 404);
@@ -1440,10 +1478,16 @@ class Hub {
               }
             : name == 'online_tunnel'
             ? {'tunnel': tunnelShown}
+            : name == 'texts'
+            ? {'account': typed['account'], 'sender': typed['sender'], 'key_sid': typed['key_sid'] ?? ''}
             : <String, dynamic>{},
         'by': 'Mike',
         'at_ms': keysAtMs,
       };
+      if (name == 'texts') {
+        held[name] = {...held[name]!, 'ending': ''};
+        texts = textsStand(sender: typed['sender'] as String);
+      }
       // the tunnel's program has not looked at the new token yet
       if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('starting')};
     }
@@ -1451,6 +1495,7 @@ class Hub {
       keysRemoved.add(name);
       held[name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
       if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('off')};
+      if (name == 'texts') texts = textsStand();
     }
     if (request.method == 'GET') {
       hubKeysAsks += 1;
@@ -1491,10 +1536,11 @@ class Hub {
   Map<String, dynamic> hubKeysSaid() => {
     'keys': [
       for (final key in hubKeys!.values)
-        if (wayIn != null || !wayInKeys.contains(key['name'])) key,
+        if ((wayIn != null || !wayInKeys.contains(key['name'])) && (texts != null || key['name'] != 'texts')) key,
     ],
     'kept': hubKeysKept,
     'way_in': ?wayIn,
+    'texts': ?texts,
     if (onlineAccounts != null)
       'online_accounts': [
         {'id': 'main', 'name': firstAccountName, 'test': firstAccountTest, 'key': hubKeys!['online']},
@@ -3645,7 +3691,8 @@ class Hub {
     if (path == '/hub/keys' ||
         path.startsWith('/hub/keys/') ||
         path.startsWith('/hub/online/accounts') ||
-        path.startsWith('/hub/online/push/')) {
+        path.startsWith('/hub/online/push/') ||
+        path == '/hub/texts/try') {
       return _keys(request);
     }
     if (path == '/push/status' || path == '/push/test') return _push(request);

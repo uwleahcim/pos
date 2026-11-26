@@ -67,7 +67,7 @@ from ..maps import (
     turned_on,
 )
 from ..menu.service import MenuService
-from ..messaging import LogMessenger, Messenger, Notifier, messenger_from_env
+from ..messaging import LogMessenger, Messenger, Notifier
 from ..notes import ShiftNotes, default_note_store
 from ..online.gloriafood import push_key_from_env
 from ..online.inbox import default_inbox
@@ -138,7 +138,7 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list, follow_merges, names_by_check, seated_by_check
 from .history import add_history
-from .keys import add_hub_keys, hand_way_in, keys_mark, online_setup, sender_for, watch_keys
+from .keys import add_hub_keys, hand_way_in, keys_mark, online_setup, sender_for, texts_for, watch_keys
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
@@ -972,6 +972,9 @@ def create_app(
                 await pbx.stop()
             await app.state.relay.close()
             await app.state.wayin.close()
+            hang_up = getattr(app.state.messenger, "close", None)
+            if callable(hang_up):
+                hang_up()  # the texts still in the line are dropped with the hub
 
     app = FastAPI(title="POS backend", version="0.1.0 (phase 1)", lifespan=lifespan)
     app.state.menu = menu if menu is not None else default_menu()
@@ -1029,10 +1032,15 @@ def create_app(
         # what waits of the orders sent ahead of their time is kept in the database: a restart loses nothing
         else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0", held=default_held())
     )
-    app.state.messenger = messenger if messenger is not None else messenger_from_env()
     # The keys for the services outside the building: a manager's, typed in the app, over the hub's own file
     # (`pos.keys`, docs/hub-keys.md). `outside` is the hub's environment as it reads with them in it.
     app.state.keys = keys if keys is not None else keys_from_env()
+    # The texts to customers go out through Twilio once a manager typed the restaurant's account in the app,
+    # and are only written to the log until then (docs/texts.md). The messenger is exchanged where it stands
+    # when the account changes (`use_texts`), unless one was handed in here.
+    app.state.texts_given = messenger is not None
+    app.state.texts_made_with = {}
+    app.state.messenger = messenger if messenger is not None else texts_for(app.state.keys)
     outside = app.state.keys.environ()
     app.state.keys_mark = keys_mark(app.state.keys, app.state.settings)
     app.state.asks_online = False

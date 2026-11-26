@@ -34,8 +34,9 @@ services:
       # Signs managers' menu-editor sessions; give both hubs and the cloud the same value so a session
       # survives a failover. Empty: each restart asks for the PIN again.
       POS_SECRET: ${POS_SECRET:-}
-      # Named in the ready text ("order #12 is ready for pickup at ..."); texts only go to the log until a
-      # messaging provider is wired in (POS_MESSAGING=log).
+      # Named in the ready text ("order #12 is ready for pickup at ..."). Texts go out through the
+      # restaurant's Twilio account once a manager types it in the app (docs/texts.md), and only to the log
+      # until then. POS_MESSAGING names no service: it stays `log`.
       POS_LOCATION: ${POS_LOCATION:-}
       POS_MESSAGING: ${POS_MESSAGING:-log}
       # The restaurant's time zone: menu hours, the day the order numbers count through and "today" when a

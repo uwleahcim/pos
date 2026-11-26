@@ -4,7 +4,8 @@ A hub asks a map service how far a delivery is and what the letters typed in an 
 asks GloriaFood for the website's orders and wakes a locked iPhone through Apple. Each of those wants a key,
 and until now each key was put on the hub from its terminal (`hubctl maps key`, `hubctl online key`,
 `hubctl push apple`), into `/opt/pos/.env`. This module lets a manager type the same keys in the app
-(Location, Keys and connections; docs/hub-keys.md).
+(Location, Keys and connections; docs/hub-keys.md). The Twilio account the texts to customers go out with
+(`texts`, docs/texts.md) is kept here too, and is typed in the app only.
 
 What is kept, and how:
 
@@ -61,6 +62,7 @@ from psycopg_pool import ConnectionPool
 
 from .online.accounts import MAIN, account_of_slot
 from .sync.pgstore import ReadOnlyError
+from .twilio import clean as _clean_twilio
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +236,7 @@ class Slot:
 MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE = "maps", "maps_google", "online", "push_apple"
 MAPS_MAPBOX, MAPS_AZURE = "maps_mapbox", "maps_azure"
 ONLINE_PUSH, ONLINE_TUNNEL = "online_push", "online_tunnel"
+TEXTS = "texts"
 
 SLOTS: dict[str, Slot] = {
     slot.name: slot
@@ -304,6 +307,16 @@ SLOTS: dict[str, Slot] = {
             _clean_apple,
             _apple_from_env,
             shown=("key_id", "team_id", "bundle_id"),
+        ),
+        # The restaurant's Twilio account, which the texts to customers go out with (docs/texts.md): the Auth
+        # Token is the key, and the account's own name and what the texts are sent from are no secret. Typed
+        # in the app only: no hubctl command sets it, and the hub's own file never names it.
+        Slot(
+            TEXTS,
+            (),
+            _clean_twilio,
+            lambda env: None,
+            shown=("account", "sender", "key_sid"),
         ),
     )
 }
@@ -666,6 +679,7 @@ __all__ = [
     "ONLINE_TUNNEL",
     "PUSH_APPLE",
     "SLOTS",
+    "TEXTS",
     "HubKeys",
     "Kept",
     "KeyStore",

@@ -38,7 +38,8 @@ String makePushKey() {
 
 /// Keys and connections (docs/hub-keys.md): the hub's keys for the services outside the restaurant, each
 /// with how it stands, and for a manager the buttons to type one, replace it, try it and remove it. What
-/// used to be typed in the hub's terminal. The hub keeps a typed key sealed and uses it at once; this page
+/// used to be typed in the hub's terminal, and the Twilio account the texts to customers go out with
+/// (docs/texts.md). The hub keeps a typed key sealed and uses it at once; this page
 /// never has a key to show, only its last characters.
 class HubKeysScreen extends StatefulWidget {
   const HubKeysScreen({
@@ -146,6 +147,7 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     _stand(saved, key.name, switch (key.name) {
       'online_push' => "Saved. The push door is open for it. Put the same key into GloriaFood's admin.",
       'online_tunnel' => 'Saved. The tunnel is started with it.',
+      'texts' => 'Saved. Texts to customers go out through Twilio from now on. Try it with your own phone.',
       _ => 'Saved. The hub uses it from now on.',
     });
     _watchTunnel();
@@ -413,8 +415,37 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     });
   }
 
+  /// The Twilio account is tried with one text to a mobile number the manager types: their own.
+  Future<void> _tryTexts(String name) async {
+    final number = await showDialog<String>(context: context, builder: (_) => const _NumberDialog());
+    if (number == null || !mounted) return;
+    await _trying(name, () async {
+      final HubKeys answer;
+      try {
+        answer = await widget.api.tryTexts(widget.token, number);
+      } on ApiException catch (err) {
+        if (err.status == 409) {
+          return (words: 'This hub has no Twilio account in force. Type it again here.', bad: true);
+        }
+        if (err.status == 404 || err.status == 405) {
+          return (words: 'This hub is older than texts sent through Twilio. Update it first.', bad: true);
+        }
+        rethrow;
+      }
+      if (mounted) {
+        setState(() => _keys = answer);
+        widget.onChanged?.call(answer);
+      }
+      final tried = answer.textTried;
+      if (tried == null) return (words: 'The hub did not say what the try came to.', bad: true);
+      return (words: tried.words, bad: tried.bad);
+    });
+  }
+
   void _try(HubKey key, OnlineAccount? account) {
     switch (key.name) {
+      case 'texts':
+        _tryTexts(key.name);
       case 'maps':
         _tryMaps(key.name, 'geocodio', 'Geocodio');
       case 'maps_google':
@@ -504,6 +535,7 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
               style: theme.textTheme.bodyMedium?.copyWith(color: key.unreadable ? scheme.error : null),
             ),
             ..._wayInLines(context, key),
+            ..._textsLines(context, key),
             const SizedBox(height: 4),
             Text(
               [
@@ -526,6 +558,8 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
                         ? 'Replace'
                         : key.name == 'online_tunnel'
                         ? 'Paste the token'
+                        : key.name == 'texts'
+                        ? 'Type the account'
                         : 'Type the key',
                   ),
                 ),
@@ -605,6 +639,25 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
               icon: const Icon(Icons.copy_outlined),
             ),
           ],
+        ),
+    ];
+  }
+
+  /// What the card of the Twilio account says beyond its key: how many texts went out in the last day,
+  /// and the last one that did not go, with why. Nothing of a customer's is in it.
+  List<Widget> _textsLines(BuildContext context, HubKey key) {
+    final texts = _keys.texts;
+    if (key.name != 'texts' || !key.set || texts == null || !texts.on) return const [];
+    final theme = Theme.of(context);
+    final failed = texts.failedWords;
+    return [
+      const SizedBox(height: 2),
+      Text(texts.dayWords, key: const ValueKey('texts-day'), style: theme.textTheme.bodyMedium),
+      if (failed != null)
+        Text(
+          failed,
+          key: const ValueKey('texts-failed'),
+          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
         ),
     ];
   }
@@ -769,7 +822,8 @@ class HubKeyDialog extends StatefulWidget {
   final PosApi api;
   final String token;
 
-  /// The key as it stands: Apple's ids start from the ones in force.
+  /// The key as it stands: Apple's ids start from the ones in force, and so do the Twilio account's SID and
+  /// what its texts are sent from.
   final HubKey was;
   final HubKeyInfo info;
 
@@ -785,6 +839,9 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
   late final _keyId = TextEditingController(text: widget.was.shown['key_id'] ?? '');
   late final _teamId = TextEditingController(text: widget.was.shown['team_id'] ?? '');
   late final _bundleId = TextEditingController(text: widget.was.shown['bundle_id'] ?? '');
+  late final _account = TextEditingController(text: widget.was.shown['account'] ?? '');
+  late final _sender = TextEditingController(text: widget.was.shown['sender'] ?? '');
+  late final _keySid = TextEditingController(text: widget.was.shown['key_sid'] ?? '');
   bool _hidden = true;
   bool _busy = false;
   bool _made = false; // the key in the box was made here, and is still to be copied
@@ -794,6 +851,7 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
   bool get _apple => widget.was.name == 'push_apple';
   bool get _push => widget.was.name == 'online_push';
   bool get _tunnel => widget.was.name == 'online_tunnel';
+  bool get _texts => widget.was.name == 'texts';
 
   void _make() {
     setState(() {
@@ -816,6 +874,9 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
     _keyId.dispose();
     _teamId.dispose();
     _bundleId.dispose();
+    _account.dispose();
+    _sender.dispose();
+    _keySid.dispose();
     super.dispose();
   }
 
@@ -829,8 +890,14 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
             ? 'Paste the token, or the command Cloudflare shows, first.'
             : _push
             ? 'Paste the key, or press Make one, first.'
+            : _texts
+            ? 'Paste the Auth Token first.'
             : 'Type or paste the key first.',
       );
+      return;
+    }
+    if (_texts && (_account.text.trim().isEmpty || _sender.text.trim().isEmpty)) {
+      setState(() => _message = 'Twilio needs the Account SID and the number the texts are sent from.');
       return;
     }
     if (_apple && (_keyId.text.trim().isEmpty || _teamId.text.trim().isEmpty)) {
@@ -849,6 +916,7 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
           'team_id': _teamId.text.trim().toUpperCase(),
           'bundle_id': _bundleId.text.trim(),
         },
+        if (_texts) ...{'account': _account.text.trim(), 'sender': _sender.text.trim(), 'key_sid': _keySid.text.trim()},
       });
       if (mounted) Navigator.of(context).pop(saved);
     } on ApiException catch (err) {
@@ -877,6 +945,22 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
             children: [
               Text(widget.info.where, key: const ValueKey('key-where'), style: quiet),
               const SizedBox(height: 10),
+              if (_texts) ...[
+                TextField(
+                  key: const ValueKey('key-account'),
+                  controller: _account,
+                  autofocus: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Account SID',
+                    helperText: 'It begins with AC',
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               if (_apple || _tunnel)
                 TextField(
                   key: const ValueKey('key-field'),
@@ -902,7 +986,7 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                 TextField(
                   key: const ValueKey('key-field'),
                   controller: _key,
-                  autofocus: true,
+                  autofocus: !_texts,
                   obscureText: _hidden,
                   // a key that is shown is shown whole, over as many lines as it takes: one made here has to be
                   // read or copied before it is saved
@@ -914,7 +998,7 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                   onSubmitted: (_) => _busy ? null : _save(),
                   decoration: InputDecoration(
                     isDense: true,
-                    labelText: 'The key',
+                    labelText: _texts ? 'Auth Token' : 'The key',
                     suffixIcon: IconButton(
                       key: const ValueKey('key-show'),
                       tooltip: _hidden ? 'Show what is typed' : 'Hide what is typed',
@@ -923,6 +1007,45 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
                     ),
                   ),
                 ),
+              if (_texts) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  key: const ValueKey('key-sender'),
+                  controller: _sender,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'Send from',
+                    hintText: '781 555 0100',
+                    helperText: "A number of the Twilio account's that can text, or a Messaging Service's SID (MG…)",
+                    helperMaxLines: 3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  key: const ValueKey('key-sid'),
+                  controller: _keySid,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: 'API key SID (optional)',
+                    helperText:
+                        'Only with an API key in place of the Auth Token: its SID here (SK…), and its secret in the '
+                        'Auth Token box',
+                    helperMaxLines: 3,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'In the United States the phone companies deliver a business\'s texts only from a number that is '
+                  "registered for them (A2P 10DLC, in Twilio's console under Messaging, Regulatory Compliance). "
+                  'Until that is done Twilio takes a text and the phone company drops it.',
+                  key: const ValueKey('key-texts-note'),
+                  style: quiet,
+                ),
+              ],
               if (_push) ...[
                 Wrap(
                   spacing: 4,
@@ -994,7 +1117,10 @@ class _HubKeyDialogState extends State<HubKeyDialog> {
               ],
               const SizedBox(height: 10),
               Text(
-                widget.was.set
+                _texts
+                    ? 'From then on every to-go order that has a phone number gets its texts through Twilio. The hub '
+                          'is not restarted.'
+                    : widget.was.set
                     ? 'It takes the place of the key in use now, at once. The hub is not restarted.'
                     : 'The hub uses it at once. The hub is not restarted.',
                 style: quiet,
@@ -1282,6 +1408,73 @@ class _WayInDialogState extends State<WayInDialog> {
       actions: [
         TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(key: const ValueKey('way-in-try'), onPressed: _busy ? null : _try, child: const Text('Try')),
+      ],
+    );
+  }
+}
+
+/// A mobile number to try the texts with: the manager's own.
+class _NumberDialog extends StatefulWidget {
+  const _NumberDialog();
+
+  @override
+  State<_NumberDialog> createState() => _NumberDialogState();
+}
+
+class _NumberDialogState extends State<_NumberDialog> {
+  final _number = TextEditingController();
+
+  @override
+  void dispose() {
+    _number.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final number = _number.text.trim();
+    if (number.isNotEmpty) Navigator.of(context).pop(number);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Try it with a text'),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                key: const ValueKey('key-try-number'),
+                controller: _number,
+                autofocus: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                keyboardType: TextInputType.phone,
+                inputFormatters: [LengthLimitingTextInputFormatter(24)],
+                onSubmitted: (_) => _send(),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'A mobile number',
+                  hintText: 'Your own, with its area code',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'The hub sends one text to this number through your Twilio account, and waits a few seconds to '
+                'hear whether it arrived. Twilio bills it like any text. The number is kept nowhere.',
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(key: const ValueKey('key-try-send'), onPressed: _send, child: const Text('Send')),
       ],
     );
   }

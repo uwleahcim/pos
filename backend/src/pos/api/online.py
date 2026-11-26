@@ -56,8 +56,10 @@ Putting an order on the POS is this module's too (`add_online_orders` sets `Onli
 operations `pos.online.place` makes are numbered, stored and printed as a screen's are, by the same steps.
 So is telling the POS what GloriaFood says of an order later (`OnlineOrders.change`, `pos.online.after`):
 an order marked ready in GloriaFood's app is ready on the POS, one that was cancelled is voided and its
-VOID tickets print, and a booked table that was cancelled is cancelled in the book. The customer is sent
-no text of the POS's for an order GloriaFood marked ready: GloriaFood tells its own customers.
+VOID tickets print, and a booked table that was cancelled is cancelled in the book. The customer of an
+order GloriaFood marked ready is sent the POS's own ready text, as when Ready is pressed at the counter
+(GloriaFood sends none; docs/texts.md), unless the hub hears of it too late for it to be news
+(`pos.online.after.news`).
 So is writing a table that was booked on the website into the reservation book (`OnlineOrders.book`): what
 `pos.online.book` reads of it is handed to `Reservations.take`, once, and the screens that show the book are
 told. No call here writes a reservation: a screen cannot make one up as the website's.
@@ -74,7 +76,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..online.after import After, off, ops_after, slip_words, unknown
+from ..online.after import After, news, off, ops_after, slip_words, unknown
 from ..online.book import BY as BOOKED_BY
 from ..online.book import RESERVATION_TYPES, Booked, wanted
 from ..online.door import body_of
@@ -155,10 +157,13 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
         if accepted:
             app.state.feed.poke()  # the screens hear of it now, before the tickets print
             app.state.printing.on_ops(store.for_order, list(accepted))
-            if order.get("ready") is not True:
-                # one that comes marked ready already goes on as ready, and GloriaFood told its customer
-                # so itself: no text of the POS's on top
+            # One that comes marked ready already goes on as ready, and its customer gets the POS's ready
+            # text like any order made ready (GloriaFood sends no text). Not when that is old news: the hub
+            # was off, and the customer has come and gone.
+            if order.get("ready") is not True or news(order, store.now_ms()):
                 app.state.notifier.on_ops(store.for_order, list(accepted))
+            else:
+                log.info("online order %s: it came ready too long ago for a text to its customer", ext_id)
         return placed
 
     def book(order: Mapping[str, Any]) -> Booked:
@@ -211,6 +216,12 @@ def add_online_orders(app: FastAPI, number_orders: Any) -> None:
             return None  # it is in the log already: said before
         app.state.feed.poke()  # the screens hear of it now, before the tickets print
         app.state.printing.on_ops(store.for_order, list(accepted))
+        # Ready in GloriaFood's app is ready on the POS, and the customer is told as when Ready is pressed
+        # at the counter: the ready text (none for a delivery, which is brought). Only while it is news.
+        if news(order, store.now_ms()):
+            app.state.notifier.on_ops(store.for_order, list(accepted))
+        else:
+            log.info("online order %s: what GloriaFood says of it is too old for a text", arrival.ext_id)
         return after
 
     def unbook(arrival: Arrival, order: Mapping[str, Any]) -> After | None:

@@ -3,8 +3,8 @@
 The hub talks to a few services outside the restaurant, and each wants a key: the map service a delivery's
 distance is asked of, Google Maps behind it, Mapbox and Azure Maps for the list of addresses while one is
 typed, GloriaFood for the website's orders (a key for asking, and one
-its own pushes carry), Cloudflare for the tunnel those pushes come in by, and Apple for waking a locked
-iPhone. Until 2026-11-24 every one of them was put on the hub in its terminal (`sudo hubctl maps key` and
+its own pushes carry), Cloudflare for the tunnel those pushes come in by, Apple for waking a locked
+iPhone, and Twilio for the texts to customers. Until 2026-11-24 every one of them was put on the hub in its terminal (`sudo hubctl maps key` and
 the like). Now a manager or an owner types them in the app, under **Location › Keys and connections**, and
 the hub uses a typed key at once, with no restart.
 
@@ -15,7 +15,7 @@ shows on the page as set.
 
 Orders screen › the three dots › **Location**, a manager's PIN, then **Keys and connections**. The row
 itself says which keys are set and which are not ("Set: map service, GloriaFood · Not set: Google Maps,
-Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, Apple push"). Only a manager or an owner sees the row and opens the
+Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, Apple push, Twilio texts"). Only a manager or an owner sees the row and opens the
 page. It is not a power that can be handed to another role (`roles.md`).
 
 Each key is a card:
@@ -46,6 +46,11 @@ from another. A key shorter than sixteen characters shows none of itself.
 | **GloriaFood push key** | Every order GloriaFood sends by itself, the moment it is accepted, must carry it; the push door opens for it and for nothing else (`online-orders.md`, "Push") | Yours to make: **Make one** in the box, **Copy**, Save, and the same key into GloriaFood's admin as the master key of the integration "Push Accepted Order" | Tries the way in: see below |
 | **Cloudflare Tunnel (the way in)** | The hub holds a line open to Cloudflare, and GloriaFood's pushes come down it to the push door. Nothing is opened on the router | Cloudflare's dashboard: Zero Trust, Networks, Tunnels, your tunnel. The command it shows for installing it, pasted whole, or only the long word in it that starts with `eyJ` | Tries the way in: see below |
 | **Apple push key** | Wakes a locked iPhone or iPad for a call or a desk-phone pick-up (`push-relay.md`) | Apple's developer account: Certificates, IDs & Profiles, Keys. The file `AuthKey_<key id>.p8`, which can be downloaded once | Sends a notification to an iPhone or iPad that registered with the hub |
+| **Texts to customers (Twilio)** | Sends the texts to customers through the restaurant's own Twilio account: ready for pickup, on its way, a new time (`texts.md`) | Twilio's console, first page: the Account SID and the Auth Token; and a number of the account's that can text, or a Messaging Service's SID | Sends one text to a mobile number you type, and says whether it arrived |
+
+**The Twilio account is three things, not one**: the Account SID, the Auth Token and what the texts are sent
+from. `texts.md` says where each is found, what the card says once the texts go out, and what a failed text
+means.
 
 Apple's key is a small text file. Open it in a text editor (TextEdit on a Mac), copy all of it with the two
 dashed lines, and paste it into the box. It needs two ids beside it: the **Key ID** (the ten letters and
@@ -88,7 +93,8 @@ a try is kept.
 ## The terminal and the app
 
 Both can set every one of these keys, and **whichever was used last wins**. (A further GloriaFood
-account's key is the exception: it is typed in the app only. `hubctl online key` is the first account's.)
+account's key and the Twilio account are the exceptions: they are typed in the app only. `hubctl online key`
+is the first account's.)
 
 - A key typed in the app is used in place of the one in the hub's own file (`/opt/pos/.env`).
 - A key put on with `hubctl` (or taken off with `hubctl ... forget`) clears what the app typed for that key,
@@ -153,8 +159,8 @@ All of them are a manager's or an owner's (the token from `POST /admin/session`)
 
 | Call | What it does |
 | --- | --- |
-| `GET /hub/keys` | `keys`: each with `name` (`maps`, `maps_google`, `online`, `online_push`, `online_tunnel`, `push_apple`), `set`, `source` (`app`, `hub` or null), `ending`, `shown` (Apple's ids; of a tunnel's token `tunnel`, the start of the tunnel's id), `by`, `at_ms`, `removed`, `unreadable`. And `kept`: false on a hub with nowhere to keep its sealing secret. Never a key |
-| `PUT /hub/keys/{name}` | `{"key": "..."}`; for Apple's also `key_id`, `team_id` and, when not the usual one, `bundle_id`. Checked, sealed, stored and in force at once. Answers like the `GET`. 422 `bad_value` with words; 404 `unknown_key`; 503 `read_only` on a standby |
+| `GET /hub/keys` | `keys`: each with `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `online_push`, `online_tunnel`, `push_apple`, `texts`), `set`, `source` (`app`, `hub` or null), `ending`, `shown` (Apple's ids; of a tunnel's token `tunnel`, the start of the tunnel's id; of the Twilio account `account`, `sender` and `key_sid`), `by`, `at_ms`, `removed`, `unreadable`. And `kept`: false on a hub with nowhere to keep its sealing secret. Never a key |
+| `PUT /hub/keys/{name}` | `{"key": "..."}`; for Apple's also `key_id`, `team_id` and, when not the usual one, `bundle_id`; for the Twilio account (`texts`) the Auth Token as `key` with `account` and `sender` (`texts.md`). Checked, sealed, stored and in force at once. Answers like the `GET`. 422 `bad_value` with words; 404 `unknown_key`; 503 `read_only` on a standby |
 | `DELETE /hub/keys/{name}` | None is in force from now on. Answers like the `GET` |
 | `POST /hub/online/accounts` | Another GloriaFood account: `{"name": "Sushi site", "key": "...", "test": false}`. The key is checked first, sealed under `online:<id>` and asked with at once. Answers like the `GET`, with the new account's `id` as `added`. 422 `bad_value` with words |
 | `PUT /hub/online/accounts/{id}` | Its `name`, or whether it is for testing (`test`); what is left out stays, and its key is not touched. The first account is `main`. 404 `unknown_account` |
@@ -174,6 +180,9 @@ token; null on a machine that runs neither), and `tunnel`: `there` (a tunnel pro
 `unreachable`, `slow`, `missing`, `trouble`), `said` (Cloudflare's program's own last word, a line of plain
 text) and `version`.
 
+And `texts`, how the texts to customers are doing, with `POST /hub/texts/try` to send one: both are in
+`texts.md`.
+
 The code is `backend/src/pos/keys.py` (what is kept and how) and `backend/src/pos/api/keys.py` (the calls,
 and putting a key to work without a restart); the page is `apps/pos_app/lib/screens/hub_keys_screen.dart`.
 
@@ -184,4 +193,5 @@ the app: update it (sudo hubctl update)" and opens nothing. An app from before t
 everything else is as it was. Update the hub first, then the apps.
 
 A hub from before the push key and the tunnel were typed here lists neither, and the page shows no card for
-them. An app from before them shows the four cards it knew, on any hub.
+them. An app from before them shows the four cards it knew, on any hub. The same goes for the Twilio
+account: a hub from before it lists none, and an app from before it shows no card for it.

@@ -148,7 +148,8 @@ their quantities: three egg rolls are three dishes.
 
 ## Texts to the customer
 
-The hub sends two texts, in the order's language (English or Chinese), to the phone number on the order:
+The hub sends these texts, in the order's language (English or Chinese), to the phone number on the order
+(a delivery's own text, "on its way", is in `delivery.md`):
 
 - **Ready**, when the stage becomes `ready`: "Hi Linda, order #42 is ready for pickup at Golden Wok.
   Please pay at pickup." (the last sentence only while something is still due).
@@ -156,10 +157,10 @@ The hub sends two texts, in the order's language (English or Chinese), to the ph
   `promised_at`; the app has no button for it yet). The time a big order is given as it is first sent is
   its quote, not a delay: nothing is texted for it.
 
-Phase 1 ships the adapter and a messenger that only logs. `POS_MESSAGING=log` writes each text to the API
-log, and `GET /messages` lists the last ones, newest first, so the bench can see what would have gone
-out. `POS_LOCATION` names the restaurant in the texts. A provider (Twilio) plugs in behind the same call
-in phase 2.
+The texts really go out once a manager has typed the restaurant's Twilio account in the app (Location › Keys
+and connections; `texts.md` says how, what it sends where, and what happens when a text does not go). A hub
+without an account only writes each text to its log, and `GET /messages` lists the last ones, newest first,
+so the bench can see what would have gone out. `POS_LOCATION` names the restaurant in the texts.
 
 ## On the wire
 
