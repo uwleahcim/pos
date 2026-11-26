@@ -382,9 +382,9 @@ def ops_for(
             code, name = ("online_rounding", ROUNDED) if small else ("online_difference", DIFFERENCE)
             write("difference", "charge", _charge(order_id, "difference", code, name, difference, False))
 
-    payment = str(order.get("payment") or "").upper()
-    if payment == "ONLINE" and total is not None and total > ZERO:
-        if order.get("used_payment_methods") in (None, 1, "1"):
+    ways = _ways_paid(order)
+    if "ONLINE" in ways and total is not None and total > ZERO:
+        if ways == {"ONLINE"}:
             write(
                 "paid",
                 "pay",
@@ -396,8 +396,10 @@ def ops_for(
                     "by": BY,
                 },
             )
-        else:
+        elif ways <= WAYS_TO_PAY:
             notes.append("it was paid in more than one way on the website: GloriaFood says what is still to collect")
+        else:
+            notes.append("how it was paid on the website cannot be read: GloriaFood says what is still to collect")
     if late:
         notes.append(f"{late}: it is on the POS for the check and was not sent to the kitchen")
     else:
@@ -409,6 +411,22 @@ KNOWN = frozenset({"item", "delivery_fee", "tip", "cash_discount"}) | PROMOTIONS
 
 
 # --- the order's own fields ---------------------------------------------------------------------
+
+
+WAYS_TO_PAY = frozenset({"ONLINE", "CASH", "CARD", "CARD_PHONE"})
+"""How an order is paid, in GloriaFood's words: on the website, or at the door in cash, by card, or by a card
+read out over the phone."""
+
+
+def _ways_paid(order: Mapping[str, Any]) -> set[str]:
+    """Every way an order was paid, in GloriaFood's words, upper case: its one `payment`, and those it lists
+    in `used_payment_methods`. That is a list of the same words: one as a rule (`["ONLINE"]` for a card, a
+    wallet or PayPal on the website, whichever it was), two for a payment that was split. What is listed in
+    a shape this does not know stays in as it came, so it is never taken for money the website took."""
+    listed = order.get("used_payment_methods")
+    if not isinstance(listed, list | tuple):
+        listed = [listed]
+    return {str(way).strip().upper() for way in (order.get("payment"), *listed) if way not in (None, "")}
 
 
 def _name_of(order: Mapping[str, Any]) -> str:

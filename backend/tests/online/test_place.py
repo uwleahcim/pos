@@ -277,10 +277,41 @@ def test_an_order_to_be_paid_at_the_door_records_no_payment():
         assert (check["payments"], check["paid"], check["due"]) == ([], "0.00", "31.99")
 
 
+def test_an_order_paid_by_apple_pay_on_the_website_is_paid():
+    # as the restaurant's hub was really given one: the way it was paid is a list of one, and the wallet
+    # is named beside it
+    told = order(205, [row(*LUNCH)], payment="ONLINE", gateway_type="Apple Pay", card_type=None)
+    assert told["used_payment_methods"] == ["ONLINE"]
+    placed = place(told)
+    check = check_of(placed)
+    assert [(paid["method"], paid["amount"], paid["note"]) for paid in check["payments"]] == [
+        ("elsewhere", "31.99", "Paid online")
+    ]
+    assert (check["paid"], check["due"], placed.said) == ("31.99", "0.00", "")
+
+
+def test_an_order_that_does_not_list_how_it_was_paid_goes_by_its_one_payment():
+    for ways in (None, [], "ONLINE", ["online"]):
+        check = check_of(place(order(206, [row(*LUNCH)], payment="ONLINE", used_payment_methods=ways)))
+        assert (check["paid"], check["due"]) == ("31.99", "0.00"), ways
+    check = check_of(place(order(207, [row(*LUNCH)], payment="CASH", used_payment_methods=None)))
+    assert (check["payments"], check["due"]) == ([], "31.99")
+
+
 def test_an_order_paid_in_two_ways_is_not_guessed_at():
-    placed = place(order(203, [row(*LUNCH)], payment="ONLINE", used_payment_methods=2))
-    assert check_of(placed)["payments"] == []
-    assert "paid in more than one way" in placed.said
+    for payment, ways in (("ONLINE", ["ONLINE", "CASH"]), ("CASH", ["CASH", "ONLINE"])):
+        placed = place(order(203, [row(*LUNCH)], payment=payment, used_payment_methods=ways))
+        assert check_of(placed)["payments"] == [], ways
+        assert "paid in more than one way" in placed.said
+
+
+def test_a_way_of_paying_the_hub_cannot_read_is_said_and_never_taken_for_money():
+    # the list was once read as a count, which GloriaFood never sends: whatever comes that is not its own
+    # words is told of, and no payment is made up from it
+    for ways in (1, ["ONLINE", {"type": "CASH"}], ["WIRE", "ONLINE"]):
+        placed = place(order(208, [row(*LUNCH)], payment="ONLINE", used_payment_methods=ways))
+        assert check_of(placed)["payments"] == [], ways
+        assert "cannot be read" in placed.said and "more than one way" not in placed.said, ways
 
 
 def test_a_taxed_delivery_fee_is_taxed_as_the_website_taxed_it():
