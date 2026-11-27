@@ -89,6 +89,11 @@ class Hub {
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
 
+  /// Whether a table has seats (`GET/PUT /settings/seats`); null is a hub older than the setting, which
+  /// answers as it does for anything it has no word for. [seatsAuth] is who last set it.
+  bool? seats = true;
+  String? seatsAuth;
+
   /// What it knows of a customer, by the number's digits (`GET /customers/lookup`): a number it does not
   /// list is answered as everything is that this hub has no word for.
   final customers = <String, Map<String, dynamic>>{};
@@ -4378,6 +4383,13 @@ class Hub {
           coursing = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(coursing);
+      case '/settings/seats':
+        if (seats == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          seatsAuth = request.headers['authorization'];
+          seats = (jsonDecode(request.body) as Map<String, dynamic>)['enabled'] as bool;
+        }
+        return json({'enabled': seats});
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotesOut);
@@ -5132,6 +5144,9 @@ class Hub {
         case 'set_field' when data.containsKey('split'):
           // how the table pays: the one field of an order these tests read back
           (order['fields'] as Map)['split'] = data['split'];
+        case 'set_field' when data.containsKey('guests'):
+          // the party's size: the seats of the order screen, or the party alone where a table has no seats
+          (order['fields'] as Map)['guests'] = data['guests'];
         case 'set_field' when data.containsKey('table') || data.containsKey('merged_into'):
           // the check moved to another table, or was emptied into another check
           for (final field in const ['table', 'merged_into']) {

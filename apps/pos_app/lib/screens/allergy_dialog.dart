@@ -17,6 +17,7 @@ class AllergyDialog extends StatefulWidget {
     required this.seated,
     this.seats = 0,
     this.seat,
+    this.bySeat = true,
   });
 
   /// What the menu names, in its order.
@@ -31,6 +32,11 @@ class AllergyDialog extends StatefulWidget {
 
   /// The seat it opens on: the one the next dish goes to. Null is the table.
   final int? seat;
+
+  /// Whether a table has seats here. Off, an allergy is the whole table's and nothing asks whose it is;
+  /// [seats] then reaches only as far as the seats that have one noted all the same, so those can still be
+  /// changed and taken off.
+  final bool bySeat;
 
   @override
   State<AllergyDialog> createState() => _AllergyDialogState();
@@ -137,7 +143,7 @@ class _AllergyDialogState extends State<AllergyDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (widget.seated) ...[
+              if (widget.seated && (widget.bySeat || widget.seats > 0)) ...[
                 Wrap(
                   spacing: 6,
                   runSpacing: 2,

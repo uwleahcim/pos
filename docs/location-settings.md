@@ -10,9 +10,9 @@ and edited only with a manager's session token.
 Every setting is saved the same way, here and on the screens and dialogs this screen opens: **nothing
 takes effect as it is changed.**
 
-- **On the screen itself** (the courses, the time clock, what the tickets say, the desk phones, face
-  sign-in, the hands-free switching): flip a switch, type a name or pick from a list, and a bar comes up at
-  the bottom of the screen with **Save** on it. The bar says what is waiting ("Not saved: courses, time
+- **On the screen itself** (the courses, the seat numbers, the time clock, what the tickets say, the desk
+  phones, face sign-in, the hands-free switching): flip a switch, type a name or pick from a list, and a bar
+  comes up at the bottom of the screen with **Save** on it. The bar says what is waiting ("Not saved: courses, time
   clock") and stays at the bottom however the screen is scrolled, above the keyboard too. Scrolled all the
   way down it rests at the end of the screen; scrolled back up it follows. One **Save** keeps everything
   that waits. Put a thing back as it was and it waits no longer; with nothing waiting the bar goes.
@@ -64,6 +64,8 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **Course the dishes**: on or off.
 - **The courses**, when on: as many as the kitchen serves, in the order it serves them. Rename, add,
   remove, drag to reorder; the star marks the course a new dish goes to.
+- **Seat numbers**, on the same card, under the courses: on or off (on to start, as every table had seats
+  before a location could say; see "Seats on the order screen" below).
 - **Quote times**: the minutes per channel, which channels may pay at pickup, how long before its time a
   catering order's ticket prints, and how many more minutes an order of so many dishes takes (see
   `counter-mode.md`). Tonight's rush is not here: it is the flame on
@@ -128,6 +130,39 @@ counts the dishes still to send.
 
 A course taken off the list keeps its id on the lines that already carry it: they show under that id on the
 check and on the ticket, and still fire. Turning coursing off keeps the courses for when it comes back.
+
+## Seats on the order screen
+
+**Seat numbers** is the other half of how a table's order is taken, and its own switch: a location may
+course without seats, seat without courses, do both or neither. It is on to start.
+
+With seat numbers **on**, the bar above the menu offers **Table** and a chip for each seat, with **−** and
+**+** to take the last seat away or add one; the seats are the party's size. Each dish on the check says
+its seat, or "table"; an allergy is the table's or a seat's; a check can be split **By seat**; the kitchen
+ticket marks a seat's dish `[s2]`.
+
+With seat numbers **off**, for a house that rings every dish in for the table:
+
+- The bar has no seats. A dish goes to the kitchen with no seat, and says none on the check (the quantity
+  stands alone in its box) or on its ticket.
+- **The party's size stays**, since the seats were where it was set and the sales per guest, an even split
+  and any charge that goes by the size of the party read it: `Party 4` with the same **−** and **+**. On a
+  tablet it stands where the seats were. On a phone, where the bar is one line, it comes after the courses:
+  a course is picked for every dish and the party is changed now and then, so the courses are the ones in
+  reach without scrolling.
+- **An allergy is the whole table's**: the box does not ask whose it is.
+- **Split** offers Evenly and One check, and dishes are still moved between checks by hand; By seat is left
+  out.
+
+Nothing already on a check is lost by the switch. A dish that was rung in on a seat keeps it: the check
+still says "seat 2" under it, its ticket still says `[s2]`, and By seat is still offered for that check. An
+allergy noted for a seat stays in the red strip and can still be changed and taken off. The hub refuses
+nothing for the setting, so a screen that has an order open while a manager flips the switch finishes that
+order the way it started; the next order it opens follows. Turning the seats back on brings everything
+back as it was.
+
+Not touched by the switch: a to-go order (it never had seats), a bar tab (it has none until it sits down at
+a table), the floor map, reservations and the waitlist, which count guests, not seats.
 
 ## Table timers
 
@@ -206,6 +241,11 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   `*`, which a `fire` uses for every course); names are at most 40 characters. A bad body is 422 with
   `message` saying why; a standby hub is 503 `read_only`.
 - `GET /floor` carries `courses`: the list while coursing is on, empty while it is off.
+- `GET /settings/seats` and `PUT /settings/seats` (the manager Bearer token): `{"enabled": true}`, whether
+  a table's dishes are rung in on seats. A `PUT` has to say `enabled`; a bad body is 422, a standby hub 503
+  `read_only`. The terminal reads it beside the coursing as it opens an order, keeps the last answer for
+  when no hub answers, and takes a hub that has no such setting (404) as one whose tables have seats. An
+  order line's `seat` is never refused for the setting.
 - `GET /settings/table_timers` and `PUT /settings/table_timers` (the manager Bearer token): `{"enabled":
   true, "stages": {"sat": {"warn": 5, "late": 10}, "unsent": {"warn": 5, "late": 10}, "held": {"warn": 15,
   "late": 25}, "fired": {"warn": 25, "late": 0}}}`, whole minutes, 0 for never, at most 1440, `late` after

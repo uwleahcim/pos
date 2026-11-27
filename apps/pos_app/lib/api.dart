@@ -857,6 +857,33 @@ class PosApi {
     }),
   );
 
+  /// Whether a table's dishes are rung in on seats (`GET /settings/seats`, docs/location-settings.md); the
+  /// last answer read when nothing answers, so a check taken with no hub looks the way the location set
+  /// it (ADR 6). A hub older than the setting has seats, as every table had before a location could say.
+  Future<bool> seats() async => await seatsSetting() ?? true;
+
+  /// The same as the hub keeps it, for the screen that sets it: null from a hub older than the setting.
+  Future<bool?> seatsSetting() async {
+    try {
+      return await _repeated('/settings/seats', (json) => json['enabled'] as bool? ?? true, remember: 'seats');
+    } on ApiException catch (err) {
+      if (err.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) turns the seats of a table's order on or off for every terminal.
+  Future<bool> saveSeats(String token, {required bool enabled}) async {
+    final kept = await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/seats'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'enabled': enabled}),
+      ),
+    );
+    return kept['enabled'] as bool? ?? enabled;
+  }
+
   /// Minutes each channel promises a takeout order, which channels may pay at pickup, the rush a manager
   /// set for tonight and the minutes a big order adds; the last answer read when nothing answers, so an
   /// order taken with no hub is still quoted the location's way (ADR 6).

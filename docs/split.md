@@ -14,6 +14,8 @@ Three ways stand at the top as buttons; the one in force is lit.
 - **By seat**: one tap. Every seat with a dish of its own gets a check, numbered as the seat. A dish rung in
   for the table (no seat) is shared by every check in equal parts. A dish added later goes to its seat's
   check by itself. The button waits until at least one dish is on a seat.
+  Where the location turned **Seat numbers** off (`location-settings.md`, "Seats on the order screen") the
+  button is left out, unless dishes are on seats all the same.
 - **Evenly**: the dishes stay together and the total is cut in equal parts, as many as there are guests to
   start with. − and + make it fewer or more (two at least, twenty at most). The odd cents go to the first
   parts, one each, so the parts add up to the total.
