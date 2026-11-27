@@ -290,6 +290,47 @@ and every answer behind it:
 The hub must be able to send UDP to the printers (ports 161 and 22222) for the names; without it a Star is
 still known as a Star by step 3, without its model.
 
+## The print log
+
+**Location settings › Printers › Print log** (managers), and the paper button on each printer's card for
+that printer's prints alone. The hub writes down every paper it makes, whatever it is (a kitchen ticket, a
+change or a void, a bill, the day's report, a pack sheet, a prep list, bag labels, a test print), and keeps
+it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
+
+- **The list**, newest first, by day: the time, what it was and what for ("Ticket · Table 12", "Bill ·
+  Table 5 (4 guests)"), the printer it was made for and how it ended: **Printed**; **Printed after 2 failed
+  tries**; **Printed at Bar instead: Wok did not answer** (it went to a fallback); **Not printed yet: the
+  printer did not answer (3 failed tries). Still trying**; **Never printed: the hub restarted before it came
+  out** (a print waits in the hub's memory, so one still waiting when the hub stops is gone; the log is how
+  that is seen, and Reprint how it is mended). The list can be read for one printer, and for **Problems**
+  alone: everything that did not print first time at its own printer. It follows what the printers do
+  without a tap (the change feed's `prints`).
+- **The paper on the screen**: a tap on a print opens its paper as it came out, line for line: big where
+  the paper is big, white on black where the paper is, the rules, the cut. Under it, what happened to it one
+  thing after the other (sent, each reason it failed and how often, passed on to which printer, printed,
+  printed again by whom). The button in the bar shows **every paper** at once, one under the other, like the
+  roll at the printer. The paper is drawn from what the hub wrote down, in the screen's own letters: it says
+  what the paper said, in the same order and sizes, and is not a photograph of it (a long line may break at
+  another word than on the paper, and Chinese is drawn in the screen's font).
+- **Reprint**, under every paper: prints it again at the printer it was made for, or **At another
+  printer** at any printer on the list. The paper that comes out is headed `*** REPRINT ***`, white on black,
+  with a line under it saying when the first came out ("FIRST PRINTED THU NOV 26 19:05") or that it never did
+  ("FIRST SENT THU NOV 26 19:05, DID NOT PRINT"), so a cook cannot take it for a new order. The log lists it as
+  "Reprint · Ticket · Table 12" with who asked for it, and the first print's story says it was printed
+  again. A reprint is the paper as it was, not the order as it is now: a dish voided since is still on it.
+  A reprint of a reprint repeats the first paper and is headed once.
+
+How it is kept: every paper is made by calling a builder (a line, two columns, a rule, a feed, a cut), and
+besides the printer's own language the hub makes each paper once with a builder that writes the calls down
+(`pos.printing.script`, a few hundred bytes a ticket). That script is what the screen draws and what a
+reprint plays back on the builder of whichever printer it goes to, so a paper first printed on the Epson
+reprints on a Star. The log is the table `print_log` on the hub (in memory without a database); a failure
+that repeats is written once a minute at most, so a printer that is off all night does not fill it. A log
+that cannot be written never stops a paper from printing.
+
+A waiting print that is reprinted is not taken back: when its own printer answers again, it still comes
+out there, without the REPRINT heading.
+
 ## The API
 
 - `GET /settings/printers`, `PUT /settings/printers` (manager): `printers` as `{id, stations, address,
@@ -328,6 +369,14 @@ still known as a Star by step 3, without its model.
 - The pack sheet and the prep list: `POST /orders/{id}/pack-sheet`, `GET /orders/ahead/prep` and
   `POST /orders/ahead/prep/print` are in `docs/catering.md`.
 - The labels of a to-go order's bags: `POST /orders/{id}/bag-labels` is in `docs/bag-labels.md`.
+- The print log (manager; `pos.api.prints`): `GET /print/log?printer=&only=trouble&before=&limit=` is a
+  page of it, newest first, with `next` to send as `before` for the page after, the `printers` a reprint may
+  go to and `keeps_days`; each print says its `sort`, `kind`, `title`, the printer it was made for, its
+  `status` (`printed`, `waiting`, `lost`), where it printed, its failed `tries` and last `error`, its
+  `events`, and for a reprint `reprint_of`, `first_ms` and `by`. `GET /print/log/paper?job=` is one print
+  with its `pages`, the steps a screen draws. `POST /print/log/reprint` `{job, printer}` prints it again
+  (202 with the new `print`; 404 `no_such_print`, 409 `no_printer`). The change feed says `prints` when the
+  log has something new.
 
 Code: `backend/src/pos/printing/service.py` (routing, with `Printer.sets` for the tickets of one printer;
 `send` and `cooking` for the two lines above; `_hold` and `release_due` for orders sent ahead), `held.py` (what waits: `HeldTickets` in memory, `PgHeldTickets`

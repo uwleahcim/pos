@@ -2743,6 +2743,20 @@ class Hub {
   String? printersAuth;
   String? refusePrinters;
 
+  /// The print log (`GET /print/log`, `GET /print/log/paper`, `POST /print/log/reprint`): the prints it has,
+  /// newest first, and the paper of each by its job; null is a hub older than the log (404). [printLogAsks] is
+  /// what each read of the log asked for, [paperAsks] the jobs whose paper was read, [reprints] what was
+  /// asked to be printed again, with the token each carried in [printLogAuth]. [logPrinters] are the printers
+  /// it names for a reprint, and [refuseReprint] the words it refuses the next one with (409).
+  List<Map<String, dynamic>>? printLog = [];
+  final papers = <String, List<List<Map<String, dynamic>>>>{};
+  List<Map<String, dynamic>> logPrinters = [];
+  final printLogAsks = <Map<String, String>>[];
+  final paperAsks = <String>[];
+  final reprints = <Map<String, dynamic>>[];
+  String? printLogAuth;
+  String? refuseReprint;
+
   /// What the tickets say beyond their dishes (`GET/PUT /settings/tickets`), the token the last save carried
   /// and a reason to refuse the next save with. Null is a hub older than the setting (404); one with no `paid`
   /// is a hub older than PAID / NOT PAID on the takeout ticket, and one with no `moved` is older than the
@@ -4539,6 +4553,95 @@ class Hub {
         final address = (jsonDecode(request.body) as Map)['address'] as String;
         identified.add(address);
         return json({'address': address, ...identity});
+      case '/print/log':
+        if (printLog == null) return json({'detail': 'Not Found'}, 404);
+        printLogAuth = request.headers['authorization'];
+        final asked = request.url.queryParameters;
+        printLogAsks.add(asked);
+        var listed = [
+          for (final p in printLog!)
+            if ((asked['printer'] == null || p['printer'] == asked['printer']) &&
+                (asked['only'] != 'trouble' ||
+                    p['status'] != 'printed' ||
+                    ((p['tries'] as int?) ?? 0) > 0 ||
+                    ((p['printed_on'] ?? p['address']) != p['address'])))
+              p,
+        ];
+        final before = asked['before'];
+        if (before != null) {
+          final at = listed.indexWhere((p) => '${p['at_ms']}:${p['job_id']}' == before);
+          listed = listed.sublist(at + 1);
+        }
+        final limit = int.parse(asked['limit'] ?? '50');
+        final page = listed.take(limit).toList();
+        return json({
+          'prints': page,
+          'next': listed.length > limit ? '${page.last['at_ms']}:${page.last['job_id']}' : null,
+          'printers': logPrinters,
+          'keeps_days': 14,
+        });
+      case '/print/log/paper':
+        if (printLog == null) return json({'detail': 'Not Found'}, 404);
+        printLogAuth = request.headers['authorization'];
+        final job = request.url.queryParameters['job']!;
+        paperAsks.add(job);
+        final entry = printLog!.where((p) => p['job_id'] == job).firstOrNull;
+        if (entry == null || papers[job] == null) {
+          return json({
+            'detail': {'error': 'no_such_print', 'message': 'That print is no longer in the log.'},
+          }, 404);
+        }
+        return json({...entry, 'pages': papers[job]});
+      case '/print/log/reprint':
+        if (printLog == null) return json({'detail': 'Not Found'}, 404);
+        printLogAuth = request.headers['authorization'];
+        final asked = jsonDecode(request.body) as Map<String, dynamic>;
+        reprints.add(asked);
+        final first = printLog!.where((p) => p['job_id'] == asked['job']).firstOrNull;
+        if (first == null) {
+          return json({
+            'detail': {'error': 'no_such_print', 'message': 'That print is no longer in the log.'},
+          }, 404);
+        }
+        if (refuseReprint != null) {
+          return json({
+            'detail': {'error': 'no_printer', 'message': refuseReprint, 'printers': logPrinters},
+          }, 409);
+        }
+        final at = logPrinters.where((p) => p['id'] == (asked['printer'] ?? first['printer'])).firstOrNull;
+        final made = {
+          ...first,
+          'job_id': 'reprint:${reprints.length}',
+          'at_ms': (printLog!.first['at_ms'] as int) + 60000,
+          'printer': at?['id'] ?? first['printer'],
+          'name': at?['name'] ?? first['name'],
+          'address': at?['address'] ?? first['address'],
+          'status': 'waiting',
+          'printed_ms': null,
+          'printed_on': '',
+          'tries': 0,
+          'error': '',
+          'reprint_of': first['reprint_of'] == '' || first['reprint_of'] == null
+              ? first['job_id']
+              : first['reprint_of'],
+          'first_ms': first['printed_ms'] ?? first['at_ms'],
+          'by': 'Mike',
+          'reprints': 0,
+          'events': <Map<String, dynamic>>[],
+        };
+        first['reprints'] = ((first['reprints'] as int?) ?? 0) + 1;
+        printLog!.insert(0, made);
+        papers[made['job_id'] as String] = [
+          for (final page in papers[first['job_id']] ?? const <List<Map<String, dynamic>>>[])
+            [
+              {'k': 'line', 'text': '*** REPRINT ***', 'big': true, 'bold': true, 'center': true, 'invert': true},
+              ...page,
+            ],
+        ];
+        return json({
+          'print': made,
+          'printed_at': {'id': made['printer'], 'name': made['name']},
+        }, 202);
       case '/print/test':
         final printer = (jsonDecode(request.body) as Map)['printer'] as String;
         final known = (printers['printers'] as List).any((p) => (p as Map)['id'] == printer);

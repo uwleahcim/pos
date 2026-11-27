@@ -8,6 +8,9 @@ one; a relay that reports twice changes nothing. So a job prints once, by whiche
 A job may carry fallbacks: the same ticket rendered for other printers, in the order the manager listed
 them. After `FALLBACK_AFTER` failed attempts at the printer it is on, the job moves to the next one (and
 round again when every one has failed), so a dead printer costs seconds, not the ticket.
+
+What happens to a job is told to whoever watches (`JobStore.watch`: the print log, `pos.printing.log`): that
+a try failed, that the job moved on to a fallback, that it printed.
 """
 
 from __future__ import annotations
@@ -77,6 +80,18 @@ class JobStore:
         self._clock = clock
         self._lease = lease
         self._lock = threading.Lock()
+        self.watch: Callable[[PrintJob, str, str], None] | None = None
+        """Told what happens to a job, after it happened: `failed` with what went wrong and `moved` with the
+        address the job left (it is at its next printer by then), `printed` with who printed it. Called
+        outside the store's lock, from whichever thread it happened on; what it raises is dropped, since a
+        job prints whether or not anybody is writing it down."""
+
+    def _tell(self, job: PrintJob, happened: list[tuple[str, str]]) -> None:
+        for what, detail in happened if self.watch is not None else ():
+            try:
+                self.watch(job, what, detail)
+            except Exception:  # noqa: BLE001 - see `watch`
+                pass
 
     def create(
         self,
@@ -148,11 +163,14 @@ class JobStore:
         """Idempotent: the first report wins, later ones are acknowledged and ignored."""
         with self._lock:
             job = self._jobs[job_id]
-            if job.status != "done":
+            first = job.status != "done"
+            if first:
                 job.status = "done"
                 job.done_by = by
                 job.done_at = self._clock()
-            return job
+        if first:
+            self._tell(job, [("printed", by)])
+        return job
 
     def failed(self, job_id: str, by: str, error: str) -> PrintJob:
         """The relay could not reach the printer; the job goes back to the queue at once, or on to its next
@@ -163,17 +181,23 @@ class JobStore:
                 job.status = "queued"
                 job.leased_to = None
                 job.lease_until = 0.0
-            self._failed_unlocked(job, error)
-            return job
+            happened = self._failed_unlocked(job, error)
+        self._tell(job, happened)
+        return job
 
-    def _failed_unlocked(self, job: PrintJob, error: str) -> None:
+    def _failed_unlocked(self, job: PrintJob, error: str) -> list[tuple[str, str]]:
+        """Gives what happened, for whoever watches: the failure, and the move to a fallback it brought."""
+        happened = [("failed", error)]
         job.last_error = error
         job.failures += 1
         if job.fallbacks and job.failures >= FALLBACK_AFTER:
+            left = job.printer
             job.fallbacks.append((job.printer, job.data))
             job.printer, job.data = job.fallbacks.pop(0)
             job.failures = 0
             job.moved += 1
+            happened.append(("moved", left))
+        return happened
 
     def deliver_direct(self, job: PrintJob, *, send: Callable[[str, bytes], None] = send_raw, by: str = "hub") -> bool:
         """The hub path: write to the printer now. On failure the job stays queued for a retry or a relay."""
@@ -185,7 +209,8 @@ class JobStore:
             send(job.printer, job.data)
         except OSError as err:
             with self._lock:
-                self._failed_unlocked(job, str(err))
+                happened = self._failed_unlocked(job, str(err))
+            self._tell(job, happened)
             return False
         self.done(job.job_id, by)
         return True

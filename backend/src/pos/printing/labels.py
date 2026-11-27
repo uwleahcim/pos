@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .ticket import DIALECTS
+from .ticket import builder
 
 BAGS_MOST = 24
 """The most bags one asking prints labels for: a slip of the thumb must not empty the roll."""
@@ -49,7 +49,7 @@ def render_labels(labels: BagLabels, *, dots: int = 576, font: str | None = None
     whose = f"{number}  {labels.customer}".strip().upper()
 
     def label(bag: int) -> bytes:
-        b = DIALECTS[dialect](dots=dots, font=font)
+        b = builder(dialect, dots=dots, font=font)
         if labels.reprinted_from:
             b.line(f"{labels.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
         if whose:

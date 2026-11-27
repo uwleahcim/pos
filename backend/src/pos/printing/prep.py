@@ -27,7 +27,7 @@ from ..orders.ahead import HANDOVERS, is_ahead
 from ..sync.oplog import Line, OrderState, promised_ms
 from .day import long_day
 from .escpos import Builder
-from .ticket import DIALECTS
+from .ticket import builder
 
 NO_STATION = "No station"
 
@@ -189,7 +189,7 @@ def _way(b: Builder, way: Mapping[str, Any]) -> None:
 def render_prep(paper: PrepPaper, *, dots: int = 576, font: str | None = None, dialect: str = "escpos") -> bytes:
     """The print job for one day's prep list (`dialect` escpos or star). Deterministic for the same inputs."""
     prep = paper.prep
-    b = DIALECTS[dialect](dots=dots, font=font)
+    b = builder(dialect, dots=dots, font=font)
     if paper.reprinted_from:
         b.line(f"{paper.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
         b.feed(1)

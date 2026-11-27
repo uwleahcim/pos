@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..orders.day import PAID_AS
-from .ticket import DIALECTS
+from .ticket import builder
 
 ZERO = Decimal(0)
 KINDS = {"dine_in": "Tables", "tab": "Bar tabs", "takeout": "To go", "delivery": "Delivery"}
@@ -203,7 +203,7 @@ def day_paper(
 
 def render_day(paper: DayPaper, *, dots: int = 576, font: str | None = None, dialect: str = "escpos") -> bytes:
     """The print job for one day's report (`dialect` escpos or star). Deterministic for the same inputs."""
-    b = DIALECTS[dialect](dots=dots, font=font)
+    b = builder(dialect, dots=dots, font=font)
     if paper.reprinted_from:
         b.line(f"{paper.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
         b.feed(1)

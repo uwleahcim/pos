@@ -10,11 +10,25 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from .escpos import Builder
+from .script import ScriptBuilder
 from .star import StarBuilder
 
 DIALECTS: dict[str, type[Builder]] = {"escpos": Builder, "star": StarBuilder}
 AUTO = "auto"
 """A printer's language setting that is no language: print in the one the printer was found to speak."""
+
+SCRIPT = "script"
+"""No printer's language either: the paper written down step by step (`pos.printing.script`), which is what
+the print log keeps of it. Every renderer takes it where it takes a printer's language."""
+
+
+def builder(dialect: str, *, dots: int = 576, font: str | None = None) -> Builder:
+    """What a renderer writes a paper with: the builder of a printer's language, or the one that writes the
+    steps down (`SCRIPT`)."""
+    if dialect == SCRIPT:
+        return ScriptBuilder(dots=dots)
+    return DIALECTS[dialect](dots=dots, font=font)
+
 
 ONE, EACH = "one", "each"
 """How a printer that prints for several stations prints one send (its `tickets` setting): every dish on `one`
@@ -104,7 +118,7 @@ def render(
     ticket: Ticket, *, dots: int = 576, font: str | None = None, beep: bool = True, dialect: str = "escpos"
 ) -> bytes:
     """The print job for one ticket (`dialect` escpos or star). Deterministic for the same inputs."""
-    b = DIALECTS[dialect](dots=dots, font=font)
+    b = builder(dialect, dots=dots, font=font)
     if beep:
         b.beep(3 if ticket.kind in ("modify", "void", "allergy", "moved", "bag", "notice") or ticket.late else 1)
     header = {

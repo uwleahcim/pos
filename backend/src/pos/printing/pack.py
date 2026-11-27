@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .escpos import Builder
-from .ticket import DIALECTS, TEST_WORDS, Money, TicketLine
+from .ticket import TEST_WORDS, Money, TicketLine, builder
 
 HANDOVER_WORDS = {"pickup": "PICKUP", "delivery": "DELIVERY"}
 
@@ -69,7 +69,7 @@ def _dish(b: Builder, line: TicketLine) -> None:
 
 def render_pack(sheet: PackSheet, *, dots: int = 576, font: str | None = None, dialect: str = "escpos") -> bytes:
     """The print job for one pack sheet (`dialect` escpos or star). Deterministic for the same inputs."""
-    b = DIALECTS[dialect](dots=dots, font=font)
+    b = builder(dialect, dots=dots, font=font)
     if sheet.reprinted_from:
         b.line(f"{sheet.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
     b.line("PACK SHEET", big=True, bold=True, center=True)

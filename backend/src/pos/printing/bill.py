@@ -28,7 +28,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..sync.oplog import is_delivery, is_tab
-from .ticket import DIALECTS
+from .ticket import builder
 
 ZERO = Decimal(0)
 PAID_AS = {"cash": "Paid cash", "card": "Paid card"}
@@ -209,7 +209,7 @@ def bill_for(
 def render_bill(bill: Bill, *, dots: int = 576, font: str | None = None, dialect: str = "escpos") -> bytes:
     """The print job for one bill (`dialect` escpos or star). Deterministic for the same inputs. No buzzer:
     a bill comes out where a person is standing waiting for it."""
-    b = DIALECTS[dialect](dots=dots, font=font)
+    b = builder(dialect, dots=dots, font=font)
     if bill.reprinted_from:
         # A fallback printer's copy: whoever stands there carries it out front, and tears this strip off.
         b.line(f"{bill.reprinted_from} printer down, printed here".upper(), center=True, bold=True, invert=True)
