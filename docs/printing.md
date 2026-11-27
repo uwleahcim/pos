@@ -215,7 +215,8 @@ ticket lists what is picked in the group; tap it off and the dish prints there w
   been asked yet is asked on Save, and one that has not answered prints in ESC/POS until it does. A language
   set by hand that is not what the printer said is pointed out under it.
 - **When it is down, print its tickets at**: the fallbacks, from a list of the other printers, dragged into
-  the order they are tried. Fallbacks may not go round in a loop (Wok 1 falls back to Bar, Bar to Wok 1, or
+  the order they are tried. The top one is tried first, which a line says once there are two; no number is
+  put before a name. Fallbacks may not go round in a loop (Wok 1 falls back to Bar, Bar to Wok 1, or
   the same through a third printer): a printer that already falls back to this one is greyed out in the list
   with "would loop back here", a loop saved earlier is marked "loops back here" on its cards, and Save waits
   until one of them is taken out. The hub refuses such a save too.

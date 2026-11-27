@@ -227,8 +227,10 @@ void main() {
       expect(placed(tester, mark), ['geocodio', 'google', 'mapbox', 'azure']);
       expect(
         [for (final service in placed(tester, mark)) said(tester, '$mark-name:$service')],
-        ['1. Geocodio', '2. Google Maps', '3. Mapbox', '4. Azure Maps'],
+        ['Geocodio', 'Google Maps', 'Mapbox', 'Azure Maps'],
       );
+      // where a row stands says when it is asked: no number before a name
+      expect(find.textContaining(RegExp(r'^\d+\. ')), findsNothing);
       expect([for (final service in placed(tester, mark)) switched(tester, mark, service)], [true, true, false, false]);
       expect(said(tester, '$mark-state:geocodio'), '488 of 500 lookups left today');
       expect(said(tester, '$mark-state:google'), '97 of 100 lookups left today');
@@ -259,7 +261,8 @@ void main() {
       await tapKey(tester, 'delivery-fee');
       await dragPast(tester, mark, 'google', -1);
       expect(placed(tester, mark), ['google', 'geocodio', 'mapbox', 'azure']);
-      expect(said(tester, '$mark-name:google'), '1. Google Maps');
+      expect(said(tester, '$mark-name:google'), 'Google Maps');
+      expect(find.textContaining(RegExp(r'^\d+\. ')), findsNothing);
       await turn(tester, mark, 'mapbox');
       expect(switched(tester, mark, 'mapbox'), isTrue);
       // Mapbox finds the address first, out of the Address list's free lookups: said once it is asked
@@ -288,7 +291,7 @@ void main() {
       // opened again, it stands as it was saved
       await tapKey(tester, 'delivery-fee');
       expect(placed(tester, mark), ['mapbox', 'google', 'geocodio', 'azure']);
-      expect(said(tester, '$mark-name:mapbox'), '1. Mapbox');
+      expect(said(tester, '$mark-name:mapbox'), 'Mapbox');
       expect(switched(tester, mark, 'mapbox'), isTrue);
       await stop(tester);
     });
@@ -421,8 +424,9 @@ void main() {
       expect(placed(tester, mark), ['google', 'mapbox', 'azure']);
       expect(
         [for (final service in placed(tester, mark)) said(tester, '$mark-name:$service')],
-        ['1. Google Maps', '2. Mapbox', '3. Azure Maps'],
+        ['Google Maps', 'Mapbox', 'Azure Maps'],
       );
+      expect(find.textContaining(RegExp(r'^\d+\. ')), findsNothing);
       expect([for (final service in placed(tester, mark)) switched(tester, mark, service)], [true, false, false]);
       expect(said(tester, '$mark-state:google'), '141 of 150 lookups left today');
       expect(badgeSays(tester, '$mark-badge:google'), 'Google Maps: 141 of 150 lookups left today');

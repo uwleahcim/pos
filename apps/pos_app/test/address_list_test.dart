@@ -1128,9 +1128,14 @@ void main() {
       expect(rowWords(tester), 'Your own earlier deliveries are listed while an address is typed');
       await tapKey(tester, 'address-list');
       expect(find.byType(AddressListDialog), findsOneWidget);
-      expect(find.text('1. Google Maps'), findsOneWidget);
-      expect(find.text('2. Mapbox'), findsOneWidget);
-      expect(find.text('3. Azure Maps'), findsOneWidget);
+      // where a row stands says when it is asked: no number before a name
+      expect(
+        [
+          for (final service in ['google', 'mapbox', 'azure']) said(tester, 'address-list-name:$service'),
+        ],
+        ['Google Maps', 'Mapbox', 'Azure Maps'],
+      );
+      expect(find.textContaining(RegExp(r'^\d+\. ')), findsNothing);
       final top = [
         for (final service in ['google', 'mapbox', 'azure']) tester.getTopLeft(key('address-list-$service')).dy,
       ];
@@ -1241,14 +1246,15 @@ void main() {
       expect(placed(tester), ['mapbox', 'google', 'azure']);
       expect(
         [for (final service in placed(tester)) said(tester, 'address-list-name:$service')],
-        ['1. Mapbox', '2. Google Maps', '3. Azure Maps'],
+        ['Mapbox', 'Google Maps', 'Azure Maps'], // the names alone: the order is the rows' own
       );
       expect((switched(tester, 'google'), switched(tester, 'mapbox'), switched(tester, 'azure')), (true, true, false));
       expect(t.hub.addressSaved, isEmpty); // nothing is saved by a drag alone
       // and Mapbox to the end
       await dragPast(tester, 'mapbox', 2);
       expect(placed(tester), ['google', 'azure', 'mapbox']);
-      expect(said(tester, 'address-list-name:mapbox'), '3. Mapbox');
+      expect(said(tester, 'address-list-name:mapbox'), 'Mapbox');
+      expect(find.textContaining(RegExp(r'^\d+\. ')), findsNothing);
       // back to the front, and saved
       await dragPast(tester, 'mapbox', -2);
       expect(placed(tester), ['mapbox', 'google', 'azure']);
@@ -1267,7 +1273,7 @@ void main() {
       // opened again, it stands as it was saved
       await tapKey(tester, 'address-list');
       expect(placed(tester), ['mapbox', 'google', 'azure']);
-      expect(said(tester, 'address-list-name:mapbox'), '1. Mapbox');
+      expect(said(tester, 'address-list-name:mapbox'), 'Mapbox');
       await stop(tester);
     });
 
@@ -1297,7 +1303,7 @@ void main() {
       );
       await tapKey(tester, 'address-list');
       expect(placed(tester), ['google', 'mapbox', 'azure']);
-      expect(find.text('1. Google Maps'), findsOneWidget);
+      expect(said(tester, 'address-list-name:google'), 'Google Maps'); // no number here either
       for (final service in ['google', 'mapbox', 'azure']) {
         expect(key('address-list-handle:$service'), findsNothing);
       }
@@ -1386,7 +1392,7 @@ void main() {
     testWidgets('a hub from before there were several has the one Google switch', (tester) async {
       final t = await pumpLocation(tester, list: {...Hub.addressListOld, 'service': false});
       await tapKey(tester, 'address-list');
-      expect(find.text('1. Google Maps'), findsOneWidget);
+      expect(said(tester, 'address-list-name:google'), 'Google Maps');
       expect(key('address-list-mapbox'), findsNothing);
       expect(said(tester, 'address-list-state:google'), 'No key on this hub yet (Keys and connections)');
       expect(key('address-list-try:google'), findsNothing);

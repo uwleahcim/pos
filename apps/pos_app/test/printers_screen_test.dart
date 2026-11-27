@@ -131,18 +131,35 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bar').last);
     await tester.pumpAndSettle();
+    // one fallback has no order to speak of
+    expect(find.byKey(const ValueKey('printer-fallbacks-order:wok')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('fallback-add:wok')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sushi bar').last);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('fallback:wok:bar')), findsOneWidget);
     expect(find.byKey(const ValueKey('fallback:wok:sushi')), findsOneWidget);
+    // two are tried from the top, which a line says once: no number before a name
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('printer-fallbacks-order:wok'))).data,
+      'The top one is tried first. Drag one by its handle to put it earlier or later.',
+    );
+    expect(find.text('1.'), findsNothing);
+    expect(find.text('2.'), findsNothing);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('fallback:wok:bar'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('fallback:wok:sushi'))).dy),
+    );
     // only the two are offered: the list is empty now
     expect(find.byKey(const ValueKey('fallback-add:wok')), findsNothing);
 
     // dragged above the bar, the sushi bar is tried first
     await tester.drag(find.byKey(const ValueKey('fallback-handle:wok:sushi')), const Offset(0, -300));
     await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('fallback:wok:sushi'))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('fallback:wok:bar'))).dy),
+    );
 
     await tester.tap(find.byKey(const ValueKey('printers-save')));
     await tester.pumpAndSettle();

@@ -8,8 +8,9 @@ import 'service_badge.dart';
 /// fee's dialog, and how long the drive is right now, in Live traffic's.
 ///
 /// Each row has a handle that moves it earlier or later, the service's badge with a ring for how many of
-/// its day's lookups are left, its place and name, a line on how it stands, and its switch. The order and
-/// the switches are the dialog's to hold: this shows them and says what somebody did.
+/// its day's lookups are left, its name, a line on how it stands, and its switch. Where a row stands says
+/// when it is asked, so no number is put before its name. The order and the switches are the dialog's to
+/// hold: this shows them and says what somebody did.
 class DriveServicesList extends StatelessWidget {
   const DriveServicesList({
     super.key,
@@ -79,7 +80,7 @@ class DriveServicesList extends StatelessWidget {
                   value: service.on,
                   onChanged: enabled ? (to) => onTurned(service.name, to) : null,
                   title: Text(
-                    '${index + 1}. ${service.title}',
+                    service.title,
                     key: ValueKey('$mark-name:${service.name}'),
                     style: theme.textTheme.bodyLarge,
                   ),

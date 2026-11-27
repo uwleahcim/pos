@@ -463,9 +463,11 @@ to other api services like live traffic travel time look ups (also show indicato
 - **Where.** For the distance: Back office › Location › **Delivery fee**, under "Looking the distance up".
   For the drive right now: Location › **Live traffic**, under "Who is asked about the roads". Geocodio does
   not know the roads as they are at this minute, so that list has three services and the other four.
-- **A row for each service**: a handle (two short lines), its badge, its place and name ("1. Geocodio"),
-  a line on how it stands, and its switch.
-- **Drag a row by its handle** to put the service earlier or later. The numbers before the names follow.
+- **A row for each service**: a handle (two short lines), its badge, its name, a line on how it stands,
+  and its switch. The top row is asked first: where a row stands says when its service is asked, so no
+  number is put before a name (the owner's words, 2026-11-27: "There is no need to put a number label in
+  front of the service name since the order implies the priority").
+- **Drag a row by its handle** to put the service earlier or later.
   **Nothing is saved before Save**, and Cancel leaves the order and the switches as they were.
 - **The first one that is turned on and has a key is asked. The next one only when the one before it gives
   nothing**: it does not find the address, does not answer in time, refuses its key, or was asked as often
@@ -889,16 +891,17 @@ The Google account and its card are the owner's. What follows is what Google's o
    lists addresses for this hub." says the key works. "Google refused the hub's key. Is Places API (New)
    turned on for it?" says step 2 or 3 is not done, or that Google needs a few more minutes. Trying asks
    Google about the restaurant's own address, never a customer's, and turns nothing on.
-5. **Turn on "1. Google Maps"** and **Save**. From the next letter typed, every screen lists Google's
-   answers under your own.
+5. **Turn on "Google Maps"**, the top row, and **Save**. From the next letter typed, every screen lists
+   Google's answers under your own.
 
 The dialog lists the three services in the order they are asked, each with its own switch, its badge, a
 line on how it stands ("Off · 9,500 of 9,500 free lookups left this month", "No key on this hub yet",
 "Not answering right now: the next one is asked meanwhile") and, where the hub has its key, **Try it**.
-Each also has a handle before its badge: a drag by it moves the service up or down the order, the
-numbers before the names follow, and nothing is saved before Save (the owner's words, 2026-11-25:
-"dragging provider arrangements/order to determine the priority of which service is used first"). The
-steps below say "2. Mapbox" and "3. Azure Maps", which is where the two stand until somebody drags them.
+Each also has a handle before its badge: a drag by it moves the service up or down the order, and nothing
+is saved before Save (the owner's words, 2026-11-25: "dragging provider arrangements/order to determine
+the priority of which service is used first"). The top row is asked first; no number is put before a name,
+since the order of the rows says it. Until somebody drags them, Mapbox is the second row and Azure Maps
+the third.
 
 Under the three, **Nearby first** is how far around the restaurant a service's addresses come first: a
 slider, with the distance in words beside its name ("4 miles"). Its steps are finer up close (the owner's
@@ -947,7 +950,7 @@ in may not reach Mapbox or Azure, and there was no key. **Try it** is the first 
    new public token without it.
 3. In the app: Location › **Keys and connections** › **Mapbox** › **Type the key**, paste it, **Save**.
    **Try it** on the card asks Mapbox about the restaurant's own address.
-4. Location › **Address list** › turn on **2. Mapbox** › **Save**.
+4. Location › **Address list** › turn on **Mapbox** › **Save**.
 
 **Azure Maps:**
 
@@ -956,7 +959,7 @@ in may not reach Mapbox or Azure, and there was no key. **Try it** is the first 
 2. Open the new Maps account › **Settings › Authentication**, and copy the **Primary Key**.
 3. In the app: Location › **Keys and connections** › **Azure Maps** › **Type the key**, paste it, **Save**,
    and **Try it**.
-4. Location › **Address list** › turn on **3. Azure Maps** › **Save**.
+4. Location › **Address list** › turn on **Azure Maps** › **Save**.
 
 Neither key is typed in the hub's terminal: there is no hubctl command for them. A hub's own file may hold
 them all the same (`POS_MAPS_MAPBOX_KEY`, `POS_MAPS_AZURE_KEY` in `/opt/pos/.env`); a key typed in the app

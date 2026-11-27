@@ -840,6 +840,16 @@ class _PrintersScreenState extends State<PrintersScreen> {
                   style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ),
+            // with two or more, where each stands is when it is tried: said once, and no number on a row
+            if (row.fallbacks.length > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
+                child: Text(
+                  'The top one is tried first. Drag one by its handle to put it earlier or later.',
+                  key: ValueKey('printer-fallbacks-order:${row.id}'),
+                  style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                ),
+              ),
             ReorderableListView.builder(
               key: ValueKey('printer-fallbacks:${row.id}'),
               shrinkWrap: true,
@@ -1331,8 +1341,9 @@ class _PrintersScreenState extends State<PrintersScreen> {
     );
   }
 
-  /// One fallback: the handle to move it (the order is the order tried), its name and the bin. One that
-  /// leads back to this printer (saved before loops were refused, or made by joining two cards) is marked.
+  /// One fallback: the handle to move it (the order is the order tried, so no number is put before its
+  /// name), its name and the bin. One that leads back to this printer (saved before loops were refused, or
+  /// made by joining two cards) is marked.
   Widget _fallbackRow(BuildContext context, _PrinterRow row, int j) {
     final id = row.fallbacks[j];
     final other = _rows.where((r) => r.id == id).firstOrNull;
@@ -1349,8 +1360,6 @@ class _PrintersScreenState extends State<PrintersScreen> {
             child: Icon(Icons.drag_handle, color: scheme.onSurfaceVariant),
           ),
         ),
-        Text('${j + 1}.', style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(width: 8),
         Expanded(
           child: Text(
             other == null
