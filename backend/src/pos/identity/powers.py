@@ -47,6 +47,7 @@ POWERS: tuple[Power, ...] = (
     Power("adjust", "their PIN approves a discount, a comp, or taking a service charge off", session=False),
     Power("exempt", "their PIN approves marking a check tax exempt", session=False),
     Power("history", "read a check's whole history: every step, who did it and when"),
+    Power("calls", "listen to the recorded calls on an order (docs/call-recordings.md)"),
     Power(
         "take_tables", "a table can be theirs: the floor map offers them as a server", ("server", "bartender"), False
     ),

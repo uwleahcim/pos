@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import '../allergies.dart';
 import '../api.dart';
 import '../bag.dart';
+import '../call_player.dart';
+import '../calls.dart';
 import '../check_order.dart';
 import '../coursing.dart';
 import '../customers.dart';
@@ -36,6 +38,7 @@ import '../voids.dart';
 import 'allergy_dialog.dart';
 import 'bag_labels_dialog.dart';
 import 'bag_sheet.dart';
+import 'calls_sheet.dart';
 import 'check_history_screen.dart';
 import 'check_list.dart';
 import 'comp_menu.dart';
@@ -82,12 +85,16 @@ class OrderScreen extends StatefulWidget {
     this.session,
     this.phone,
     this.now,
+    this.callPlayer,
   });
 
   final PosApi api;
   final Outbox outbox;
   final PhotoQueue photos;
   final String orderId;
+
+  /// What plays a recorded call (docs/call-recordings.md): the device's speaker, unless a test stands in.
+  final CallPlayer Function()? callPlayer;
 
   /// What time it is, for how long ago a dish was sent; the device's own clock unless a test names one.
   /// It is the clock that stamps what this screen sends and the one in the corner of the device, so "sent
@@ -134,6 +141,9 @@ class _OrderScreenState extends State<OrderScreen> {
   String? _noteFor; // the number's digits it was read for
   int? _customerPoints; // and the points they have, where the owner set a rate (docs/points.md)
   String _customerName = ''; // and the name the hub knows them by: who a bar tab's number is of
+  OrderCalls _calls = OrderCalls.none; // the recorded calls with this order's number (docs/call-recordings.md)
+  String? _callsFor; // the number's digits they were read for
+  final _callsAccess = CallsAccess(); // the session somebody opened here to listen to them
   TableGuests _table = TableGuests.none; // the parties the host seated on this check, and their tags
   bool _tableAsked = false; // they were asked for, once it was known that this is a table's check
   int _ticks = 0; // of the timer: the table's guests are asked for again every fifteenth
@@ -165,6 +175,9 @@ class _OrderScreenState extends State<OrderScreen> {
       if (change.touches(widget.orderId)) _reader();
       // a party sat down or was put back, or a guest's tags changed: this check may say other tags now
       if (change.everything || change.reservations || change.waitlist) unawaited(_readTable());
+      // the phone server has a new recording: the call that just ended may be this order's
+      final order = _order;
+      if (order != null && (change.calls || change.everything)) unawaited(_readCalls(order, again: true));
     });
     widget.outbox.addListener(_onOutbox);
     _refresh();
@@ -326,6 +339,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayAllergic(order, quiet: first);
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
+        unawaited(_readCalls(order));
         if (!_tableAsked) unawaited(_readTable());
         unawaited(_readQuotes(order));
         unawaited(_readFees(order));
@@ -362,6 +376,32 @@ class _OrderScreenState extends State<OrderScreen> {
       _customerName = name;
     });
   }
+
+  /// The recorded calls with this order's number (docs/call-recordings.md), read once for the number and
+  /// [again] when the hub says the phone server has a new recording. An order without a number has none,
+  /// and nobody is asked.
+  Future<void> _readCalls(Order order, {bool again = false}) async {
+    final digits = phoneDigits(order.fields['phone']?.toString());
+    if (digits == _callsFor && !again) return;
+    if (digits.length < customerDigits) {
+      _callsFor = digits;
+      if (!_calls.isEmpty) setState(() => _calls = OrderCalls.none);
+      return;
+    }
+    final calls = await widget.api.orderCalls(widget.orderId);
+    if (!mounted || calls == null) return; // no hub has the order yet: asked again when it is read next
+    _callsFor = digits;
+    if (calls != _calls) setState(() => _calls = calls);
+  }
+
+  Future<void> _showCalls() => showCalls(
+    context,
+    api: widget.api,
+    orderId: widget.orderId,
+    calls: _calls,
+    access: _callsAccess,
+    player: widget.callPlayer,
+  );
 
   /// Whether this check carries the number of a guest at a table or at the bar: a walk-in who left one
   /// (docs/guest-list.md, "A walk-in's number"). A to-go order's number is its customer's, in its title.
@@ -1887,6 +1927,9 @@ class _OrderScreenState extends State<OrderScreen> {
             // an order from the website says so, with how it is paid and what the customer wrote for the
             // whole of it (docs/online-orders.md, "On the screens")
             if (order != null && OnlineStrip.shows(order)) OnlineStrip(order: order),
+            // the phone calls recorded with this order's number, to listen to (docs/call-recordings.md):
+            // only where there are any
+            if (order != null && !_calls.isEmpty) CallsStrip(calls: _calls, onTap: () => unawaited(_showCalls())),
             // an order for later says its day and time, a catering order what its event needs, and a
             // delivery where it goes; a tap changes them
             if (order != null && order.isTakeout && ((order.forLater && order.promisedAt != null) || order.isDelivery))

@@ -9,6 +9,7 @@ import 'address_parts.dart';
 import 'allergies.dart';
 import 'bag.dart';
 import 'cache.dart';
+import 'calls.dart';
 import 'check_history.dart';
 import 'contests.dart';
 import 'coursing.dart';
@@ -2133,6 +2134,32 @@ class PosApi {
     } on ApiException {
       return null;
     }
+  }
+
+  // An order's recorded calls (docs/call-recordings.md). -----------------------------------------------------
+
+  /// The recorded calls that go with an order, oldest first. None from a hub older than call recordings.
+  /// Null while it cannot be said: no hub answers, or none has heard of the order yet (it was only just
+  /// rung in), so whoever asks may ask again.
+  Future<OrderCalls?> orderCalls(String orderId) async {
+    try {
+      return OrderCalls.fromJson(await _get('/orders/$orderId/calls'));
+    } on ApiException catch (err) {
+      if (err.status == 404 && err.detail?['error'] != 'unknown_id') return OrderCalls.none;
+      return null;
+    }
+  }
+
+  /// One of the order's calls as an MP3, with the session of somebody who may listen ([token]). 401 for a
+  /// session whose hour is over, 403 for one that may not listen, 404 `gone` for a recording the phone
+  /// server no longer has, 424 while the phone server does not answer the hub.
+  Future<Uint8List> callAudio(String token, String orderId, String callId) async {
+    final response = await _send(
+      (base) => _client.get(Uri.parse('$base/orders/$orderId/calls/$callId/audio'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 60), // a long call is fetched from the phone server first
+    );
+    if (response.statusCode >= 400) throw _refused(response);
+    return response.bodyBytes;
   }
 
   // The day's report (docs/day-report.md). ------------------------------------------------------------------

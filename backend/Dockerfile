@@ -48,6 +48,11 @@ RUN install -d -m 0700 -o pos -g pos /door /tunnel \
   && echo "The API tells the push door here which key a push must carry (its SHA-256, not the key)." > /door/README \
   && echo "The API leaves the tunnel its token here, and the tunnel says how it stands. Not part of any backup." > /tunnel/README \
   && chown pos:pos /door/README /tunnel/README
+# Where a hub keeps the call recordings somebody listened to (pos/phones/recordings.py; the `pos-recordings`
+# volume). A new volume takes the folder as it is here: the hub's own user's, and nobody else's.
+RUN install -d -m 0700 -o pos -g pos /recordings \
+  && echo "Call recordings somebody listened to, kept a month. The PBX has them all. Not part of any backup." > /recordings/README \
+  && chown pos:pos /recordings/README
 COPY --from=cloudflared /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY --from=build /install /usr/local
 COPY --from=models /models /app/models

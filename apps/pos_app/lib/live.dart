@@ -19,6 +19,7 @@ class LiveChange {
     this.online = false,
     this.floor = false,
     this.prints = false,
+    this.calls = false,
   });
 
   /// The orders that changed, by id.
@@ -52,6 +53,10 @@ class LiveChange {
   /// The print log has a new print, or one printed or failed (docs/printing.md, "The print log").
   final bool prints;
 
+  /// The phone server has a call recording that is new or changed: an order may list another call
+  /// (docs/call-recordings.md).
+  final bool calls;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -60,7 +65,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -267,6 +272,7 @@ class LiveFeed extends ChangeNotifier {
             online: topics.contains('online'),
             floor: topics.contains('floor'),
             prints: topics.contains('prints'),
+            calls: topics.contains('calls'),
           ),
         );
     }

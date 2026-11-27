@@ -49,6 +49,7 @@ const powerGroups = [
     ),
     Power('exempt', 'Approve a tax-exempt check', 'Their PIN marks a check exempt from sales tax.'),
     Power('history', "Read a check's history", 'Every step of a check: who did it, on which screen and when.'),
+    Power('calls', 'Listen to recorded calls', 'Their PIN plays the phone calls recorded on an order.'),
   ]),
   PowerGroup('Tables', [
     Power('take_tables', 'Take tables', 'A table can be theirs, and a host can seat a party for them.'),
@@ -87,7 +88,18 @@ final powersById = {
 };
 
 /// The powers a session at the back office is for (the rest are a PIN on a check, or the tables).
-const sessionPowers = {'history', 'rush', 'notes', 'logbook', 'waste', 'reports', 'guests', 'time_clock', 'menu'};
+const sessionPowers = {
+  'history',
+  'calls',
+  'rush',
+  'notes',
+  'logbook',
+  'waste',
+  'reports',
+  'guests',
+  'time_clock',
+  'menu',
+};
 
 /// What is under Location in the menu, besides the settings themselves.
 const locationPowers = {'reports', 'guests', 'waste', 'notes', 'logbook', 'time_clock'};

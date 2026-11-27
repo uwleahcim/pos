@@ -2509,6 +2509,40 @@ class Hub {
   int? refuseHistory;
   final eventPhotos = <String, List<int>>{};
 
+  /// An order's recorded calls (docs/call-recordings.md). [calls] answers `GET /orders/<id>/calls` by the
+  /// order asked for, each call as the hub lists it ([recorded] makes one); an order it has nothing for has
+  /// none, and null is a hub older than call recordings. [callsProblem] is the hub's word for a phone server
+  /// that did not answer its last look. Each ask is in [callsAsks]. [callAudio] answers
+  /// `GET /orders/<id>/calls/<call>/audio` with a recording's bytes, to a session whose holder may listen
+  /// (the power `calls` in [powers]): each ask is in [audioAsks] and the token of the last in [audioAuth];
+  /// [refuseAudio] answers with that status and error instead, once when [refuseAudioOnce].
+  Map<String, List<Map<String, dynamic>>>? calls = {};
+  String? callsProblem;
+  final callsAsks = <String>[];
+  final callAudio = <String, List<int>>{};
+  final audioAsks = <String>[];
+  String? audioAuth;
+  (int, String)? refuseAudio;
+  bool refuseAudioOnce = false;
+
+  /// A recorded call as the hub lists it.
+  static Map<String, dynamic> recorded(
+    String id,
+    int startedMs, {
+    bool out = false,
+    int? seconds = 95,
+    bool stereo = false,
+    bool opened = false,
+  }) => {
+    'id': id,
+    'direction': out ? 'out' : 'in',
+    'started_ms': startedMs,
+    'seconds': seconds,
+    'stereo': stereo,
+    'extension': out ? '200' : '',
+    'opened': opened,
+  };
+
   /// Unreachable: every call fails, as with the hub's cable pulled.
   bool down = false;
 
@@ -2868,6 +2902,8 @@ class Hub {
   }
 
   static final _history = RegExp(r'^/orders/([^/]+)/history$');
+  static final _calls = RegExp(r'^/orders/([^/]+)/calls$');
+  static final _callAudio = RegExp(r'^/orders/([^/]+)/calls/([^/]+)/audio$');
   static final _photo = RegExp(r'^/events/photos/([^/]+)$');
   static final _shift = RegExp(r'^/timeclock/shifts/([^/]+)$');
 
@@ -3955,6 +3991,59 @@ class Hub {
       final id = _order.firstMatch(path)!.group(1)!;
       final order = orders.where((o) => o['order_id'] == id).firstOrNull;
       return order == null ? json({'detail': 'not found'}, 404) : json(order);
+    }
+    if (_calls.hasMatch(path)) {
+      if (calls == null) return json({'detail': 'Not Found'}, 404);
+      final id = _calls.firstMatch(path)!.group(1)!;
+      callsAsks.add(id);
+      final order = orders.where((o) => o['order_id'] == id).firstOrNull;
+      if (order == null) {
+        return json({
+          'detail': {'error': 'unknown_id', 'message': 'There is no such check.'},
+        }, 404);
+      }
+      return json({
+        'order_id': id,
+        'phone': phoneDigits(((order['fields'] as Map?)?['phone'])?.toString()),
+        'linked': true,
+        'problem': callsProblem,
+        'calls': calls![id] ?? const <Map<String, dynamic>>[],
+      });
+    }
+    if (_callAudio.hasMatch(path)) {
+      if (calls == null) return json({'detail': 'Not Found'}, 404);
+      final found = _callAudio.firstMatch(path)!;
+      final (id, call) = (found.group(1)!, found.group(2)!);
+      audioAsks.add(call);
+      audioAuth = request.headers['authorization'];
+      final token = (audioAuth ?? '').replaceFirst('Bearer ', '');
+      final role = token == 'tok-admin'
+          ? 'manager'
+          : people.values.where((person) => 'tok-${person.$1}' == token).firstOrNull?.$3;
+      if (role == null) {
+        return json({
+          'detail': {'error': 'sign_in', 'message': 'sign in with a manager PIN'},
+        }, 401);
+      }
+      if (!heldBy(role).contains('calls')) {
+        return json({
+          'detail': {'error': 'not_allowed', 'role': role, 'power': 'calls'},
+        }, 403);
+      }
+      final refuse = refuseAudio;
+      if (refuse != null) {
+        if (refuseAudioOnce) refuseAudio = null;
+        return json({
+          'detail': {'error': refuse.$2, 'message': 'no'},
+        }, refuse.$1);
+      }
+      final sound = (calls![id] ?? const []).any((c) => c['id'] == call) ? callAudio[call] : null;
+      if (sound == null) {
+        return json({
+          'detail': {'error': 'unknown_call', 'message': "That call is not one of this order's."},
+        }, 404);
+      }
+      return http.Response.bytes(sound, 200, headers: const {'content-type': 'audio/mpeg'});
     }
     if (_history.hasMatch(path)) {
       if (histories == null) return json({'detail': 'Not Found'}, 404);

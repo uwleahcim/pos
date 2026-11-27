@@ -55,6 +55,11 @@ services:
       POS_AMI_USER: ${POS_AMI_USER:-pos}
       POS_AMI_SECRET: ${POS_AMI_SECRET:-}
       POS_AMI_TLS: ${POS_AMI_TLS:-}
+      # Call recordings on phone orders (docs/call-recordings.md): the PBX whose recordings the hub reads, as
+      # user@host, written by `hubctl pbx recordings link` with the key in /opt/pos/pbx-recordings (mounted
+      # below). Empty: no order lists any call. What somebody listened to is kept a month in /recordings.
+      POS_PBX_RECORDINGS: ${POS_PBX_RECORDINGS:-}
+      POS_RECORDINGS_CACHE: /recordings
       # Apple's push key (docs/push-relay.md), for waking a locked iPhone or iPad: `hubctl push apple` puts the
       # key in /opt/pos/apns (mounted below) and writes these. Empty: no pushes go out.
       POS_APNS_KEY: ${POS_APNS_KEY:-}
@@ -95,6 +100,13 @@ services:
       POS_TUNNEL_TOKEN: ${POS_TUNNEL_TOKEN:-}
     volumes:
       - ./apns:/apns:ro
+      # The hub's key for the PBX's call recordings and the PBX's host key: a key of its own, which on the
+      # PBX may run one program that lists and hands over recordings (`hubctl pbx recordings link`). The
+      # tunnel's key in /opt/pos/pbx is not mounted here.
+      - ./pbx-recordings:/pbx-recordings:ro
+      # The recordings somebody listened to, kept so the second listen needs no PBX. Not part of any backup:
+      # the PBX has them all.
+      - pos-recordings:/recordings
       # The secret that opens the keys a manager typed in the app (Location, Keys and connections;
       # docs/hub-keys.md). The keys themselves are in the database, sealed; this is kept apart from it, so a
       # backup of the database opens nothing. A hub with POS_SECRET seals with that instead.
@@ -200,3 +212,4 @@ volumes:
   pos-keys:
   pos-door:
   pos-tunnel:
+  pos-recordings:

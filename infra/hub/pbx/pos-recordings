@@ -1,0 +1,109 @@
+#!/bin/sh
+# pos-recordings: what the POS hub may ask this PBX about its call recordings, and nothing else.
+#
+# It is the forced command of the hub's recordings key: the line `hubctl pbx recordings link` adds to
+# ~/.ssh/authorized_keys on the PBX names this file, so whatever that key asks for, sshd runs this file and
+# hands it the request in SSH_ORIGINAL_COMMAND. The key opens no shell, forwards nothing and writes nothing.
+# This file only reads, and answers three requests:
+#
+#   about           this file's version, the tools found, and whether the stereo step is in place
+#   list <since>    the recordings changed after <since> (seconds since 1970), one a line: mtime size path
+#   get <path>      one recording as an MP3 on standard output; <path> as `list` gave it
+#
+# Anything else is refused, and so is any path that is not a plain file under the recordings folder.
+# docs/call-recordings.md has the whole story. Installed as /usr/local/sbin/pos-recordings.
+set -u
+set -f # nothing that was asked for is ever expanded as a pattern
+
+VERSION=1
+DIR=${POS_RECORDINGS_DIR:-/var/spool/asterisk/monitor}
+STEREO=${POS_STEREO_SCRIPT:-/usr/local/sbin/pos-stereo}
+CUSTOM=${POS_DIALPLAN_CUSTOM:-/etc/asterisk/extensions_custom.conf}
+
+# sshd runs this as the user the key logs in as, root as a rule. Reading recordings needs no more than
+# Asterisk's own user, so that is who does the work where there is one.
+if [ "$(id -u)" = 0 ] && [ -z "${POS_RECORDINGS_KEEP_ROOT:-}" ] && id asterisk > /dev/null 2>&1 \
+  && command -v runuser > /dev/null 2>&1; then
+  exec runuser -u asterisk -- "$0" "$@"
+fi
+
+refuse() {
+  echo "pos-recordings: refused: $1" >&2
+  exit 2
+}
+
+have() {
+  command -v "$1" > /dev/null 2>&1
+}
+
+# One recording as an MP3 on standard output: 16 kHz, so every phone and tablet plays it; one channel or two
+# as the recording has them. FreePBX's own files are GSM inside a WAV, which few players read.
+to_mp3() {
+  if have sox && have lame; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/pos-recording.XXXXXX") || exit 5
+    trap 'rm -f "$tmp" "$tmp.wav"' EXIT INT TERM
+    channels=$(soxi -c "$1" 2> /dev/null || echo 1)
+    if sox "$1" -r 16000 -e signed-integer -b 16 "$tmp.wav" 2> /dev/null; then
+      if [ "$channels" = 2 ]; then
+        lame --quiet -m s -b 64 "$tmp.wav" -
+      else
+        lame --quiet -m m -b 24 "$tmp.wav" -
+      fi
+      return
+    fi
+  fi
+  if have ffmpeg; then
+    ffmpeg -nostdin -v error -i "$1" -vn -ar 16000 -c:a libmp3lame -q:a 6 -f mp3 -
+    return
+  fi
+  echo "pos-recordings: this PBX has neither sox with lame nor ffmpeg to read the recording with" >&2
+  exit 5
+}
+
+# shellcheck disable=SC2086  # split into words on purpose; `set -f` above keeps patterns from expanding
+set -- ${SSH_ORIGINAL_COMMAND:-about}
+[ $# -le 2 ] || refuse "one request and at most one thing after it"
+
+case ${1:-about} in
+  about)
+    echo "pos-recordings $VERSION"
+    echo "folder $DIR"
+    for tool in sox lame ffmpeg; do
+      if have "$tool"; then echo "$tool yes"; else echo "$tool no"; fi
+    done
+    if [ -x "$STEREO" ]; then echo "stereo-script yes"; else echo "stereo-script no"; fi
+    if grep -q '^\[pos-stereo\]' "$CUSTOM" 2> /dev/null; then echo "stereo-dialplan yes"; else echo "stereo-dialplan no"; fi
+    ;;
+  list)
+    since=${2:-0}
+    case $since in
+      '' | *[!0-9]*) refuse "list takes a time in whole seconds" ;;
+    esac
+    [ -d "$DIR" ] || exit 0
+    cd "$DIR" || exit 3
+    find . -type f -newermt "@$since" -printf '%T@ %s %P\n'
+    ;;
+  get)
+    path=${2:-}
+    case $path in
+      '' | /* | -* | *..* | *//*) refuse "that is not a recording's path" ;;
+      *[!A-Za-z0-9+_.@/-]*) refuse "that is not a recording's path" ;;
+    esac
+    file=$DIR/$path
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+      echo "pos-recordings: no such recording" >&2
+      exit 4
+    fi
+    case $(realpath -e -- "$file") in
+      "$(realpath -e -- "$DIR")"/*) ;;
+      *) refuse "that is not under the recordings folder" ;;
+    esac
+    case $path in
+      *.mp3) exec cat -- "$file" ;;
+      *) to_mp3 "$file" ;;
+    esac
+    ;;
+  *)
+    refuse "only about, list and get are answered"
+    ;;
+esac

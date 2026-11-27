@@ -1,0 +1,64 @@
+#!/bin/sh
+# pos-stereo <legs>: one stereo recording of a call out of its two sides.
+#
+# FreePBX mixes both voices of a call into one channel. With the [pos-stereo] step in the dialplan
+# (pos-stereo.conf beside this file; docs/call-recordings.md, "Stereo") Asterisk also writes each side of
+# the call to a file of its own while it records, <legs>-in.wav (what came from the caller) and
+# <legs>-out.wav (what the caller heard: the restaurant), and runs this when the recording ends. This puts
+# the two side by side in <legs>.mp3, the caller on the left and the restaurant on the right, and then
+# removes the two side files. FreePBX's own recording of the call is not touched.
+#
+# <legs> is a path under the recordings folder without an ending, such as 2026/11/26/pos-1795713495.19788.
+# Nothing is ever removed unless the stereo file was written whole; whatever goes wrong, this exits quietly:
+# a call recording must never fail because of it. Installed as /usr/local/sbin/pos-stereo, run by Asterisk.
+set -u
+
+DIR=${POS_RECORDINGS_DIR:-/var/spool/asterisk/monitor}
+legs=${1:-}
+case $legs in
+  '' | /* | -* | *..* | *//*) exit 0 ;;
+  *[!A-Za-z0-9_./-]*) exit 0 ;;
+esac
+
+in=$DIR/$legs-in.wav
+out=$DIR/$legs-out.wav
+mp3=$DIR/$legs.mp3
+part=$mp3.part
+[ -s "$in" ] && [ -s "$out" ] || exit 0
+
+have() {
+  command -v "$1" > /dev/null 2>&1
+}
+
+# How long the longer side runs, in whole seconds, by its size: Asterisk writes a side as 8 kHz, 16 bits.
+longest() {
+  a=$(wc -c < "$in")
+  b=$(wc -c < "$out")
+  [ "$a" -ge "$b" ] || a=$b
+  echo $((a / 16000 + 1))
+}
+
+merged=no
+if have sox && have lame; then
+  # sox pads the shorter side with silence, so neither side is ever cut short
+  if sox -M "$in" "$out" -r 16000 -e signed-integer -b 16 "$part.wav" 2> /dev/null \
+    && lame --quiet -m s -b 64 "$part.wav" "$part" 2> /dev/null; then
+    merged=yes
+  fi
+  rm -f "$part.wav"
+fi
+if [ "$merged" = no ] && have ffmpeg; then
+  if ffmpeg -nostdin -v error -y -i "$in" -i "$out" \
+    -filter_complex '[0:a]apad[l];[1:a]apad[r];[l][r]amerge=inputs=2[a]' -map '[a]' \
+    -t "$(longest)" \
+    -ar 16000 -c:a libmp3lame -b:a 64k -joint_stereo 0 -f mp3 "$part" 2> /dev/null; then
+    merged=yes
+  fi
+fi
+
+if [ "$merged" = yes ] && [ -s "$part" ]; then
+  mv -f "$part" "$mp3" && rm -f "$in" "$out"
+else
+  rm -f "$part"
+fi
+exit 0

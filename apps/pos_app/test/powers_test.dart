@@ -103,6 +103,7 @@ const everything = {
   'adjust',
   'exempt',
   'history',
+  'calls',
   'take_tables',
   'assign_tables',
   'deliver',
@@ -147,7 +148,7 @@ void main() {
         expect(table.opensLocation(role), isFalse);
       }
       expect(table.summary, 'As it started: managers and owners approve and open the back office');
-      expect(powersById.length, 15);
+      expect(powersById.length, 16);
     });
 
     test('a manager and an owner hold everything whatever it says, and nobody else the settings', () {
@@ -247,8 +248,8 @@ void main() {
         }
       }
       // six roles to hand a power to, and no button for a manager or an owner: theirs is not the table's
-      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(15));
-      expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(15));
+      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(16));
+      expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(16));
       expect(find.widgetWithText(FilterChip, 'Managers'), findsNothing);
       expect(find.widgetWithText(FilterChip, 'Owners'), findsNothing);
       // nothing to save, so no Save at all, and nothing to put back
