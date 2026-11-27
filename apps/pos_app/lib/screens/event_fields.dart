@@ -263,7 +263,7 @@ typedef WhenAndEvent = ({DateTime? promised, EventDetails? event, String? fee, M
 /// time here: the kitchen's ticket waits for the new time (docs/printing.md, "Orders sent ahead"). A
 /// catering order ([catering]) changes its guests and the note for its event too. A delivery that is no
 /// catering order needs its address: without one it cannot be saved. Where the location charges for
-/// delivery ([fees]) it needs its fee picked too, and "No fee" is a pick.
+/// delivery ([fees]) it needs its fee picked too, and "No fee" is a pick. A custom fee needs its amount typed.
 class WhenDialog extends StatefulWidget {
   const WhenDialog({
     super.key,
@@ -333,8 +333,11 @@ class _WhenDialogState extends State<WhenDialog> {
     if (!mounted || widget.event == null || _handover != 'delivery') return;
     // (never a fee the website charged: the customer was told it, and may have paid it)
     if (chosen && _asker.can && !(widget.fee?.onWebsite ?? false)) _feeByHand = false;
-    final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: widget.live))?.band;
-    if (mounted && band != null && !_feeByHand) setState(() => _fee = band.upTo);
+    final found = await _asker.ask(_address.text, again: again, fresh: fresh, now: widget.live);
+    if (!mounted || _feeByHand) return;
+    // an address further than every price asks for the custom fee, where the location has one
+    final pick = FeePick.found(found, widget.fees, _fee);
+    if (pick != null) setState(() => _fee = pick);
   }
 
   /// A delivery with nowhere to go. (A catering order may be given its address later: it is days away.)
@@ -349,6 +352,9 @@ class _WhenDialogState extends State<WhenDialog> {
       _handover == 'delivery' &&
       (widget.fees?.asks ?? false) &&
       _fee == null;
+
+  /// A delivery on the custom fee with no amount typed yet: nothing to save, on a catering order too.
+  bool get _untyped => widget.event != null && _handover == 'delivery' && FeePick.unfinished(_fee);
 
   @override
   void dispose() {
@@ -381,7 +387,8 @@ class _WhenDialogState extends State<WhenDialog> {
     final later = widget.promised != null;
     final past = later && WhenPicker.at(_day, _time).isBefore(DateTime.now());
     final nowhere = _nowhere;
-    final unpriced = _unpriced;
+    final untyped = _untyped;
+    final unpriced = _unpriced || untyped;
     return AlertDialog(
       title: Text(
         widget.catering
@@ -429,8 +436,8 @@ class _WhenDialogState extends State<WhenDialog> {
                   fee: _fee,
                   feeTaken: widget.fee,
                   onFee: (pick) => setState(() {
+                    if (FeePick.byHand(_fee, pick)) _feeByHand = true;
                     _fee = pick;
-                    _feeByHand = true;
                   }),
                   asker: _asker,
                   onAddressDone: _lookUp,
@@ -444,7 +451,7 @@ class _WhenDialogState extends State<WhenDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    'Pick the delivery fee.',
+                    untyped ? 'Type the delivery fee.' : 'Pick the delivery fee.',
                     key: const ValueKey('fee-needed'),
                     style: theme.textTheme.bodySmall,
                   ),

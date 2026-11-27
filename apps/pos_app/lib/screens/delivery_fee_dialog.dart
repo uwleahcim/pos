@@ -17,6 +17,11 @@ import 'drive_services.dart';
 /// 2026-11-27: "Allow fractional miles like 0.25 miles. Also the list of the delivery distance should auto
 /// sort by distance").
 ///
+/// A delivery that goes further than the last price reaches has no price on the list. A switch says whether
+/// whoever takes the order may then type what it costs ("A custom fee for a delivery further away"; the
+/// owner's words, 2026-11-27: "Allow custom delivery fee for distance more than the max delivery fee distance
+/// in the delivery fee settings"). On unless it is turned off; a hub older than it shows no switch.
+///
 /// On a hub that can look a delivery's distance up ("Looking the distance up") the dialog also holds the
 /// restaurant's own address, where every delivery starts, and says whether the hub has a map service.
 ///
@@ -54,6 +59,7 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
   late bool _enabled = widget.fees.enabled;
   late String _by = widget.fees.by;
   late bool _taxed = widget.fees.taxed;
+  late bool? _custom = widget.fees.custom; // null: a hub older than the custom fee, which is not told of one
   late final _origin = TextEditingController(text: widget.fees.origin);
 
   /// The map services' names in the order they are asked, as a drag left it, and each one's switch.
@@ -164,6 +170,7 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
           enabled: _enabled,
           by: _by,
           taxed: _taxed,
+          custom: _custom,
           bands: [for (final (i, reach) in reaches.indexed) FeeBand(upTo: reach, fee: fees[i])],
           // a hub older than the lookup shows no box for it: what it holds is left as it is
           origin: widget.fees.maps == null ? widget.fees.origin : oneLine(_origin.text),
@@ -228,7 +235,9 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
               const SizedBox(height: 12),
               Text('The prices', style: theme.textTheme.titleSmall),
               Text(
-                'One button each on a delivery, nearest first. "No fee" is always a button.',
+                'Nearest first. Up to ${DeliveryFees.mostButtons} are a button each on a delivery; more are one line '
+                'that opens the whole list. "No fee" is always a choice.',
+                key: const ValueKey('fee-bands-says'),
                 style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               for (final band in _bands)
@@ -285,6 +294,20 @@ class _DeliveryFeeDialogState extends State<DeliveryFeeDialog> {
                         }),
                 ),
               ),
+              if (_custom case final custom?)
+                SwitchListTile(
+                  key: const ValueKey('fee-custom'),
+                  contentPadding: EdgeInsets.zero,
+                  value: custom,
+                  onChanged: (on) => setState(() => _custom = on),
+                  title: const Text('Custom fee past the last distance'),
+                  subtitle: Text(
+                    custom
+                        ? 'For a delivery further than the last price reaches, whoever takes the order types what '
+                              'it costs'
+                        : 'A delivery further than the last price reaches is charged one of the prices, or no fee',
+                  ),
+                ),
               SwitchListTile(
                 key: const ValueKey('fee-taxed'),
                 contentPadding: EdgeInsets.zero,

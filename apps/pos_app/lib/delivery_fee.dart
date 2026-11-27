@@ -38,6 +38,7 @@ class DeliveryFees {
     this.lookup = false,
     this.services = const [],
     this.live = false,
+    this.custom,
   });
 
   factory DeliveryFees.fromJson(Map<String, dynamic> json) => DeliveryFees(
@@ -57,10 +58,16 @@ class DeliveryFees {
           if (name is String && name.isNotEmpty) name,
     ],
     live: json['live'] == true,
+    custom: json['custom'] is bool ? json['custom'] as bool : null,
   );
 
-  /// The most bands a location lists, as the hub holds it: one screenful of buttons.
+  /// The most bands a location lists, as the hub holds it.
   static const mostBands = 8;
+
+  /// The most prices a form shows as a button each. A longer list is one line that opens the whole list
+  /// (the owner's words, 2026-11-27: "delivery fees with lots of options (over 4) change it something that
+  /// fit better on the screen than a bunch of buttons").
+  static const mostButtons = 4;
 
   final bool enabled;
 
@@ -88,8 +95,28 @@ class DeliveryFees {
   /// for the drive right now beside the distance.
   final bool live;
 
+  /// Whether whoever takes a delivery may type what it costs where it goes further than the last band
+  /// reaches ("A custom fee for a delivery further away"); null from a hub older than that, which takes no
+  /// typed amount.
+  final bool? custom;
+
   /// Whether a delivery is asked what it costs: turned on, with a price to pick.
   bool get asks => enabled && bands.isNotEmpty;
+
+  /// Whether a form offers the custom fee beside the prices.
+  bool get offersCustom => asks && custom == true;
+
+  /// Whether the prices are too many for a button each ([mostButtons]).
+  bool get crowded => bands.length > mostButtons;
+
+  /// The band that reaches furthest, which a custom fee is for deliveries beyond; null with no band.
+  FeeBand? get furthest {
+    FeeBand? last;
+    for (final band in bands) {
+      if (last == null || (double.tryParse(band.upTo) ?? 0) > (double.tryParse(last.upTo) ?? 0)) last = band;
+    }
+    return last;
+  }
 
   /// Whether a form asks the hub how far an address is: only where there is a price to pick for the answer,
   /// so no address leaves the building for nothing.
@@ -103,13 +130,15 @@ class DeliveryFees {
     return null;
   }
 
-  /// As a manager saves it. What the hub says of its map service is the hub's to say, and is not sent.
+  /// As a manager saves it. What the hub says of its map service is the hub's to say, and is not sent. Nor
+  /// is [custom] to a hub that said nothing of it: it would not know the word.
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
     'by': by,
     'bands': [for (final band in bands) band.toJson()],
     'taxed': taxed,
     'origin': origin,
+    'custom': ?custom,
   };
 }
 
@@ -361,14 +390,21 @@ String reachShort(String by, String upTo) => '$upTo ${feeUnit(by)}';
 /// "$5.00", and "Free" for a band that costs nothing.
 String feeWords(String fee) => (double.tryParse(fee) ?? 0) == 0 ? 'Free' : '\$$fee';
 
+/// "Past 8 mi", "Past 20 min": what a custom fee is for, by the band that reaches furthest.
+String pastWords(String by, String upTo) => 'Past ${reachShort(by, upTo)}';
+
 /// The fee an order carries, read from its `delivery_fee` field: the band it was picked by and what that
 /// band cost then. An order placed on the restaurant's website carries the fee the website charged, which
-/// has no band ([onWebsite], docs/online-orders.md).
+/// has no band ([onWebsite], docs/online-orders.md). Nor has a fee that was typed for a delivery further
+/// than the bands reach ([custom]).
 class OrderFee {
   const OrderFee({this.by, this.upTo, this.amount = '0.00', this.taxed = false, this.measured});
 
   /// What [by] says of a fee the website charged.
   static const website = 'online';
+
+  /// What [by] says of a fee that was typed: the amount alone, for a delivery further than the bands reach.
+  static const typed = 'custom';
 
   /// Null while nobody said what the delivery costs, and for a field this build cannot read.
   static OrderFee? of(Object? value) {
@@ -380,6 +416,9 @@ class OrderFee {
       return OrderFee(by: website, amount: amount, taxed: value['taxed'] == true);
     }
     final measured = Measured.of(value['measured']);
+    if (by == typed && double.parse(amount) > 0) {
+      return OrderFee(by: typed, amount: amount, taxed: value['taxed'] == true, measured: measured);
+    }
     if ((by != 'miles' && by != 'minutes') || upTo == null || upTo.isEmpty) {
       return double.parse(amount) == 0 ? OrderFee(measured: measured) : null;
     }
@@ -388,7 +427,7 @@ class OrderFee {
 
   final String? by;
 
-  /// The band's reach; null for no fee on purpose, and for a fee the website charged.
+  /// The band's reach; null for no fee on purpose, for a fee the website charged and for one that was typed.
   final String? upTo;
   final String amount;
   final bool taxed;
@@ -399,21 +438,30 @@ class OrderFee {
   /// Charged on the restaurant's website when the order was placed there: no band of the location's list.
   bool get onWebsite => by == website;
 
+  /// Typed by whoever took the order, for a delivery further than the bands reach: no band of the list.
+  bool get custom => by == typed;
+
   /// No fee, on purpose.
-  bool get none => upTo == null && !onWebsite;
+  bool get none => upTo == null && !onWebsite && !custom;
 
-  /// How a form names it: the band's reach, [FeePick.none], or [FeePick.kept] for the website's fee, which
-  /// no button of the list stands for.
-  String get pick => onWebsite ? FeePick.kept : upTo ?? FeePick.none;
+  /// How a form names it: the band's reach, [FeePick.none], the amount that was typed ([FeePick.typed]),
+  /// or [FeePick.kept] for the website's fee, which no button of the list stands for.
+  String get pick => onWebsite
+      ? FeePick.kept
+      : custom
+      ? FeePick.typed(amount)
+      : upTo ?? FeePick.none;
 
-  /// "Up to 4.5 mi", or "Charged on the website"; nothing for no fee.
+  /// "Up to 4.5 mi", "Charged on the website" or "Custom fee"; nothing for no fee.
   String get reach => none
       ? ''
       : onWebsite
       ? 'Charged on the website'
+      : custom
+      ? 'Custom fee'
       : reachWords(by!, upTo!);
 
-  /// "$5.00 · up to 4.5 mi", "$4.00 · charged on the website", or "No fee".
+  /// "$5.00 · up to 4.5 mi", "$4.00 · charged on the website", "$12.50 · custom fee", or "No fee".
   String get words => none ? 'No fee' : '${feeWords(amount)} · ${reach.toLowerCase()}';
 
   @override
@@ -430,27 +478,80 @@ class OrderFee {
 }
 
 /// What a form holds of the fee: a band's reach ("2.5"), [none] for no fee on purpose, [kept] for the fee
-/// the order already carries, or null while nobody picked.
+/// the order already carries, a custom fee with what was typed of it so far ([typed]), or null while nobody
+/// picked.
 abstract final class FeePick {
   static const none = '';
   static const kept = '=';
 
+  /// The custom fee, picked and nothing typed yet. What is typed follows it: "+12.50". No band's reach
+  /// starts so.
+  static const custom = '+';
+
+  /// The custom fee with [amount] as far as it is typed.
+  static String typed(String amount) => '$custom${amount.trim()}';
+
+  /// Whether [pick] is the custom fee, whatever is typed of it.
+  static bool isCustom(String? pick) => pick != null && pick.startsWith(custom);
+
+  /// What is typed of a custom fee, as it was typed; nothing for any other pick.
+  static String typedOf(String? pick) => isCustom(pick) ? pick!.substring(custom.length) : '';
+
+  /// A typed fee as the hub takes it, "12.50": dollars and cents (a "$" before them is let be), above
+  /// nothing and under a thousand. Null while it is no such amount.
+  static String? money(String text) {
+    final said = text.trim().replaceFirst(RegExp(r'^\$\s*'), '');
+    if (!RegExp(r'^(\d{1,3}(\.\d{0,2})?|\.\d{1,2})$').hasMatch(said)) return null;
+    final amount = double.parse(said.startsWith('.') ? '0$said' : said);
+    return amount > 0 ? amount.toStringAsFixed(2) : null;
+  }
+
+  /// The amount of a custom fee, once it is one ([money]); null for any other pick, and while it is not.
+  static String? amountOf(String? pick) => isCustom(pick) ? money(typedOf(pick)) : null;
+
+  /// The custom fee was picked and what it costs is not typed yet: nothing to send, and nothing to start
+  /// a delivery on.
+  static bool unfinished(String? pick) => isCustom(pick) && amountOf(pick) == null;
+
+  /// Whether going from [was] to [pick] is somebody picking by hand. Typing the amount of a custom fee
+  /// that is already picked is not: where the map asked for it, the map still picks for the next address.
+  static bool byHand(String? was, String pick) => !(isCustom(was) && isCustom(pick));
+
+  /// What the map's [answer] about an address picks on a form that holds [pick]: the band the address
+  /// falls in, or the custom fee where it is further than the bands reach and the location offers one (what
+  /// is typed of one already stays). Null leaves the form as it is.
+  static String? found(FeeLookup? answer, DeliveryFees? fees, String? pick) {
+    if (answer == null) return null;
+    if (answer.band case final band?) return band.upTo;
+    if (!answer.beyond || !(fees?.offersCustom ?? false)) return null;
+    return isCustom(pick) ? pick : custom;
+  }
+
   /// What an order's `delivery_fee` field is sent as: the band alone, and what the map said of the
-  /// address when it was asked ([measured]). The hub fills in what the band costs.
+  /// address when it was asked ([measured]). The hub fills in what the band costs. A custom fee is sent as
+  /// its amount, the one amount a screen says.
   static Map<String, dynamic> field(String pick, {Measured? measured}) => {
-    'up_to': pick == none ? null : pick,
+    if (isCustom(pick)) 'custom': amountOf(pick) else 'up_to': pick == none ? null : pick,
     'measured': ?measured?.toJson(),
   };
 
   /// Whether the fee an order carries ([taken]) is one the list ([fees]) still offers at that price. One
-  /// that is not stays on the order as it was taken, until somebody picks another.
+  /// that is not stays on the order as it was taken, until somebody picks another. A custom fee is offered
+  /// for as long as the location lets one be typed.
   static bool listed(OrderFee taken, DeliveryFees? fees) =>
-      taken.none || (fees != null && fees.asks && fees.by == taken.by && fees.band(taken.upTo)?.fee == taken.amount);
+      taken.none ||
+      (fees != null &&
+          fees.asks &&
+          (taken.custom ? fees.offersCustom : fees.by == taken.by && fees.band(taken.upTo)?.fee == taken.amount));
 
-  /// What a form picked, as it is to be sent: null when it leaves the order's fee ([taken]) as it is.
+  /// What a form picked, as it is to be sent: null when it leaves the order's fee ([taken]) as it is, and
+  /// for a custom fee whose amount is not typed.
   static String? changed(String? pick, OrderFee? taken, DeliveryFees? fees) {
-    if (pick == null || pick == kept) return null;
-    if (taken != null && listed(taken, fees) && pick == taken.pick) return null;
+    if (pick == null || pick == kept || unfinished(pick)) return null;
+    if (taken != null && listed(taken, fees)) {
+      if (pick == taken.pick) return null;
+      if (taken.custom && amountOf(pick) == money(taken.amount)) return null; // "12.5" is the 12.50 it carries
+    }
     return pick;
   }
 }

@@ -29,6 +29,16 @@ Not every service lets its figures be kept (`pos.maps.may_keep`: Google's terms 
 said picks the band on the form and goes no further: `fee_ops` leaves it off the order, and leaves off
 figures that do not say who measured them, since nobody can tell whose terms those fall under.
 
+A delivery that goes further than the last band reaches has no price on the list. Where the location allows it
+(`custom` in the setting, on to start), whoever takes the order types what that one costs (the owner's words,
+2026-11-27: "Allow custom delivery fee for distance more than the max delivery fee distance in the delivery
+fee settings"). A screen then says the amount in place of a band, `{"custom": "12.50"}`, and the order carries
+`{"by": "custom", "up_to": null, "amount": "12.50"}`, with whether the fee is taxed filled in as for a band. It
+is the one amount a screen may say: it is above nothing, it is refused where the location does not allow it,
+and the history of the check says who typed it. The hub does not check how far the address is: with no map
+service nobody knows but whoever took the order, and anybody who takes orders may already pick any band, or
+no fee.
+
 An order that came from the restaurant's website was charged its fee there (`pos.online.place`): it carries
 what that was, `{"by": "online", "up_to": null, "amount": "5.00"}`, with no band, and is charged it like any
 other. Only the hub writes one: a screen that names no band says no fee, as ever.
@@ -60,6 +70,9 @@ TAX_CLASS = "delivery_fee"
 MEASURES = ("miles", "minutes")
 ONLINE = "online"
 """What a fee goes by when the customer was charged it on the restaurant's website: no band, the amount alone."""
+CUSTOM = "custom"
+"""What a fee goes by when whoever took the order typed it, for a delivery further than the last band reaches:
+no band, the amount alone. It is also what a screen says the amount under, and the setting's switch for it."""
 MILES_MAX = Decimal(100)
 MINUTES_MAX = Decimal(240)
 FEE_MAX = Decimal("999.99")
@@ -164,11 +177,18 @@ def measured_of(value: Any) -> dict[str, Any] | None:
     return kept
 
 
+def custom_allowed(setting: Mapping[str, Any]) -> bool:
+    """Whether whoever takes an order may type the fee of a delivery further than the last band reaches: the
+    location charges a fee, lists a price to be further than, and has not turned the custom fee off."""
+    return setting.get("enabled") is True and bool(setting.get("bands")) and setting.get(CUSTOM) is not False
+
+
 def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     """What an order carries of its delivery fee, or None while nobody said: `amount` (dollars, "0.00" for
     no fee on purpose), `by` and `up_to` (the band it was picked by; None with no fee), `taxed`, and, only
     when the map was asked, `measured`: what it said of the address when the fee was picked. A fee charged
-    on the website goes by `online` and has no band."""
+    on the website goes by `online` and has no band; nor has one that was typed for a delivery further than
+    the bands reach, which goes by `custom`."""
     value = fields.get(FIELD)
     if not isinstance(value, Mapping):
         return None
@@ -178,9 +198,11 @@ def fee_of(fields: Mapping[str, Any]) -> dict[str, Any] | None:
     by = value.get("by")
     if by == ONLINE and amount > ZERO:
         return {"by": ONLINE, "up_to": None, "amount": str(amount), "taxed": value.get("taxed") is True}
-    reach = measure(value.get("up_to"), by) if by in MEASURES else None
     measured = measured_of(value)
     told = {} if measured is None else {"measured": measured}
+    if by == CUSTOM and amount > ZERO:
+        return {"by": CUSTOM, "up_to": None, "amount": str(amount), "taxed": value.get("taxed") is True, **told}
+    reach = measure(value.get("up_to"), by) if by in MEASURES else None
     if reach is None:
         return {"by": None, "up_to": None, "amount": "0.00", "taxed": False, **told} if amount == ZERO else None
     return {"by": by, "up_to": measure_text(reach), "amount": str(amount), "taxed": value.get("taxed") is True, **told}
@@ -198,8 +220,9 @@ def fee_charged(fields: Mapping[str, Any]) -> dict[str, Any] | None:
 def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[list[Op], list[dict[str, Any]]]:
     """Fill in every newly picked fee before it is stored: the band's price as the location lists it now,
     what it goes by and whether it is taxed. A band the location does not list is left out and reported;
-    whatever else its operation says of the order goes through without it. `setting` reads the location's
-    `delivery_fee` setting, and is asked only when an operation picks a band."""
+    whatever else its operation says of the order goes through without it. So is a typed amount (`custom`)
+    where the location does not allow one, or that is no amount above nothing. `setting` reads the location's
+    `delivery_fee` setting, and is asked only when an operation picks a band or types an amount."""
     if not any(_picks(op) for op in ops):
         return ops, []
     listed: Mapping[str, Any] | None = None
@@ -214,6 +237,26 @@ def fee_ops(setting: Callable[[], Mapping[str, Any]], ops: list[Op]) -> tuple[li
                 data[FIELD] = None  # the answer taken back: nobody said what the delivery costs
             elif not isinstance(wanted, Mapping):
                 problem = "a delivery fee names the band it was picked by"
+            elif wanted.get(CUSTOM) is not None:
+                listed = setting() if listed is None else listed
+                typed = money(wanted[CUSTOM])
+                if wanted.get("up_to") is not None:
+                    problem = "a delivery fee is a band of the list or a typed amount, not both"
+                elif listed.get("enabled") is not True:
+                    problem = "no delivery fee is charged here"
+                elif not custom_allowed(listed):
+                    problem = "a delivery fee cannot be typed here: pick one of the listed prices"
+                elif typed is None or typed <= ZERO:
+                    problem = f"a typed delivery fee is dollars and cents, from 0.01 to {FEE_MAX}"
+                else:
+                    data[FIELD] = {
+                        "by": CUSTOM,
+                        "up_to": None,
+                        "amount": str(typed),
+                        "taxed": listed.get("taxed") is True,
+                    }
+                    if (told := _kept(wanted)) is not None:
+                        data[FIELD]["measured"] = told
             elif wanted.get("up_to") is None:
                 data[FIELD] = {"up_to": None, "amount": "0.00"}  # no fee, on purpose
                 if (told := _kept(wanted)) is not None:
@@ -261,6 +304,7 @@ __all__ = [
     "BANDS_MAX",
     "CHARGE_ID",
     "CHARGE_NAME",
+    "CUSTOM",
     "FEE_MAX",
     "FIELD",
     "MEASURES",
@@ -270,6 +314,7 @@ __all__ = [
     "TAX_CLASS",
     "band_for",
     "band_of",
+    "custom_allowed",
     "fee_charged",
     "fee_of",
     "fee_ops",

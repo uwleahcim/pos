@@ -1102,7 +1102,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     if (fees == null) return 'The hub has not answered about the delivery fee (an older hub: update it)';
     if (!fees.asks) return 'Off: nothing is added to a delivery for the trip';
     final prices = [for (final band in fees.bands) '${feeWords(band.fee)} up to ${band.upTo} ${feeUnit(fees.by)}'];
-    return '${prices.join(', ')}${fees.taxed ? ' · taxed' : ''}${fees.lookup ? ' · distance looked up' : ''}';
+    return '${prices.join(', ')}${fees.offersCustom ? ', custom fee further out' : ''}'
+        '${fees.taxed ? ' · taxed' : ''}${fees.lookup ? ' · distance looked up' : ''}';
   }
 
   /// One line on live traffic: off, what a delivery for now is promised, or what is still missing for it.

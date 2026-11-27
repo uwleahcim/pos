@@ -455,6 +455,10 @@ class DeliveryFeeIn(BaseModel):
         max_length=1000,
         description="the restaurant's own address, where a looked-up distance starts; left out: kept as it is",
     )
+    custom: bool | None = Field(
+        None,
+        description="whether the fee of a delivery further than the last band may be typed; left out: kept as it is",
+    )
 
 
 class DistanceIn(BaseModel):
@@ -1920,8 +1924,10 @@ def create_app(
         """What a delivery costs the customer: `enabled`, whether a fee is charged at all; `by`, whether it
         goes by `miles` or by the `minutes` of the drive; `bands`, the prices in order of how far they
         reach, each `{up_to, fee}`; `taxed`, whether sales tax is charged on it; `origin`, the restaurant's
-        own address. The band picked for an order is its `delivery_fee` field (`pos.orders.delivery_fee`): a
-        screen names the band and the hub fills in what it costs. `maps` says whether this hub has a map
+        own address; `custom`, whether whoever takes an order may type the fee of a delivery that goes further
+        than the last band reaches. The band picked for an order is its `delivery_fee` field
+        (`pos.orders.delivery_fee`): a screen names the band and the hub fills in what it costs, or, for such
+        a delivery, says the amount that was typed. `maps` says whether this hub has a map
         service, and `lookup` whether a form may ask how far an address is (`POST /delivery/distance`)."""
         return delivery_fee_now()
 
@@ -1929,12 +1935,15 @@ def create_app(
     def write_delivery_fee(body: DeliveryFeeIn, authorization: str | None = Header(None)) -> dict[str, Any]:
         """A manager turns the fee on or off, says what it goes by and lists the prices. Orders already taken
         keep the fee they were given; every screen offers the new prices from its next delivery. An app
-        older than the lookup says no `origin`, and the one that is stored stays."""
+        older than the lookup says no `origin`, and the one that is stored stays; so does `custom` (whether
+        the fee of a delivery further than the last band may be typed) from an app older than that."""
         manager_from(app.state.tokens, authorization)
         data = body.model_dump()
+        settings: SettingStore = app.state.settings
         if data["origin"] is None:
-            settings: SettingStore = app.state.settings
             data["origin"] = settings.get("delivery_fee").get("origin") or ""
+        if data["custom"] is None:
+            data["custom"] = settings.get("delivery_fee").get("custom") is not False
         return delivery_fee_now(write_setting("delivery_fee", data, clean_delivery_fee))
 
     @app.post("/delivery/distance")
@@ -1943,7 +1952,8 @@ def create_app(
         (`pos.maps`), and the band of the fee it falls in: `miles` (along the road, to a hundredth), `minutes`
         (the usual drive), `by` (what the fee goes by here), `band` (`{up_to, fee}`, or null) and `beyond`
         (true when the address is further than the last band reaches). The form picks that band, and whoever
-        takes the order can still tap another.
+        takes the order can still tap another. For an address beyond them all the form asks for the fee to be
+        typed, where the location allows that (`custom` in the setting).
 
         A customer who had a delivery brought to this address before is not asked about again: with their
         `phone`, the figures are read off that order (`pos.customers.saved_trip`) and `saved` is true.
