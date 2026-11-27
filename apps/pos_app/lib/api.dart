@@ -33,6 +33,7 @@ import 'online_orders.dart';
 import 'orders_ahead.dart';
 import 'paid_checks.dart';
 import 'prep_list.dart';
+import 'print_log.dart';
 import 'phone.dart';
 import 'points.dart';
 import 'powers.dart';
@@ -2581,6 +2582,51 @@ class PosApi {
       _post('/print/jobs/$jobId/failed', {'by': by, 'error': error});
 
   Future<Map<String, dynamic>> testPrint(String printer) => _post('/print/test', {'printer': printer});
+
+  /// A page of the print log, newest first (manager token): every paper the hub made, where it went and
+  /// how that ended. [printer] keeps the prints made for one printer (its id), [trouble] the ones to look
+  /// at (not printed, a try failed, printed at another printer); [before] is the page before's
+  /// [PrintLogPage.next]. Null from a hub older than the log.
+  Future<PrintLogPage?> printLog(
+    String token, {
+    String? printer,
+    bool trouble = false,
+    String? before,
+    int limit = 50,
+  }) async {
+    try {
+      return PrintLogPage.fromJson(
+        await _get(
+          '/print/log',
+          query: {'printer': ?printer, if (trouble) 'only': 'trouble', 'before': ?before, 'limit': '$limit'},
+          headers: _bearer(token),
+          timeout: const Duration(seconds: 6),
+        ),
+      );
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// One print of the log with its paper as it came out, for the screen to draw (manager token). 404 for a
+  /// print the log no longer has.
+  Future<PrintPaper> printPaper(String token, String job) async => PrintPaper.fromJson(
+    await _get('/print/log/paper', query: {'job': job}, headers: _bearer(token), timeout: const Duration(seconds: 6)),
+  );
+
+  /// Prints a paper of the log again, headed REPRINT, at the printer it was made for or at [printer] (an
+  /// id); the hub writes down who asked (manager token). Returns the new print. 404 for a print the log no
+  /// longer has; 409 `no_printer` when there is no printer to print it at, with the hub's words for it.
+  Future<PrintEntry> reprint(String token, String job, {String? printer}) async {
+    final answer = await _post(
+      '/print/log/reprint',
+      {'job': job, 'printer': ?printer},
+      headers: _bearer(token),
+      timeout: const Duration(seconds: 6),
+    );
+    return PrintEntry.fromJson(((answer['print'] as Map?) ?? const <String, dynamic>{}).cast<String, dynamic>());
+  }
 
   // Menu editor: a manager's PIN buys a token for an hour; every other call carries it. -----------------
 

@@ -31,14 +31,19 @@ A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); 
 LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
 the job store is the queue; the printing itself is retried in the background and never holds up the order
 call.
+
+Every paper queued is written in the print log (`pos.printing.log`) with what became of it, and can be
+printed again from there, headed REPRINT (`PrintService.reprint`).
 """
 
 from __future__ import annotations
 
 import itertools
+import logging
 import os
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -56,9 +61,13 @@ from .escpos import find_font
 from .held import Held, HeldTickets, Part
 from .jobs import JobStore, PrintJob, send_raw
 from .labels import BagLabels, render_labels
+from .log import DAY_MS, KEEP_DAYS, Event, Print, PrintLog
 from .pack import PackSheet, render_pack
 from .prep import PrepPaper, render_prep
-from .ticket import AUTO, DIALECTS, EACH, ONE, Money, Ticket, TicketLine, render
+from .script import Script, carried, pages, play, reprinted
+from .ticket import AUTO, DIALECTS, EACH, ONE, SCRIPT, Money, Ticket, TicketLine, builder, render
+
+log = logging.getLogger(__name__)
 
 LATE_AFTER_MS = 10 * 60 * 1000
 """An operation stamped this long before it arrives was queued through an outage, flagged or not."""
@@ -435,6 +444,51 @@ Paper = Ticket | Bill | DayPaper | PackSheet | PrepPaper | BagLabels
 a day's prep list or the labels of an order's bags."""
 
 
+def _called(order_no: int | None, customer: str) -> str:
+    """A to-go order as it is called at the shelf: "#45 Wu"."""
+    number = f"#{order_no}" if order_no is not None else ""
+    return " ".join(part for part in (number, " ".join(customer.split())) if part)
+
+
+def describe(paper: Paper) -> dict[str, str]:
+    """What the print log says a paper is: its `sort` (ticket, bill, day, pack, prep, labels), for a ticket
+    its `kind`, what it is for in a few words (`title`: "Table 12", "#45 Wu", "Tab Sam"), the stations a
+    ticket is headed with (`head`) and its order."""
+    if isinstance(paper, Ticket):
+        if paper.kind == "notice":
+            title = paper.words[0] if paper.words else ""
+        elif paper.tab:
+            title = f"Tab {paper.customer}".strip()
+        elif paper.table:
+            title = f"Table {paper.table}"
+        else:
+            title = _called(paper.order_no, paper.customer) or "No table"
+        return {"sort": "ticket", "kind": paper.kind, "title": title, "head": paper.station, "order_id": paper.order_id}
+    if isinstance(paper, Bill):
+        title = f"{paper.where} ({paper.detail})" if paper.where and paper.detail else paper.where or paper.detail
+        return {"sort": "bill", "title": title, "order_id": paper.order_id}
+    if isinstance(paper, DayPaper):
+        return {"sort": "day", "title": paper.day}
+    if isinstance(paper, PackSheet):
+        return {"sort": "pack", "title": _called(paper.order_no, paper.customer), "order_id": paper.order_id}
+    if isinstance(paper, PrepPaper):
+        return {"sort": "prep", "title": str(paper.prep.get("day") or "")}
+    title = " ".join(part for part in (_called(paper.order_no, paper.customer), f"{paper.bags} bags") if part)
+    return {"sort": "labels", "title": title, "order_id": paper.order_id}
+
+
+class NoSuchPrint(LookupError):
+    """The print log has no print by that id: it was never there, or it is older than the log keeps."""
+
+
+class NoPrinter(LookupError):
+    """There is no printer to print it again at: the one it was made for is gone, or the one asked for is."""
+
+    def __init__(self, asked: str) -> None:
+        super().__init__(asked)
+        self.asked = asked
+
+
 @dataclass(frozen=True)
 class Takes:
     """What one ticket of a printer prints: called with the station a kitchen line is cooked at, it says
@@ -571,9 +625,18 @@ class PrintService:
         now: Callable[[], int] = wall_clock_ms,
         late_after_ms: int = LATE_AFTER_MS,
         held: HeldTickets | None = None,
+        log: PrintLog | None = None,
     ) -> None:
         self._printers = printers
         self.store = store or JobStore()
+        self.store.watch = self._happened
+        self.log = log if log is not None else PrintLog()
+        """Every paper queued, with what became of it (`pos.printing.log`): kept in the database on a hub."""
+        self.on_log: Callable[[], None] | None = None
+        """Called when the print log has something new to show (a print, or how one ended): the API tells
+        the screens that have it open."""
+        self._written: dict[str, tuple[str, int]] = {}  # the last failure written of a job, and when
+        self._pruned = 0  # when the log was last cleared of old prints (the hub's clock, ms)
         self.held = held if held is not None else HeldTickets()
         """What waits of the orders sent ahead of their time (`pos.printing.held`): kept in the database on a
         hub, so their tickets print when the time comes whatever happened to the hub in between."""
@@ -1197,15 +1260,205 @@ class PrintService:
         job_id: str | None = None,
         delay: float = 0.0,
         printers: list[Printer] | None = None,
+        title: str | None = None,
     ) -> PrintJob:
         """Renders the ticket (or a guest's bill, the day's report, a pack sheet, a prep list, an order's
         labels) for the printer and for each of its fallbacks (headed with whose it is), and queues it; a hub
-        starts writing it at once."""
+        starts writing it at once. The print is written in the log with the paper as it was made; `title` is
+        what the log calls a paper that is nobody's order ("Test print")."""
         data, fallbacks = self._rendered(ticket, printer, printers)
+        job_id = job_id or uuid.uuid4().hex
+        if self.store.get(job_id) is None:  # the same job asked for twice is one job, and one print in the log
+            about = {**describe(ticket), **({"title": title} if title is not None else {})}
+            self._write_down(job_id, printer, about, lambda: pages(self._drawn(ticket, SCRIPT)))
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
-        if self.direct and delay <= 0:
-            threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
+        if delay <= 0:
+            self._start(job)
         return job
+
+    # The print log ------------------------------------------------------------------------------------------
+
+    def _write_down(
+        self, job_id: str, printer: Printer, about: Mapping[str, Any], script: Callable[[], Script]
+    ) -> None:
+        """One more print in the log, as its job is queued. Whatever goes wrong with the writing is the
+        log's loss and not the print's: the paper comes out all the same."""
+        try:
+            now = self._now()
+            entry = Print(job_id, now, printer=printer.id, name=self.head(printer), address=printer.address)
+            self.log.add(replace(entry, **about), script())
+            if now - self._pruned > DAY_MS // 24:  # once an hour is often enough to drop a day that is too old
+                self._pruned = now
+                self.log.prune(now - KEEP_DAYS * DAY_MS)
+            self._said()
+        except Exception as err:  # noqa: BLE001 - see above
+            log.warning("print log: a print could not be written down (%s)", type(err).__name__)
+
+    def _said(self) -> None:
+        if self.on_log is not None:
+            try:
+                self.on_log()
+            except Exception:  # noqa: BLE001 - the screens ask again by themselves
+                pass
+
+    def _happened(self, job: PrintJob, what: str, detail: str) -> None:
+        """What became of a job (`JobStore.watch`), written to its print: a try that failed and why, the move
+        to a fallback, that it printed and where. The same failure over and over (a printer that is off, tried
+        every few seconds) is written once a minute, and the screens are not told of each."""
+        try:
+            now = self._now()
+            if what == "failed":
+                last = self._written.get(job.job_id)
+                again = last is not None and last[0] == detail
+                if again and now - last[1] < 60_000:
+                    return
+                self._written[job.job_id] = (detail, now)
+                tries = job.attempts
+
+                def failed(entry: Print) -> Print:
+                    times = max(1, tries - entry.tries)
+                    after = entry.then(Event(now, "failed", detail, times))
+                    return replace(after, tries=max(tries, entry.tries), error=detail, error_ms=now)
+
+                self.log.change(job.job_id, failed)
+                if again:
+                    return
+            elif what == "moved":
+                name = self._name_at(job.printer)
+                self.log.change(job.job_id, lambda entry: entry.then(Event(now, "moved", name or job.printer)))
+            elif what == "printed":
+                self._written.pop(job.job_id, None)
+                where, by, failed_tries = job.printer, detail, job.attempts - 1
+
+                def printed(entry: Print) -> Print:
+                    name = self._name_at(where) if where != entry.address else ""
+                    missed = failed_tries - entry.tries  # the failures that were not written one by one
+                    if missed > 0 and entry.events and entry.events[-1].what == "failed":
+                        entry = entry.then(replace(entry.events[-1], ms=entry.events[-1].ms, times=missed))
+                    after = replace(
+                        entry,
+                        printed_ms=now,
+                        printed_by=by,
+                        printed_on=where,
+                        printed_name=name,
+                        tries=max(entry.tries, failed_tries),
+                    )
+                    return after.then(Event(now, "printed", name or (where if where != entry.address else "")))
+
+                self.log.change(job.job_id, printed)
+            self._said()
+        except Exception as err:  # noqa: BLE001 - the job goes its way whether or not it is written down
+            log.warning("print log: what became of a print could not be written down (%s)", type(err).__name__)
+
+    def _name_at(self, address: str) -> str:
+        """What the printer at an address is called now; nothing for an address no printer has."""
+        found = next((p for p in self.printers if p.address == address), None)
+        return self.head(found) if found is not None else ""
+
+    def status(self, entry: Print) -> str:
+        """Where a print stands: `printed`; `waiting` while its job is still in the queue (not tried yet, or
+        the printer does not answer and it is being tried again); `lost` when it never printed and its job is
+        gone, which is what a hub that stopped with it still waiting leaves behind."""
+        if entry.printed:
+            return "printed"
+        return "waiting" if self.store.get(entry.job_id) is not None else "lost"
+
+    def seen(self, entry: Print) -> dict[str, Any]:
+        """A print as the screens read it: the log's own words, and where it stands now."""
+        return {**entry.as_json(), "status": self.status(entry)}
+
+    def paper(self, job_id: str) -> tuple[Print, Script] | None:
+        """A print and its paper for the screen: as it came out, so with the line a fallback printer put on it
+        when that is where it printed."""
+        found = self.log.get(job_id)
+        if found is None:
+            return None
+        entry, script = found
+        return entry, carried(script, entry.head or entry.name) if entry.elsewhere else script
+
+    def reprint(self, job_id: str, *, printer: str | None = None, by: str = "") -> tuple[PrintJob, Print]:
+        """Prints a paper of the log again, as it was: at the printer it was made for, or at `printer` (an
+        id). The copy is headed REPRINT, white on black, with when the first came out under it, so nobody
+        takes it for a new ticket; it is a print of its own in the log, which names the first and who asked
+        (`by`), and the first counts it. The paper is not made again from the order: it says what it said.
+
+        A reprint printed again repeats the first paper, not the reprint, so it is headed once. `NoSuchPrint`
+        when the log has no such print, `NoPrinter` when there is no printer to print it at."""
+        found = self.log.get(job_id)
+        if found is None:
+            raise NoSuchPrint(job_id)
+        entry, script = found
+        printers = self.printers
+        if printer is not None:
+            target = self._named(printers, printer)
+        else:  # its own printer, by its id, or whichever printer stands at its address now
+            target = next((p for p in printers if p.id == entry.printer), None)
+            target = target or next((p for p in printers if p.address == entry.address), None)
+        if target is None:
+            raise NoPrinter(printer if printer is not None else entry.printer)
+        # The paper it repeats is the first one, whichever copy of it was asked for: when that came out, as
+        # the log has it now, or that it never did.
+        first_id = entry.reprint_of or entry.job_id
+        began = found if not entry.reprint_of else self.log.get(first_id)
+        first_ms = (began[0].printed_ms or began[0].at_ms) if began is not None else entry.first_ms
+        when = _local(first_ms)
+        day = f" {when:%a %b} {when.day} {when:%H:%M}" if when is not None else ""
+        if began is not None and began[0].printed:
+            first = f"first printed{day}"
+        else:
+            first = f"first sent{day}, did not print" if began is not None else f"first sent{day}"
+        script = reprinted(script, first.upper())
+
+        def drawn(steps: Script, on: Printer) -> bytes:
+            return play(steps, lambda: builder(on.dialect, dots=self._dots, font=self._font))
+
+        by_id = {p.id: p for p in printers}
+        fallbacks = [
+            (other.address, drawn(reprinted(script, first.upper(), whose=self.head(target)), other))
+            for other in (by_id.get(other_id) for other_id in target.fallbacks)
+            if other is not None and other.address != target.address
+        ]
+        new_id = f"reprint:{uuid.uuid4().hex}"
+        about = {
+            "sort": entry.sort,
+            "kind": entry.kind,
+            "title": entry.title,
+            "head": entry.head,
+            "order_id": entry.order_id,
+            "reprint_of": first_id,
+            "first_ms": first_ms,
+            "by": by,
+        }
+        self._write_down(new_id, target, about, lambda: script)
+        job = self.store.create(target.address, drawn(script, target), job_id=new_id, fallbacks=fallbacks)
+        try:
+            now, where = self._now(), self.head(target)
+            said = " ".join(part for part in (f"by {by}" if by else "", f"at {where}") if part)
+            self.log.change(
+                first_id, lambda first: replace(first, reprints=first.reprints + 1).then(Event(now, "reprinted", said))
+            )
+        except Exception as err:  # noqa: BLE001 - the reprint is on its way; only the count is off
+            log.warning("print log: a reprint could not be counted (%s)", type(err).__name__)
+        self._start(job)
+        made = self.log.get(new_id)
+        return job, made[0] if made is not None else replace(
+            Print(job_id=new_id, at_ms=self._now(), printer=target.id, name=self.head(target), address=target.address),
+            **about,
+        )
+
+    def _drawn(self, paper: Paper, dialect: str) -> bytes:
+        """The paper in a printer's language, or written down step by step (`SCRIPT`)."""
+        if isinstance(paper, Bill):
+            return render_bill(paper, dots=self._dots, font=self._font, dialect=dialect)
+        if isinstance(paper, DayPaper):
+            return render_day(paper, dots=self._dots, font=self._font, dialect=dialect)
+        if isinstance(paper, PackSheet):
+            return render_pack(paper, dots=self._dots, font=self._font, dialect=dialect)
+        if isinstance(paper, PrepPaper):
+            return render_prep(paper, dots=self._dots, font=self._font, dialect=dialect)
+        if isinstance(paper, BagLabels):
+            return render_labels(paper, dots=self._dots, font=self._font, dialect=dialect)
+        return render(paper, dots=self._dots, font=self._font, dialect=dialect)
 
     def _rendered(
         self, ticket: Paper, printer: Printer, printers: list[Printer] | None = None
@@ -1215,17 +1468,7 @@ class PrintService:
         it was for."""
 
         def drawn(paper: Paper, on: Printer) -> bytes:
-            if isinstance(paper, Bill):
-                return render_bill(paper, dots=self._dots, font=self._font, dialect=on.dialect)
-            if isinstance(paper, DayPaper):
-                return render_day(paper, dots=self._dots, font=self._font, dialect=on.dialect)
-            if isinstance(paper, PackSheet):
-                return render_pack(paper, dots=self._dots, font=self._font, dialect=on.dialect)
-            if isinstance(paper, PrepPaper):
-                return render_prep(paper, dots=self._dots, font=self._font, dialect=on.dialect)
-            if isinstance(paper, BagLabels):
-                return render_labels(paper, dots=self._dots, font=self._font, dialect=on.dialect)
-            return render(paper, dots=self._dots, font=self._font, dialect=on.dialect)
+            return self._drawn(paper, on.dialect)
 
         data = drawn(ticket, printer)
         fallbacks = []
@@ -1237,6 +1480,11 @@ class PrintService:
                 continue
             fallbacks.append((fallback.address, drawn(replace(ticket, reprinted_from=whose), fallback)))
         return data, fallbacks
+
+    def _start(self, job: PrintJob) -> None:
+        """A hub writes a job to its printer as soon as it is queued, on a thread of its own."""
+        if self.direct:
+            threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
 
     def _deliver(self, job: PrintJob) -> None:
         self.store.deliver_direct(job, send=self._send)

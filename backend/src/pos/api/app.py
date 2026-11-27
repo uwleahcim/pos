@@ -92,6 +92,7 @@ from ..printing import discover
 from ..printing.bill import SAMPLE, bill_for
 from ..printing.held import default_held
 from ..printing.jobs import PrintJob
+from ..printing.log import default_log
 from ..printing.made import kitchen_words, ready_of, with_kitchen
 from ..printing.service import Printer, PrintService, printers_from_env, printers_from_setting
 from ..printing.ticket import DEMO
@@ -144,6 +145,7 @@ from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
 from .online import add_online_orders
 from .prep import add_prep
+from .prints import add_print_log
 from .reservations import add_reservations
 from .runs import add_runs
 from .sales import add_sales_report
@@ -1029,8 +1031,14 @@ def create_app(
     app.state.printing = (
         printing
         if printing is not None
-        # what waits of the orders sent ahead of their time is kept in the database: a restart loses nothing
-        else PrintService(printers_now, direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0", held=default_held())
+        # what waits of the orders sent ahead of their time is kept in the database: a restart loses nothing;
+        # so is the log of what was printed (`pos.printing.log`)
+        else PrintService(
+            printers_now,
+            direct=os.environ.get("POS_PRINT_DIRECT", "1") != "0",
+            held=default_held(),
+            log=default_log(),
+        )
     )
     # The keys for the services outside the building: a manager's, typed in the app, over the hub's own file
     # (`pos.keys`, docs/hub-keys.md). `outside` is the hub's environment as it reads with them in it.
@@ -2636,7 +2644,7 @@ def create_app(
         if printer is None:
             raise HTTPException(404, {"error": "no_such_printer", "printers": [p.id for p in printing.printers]})
         jobs = [
-            printing.queue(replace(DEMO, station=printing.head(printer, stations)), printer)
+            printing.queue(replace(DEMO, station=printing.head(printer, stations)), printer, title="Test print")
             for stations in printer.sets()
         ]
         return {**job_out(jobs[0]), "tickets": len(jobs)}
@@ -2655,8 +2663,10 @@ def create_app(
         if printer is None:
             raise HTTPException(409, {"error": "no_printer", "message": "No printer is set up for this location."})
         sample = replace(SAMPLE, head=bill_head(tried), foot=tuple(tried["footer"]), at=localtime.now())
-        return {**job_out(printing.queue(sample, printer)), "printed_at": printer_out(printer)}
+        job = printing.queue(sample, printer, title="Sample bill")
+        return {**job_out(job), "printed_at": printer_out(printer)}
 
+    add_print_log(app)
     add_menu_admin(app)
     add_face_signin(app)
     add_time_clock(app)

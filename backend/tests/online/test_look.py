@@ -138,7 +138,8 @@ def test_a_push_that_cannot_be_read_is_news_only_where_nothing_else_brings_its_o
     assert alone.push(body="<xml/>").status_code == 422
     status = alone.status()
     assert [(look["kind"], look["new"]) for look in status["look"]] == [("unreadable", True)]
-    assert (len(alone.slips()), told, status["news"]) == (1, ["online"], 1)
+    # the slip it prints is one more print in the print log, which the screens showing that are told of
+    assert (len(alone.slips()), told, status["news"]) == (1, ["online", "prints"], 1)
 
 
 def test_an_order_that_will_be_tried_again_tells_the_screens_nothing_yet():

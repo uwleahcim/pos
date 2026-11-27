@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../printers.dart';
+import 'print_log_screen.dart';
 import 'save_bar.dart';
 
 /// The kitchen printers, for a manager: each prints for one station of the menu or several, by its address
@@ -15,6 +16,9 @@ import 'save_bar.dart';
 /// and sets the station a to-go order prints whole at. The hub keeps it all and routes the next ticket by
 /// it. Behind the manager PIN, from Location settings. Nothing is kept as it is changed: a bar with Save
 /// comes up at the bottom of the screen with the first change ([SaveBarScaffold]).
+///
+/// The print log opens from here ([PrintLogScreen]): everything the printers printed, each paper on the
+/// screen, and Reprint. The row at the top shows every printer's prints, a printer's own Log button its own.
 class PrintersScreen extends StatefulWidget {
   const PrintersScreen({super.key, required this.api, required this.token, this.addresses});
 
@@ -312,6 +316,13 @@ class _PrintersScreenState extends State<PrintersScreen> {
     }
   }
 
+  /// The print log: every printer's, or the prints of one printer (by the id the hub keeps it under).
+  Future<void> _log([_PrinterRow? row]) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => PrintLogScreen(api: widget.api, token: widget.token, printer: row?.id),
+    ),
+  );
+
   Future<void> _test(_PrinterRow row) async {
     setState(() => _message = null);
     try {
@@ -521,6 +532,18 @@ class _PrintersScreenState extends State<PrintersScreen> {
       body = ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: ListTile(
+              key: const ValueKey('printers-log'),
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Print log'),
+              subtitle: const Text('What was printed and how it went. See any paper on screen, or reprint it.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _log,
+            ),
+          ),
+          const SizedBox(height: 12),
           if (missing.isNotEmpty) ...[_missingCard(context, missing), const SizedBox(height: 12)],
           if (_settings!.source == 'env' && _rows.isNotEmpty)
             Padding(
@@ -853,6 +876,14 @@ class _PrintersScreenState extends State<PrintersScreen> {
                   )
                 else
                   const Spacer(),
+                // what this printer printed; a printer not saved yet has printed nothing
+                if (_settings!.printers.any((p) => p.id == row.id))
+                  IconButton(
+                    key: ValueKey('printer-log:${row.id}'),
+                    tooltip: 'Print log of this printer',
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    onPressed: () => _log(row),
+                  ),
                 TextButton.icon(
                   key: ValueKey('printer-test:${row.id}'),
                   onPressed: () => _test(row),
