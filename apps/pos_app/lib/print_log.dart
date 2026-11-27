@@ -62,6 +62,7 @@ class PrintEntry {
     this.by = '',
     this.reprints = 0,
     this.events = const [],
+    this.found = '',
   });
 
   factory PrintEntry.fromJson(Map<String, dynamic> json) => PrintEntry(
@@ -89,6 +90,7 @@ class PrintEntry {
       for (final e in json['events'] as List? ?? const [])
         if (e is Map) PrintEvent.fromJson(e.cast<String, dynamic>()),
     ],
+    found: json['found'] as String? ?? '',
   );
 
   /// The hub's name for the print (its job): what a reprint is asked for by.
@@ -135,6 +137,10 @@ class PrintEntry {
   /// How often it was printed again.
   final int reprints;
   final List<PrintEvent> events;
+
+  /// In a search: the line of the paper the hub found the words on, when the line of the log does not
+  /// already show them. Empty otherwise.
+  final String found;
 
   bool get printed => status == 'printed';
   bool get lost => status == 'lost';
@@ -269,7 +275,7 @@ class LogPrinter {
 /// A page of the log, newest first. [next] asks for the page after it; null at the end of the log.
 @immutable
 class PrintLogPage {
-  const PrintLogPage({required this.prints, this.next, this.printers = const [], this.keepsDays = 14});
+  const PrintLogPage({required this.prints, this.next, this.printers = const [], this.keepsDays = 14, this.types});
 
   factory PrintLogPage.fromJson(Map<String, dynamic> json) => PrintLogPage(
     prints: [
@@ -282,6 +288,7 @@ class PrintLogPage {
         if (p is Map) LogPrinter.fromJson(p.cast<String, dynamic>()),
     ],
     keepsDays: (json['keeps_days'] as num?)?.toInt() ?? 14,
+    types: json['types'] is List ? [for (final t in json['types'] as List) '$t'] : null,
   );
 
   final List<PrintEntry> prints;
@@ -292,4 +299,33 @@ class PrintLogPage {
 
   /// How far back the hub keeps the log.
   final int keepsDays;
+
+  /// The types this restaurant's log can be read by, in the order to offer them ([printTypeName]); a log
+  /// that can be read by type can be searched too. Null from a hub older than both.
+  final List<String>? types;
 }
+
+/// A type of print as the log's filter names it: the hub's `kitchen`, `bar`, `bill`, `reprint`, `other`. A
+/// type a newer hub added is offered under the hub's own word for it.
+String printTypeName(String type) => switch (type) {
+  'kitchen' => 'Kitchen',
+  'bar' => 'Bar',
+  'bill' => 'Bills',
+  'reprint' => 'Reprints',
+  'other' => 'Other',
+  _ => type.isEmpty ? type : '${type[0].toUpperCase()}${type.substring(1)}',
+};
+
+/// The prints of a type, as a sentence says them: "No bar tickets in the last 14 days."
+String printTypeThings(String? type) => switch (type) {
+  null => 'prints',
+  'kitchen' => 'kitchen tickets',
+  'bar' => 'bar tickets',
+  'bill' => 'bills',
+  'reprint' => 'reprints',
+  'other' => 'other prints',
+  _ => 'prints of this kind',
+};
+
+/// A search as the hub reads it: the words as typed, one space between them.
+String printSearch(String typed) => typed.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).join(' ');

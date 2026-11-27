@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/api.dart';
 import 'package:pos_app/outbox.dart';
@@ -40,6 +41,7 @@ Map<String, dynamic> printed(
   String by = '',
   int reprints = 0,
   List<Map<String, dynamic>> events = const [],
+  List<String> places = const [],
 }) => {
   'job_id': job,
   'at_ms': atMs,
@@ -62,6 +64,7 @@ Map<String, dynamic> printed(
   'by': by,
   'reprints': reprints,
   'events': events,
+  'places': places,
 };
 
 /// A kitchen ticket's paper, as the hub wrote its steps down.
@@ -126,6 +129,58 @@ void evening(Hub hub) {
   for (final p in hub.printLog!) {
     hub.papers[p['job_id'] as String] = ticketPaper(p['title'] as String, ['1 x General Tso', '2 x Egg Roll']);
   }
+}
+
+/// The same evening as a hub that reads its log by type has it: the tickets are the kitchen's, the bar made
+/// one for table 9 (two beers and a mai tai) and Mike had it printed again.
+void night(Hub hub) {
+  evening(hub);
+  for (final p in hub.printLog!) {
+    if (p['sort'] == 'ticket') p['places'] = ['kitchen'];
+  }
+  hub.printLog!.insertAll(0, [
+    printed(
+      'r1',
+      atMs: at(26, 20, 10),
+      printer: 'bar',
+      name: 'Bar',
+      address: '10.27.1.166',
+      title: 'Table 9',
+      reprintOf: 'd1',
+      by: 'Mike',
+      places: ['bar'],
+    ),
+    printed(
+      'd1',
+      atMs: at(26, 20, 0),
+      printer: 'bar',
+      name: 'Bar',
+      address: '10.27.1.166',
+      title: 'Table 9',
+      reprints: 1,
+      places: ['bar'],
+    ),
+  ]);
+  for (final job in ['r1', 'd1']) {
+    hub.papers[job] = ticketPaper('Table 9', ['2 x Tsingtao', '1 x Mai Tai (no ice, a slice of lime on the side)']);
+  }
+}
+
+/// The prints on the screen, top to bottom.
+List<String> listed(WidgetTester tester) => [
+  for (final row in tester.widgetList<InkWell>(
+    find.byWidgetPredicate((w) => w is InkWell && w.key is ValueKey<String> && '${w.key}'.contains('print-row:')),
+  ))
+    (row.key! as ValueKey<String>).value.split(':').last,
+];
+
+bool picked(WidgetTester tester, String type) =>
+    tester.widget<ChoiceChip>(find.byKey(ValueKey('log-type:$type'))).selected;
+
+Future<void> search(WidgetTester tester, String words) async {
+  await tester.enterText(find.byKey(const ValueKey('log-search-box')), words);
+  await tester.pump(const Duration(milliseconds: 400)); // the typing stopped
+  await tester.pumpAndSettle();
 }
 
 Future<Terminal> pumpLog(
@@ -622,6 +677,290 @@ void main() {
     expect(paper.width, 328);
     final words = find.descendant(of: find.byKey(const ValueKey('paper:t2')), matching: find.text('Table 7'));
     expect(MediaQuery.textScalerOf(tester.element(words)), TextScaler.noScaling);
+    await stop(tester);
+  });
+
+  testWidgets('the log is read by kind of print: the kitchen, the bar, the bills, the reprints, the rest', (
+    tester,
+  ) async {
+    final t = await pumpLog(tester, arrange: night);
+    final chips = find.descendant(of: find.byKey(const ValueKey('log-types')), matching: find.byType(ChoiceChip));
+    expect(
+      [for (final chip in tester.widgetList<ChoiceChip>(chips)) (chip.label as Text).data],
+      ['All', 'Kitchen', 'Bar', 'Bills', 'Reprints', 'Other'],
+    );
+    expect(picked(tester, 'all'), isTrue);
+    expect(listed(tester), ['r1', 'd1', 't5', 't4', 'b1', 't2', 't1', 'y1', 'o1']);
+    expect(t.hub.printLogAsks.last, {'limit': '50'});
+
+    await tester.tap(find.byKey(const ValueKey('log-type:bar')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'type': 'bar', 'limit': '50'});
+    expect(listed(tester), ['r1', 'd1']); // the bar's ticket, and its reprint
+    expect((picked(tester, 'bar'), picked(tester, 'all')), (true, false));
+
+    await tester.tap(find.byKey(const ValueKey('log-type:reprint')));
+    await tester.pumpAndSettle();
+    expect(listed(tester), ['r1']);
+    expect(line(tester, 'r1'), endsWith('Reprint · Ticket · Table 9'));
+    await tester.tap(find.byKey(const ValueKey('log-type:bill')));
+    await tester.pumpAndSettle();
+    expect(listed(tester), ['b1']);
+    await tester.tap(find.byKey(const ValueKey('log-type:other')));
+    await tester.pumpAndSettle();
+    expect(listed(tester), ['o1']);
+
+    // with the other two ways of reading it: the kitchen's tickets that had a problem
+    await tester.tap(find.byKey(const ValueKey('log-type:kitchen')));
+    await tester.pumpAndSettle();
+    expect(listed(tester), ['t5', 't4', 't2', 't1', 'y1']);
+    await tester.tap(find.byKey(const ValueKey('log-trouble')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'type': 'kitchen', 'only': 'trouble', 'limit': '50'});
+    expect(listed(tester), ['t5', 't4', 't2']);
+    await tester.tap(find.byKey(const ValueKey('log-trouble')));
+    await tester.pumpAndSettle();
+
+    // a kind this printer made none of says so, and "Show all prints" is every kind again
+    await tester.tap(find.byKey(const ValueKey('log-type:bill')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('log-printer')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Wok').last);
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'printer': 'wok', 'type': 'bill', 'limit': '50'});
+    final none = find.byKey(const ValueKey('log-none'));
+    expect(
+      find.descendant(of: none, matching: find.text('No bills at this printer in the last 14 days.')),
+      findsOneWidget,
+    );
+    await tester.tap(find.descendant(of: none, matching: find.text('Show all prints')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'printer': 'wok', 'limit': '50'});
+    expect(picked(tester, 'all'), isTrue);
+    expect(listed(tester), ['t5', 't4', 't2', 't1', 'y1', 'o1']);
+    await stop(tester);
+  });
+
+  testWidgets('the kinds offered are the ones the hub says: a restaurant with no bar is shown none', (tester) async {
+    await pumpLog(
+      tester,
+      arrange: (hub) {
+        night(hub);
+        hub.printLogTypes = ['kitchen', 'bill', 'reprint', 'other', 'catering'];
+      },
+    );
+    expect(find.byKey(const ValueKey('log-type:bar')), findsNothing);
+    expect(find.byKey(const ValueKey('log-type:kitchen')), findsOneWidget);
+    // a kind a newer hub added is offered under the hub's word for it
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('log-type:catering')), matching: find.text('Catering')),
+      findsOneWidget,
+    );
+    await stop(tester);
+  });
+
+  testWidgets('the log is searched from the bar, once the typing stops, on the papers themselves', (tester) async {
+    final t = await pumpLog(tester, arrange: night);
+    expect(find.byKey(const ValueKey('log-search-box')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    final box = find.byKey(const ValueKey('log-search-box'));
+    expect(tester.widget<TextField>(box).focusNode!.hasFocus, isTrue);
+    expect(find.text('Print log'), findsNothing); // the box has the title's place: no line of the screen is spent
+
+    // not at every letter
+    final asked = t.hub.printLogAsks.length;
+    await tester.enterText(box, 'ts');
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.enterText(box, 'tsing');
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(t.hub.printLogAsks.length, asked);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.length, asked + 1);
+    expect(t.hub.printLogAsks.last, {'q': 'tsing', 'limit': '50'});
+    expect(listed(tester), ['r1', 'd1']);
+    // the line of the paper it was found on, since the line of the log does not show it
+    final found = tester.widget<Text>(find.byKey(const ValueKey('print-found:d1'))).textSpan!;
+    expect(found.toPlainText(), 'On the paper: 2 x Tsingtao');
+    final bold = [
+      for (final span in (found as TextSpan).children!.cast<TextSpan>())
+        if (span.style?.fontWeight == FontWeight.w700) span.text,
+    ];
+    expect(bold, ['Tsing']); // what was typed, as the paper has it
+
+    // found in the log's own line: there is nothing to add to it
+    await search(tester, '  Table   7 ');
+    expect(t.hub.printLogAsks.last, {'q': 'Table 7', 'limit': '50'});
+    expect(listed(tester), ['t2']);
+    expect(find.byKey(const ValueKey('print-found:t2')), findsNothing);
+
+    // Enter does not wait
+    await tester.enterText(box, 'mike');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'q': 'mike', 'limit': '50'});
+    expect(listed(tester), ['r1']);
+
+    // within one kind of print, and the log read again by itself is still the search
+    await search(tester, 'egg roll');
+    expect(listed(tester), ['t5', 't4', 'b1', 't2', 't1', 'y1', 'o1']);
+    await tester.tap(find.byKey(const ValueKey('log-type:bill')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'q': 'egg roll', 'type': 'bill', 'limit': '50'});
+    expect(listed(tester), ['b1']);
+    t.hub.printLogAsks.clear();
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks, isNotEmpty);
+    expect(t.hub.printLogAsks.every((ask) => ask['q'] == 'egg roll' && ask['type'] == 'bill'), isTrue);
+
+    // nothing has the words: it says what was looked through, and "Show all prints" ends the search
+    await search(tester, 'lobster');
+    final none = find.byKey(const ValueKey('log-none'));
+    expect(
+      find.descendant(of: none, matching: find.text('No bills in the last 14 days have “lobster” on them.')),
+      findsOneWidget,
+    );
+    await tester.tap(find.descendant(of: none, matching: find.text('Show all prints')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'limit': '50'});
+    expect(find.byKey(const ValueKey('log-search-box')), findsNothing);
+    expect(find.text('Print log'), findsOneWidget);
+    expect(listed(tester).length, 9);
+    await stop(tester);
+  });
+
+  testWidgets('the search is emptied with its cross, and ended by closing it; spaces are no search', (tester) async {
+    final t = await pumpLog(tester, arrange: night);
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('log-search-clear')), findsNothing);
+    final asked = t.hub.printLogAsks.length;
+    await search(tester, '   ');
+    expect(t.hub.printLogAsks.length, asked); // nothing was asked again
+    await search(tester, 'mai tai');
+    expect(listed(tester), ['r1', 'd1']);
+
+    await tester.tap(find.byKey(const ValueKey('log-search-clear')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {'limit': '50'});
+    expect(listed(tester).length, 9);
+    final box = find.byKey(const ValueKey('log-search-box'));
+    expect(tester.widget<TextField>(box).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(box).focusNode!.hasFocus, isTrue); // to type the next one
+
+    await search(tester, 'mai tai');
+    expect(listed(tester), ['r1', 'd1']);
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    expect(box, findsNothing);
+    expect(t.hub.printLogAsks.last, {'limit': '50'});
+    expect(listed(tester).length, 9);
+    // Escape in the box backs out of the search too
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await search(tester, 'mai tai');
+    expect(listed(tester), ['r1', 'd1']);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('log-search-box')), findsNothing);
+    expect(listed(tester).length, 9);
+    // a search is no longer than the hub reads
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('log-search-box')), 'x' * 150);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('log-search-box'))).controller!.text.length, 100);
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    // and closed while the typing had not stopped yet: what was typed is not searched for after all
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('log-search-box')), 'tsing');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.any((ask) => ask['q'] == 'tsing'), isFalse);
+    expect(listed(tester).length, 9);
+    await stop(tester);
+  });
+
+  testWidgets('the older prints of a kind and of a search are asked for the same way', (tester) async {
+    final t = await pumpLog(
+      tester,
+      size: const Size(700, 9000),
+      arrange: (hub) {
+        hub.logPrinters = [wokPrinter];
+        hub.printLog = [
+          for (var n = 70; n > 0; n--)
+            printed('j${n.toString().padLeft(2, '0')}', atMs: at(26, 12, 0) + n * 60000, places: ['kitchen']),
+        ];
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('log-type:kitchen')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await search(tester, 'table 12');
+    expect(listed(tester).length, 50);
+    await tester.tap(find.byKey(const ValueKey('log-more')));
+    await tester.pumpAndSettle();
+    expect(t.hub.printLogAsks.last, {
+      'type': 'kitchen',
+      'q': 'table 12',
+      'before': '${at(26, 12, 0) + 21 * 60000}:j21',
+      'limit': '50',
+    });
+    expect(listed(tester).length, 70);
+    await stop(tester);
+  });
+
+  testWidgets('a hub from before the kinds lists its log as before, with neither chips nor search', (tester) async {
+    final t = await pumpLog(
+      tester,
+      arrange: (hub) {
+        evening(hub);
+        hub.printLogTypes = null;
+      },
+    );
+    expect(listed(tester).length, 7);
+    expect(find.byKey(const ValueKey('log-types')), findsNothing);
+    expect(find.byKey(const ValueKey('log-search')), findsNothing);
+    expect(find.byKey(const ValueKey('log-printer')), findsOneWidget);
+    expect(said(tester, 'log-no-types'), 'Update the hub to read the log by kind of print and to search it.');
+    expect(t.hub.printLogAsks.every((ask) => !ask.containsKey('type') && !ask.containsKey('q')), isTrue);
+    await stop(tester);
+  });
+
+  testWidgets('on a phone, with large type, the kinds slide sideways and the search fits the bar', (tester) async {
+    await pumpLog(tester, arrange: night, size: const Size(360, 3000), textScale: 1.6);
+    expect(tester.takeException(), isNull);
+    // one line of chips, wider than the phone: the last is brought on by a slide, not by a second line
+    final all = tester.getRect(find.byKey(const ValueKey('log-type:all')));
+    final other = find.byKey(const ValueKey('log-type:other'));
+    expect(tester.getRect(other).top, all.top);
+    expect(tester.getRect(other).right, greaterThan(360));
+    await tester.drag(find.byKey(const ValueKey('log-types')), const Offset(-600, 0));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(other).right, lessThanOrEqualTo(360));
+    await tester.tap(other);
+    await tester.pumpAndSettle();
+    expect(listed(tester), ['o1']);
+    await tester.tap(find.byKey(const ValueKey('log-type:reprint')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await search(tester, 'a slice of lime on the side');
+    expect(listed(tester), ['r1']);
+    final found = tester.getRect(find.byKey(const ValueKey('print-found:r1')));
+    expect(found.right, lessThanOrEqualTo(360)); // a long line of the paper wraps under the print
+    expect(found.height, greaterThan(40));
+    await search(tester, 'a search much longer than the bar of a phone is wide');
+    expect(find.byKey(const ValueKey('log-none')), findsOneWidget);
+    expect(tester.takeException(), isNull); // nothing ran over the edge
     await stop(tester);
   });
 

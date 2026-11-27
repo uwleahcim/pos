@@ -305,6 +305,21 @@ it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
   that is seen, and Reprint how it is mended). The list can be read for one printer, and for **Problems**
   alone: everything that did not print first time at its own printer. It follows what the printers do
   without a tap (the change feed's `prints`).
+- **By kind of print**, the line of chips under the printer: **All**, **Kitchen**, **Bar**, **Bills**,
+  **Reprints**, **Other**. Kitchen and Bar are an order's tickets (new, changed, voided, moved, an allergy
+  notice, a bag slip) by where their dishes are made; a ticket with dishes of both, on a printer that prints
+  for both, is under both. Other is everything else: the day's report, pack sheets, prep lists, bag labels,
+  notices, test prints. A reprint is under Reprints and still under what it repeats, so the bar's reprints
+  are among the bar's tickets. The chips work together with the printer and with Problems, and on a narrow
+  phone the line slides sideways.
+- **Search**, the magnifier in the bar: the box takes the place of the title, and the log is searched when
+  the typing stops. The hub looks for the words as they were typed, in either case, in the print's line of
+  the log (what it is, what for, its stations, its printer, who asked for a reprint) and on every line of
+  the paper itself: a dish, a choice, a server, a guest's name, an order's number, a price. A number typed is
+  a whole number: "table 1" is not table 12, "#45" is not order 451. A print found by its paper shows the
+  line it was found on under it ("On the paper: 1 Peking Duck 48.00"). The search works together with the
+  printer, the kind and Problems; when nothing has the words, **Show all prints** drops the kind, Problems
+  and the search.
 - **The paper on the screen**: a tap on a print opens its paper as it came out, line for line: big where
   the paper is big, white on black where the paper is, the rules, the cut. Under it, what happened to it one
   thing after the other (sent, each reason it failed and how often, passed on to which printer, printed,
@@ -330,6 +345,17 @@ that cannot be written never stops a paper from printing.
 
 A waiting print that is reprinted is not taken back: when its own printer answers again, it still comes
 out there, without the REPRINT heading.
+
+Which station is the bar's is not a setting: the hub reads it off the menu (`bar_stations` in
+`pos.api.prints`). A station is the bar's when more than half of what is made there is a drink of the bar
+(an item taxed as alcohol, or one from the bar's own shelves), so the station the liquor, the beer and the
+cocktails print at is the bar's whatever it is called, and a sushi bar or a soda fountain is the
+kitchen's. A restaurant whose menu has no such station is offered no Bar chip. Each ticket is filed as it
+is queued, by the stations its dishes are made at (`Print.places`); the table keeps the types and the words
+a search looks through beside each print (`types`, `words`), so reading by kind and searching 14 days of
+paper is one query. The prints a hub wrote before it filed them are brought up to date once, as the updated
+hub starts (`PrintService.catch_up_log`): their words from the paper that was kept, and a ticket's kitchen
+or bar from the stations its printer prints for now, which is as near as an old print can be told.
 
 ## The API
 
@@ -369,11 +395,15 @@ out there, without the REPRINT heading.
 - The pack sheet and the prep list: `POST /orders/{id}/pack-sheet`, `GET /orders/ahead/prep` and
   `POST /orders/ahead/prep/print` are in `docs/catering.md`.
 - The labels of a to-go order's bags: `POST /orders/{id}/bag-labels` is in `docs/bag-labels.md`.
-- The print log (manager; `pos.api.prints`): `GET /print/log?printer=&only=trouble&before=&limit=` is a
-  page of it, newest first, with `next` to send as `before` for the page after, the `printers` a reprint may
-  go to and `keeps_days`; each print says its `sort`, `kind`, `title`, the printer it was made for, its
-  `status` (`printed`, `waiting`, `lost`), where it printed, its failed `tries` and last `error`, its
-  `events`, and for a reprint `reprint_of`, `first_ms` and `by`. `GET /print/log/paper?job=` is one print
+- The print log (manager; `pos.api.prints`): `GET /print/log?printer=&only=trouble&type=&q=&before=&limit=`
+  is a page of it, newest first, with `next` to send as `before` for the page after, the `printers` a reprint
+  may go to, `keeps_days`, and `types`, the types this restaurant's log is read by (`kitchen`, `bar` where
+  the menu has one, `bill`, `reprint`, `other`); each print says its `sort`, `kind`, `title`, the printer it
+  was made for, its `status` (`printed`, `waiting`, `lost`), where it printed, its failed `tries` and last
+  `error`, its `events`, the `places` a ticket is made at (`kitchen`, `bar`), and for a reprint `reprint_of`,
+  `first_ms` and `by`. `type` keeps one type, `q` the prints that have its words (100 letters at most), and
+  such a print says the line of its paper they were `found` on when its own line does not show them. A hub
+  from before the types sends no `types`; a screen then offers neither. `GET /print/log/paper?job=` is one print
   with its `pages`, the steps a screen draws. `POST /print/log/reprint` `{job, printer}` prints it again
   (202 with the new `print`; 404 `no_such_print`, 409 `no_printer`). The change feed says `prints` when the
   log has something new.
