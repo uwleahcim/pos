@@ -13,7 +13,7 @@ shows on the page as set.
 
 ## The page
 
-Orders screen › the three dots › **Location**, a manager's PIN, then **Keys and connections**. The row
+Orders screen › **More** › **Location**, a manager's PIN, then **Keys and connections**. The row
 itself says which keys are set and which are not ("Set: map service, GloriaFood · Not set: Google Maps,
 Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, Apple push, Twilio texts"). Only a manager or an owner sees the row and opens the
 page. It is not a power that can be handed to another role (`roles.md`).

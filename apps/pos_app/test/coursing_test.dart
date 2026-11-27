@@ -31,7 +31,7 @@ Future<Terminal> pumpLocation(WidgetTester tester, {void Function(Hub hub)? setU
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(find.byTooltip('Location'));
+  await openHome(tester, 'location');
   await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextField).last, '9999');
   await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
@@ -172,7 +172,7 @@ void main() {
     await stop(tester);
 
     await pumpOrders(tester, const [], role: 'server');
-    expect(find.byTooltip('Location'), findsNothing);
+    expect(homeIds(tester), isNot(contains('location')));
     expect(find.byTooltip('Quote times'), findsNothing);
     await stop(tester);
   });

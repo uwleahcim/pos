@@ -160,6 +160,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   List<_Row> _rows = [];
   String? _defaultKey;
   int _added = 0;
+  bool? _seats; // whether a table has seats, as the hub has it; null until it answers, and from an older hub
+  bool? _seatsDraft; // as the switch stands on the screen while it waits to be saved
   List<_PhoneRow> _phones = [];
   int _phonesAdded = 0;
   DeskPhoneLinks _phonesKept = const DeskPhoneLinks(); // the desk phones as the hub has them
@@ -244,6 +246,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       });
     } on ApiException catch (err) {
       if (mounted) setState(() => _loadError = err.message);
+    }
+    try {
+      final seats = await widget.api.seatsSetting();
+      if (mounted) setState(() => _seats = seats);
+    } on ApiException {
+      // nothing answered about the seats: the switch says so
     }
     try {
       final pbx = await widget.api.pbxStatus();
@@ -631,6 +639,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   // on the screen than the hub has it, and stops waiting when it is put back as it was.
 
   static const _coursesPart = 'Courses';
+  static const _seatsPart = 'Seats';
   static const _clockPart = 'Time clock';
   static const _ticketsPart = 'Tickets';
   static const _phonesPart = 'Desk phones';
@@ -657,6 +666,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     return false;
   }
 
+  bool get _seatsWait => _seatsDraft != null && _seats != null && _seatsDraft != _seats;
   bool get _clockWaits => _clockDraft != null && _clock != null && _clockDraft != _clock;
   bool get _ticketsWait => _ticketWordsDraft != null && _ticketWords != null && _ticketWordsDraft != _ticketWords;
   bool get _faceWaits => _faceDraft != null && _faceDraft != _faceEnabled;
@@ -665,6 +675,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   /// The parts that wait to be saved, in the order they stand on the screen.
   List<String> get _waiting => [
     if (_coursesWait) _coursesPart,
+    if (_seatsWait) _seatsPart,
     if (_clockWaits) _clockPart,
     if (_ticketsWait) _ticketsPart,
     if (_phonesWait) _phonesPart,
@@ -740,6 +751,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     final token = widget.token;
     final all =
         await send(_coursesPart, () => api.saveCoursing(token, _coursingEdited), _apply) &&
+        await send(_seatsPart, () => api.saveSeats(token, enabled: _seatsDraft!), (saved) {
+          _seats = saved;
+          _seatsDraft = null;
+        }) &&
         await send(_clockPart, () => api.saveClockSetting(token, _clockDraft!), (saved) {
           _clock = saved;
           _clockDraft = null;
@@ -1459,6 +1474,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                         ),
                       ),
                     ],
+                    const Divider(height: 13),
+                    _seatsSwitch(),
                   ],
                 ),
               ),
@@ -1689,6 +1706,26 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       ),
     ),
   );
+
+  /// Whether a table has seats, under the courses: the other half of how a table's order is taken. On as
+  /// it always was; off for a house that rings every dish in for the table. It waits for Save. A hub older
+  /// than the setting has seats and no way to turn them off.
+  Widget _seatsSwitch() {
+    final seats = _seatsDraft ?? _seats;
+    return SwitchListTile(
+      key: const ValueKey('seats-enabled'),
+      value: seats ?? true,
+      onChanged: seats == null || _saving ? null : (on) => setState(() => _seatsDraft = on),
+      title: const Text('Seat numbers'),
+      subtitle: Text(
+        seats == null
+            ? 'The hub has not answered about the seats (an older hub: update it)'
+            : seats
+            ? 'Each dish is rung in for a seat, or for the whole table'
+            : 'Every dish is for the table; the order screen shows no seats, only the size of the party',
+      ),
+    );
+  }
 
   /// The time clock: whether the location uses it (off until a manager turns it on), whether a break counts
   /// as time worked, the day the pay week starts on, and the way to the hours. Each waits for Save. A

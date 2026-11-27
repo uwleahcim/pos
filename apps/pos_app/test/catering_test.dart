@@ -769,7 +769,7 @@ void main() {
 
     testWidgets('each day lists its orders with the money on each, and adds them up', (tester) async {
       await pumpAhead(tester, week());
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       expect(find.text('Orders ahead'), findsOneWidget);
       expect(find.text('Today'), findsOneWidget);
@@ -799,7 +799,7 @@ void main() {
 
     testWidgets('a tap opens the order, and the list is read again on the way back', (tester) async {
       final t = await pumpAhead(tester, week());
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       int reads() => t.hub.requests.where((r) => r == 'GET /orders/ahead').length;
       final before = reads();
@@ -819,7 +819,7 @@ void main() {
       final chenRow = ((list['days'] as List)[1]['orders'] as List)[0] as Map<String, dynamic>;
       chenRow['unsent'] = 2;
       await pumpAhead(tester, list);
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       expect(
         find.descendant(of: find.byKey(const ValueKey('ahead-unsent:c1')), matching: find.text('2 not sent')),
@@ -830,13 +830,13 @@ void main() {
 
     testWidgets('with nothing ahead it says so; a hub older than the list says to update it', (tester) async {
       await pumpAhead(tester, {'today': '2026-11-16', 'days': <Object>[]});
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       expect(find.text('No orders are waiting for a later time.'), findsOneWidget);
       await stop(tester);
 
       await pumpAhead(tester, null);
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       expect(find.text('This hub does not list the orders ahead yet. Update the hub.'), findsOneWidget);
       await stop(tester);
@@ -869,9 +869,7 @@ void main() {
       tester.platformDispatcher.textScaleFactorTestValue = 1.3;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('ahead:p1')), findsOneWidget);
       await tester.scrollUntilVisible(find.byKey(const ValueKey('ahead:c2')), 200);

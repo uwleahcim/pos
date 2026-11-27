@@ -10,7 +10,7 @@ turn on and no menu import: the names are the ones the menu already holds.
 
 ## What the staff see
 
-Orders screen › **Display** (under the three dots on a phone). Under the text size and High contrast there
+Orders screen › **More** › **Display**. Under the text size and High contrast there
 is **Dish names**, with two buttons: **English** and **中文**.
 
 - **A tap changes the screen at once**, and is kept with the person's text size. It follows them to every

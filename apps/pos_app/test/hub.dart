@@ -16,6 +16,7 @@ import 'package:pos_app/photos.dart';
 import 'package:pos_app/powers.dart';
 import 'package:pos_app/printers.dart' show PrinterConfig;
 import 'package:pos_app/queue_store.dart';
+import 'package:pos_app/screens/home_bar.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -87,6 +88,11 @@ class Hub {
   bool keepsStages = false;
   String? coursingAuth;
   String? refuse; // a reason the hub refuses the next coursing save with
+
+  /// Whether a table has seats (`GET/PUT /settings/seats`); null is a hub older than the setting, which
+  /// answers as it does for anything it has no word for. [seatsAuth] is who last set it.
+  bool? seats = true;
+  String? seatsAuth;
 
   /// What it knows of a customer, by the number's digits (`GET /customers/lookup`): a number it does not
   /// list is answered as everything is that this hub has no word for.
@@ -4578,6 +4584,13 @@ class Hub {
           coursing = jsonDecode(request.body) as Map<String, dynamic>;
         }
         return json(coursing);
+      case '/settings/seats':
+        if (seats == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          seatsAuth = request.headers['authorization'];
+          seats = (jsonDecode(request.body) as Map<String, dynamic>)['enabled'] as bool;
+        }
+        return json({'enabled': seats});
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotesOut);
@@ -5332,6 +5345,9 @@ class Hub {
         case 'set_field' when data.containsKey('split'):
           // how the table pays: the one field of an order these tests read back
           (order['fields'] as Map)['split'] = data['split'];
+        case 'set_field' when data.containsKey('guests'):
+          // the party's size: the seats of the order screen, or the party alone where a table has no seats
+          (order['fields'] as Map)['guests'] = data['guests'];
         case 'set_field' when data.containsKey('table') || data.containsKey('merged_into'):
           // the check moved to another table, or was emptied into another check
           for (final field in const ['table', 'merged_into']) {
@@ -5484,6 +5500,34 @@ Future<void> pumpOrdersOn(WidgetTester tester, Terminal t, {PhoneClient? phone})
 }
 
 Future<void> stop(WidgetTester tester) => tester.pumpWidget(const SizedBox()); // stops the refresh timers
+
+/// Taps one of the home screen's ways out by its id ("location", docs/home-screen.md): its button in the
+/// bar where it stands there, its tile in the menu behind More otherwise. What it opens is the test's to
+/// pump for, as after any tap.
+Future<void> openHome(WidgetTester tester, String id) async {
+  final inBar = find.byKey(ValueKey('home-quick:$id'));
+  if (inBar.evaluate().isNotEmpty) return tester.tap(inBar);
+  await openMore(tester);
+  final tile = find.byKey(ValueKey('home-tile:$id'));
+  await tester.ensureVisible(tile);
+  await tester.pumpAndSettle();
+  await tester.tap(tile);
+}
+
+/// Opens the menu behind More on the home screen.
+Future<void> openMore(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('home-more')));
+  await tester.pumpAndSettle();
+}
+
+/// A tile of the home screen's menu, by its id.
+Finder homeTile(String id) => find.byKey(ValueKey('home-tile:$id'));
+
+/// The ids of every way out of the home screen for whoever is signed in: the buttons of its row and the
+/// tiles of its menu, without opening it.
+Set<String> homeIds(WidgetTester tester) => {
+  for (final entry in tester.widget<HomeBar>(find.byType(HomeBar)).entries) entry.id,
+};
 
 /// A pretend hub that also has the change feed (`GET /live`): the other calls go to [hub], and the test
 /// says what the feed tells with [hello], [changed], [beat] and [drop]. With [beats], it writes its

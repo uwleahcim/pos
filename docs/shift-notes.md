@@ -26,15 +26,15 @@ not close it.
   when the person is back at the floor or the list.
 - **In the middle of service** a new note reaches the people already signed in within seconds, the same
   way: over the floor or the list.
-- **To read them again:** while at least one note is up, the orders screen's menu has **Notes** (a note
-  icon in the bar on a tablet, under **More** on a phone). With no note up there is no such entry.
+- **To read them again:** while at least one note is up, the orders screen has **Notes** under **More**
+  (`home-screen.md`), and the tile says how many are up. With no note up there is no such entry.
 
 ### Writing a note (a manager)
 
 Either way leads to the same screen:
 
 - Orders screen › **Location** (manager PIN) › **Notes for the shift**, or
-- **Notes** in the orders screen's menu, when a note is up, then **Write or change notes** and the PIN.
+- **Notes** under **More** on the orders screen, when a note is up, then **Write or change notes** and the PIN.
 
 **Write a note** asks for the words (500 letters at most, lines kept) and how long it is up:
 

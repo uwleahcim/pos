@@ -51,7 +51,7 @@ The registration at Twilio names what kind of texts the number sends. These are 
 who gave their number with an order. If the registration was made for something else alone (offers, say),
 add order updates to it in Twilio's console, or the phone companies may filter these.
 
-1. On a terminal: the Orders screen, the three dots, **Location**, a manager's PIN, **Keys and
+1. On a terminal: the Orders screen, **More**, **Location**, a manager's PIN, **Keys and
    connections**, and the card **Texts to customers (Twilio)**.
 2. **Type the account**:
    - **Account SID**: on the first page of Twilio's console (console.twilio.com). It begins with `AC`.
@@ -128,7 +128,7 @@ Twilio keeps its own record of every text in its console, under its own terms.
 ## Replies, and STOP
 
 A customer who answers a text answers the restaurant's Twilio number, and since 27 November 2026 that
-answer shows on the POS: the Texts button on the Orders screen, in the conversation with that customer,
+answer shows on the POS: Texts behind More on the home screen, in the conversation with that customer,
 under the order text they answered (`text-inbox.md`). Twilio handles STOP, START and HELP by itself; the
 POS reads STOP and marks the conversation, and the hub is told "the customer answered STOP" when it tries
 such a number again. The order texts themselves do not say "Reply STOP to opt out": they are the words the

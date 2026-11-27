@@ -23,7 +23,7 @@ So the table only ever lets more people do something. It cannot lock anybody out
 
 ## The screen
 
-Orders screen › the three dots › **Location**, a manager's PIN, then **Who may do what**. The row itself
+Orders screen › **More** › **Location**, a manager's PIN, then **Who may do what**. The row itself
 says what is handed out beyond how it started ("Approve a void: Bartenders").
 
 Each power is a row: what it is, one line on what it lets a person do, and six buttons: **Servers,
@@ -64,7 +64,7 @@ the voids and comps report still names who approved each one.
 
 ## What each person sees
 
-- **In the menu of the Orders screen** (the three dots): **Kitchen rush** for whoever may set it, **Menu
+- **Under More on the Orders screen** (`home-screen.md`): **Kitchen rush** for whoever may set it, **Menu
   editor** for whoever may edit the menu, and **Location** for whoever has anything to open there.
 - **Location** still asks for a PIN, as it always did. It then shows what that PIN's owner may open and
   nothing else: a host handed the reports finds Sold out and running low, The day, Sales, Dishes sold,

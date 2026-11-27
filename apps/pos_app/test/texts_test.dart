@@ -427,12 +427,21 @@ void main() {
       return t;
     }
 
-    testWidgets('whoever may read the texts has the button, with how many conversations wait', (tester) async {
+    /// Whether More carries the dot that says something behind it wants a look.
+    bool moreSaysLook(WidgetTester tester) =>
+        tester.widget<Badge>(find.descendant(of: key('home-more'), matching: find.byType(Badge))).isLabelVisible;
+
+    testWidgets('whoever may read the texts has the tile, with how many conversations wait', (tester) async {
       await pumpOrdersFor(tester, amy);
-      expect(key('texts-open'), findsOneWidget);
-      expect(find.byTooltip('Texts: 1 conversation not read'), findsOneWidget);
-      expect(find.descendant(of: key('texts-badge'), matching: find.text('1')), findsOneWidget);
-      await tapKey(tester, 'texts-open');
+      expect(homeIds(tester), contains('texts'));
+      expect(key('home-quick:texts'), findsNothing, reason: 'the row keeps its room: Texts is a tile');
+      expect(moreSaysLook(tester), isTrue);
+      await openMore(tester);
+      expect(find.descendant(of: homeTile('texts'), matching: find.text('Texts')), findsOneWidget);
+      expect(find.descendant(of: homeTile('texts'), matching: find.text('1 not read')), findsOneWidget);
+      expect(find.descendant(of: key('home-count:texts:ok'), matching: find.text('1')), findsOneWidget);
+      await tester.tap(homeTile('texts'));
+      await tester.pumpAndSettle();
       expect(listed(tester), [lee, pat]);
       await stop(tester);
     });
@@ -440,32 +449,36 @@ void main() {
     testWidgets('nobody is offered the texts who may not read them, and nothing is asked for them', (tester) async {
       const ken = Staff(staffId: 's5', name: 'Ken', role: 'kitchen', method: 'pin');
       final t = await pumpOrdersFor(tester, ken);
-      expect(key('texts-open'), findsNothing);
-      expect(find.byTooltip('Texts'), findsNothing);
+      expect(homeIds(tester), isNot(contains('texts')));
+      expect(moreSaysLook(tester), isFalse);
       expect(t.hub.textAsks, 0);
       await stop(tester);
     });
 
-    testWidgets('a hub older than the texts shows no button', (tester) async {
+    testWidgets('a hub older than the texts shows no tile', (tester) async {
       await pumpOrdersFor(tester, mike, hub: (_) {});
-      expect(key('texts-open'), findsNothing);
-      expect(find.byTooltip('Texts'), findsNothing);
+      expect(homeIds(tester), isNot(contains('texts')));
       await stop(tester);
     });
 
-    testWidgets('on a phone the button is in the bar while something waits, and in the menu otherwise', (tester) async {
+    testWidgets('on a phone More says so while something waits, and the tile is there with nothing waiting', (
+      tester,
+    ) async {
       final t = await pumpOrdersFor(tester, amy, size: const Size(390, 800));
-      expect(key('texts-open'), findsOneWidget);
+      expect(moreSaysLook(tester), isTrue);
       await stop(tester);
       t.hub.textThreads = [
         for (final thread in t.hub.textThreads!) {...thread, 'unread': 0},
       ];
       await pumpOrdersOn(tester, t);
-      expect(key('texts-open'), findsNothing);
-      await tester.tap(find.byTooltip('More'));
+      expect(moreSaysLook(tester), isFalse);
+      await openMore(tester);
+      expect(find.descendant(of: homeTile('texts'), matching: find.text('Texts')), findsOneWidget);
+      expect(find.textContaining('not read'), findsNothing);
+      expect(key('home-count:texts:ok'), findsNothing);
+      await tester.ensureVisible(homeTile('texts'));
       await tester.pumpAndSettle();
-      expect(find.text('Texts'), findsOneWidget);
-      await tester.tap(find.text('Texts'));
+      await tester.tap(homeTile('texts'));
       await tester.pumpAndSettle();
       expect(listed(tester), [lee, pat]);
       await stop(tester);
@@ -475,7 +488,8 @@ void main() {
       tester,
     ) async {
       await pumpOrdersFor(tester, amy);
-      await tapKey(tester, 'texts-open');
+      await openHome(tester, 'texts');
+      await tester.pumpAndSettle();
       await tapKey(tester, 'text-thread:$pat');
       await tapKey(tester, 'text-start-order');
       expect(tester.widget<TextField>(key('takeout-name')).controller!.text, 'Pat');
@@ -576,9 +590,9 @@ void main() {
     expect(taken.asItStarted.handedTo('texts'), ['server', 'bartender', 'host', 'cashier']);
   });
 
-  test('the count on the button', () {
-    expect(unreadWords(0), 'Texts');
-    expect(unreadWords(1), 'Texts: 1 conversation not read');
-    expect(unreadWords(4), 'Texts: 4 conversations not read');
+  test('what the tile says of the conversations not read', () {
+    expect(unreadNote(0), isNull);
+    expect(unreadNote(1), '1 not read');
+    expect(unreadNote(4), '4 not read');
   });
 }

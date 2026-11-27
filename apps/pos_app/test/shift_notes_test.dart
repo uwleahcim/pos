@@ -334,7 +334,7 @@ void main() {
       ]);
       await pumpFloor(tester, t);
       expect(dialog, findsNothing, reason: 'seen already');
-      await tester.tap(find.byTooltip('Notes'));
+      await openHome(tester, 'notes');
       await tester.pumpAndSettle();
       expect(find.byType(ShiftNotesScreen), findsOneWidget);
       expect(find.text('Out tonight: lobster.'), findsOneWidget);
@@ -349,10 +349,9 @@ void main() {
         note('n1', 'Out tonight: lobster.', seenBy: ['s3', 's1']),
       ]);
       await pumpFloor(tester, t, size: const Size(390, 844));
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      expect(find.text('Notes'), findsOneWidget);
-      await tester.tap(find.text('Notes'));
+      await openMore(tester);
+      expect(find.descendant(of: homeTile('notes'), matching: find.text('1 up')), findsOneWidget);
+      await tester.tap(homeTile('notes'));
       await tester.pumpAndSettle();
       expect(find.byType(ShiftNotesScreen), findsOneWidget);
       await stop(tester);
@@ -360,10 +359,9 @@ void main() {
       final none = await amyWith(tester, []);
       await pumpFloor(tester, none, size: const Size(390, 844));
       expect(dialog, findsNothing);
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
+      await openMore(tester);
       expect(find.text('Sign out'), findsOneWidget);
-      expect(find.text('Notes'), findsNothing);
+      expect(homeTile('notes'), findsNothing);
       await stop(tester);
     });
 
@@ -422,8 +420,8 @@ void main() {
       final t = await amyWith(tester, null);
       await pumpFloor(tester, t);
       expect(dialog, findsNothing);
-      expect(find.byTooltip('Notes'), findsNothing);
-      expect(find.byTooltip('Sign out'), findsOneWidget);
+      expect(homeIds(tester), isNot(contains('notes')));
+      expect(find.byKey(const ValueKey('home-sign-out')), findsOneWidget);
       await stop(tester);
     });
 

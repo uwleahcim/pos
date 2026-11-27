@@ -10,9 +10,9 @@ a hub that has the account has the conversations.
 
 ## What is on the screens
 
-- **Texts**, on the Orders screen: a speech bubble in the bar with the number of conversations that hold
-  something nobody has read. On a phone it stands in the bar while something waits, and in the three-dot
-  menu otherwise.
+- **Texts**, a tile behind **More** on the home screen, under Guests & orders (`home-screen.md`). Its icon
+  carries the number of conversations that hold something nobody has read, the tile says "2 not read", and
+  **More** itself shows a red dot while one waits, on a phone and on a tablet alike.
 - **The list**: one line for each customer, the one with the newest text on top: their name where the POS
   knows the number (from an order, a reservation or the guest list), the number otherwise, the newest text,
   and a dot while something of theirs is not read. The box above it finds a name, a number or a word of a
@@ -176,7 +176,7 @@ it sends with.
 - **No more than 300 texts an hour** leave the hub, the order texts counted in: the same guard as before.
   The guard against the same words to the same number within ten minutes is for the order texts only: a
   person may say "Yes" twice.
-- A hub with no Twilio account shows the Texts button to a manager alone, and says there where the account
+- A hub with no Twilio account shows the Texts tile to a manager alone, and says there where the account
   is typed.
 
 ## What it costs
@@ -192,7 +192,7 @@ messages costs nothing.
 - A text to a party on the waitlist that its table is ready, or to confirm a reservation, sent by itself.
   Somebody can type either.
 - Ready-made answers ("We open at 11"), and an answer when the restaurant is closed.
-- A sound or a notification when a text comes: the number on the button is all.
+- A sound or a notification when a text comes: the dot on More and the number on the tile are all.
 - Deleting a conversation, or keeping texts only so long.
 - Blocking a number.
 - Group texts: each person's texts are their own conversation.
@@ -227,10 +227,10 @@ was read (`GET /live`).
 The code: `backend/src/pos/texts.py` keeps the conversations and makes the rules (`Texts`), and asks Twilio
 (`Listener`); `backend/src/pos/twilio.py` reads Twilio's list and its pictures (`heard`, `pictures_of`,
 `picture`) and sends a typed text (`deliver`); `backend/src/pos/api/texts.py` is the calls. In the app:
-`lib/texts.dart`, `lib/screens/texts_screen.dart`, and the button on `lib/screens/orders_screen.dart`.
+`lib/texts.dart`, `lib/screens/texts_screen.dart`, and its `HomeEntry` in `lib/screens/orders_screen.dart`.
 Tests: `backend/tests/test_text_inbox.py`, `apps/pos_app/test/texts_test.dart`.
 
 ## An older hub, an older app
 
-An app newer than its hub shows no Texts button and no line on a to-go order. A hub newer than its apps
+An app newer than its hub shows no Texts tile and no line on a to-go order. A hub newer than its apps
 keeps the conversations all the same, and the order texts go as before. Update the hub first.

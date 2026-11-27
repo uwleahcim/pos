@@ -335,7 +335,7 @@ void main() {
 
   testWidgets('a manager sets the table timers for every floor map', (tester) async {
     final t = await pumpOrders(tester, const []);
-    await tester.tap(find.byTooltip('Location'));
+    await openHome(tester, 'location');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
@@ -395,7 +395,7 @@ void main() {
     final t = await terminal(tester);
     t.hub.tableTimers = null;
     await pumpOrdersOn(tester, t);
-    await tester.tap(find.byTooltip('Location'));
+    await openHome(tester, 'location');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));

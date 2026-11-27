@@ -119,6 +119,9 @@ const everything = {
   'settings',
 };
 
+/// The home screen's ways out that a manager always had: the rush, Location and the menu editor.
+const managers = {'rush', 'location', 'menu'};
+
 /// The orders screen with [role] signed in, on a hub that knows of the rush.
 Future<Terminal> pumpMenu(WidgetTester tester, String role, {void Function(Hub hub)? hub}) async {
   final t = await terminal(tester, role: role);
@@ -511,57 +514,54 @@ void main() {
   group('the menu of the orders screen', () {
     testWidgets('a host sees what a host always saw, and what the location handed the hosts', (tester) async {
       final t = await pumpMenu(tester, 'host');
-      for (final entry in ['Kitchen rush', 'Location', 'Menu editor']) {
-        expect(find.byTooltip(entry), findsNothing, reason: entry);
-      }
+      expect(homeIds(tester).intersection(managers), isEmpty);
       await stop(tester);
 
       await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['rush'] = ['host']);
-      expect(find.byTooltip('Kitchen rush'), findsOneWidget);
-      expect(find.byTooltip('Location'), findsNothing);
-      expect(find.byTooltip('Menu editor'), findsNothing);
+      expect(homeIds(tester), contains('rush'));
+      expect(homeIds(tester), isNot(contains('location')));
+      expect(homeIds(tester), isNot(contains('menu')));
       await stop(tester);
 
       await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['menu'] = ['host']);
-      expect(find.byTooltip('Menu editor'), findsOneWidget);
-      expect(find.byTooltip('Kitchen rush'), findsNothing);
-      expect(find.byTooltip('Location'), findsNothing);
+      expect(homeIds(tester), contains('menu'));
+      expect(homeIds(tester), isNot(contains('rush')));
+      expect(homeIds(tester), isNot(contains('location')));
       await stop(tester);
 
       for (final power in ['reports', 'guests', 'waste', 'notes', 'logbook', 'time_clock']) {
         await pumpMenu(tester, 'host', hub: (hub) => hub.powers![power] = ['host']);
-        expect(find.byTooltip('Location'), findsOneWidget, reason: power);
-        expect(find.byTooltip('Menu editor'), findsNothing, reason: power);
+        expect(homeIds(tester), contains('location'), reason: power);
+        expect(homeIds(tester), isNot(contains('menu')), reason: power);
         await stop(tester);
       }
       // approving on a check, or a table of one's own, opens nothing in the menu
       await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['void'] = ['host']);
-      expect(find.byTooltip('Location'), findsNothing);
+      expect(homeIds(tester), isNot(contains('location')));
       await stop(tester);
       expect(t.hub.sessionsFor, isEmpty);
     });
 
     testWidgets('a manager sees everything on a hub that has the table and on one that has none', (tester) async {
       await pumpMenu(tester, 'manager');
-      for (final entry in ['Kitchen rush', 'Location', 'Menu editor']) {
-        expect(find.byTooltip(entry), findsOneWidget, reason: entry);
+      expect(homeIds(tester), containsAll(managers));
+      // and each is a tile of the menu behind More
+      await openMore(tester);
+      for (final id in managers) {
+        expect(homeTile(id), findsOneWidget, reason: id);
       }
       await stop(tester);
       await pumpMenu(tester, 'owner', hub: (hub) => hub.powers = null);
-      for (final entry in ['Kitchen rush', 'Location', 'Menu editor']) {
-        expect(find.byTooltip(entry), findsOneWidget, reason: entry);
-      }
+      expect(homeIds(tester), containsAll(managers));
       await stop(tester);
       await pumpMenu(tester, 'server', hub: (hub) => hub.powers = null);
-      for (final entry in ['Kitchen rush', 'Location', 'Menu editor']) {
-        expect(find.byTooltip(entry), findsNothing, reason: entry);
-      }
+      expect(homeIds(tester).intersection(managers), isEmpty);
       await stop(tester);
     });
 
     testWidgets('the rush takes the PIN of whoever was handed it, and says so to a PIN that was not', (tester) async {
       final t = await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['rush'] = ['host']);
-      await tester.tap(find.byTooltip('Kitchen rush'));
+      await openHome(tester, 'rush');
       await tester.pumpAndSettle();
       expect(find.text('PIN'), findsWidgets);
       expect(find.text('Manager PIN'), findsNothing);
@@ -576,7 +576,7 @@ void main() {
 
     testWidgets('Location opens for a host handed the reports, with the reports and no settings', (tester) async {
       final t = await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['reports'] = ['host']);
-      await tester.tap(find.byTooltip('Location'));
+      await openHome(tester, 'location');
       await tester.pumpAndSettle();
       expect(find.text('Manager PIN'), findsNothing);
       await typePin(tester, '1111', 'Open location settings'); // Amy has nothing there
@@ -598,7 +598,7 @@ void main() {
 
     testWidgets("a manager's PIN at a host's screen opens all of Location", (tester) async {
       await pumpMenu(tester, 'host', hub: (hub) => hub.powers!['reports'] = ['host']);
-      await tester.tap(find.byTooltip('Location'));
+      await openHome(tester, 'location');
       await tester.pumpAndSettle();
       await typePin(tester, '9999', 'Open location settings');
       expect(find.text('Location settings'), findsOneWidget);
@@ -610,7 +610,7 @@ void main() {
 
     testWidgets('on a hub with no table Location is a manager\'s, worded as before', (tester) async {
       final t = await pumpMenu(tester, 'manager', hub: (hub) => hub.powers = null);
-      await tester.tap(find.byTooltip('Location'));
+      await openHome(tester, 'location');
       await tester.pumpAndSettle();
       expect(find.text('Manager PIN'), findsOneWidget);
       await typePin(tester, '1111', 'Open location settings');
@@ -649,19 +649,19 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(api.live.isLive, isTrue);
-      expect(find.byTooltip('Kitchen rush'), findsNothing);
+      expect(homeIds(tester), isNot(contains('rush')));
 
       hub.powers!['rush'] = ['host']; // a manager hands the hosts the rush at another screen
       live.changed(topics: ['settings']);
       await tester.pump(const Duration(seconds: 2));
       await tester.pump();
-      expect(find.byTooltip('Kitchen rush'), findsOneWidget);
+      expect(homeIds(tester), contains('rush'));
 
       hub.powers!['rush'] = []; // and takes it back
       live.changed(topics: ['settings']);
       await tester.pump(const Duration(seconds: 2));
       await tester.pump();
-      expect(find.byTooltip('Kitchen rush'), findsNothing);
+      expect(homeIds(tester), isNot(contains('rush')));
 
       await stop(tester);
       live.close();

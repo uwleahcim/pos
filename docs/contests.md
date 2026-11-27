@@ -9,8 +9,8 @@ one up. A contest reads the sales. It changes no check, no sale and nobody's pay
 
 ## What the staff see
 
-While a contest is on the staff's screens, the orders screen's menu has **Contests** (a cup in the bar on a
-tablet, under **More** on a phone). With no contest there is no such entry.
+While a contest is on the staff's screens, the orders screen has **Contests** under **More** (the cup,
+`home-screen.md`). With no contest there is no such entry.
 
 Each contest is a card: its name, what counts, the days, who takes part, what the winner gets if the manager
 wrote it, and how long is left ("3 days left", "Ends today", "Starts Fri Nov 20", "Ended yesterday").
@@ -32,7 +32,7 @@ at most every ten seconds.
 Either way leads to the same screen:
 
 - Orders screen › **Location** (manager PIN) › **Contests**, or
-- **Contests** in the orders screen's menu, when one is on, then **Set up or change contests** and the PIN.
+- **Contests** under **More** on the orders screen, when one is on, then **Set up or change contests** and the PIN.
 
 **Set up a contest** asks for:
 

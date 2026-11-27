@@ -37,7 +37,7 @@ screen with the first change (see `location-settings.md`). Once saved, every scr
 **On a locked screen** it is the same: the Time clock button is on the locked pad, and the screen stays
 locked for whoever was on it.
 
-**Signed in already**: the orders screen's menu has **Time clock**. It asks for your PIN again, so nobody
+**Signed in already**: the orders screen has **Time clock** under **More**. It asks for your PIN again, so nobody
 can punch for the person who left a screen signed in. It works for anybody, not only the person signed in.
 
 The card closes itself after 30 seconds untouched. **Back to sign in** leaves the clock without a PIN.

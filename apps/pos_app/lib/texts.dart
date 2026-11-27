@@ -385,9 +385,6 @@ String underWords(TextMessage text, DateTime now) => [
 /// What a first text looks like on the customer's phone, with what the hub puts around it.
 String wrapped(TextPage page, String typed) => '${page.before}${typed.trim()}${page.after}';
 
-/// The count on the button, and its tooltip.
-String unreadWords(int unread) => switch (unread) {
-  0 => 'Texts',
-  1 => 'Texts: 1 conversation not read',
-  _ => 'Texts: $unread conversations not read',
-};
+/// What the Texts tile of the home screen's menu says under its name: how many conversations hold something
+/// nobody has read. Nothing while none does.
+String? unreadNote(int unread) => unread <= 0 ? null : '$unread not read';
