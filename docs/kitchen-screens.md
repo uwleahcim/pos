@@ -214,12 +214,13 @@ screen follows at once.
 
 The device is still a POS screen.
 
-- **Staff**, at the top right, brings up the sign-in pad. A PIN signs in as on any screen.
+- **Staff**, at the top right, brings up the sign-in pad. A PIN signs in as on any screen, and so does a
+  face where the location signs in by face: the camera looks for as long as the pad is up.
 - The pad has **Kitchen screen** in its bar (an icon on a phone) to go back.
 - **A pad nobody touches for a minute goes back to the tickets by itself.**
 - **Signing out** puts the tickets back.
 - **If the device locks itself when idle** (`idle-lock.md`), the tickets come over what was open, and a tap
-  still marks a dish. Staff and a PIN bring back what was open.
+  still marks a dish. Staff and a PIN (or a face, at the pad) bring back what was open.
 
 ## Good to know
 
@@ -230,8 +231,12 @@ The device is still a POS screen.
   clock is a minute off shows the tickets a minute older or younger.
 - **A location with no printer at all** can use the screens: an order sent ahead then comes onto them by
   the clock, when its ticket would have printed.
-- **Signing in by face or by tag** does not run while the tickets show: the pad is not on the screen. Tap
-  **Staff** first.
+- **The camera signs nobody in while the tickets show**, whoever stands in front of it: a cook reading the
+  tickets is not signing in, and a screen that signed them in would lose its tickets to the orders. No
+  picture leaves the device meanwhile. Tap **Staff** first; a sign-out, or the camera no longer seeing the
+  person, puts the tickets back, and they stay. The same goes for a screen that locked itself: a face
+  walking by does not unlock it.
+- **A tag held to the reader** signs in straight from the tickets: that is somebody asking.
 - **Leave Phone off on this device.** A call ringing shows the caller over every screen of a device that is
   a phone.
 - The dishes are in the kitchen's words, as its paper has them (Chinese where the menu gives a kitchen
@@ -308,6 +313,11 @@ The device is still a POS screen.
   `lib/screens/standing_gate.dart` (`StandingGate`, which stands where the sign-in pad stands and shows the
   kitchen screen, the pickup board or the pad), `Settings.kitchenStations` and `Settings.kitchenPass` (the
   preferences `kitchen_stations` and `kitchen_pass`), `lib/screens/kitchen_minutes_dialog.dart`.
+- **The camera.** The face sign-in runs for the whole app (`FaceSignIn`, `face-signin.md`), not for the
+  pad, so it has to be told that a standing screen is up: `FaceSignIn.standing` is true on a device that
+  stands as something (`Settings.stands`) with nobody signed in and no pad on the screen, and no frame goes
+  while it is. `SignInScreen` says when it is on the screen (`padUp`, `padDown`). The test is
+  `apps/pos_app/test/standing_faces_test.dart`; the other tests of this screen run without a camera.
 - **The sound** is the terminal's alone; the hub knows nothing of it. `lib/kitchen_bell.dart`:
   `kitchenReads` is what of a board a cook reads (each ticket's `id`, its `allergies`, and of each line its
   `qty`, `label`, `modifiers`, `note`, `allergy` and whether it is a `void`; not what is made, not the table

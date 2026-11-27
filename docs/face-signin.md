@@ -73,6 +73,29 @@ after the sign-in, on every screen of the app and not only the sign-in screen:
   detector pass every two seconds and a recognition every three; with nobody in view, two a second for a
   dozen frames and then one every two seconds, and a change in the view sends one at once.
 
+## A kitchen screen or the pickup board
+
+A device set to stand as a station's kitchen screen, the pass or the pickup board (`kitchen-screens.md`,
+`pickup-board.md`) is the one place the camera does not sign in whoever is in front of it. The people in
+front of such a screen are reading it: a cook at the tickets, a server or a customer at the shelf. Signing
+them in would put the orders screen where the tickets were, every time somebody enrolled looked at them.
+
+- **While the tickets or the board show**, no frame goes to the hub and no face signs anyone in. The
+  camera's frame stream is let go.
+- **Staff**, on the screen, brings up the sign-in pad, and for as long as the pad is up the camera looks as
+  on any sign-in screen. A pad nobody touches for a minute goes back to the tickets, and the looking stops.
+- **Once somebody is signed in** the device is a POS screen like any other, switching and the away
+  sign-out included. A sign-out, by hand or by the camera, puts the tickets back, and they stay: the person
+  still standing there is not signed in again.
+- **A screen that locked itself** (`idle-lock.md`) shows its tickets over the lock, and a face walking by
+  does not unlock it: Staff first.
+- **A tag** held to the reader signs in from the tickets as from any screen. Holding a badge to a reader
+  is somebody asking; standing in front of a camera is not.
+
+In the app: `FaceSignIn.standing` (`Settings.stands`, nobody signed in, no pad on the screen);
+`SignInScreen` tells the loop when it is on the screen (`padUp`, `padDown`); a frame that was at the hub
+when the pad left is dropped when it answers. `apps/pos_app/test/standing_faces_test.dart`.
+
 ## Tags
 
 For a location that does not allow faces, or a person who would rather not enroll one, a tag does the
