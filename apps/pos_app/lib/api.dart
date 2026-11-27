@@ -2612,12 +2612,16 @@ class PosApi {
 
   /// A page of the print log, newest first (manager token): every paper the hub made, where it went and
   /// how that ended. [printer] keeps the prints made for one printer (its id), [trouble] the ones to look
-  /// at (not printed, a try failed, printed at another printer); [before] is the page before's
-  /// [PrintLogPage.next]. Null from a hub older than the log.
+  /// at (not printed, a try failed, printed at another printer), [type] the ones of one type (one of the
+  /// page's [PrintLogPage.types]) and [q] the ones that have these words, in their line of the log or on
+  /// their paper; [before] is the page before's [PrintLogPage.next]. Null from a hub older than the log; a
+  /// hub older than the types answers with no [PrintLogPage.types] and reads neither [type] nor [q].
   Future<PrintLogPage?> printLog(
     String token, {
     String? printer,
     bool trouble = false,
+    String? type,
+    String? q,
     String? before,
     int limit = 50,
   }) async {
@@ -2625,7 +2629,14 @@ class PosApi {
       return PrintLogPage.fromJson(
         await _get(
           '/print/log',
-          query: {'printer': ?printer, if (trouble) 'only': 'trouble', 'before': ?before, 'limit': '$limit'},
+          query: {
+            'printer': ?printer,
+            if (trouble) 'only': 'trouble',
+            'type': ?type,
+            if (q != null && q.isNotEmpty) 'q': q,
+            'before': ?before,
+            'limit': '$limit',
+          },
           headers: _bearer(token),
           timeout: const Duration(seconds: 6),
         ),

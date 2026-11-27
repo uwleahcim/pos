@@ -654,6 +654,10 @@ class PrintService:
         the name, or the id of a course that is no longer on the list."""
         self.station_names: Callable[[], Mapping[str, str]] | None = None
         """Station code -> name as the menu has it (`wok1` -> `Wok 1`), for the head of the ticket."""
+        self.bar_stations: Callable[[], Iterable[str]] | None = None
+        """The stations that are the bar's, by code: where the menu's drinks are made (the API works it out
+        from the menu). The print log lists a ticket made there under the bar's, every other under the
+        kitchen's (`places`). Until it is wired in, every station is the kitchen's."""
         self.takeout_station: Callable[[], str | None] = lambda: None
         """The station a to-go order prints whole at, besides its lines' own stations; None for none."""
         self.allergen_names: Callable[[], Mapping[str, str]] = dict
@@ -724,6 +728,19 @@ class PrintService:
     def station_name(self, code: str) -> str:
         names = self.station_names() if self.station_names is not None else {}
         return names.get(code) or code
+
+    def places(self, stations: Iterable[str | None]) -> tuple[str, ...]:
+        """Where a ticket for these stations is made, as the print log has it: `bar` when one of them is the
+        bar's (`bar_stations`), `kitchen` when one is not, both for a ticket with dishes of each. A ticket
+        of no station at all is the kitchen's."""
+        try:
+            bar = frozenset(self.bar_stations()) if self.bar_stations is not None else frozenset()
+        except Exception:  # noqa: BLE001 - the log files the ticket under the kitchen; the paper is not held up
+            bar = frozenset()
+        codes = list(stations)
+        at_bar = any(code in bar for code in codes)
+        in_kitchen = not codes or any(code not in bar for code in codes)
+        return tuple(place for place, there in (("kitchen", in_kitchen), ("bar", at_bar)) if there)
 
     def head(self, printer: Printer, stations: Sequence[str] = ()) -> str:
         """What heads the printer's tickets: its station's name, or every one's when it serves several
@@ -1134,7 +1151,9 @@ class PrintService:
             if words.get("also_at"):
                 others = dict.fromkeys(name for *_, there in made for name in there if name not in cooked)
                 ticket = replace(ticket, also_at=tuple(others))
-            jobs.append(self.queue(ticket, printer, job_id=self._job_id(key, printer, routes), printers=printers))
+            made_at = self.made_at(printer, routes, [*voided, *sent])
+            job_id = self._job_id(key, printer, routes)
+            jobs.append(self.queue(ticket, printer, job_id=job_id, printers=printers, stations=made_at))
         return jobs
 
     def bag(self, state: OrderState) -> tuple[str, ...] | None:
@@ -1159,7 +1178,8 @@ class PrintService:
             if ticket is None:
                 continue
             ticket = replace(ticket, bag=self.bag(state), allergies=())  # the dishes' business, not the bag's
-            jobs.append(self.queue(ticket, printer, job_id=self._job_id(key, printer, routes), printers=printers))
+            job_id = self._job_id(key, printer, routes)
+            jobs.append(self.queue(ticket, printer, job_id=job_id, printers=printers, stations=routes.named or None))
         return jobs
 
     def notice(self, words: Sequence[str], *, key: str) -> list[PrintJob]:
@@ -1206,6 +1226,21 @@ class PrintService:
                 if takes.cooks(station) and (station is None or station != takeout):
                     names.setdefault(self.station_name(station) if station else self.head(printer, takes.named))
         return tuple(names)
+
+    def made_at(self, printer: Printer, takes: Takes, lines: Iterable[Line]) -> tuple[str, ...]:
+        """The stations these lines are made at on this printer's ticket, by code, for the print log to file
+        the ticket by (`places`): the stations the printer prints for itself, a line with no station where
+        its ticket comes out. A ticket that only lists the order for the bag is made at the stations it is
+        headed with."""
+        own = takes.named or printer.stations
+        codes: dict[str, None] = {}
+        for line in lines:
+            for k in (line.priced or {}).get("kitchen") or [{}]:
+                station = k.get("station")
+                if takes.cooks(station):
+                    for code in (station,) if station else own:
+                        codes.setdefault(code)
+        return tuple(codes) or tuple(own)
 
     def routing(
         self,
@@ -1261,15 +1296,20 @@ class PrintService:
         delay: float = 0.0,
         printers: list[Printer] | None = None,
         title: str | None = None,
+        stations: Iterable[str | None] | None = None,
     ) -> PrintJob:
         """Renders the ticket (or a guest's bill, the day's report, a pack sheet, a prep list, an order's
         labels) for the printer and for each of its fallbacks (headed with whose it is), and queues it; a hub
         starts writing it at once. The print is written in the log with the paper as it was made; `title` is
-        what the log calls a paper that is nobody's order ("Test print")."""
+        what the log calls a paper that is nobody's order ("Test print"). `stations` is where a ticket's
+        dishes are made, for the log to file it under the kitchen's or the bar's; without it, the stations
+        the printer prints for."""
         data, fallbacks = self._rendered(ticket, printer, printers)
         job_id = job_id or uuid.uuid4().hex
         if self.store.get(job_id) is None:  # the same job asked for twice is one job, and one print in the log
-            about = {**describe(ticket), **({"title": title} if title is not None else {})}
+            about: dict[str, Any] = {**describe(ticket), **({"title": title} if title is not None else {})}
+            if isinstance(ticket, Ticket) and ticket.kind != "notice" and title is None:
+                about["places"] = self.places(printer.stations if stations is None else stations)
             self._write_down(job_id, printer, about, lambda: pages(self._drawn(ticket, SCRIPT)))
         job = self.store.create(printer.address, data, job_id=job_id, delay=delay, fallbacks=fallbacks)
         if delay <= 0:
@@ -1425,6 +1465,7 @@ class PrintService:
             "title": entry.title,
             "head": entry.head,
             "order_id": entry.order_id,
+            "places": entry.places,
             "reprint_of": first_id,
             "first_ms": first_ms,
             "by": by,
@@ -1445,6 +1486,23 @@ class PrintService:
             Print(job_id=new_id, at_ms=self._now(), printer=target.id, name=self.head(target), address=target.address),
             **about,
         )
+
+    def catch_up_log(self) -> int:
+        """Brings the prints a hub from before the log's types wrote up to date (`PrintLog.restamp`), once
+        as the hub starts: an order's ticket is filed under the kitchen's or the bar's by the stations its
+        printer prints for now, which is as near as an old print can be told. Gives how many there were."""
+
+        def placed(entry: Print) -> Print:
+            if entry.sort != "ticket" or entry.places or entry.kind == "notice" or entry.title == "Test print":
+                return entry
+            own = next((p.stations for p in self.printers if p.id == entry.printer), ())
+            return replace(entry, places=self.places(own))
+
+        try:
+            return self.log.restamp(placed)
+        except Exception as err:  # noqa: BLE001 - old prints stay out of the filters; nothing else is lost
+            log.warning("print log: the old prints could not be brought up to date (%s)", type(err).__name__)
+            return 0
 
     def _drawn(self, paper: Paper, dialect: str) -> bytes:
         """The paper in a printer's language, or written down step by step (`SCRIPT`)."""

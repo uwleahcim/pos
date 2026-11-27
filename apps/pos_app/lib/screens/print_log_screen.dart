@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../live.dart';
@@ -13,6 +14,10 @@ import 'paper_view.dart';
 /// in the bar shows every paper at once, one under the other, like the roll in the kitchen. Any of them
 /// prints again with Reprint, at its own printer or at another; the paper that comes out is headed REPRINT
 /// and the log lists it as one.
+///
+/// The log is read by printer, by type (the kitchen's tickets, the bar's, the bills, the reprints, the
+/// rest: the hub says which this restaurant has) and by the prints with a problem, and it is searched from
+/// the bar: the hub looks for the words on the papers themselves, and says which line it found them on.
 ///
 /// The hub keeps the log and decides everything in it (docs/printing.md, "The print log"); this screen
 /// reads it, and reads it again when the hub says a print was made, failed or came out. Behind the manager
@@ -42,6 +47,13 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   int _keeps = 14;
   late String? _printer = widget.printer;
   bool _trouble = false;
+  String? _type; // one of [_types]; every type without
+  String _q = ''; // what the log is searched for; nothing is no search
+  List<String>? _types; // the types the hub reads its log by; null until it says, and from a hub older than them
+  bool _searching = false; // the bar shows the box to type a search in
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode();
+  Timer? _typing;
   bool _everyPaper = false; // every print shows its paper, not only the ones opened
   final _open = <String>{};
   final _papers = <String, PrintPaper>{}; // by [_paperKey]: a paper never changes once it is out
@@ -75,8 +87,11 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _typing?.cancel();
     unawaited(_live?.cancel());
     _reader.cancel();
+    _search.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -84,18 +99,32 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
       entry.atMs < other.atMs || (entry.atMs == other.atMs && entry.jobId.compareTo(other.jobId) > 0);
 
   static String _mark(PrintLogPage page) => [
-    for (final p in page.prints) '${p.jobId}|${p.status}|${p.tries}|${p.printedOn}|${p.reprints}|${p.events.length}',
+    for (final p in page.prints)
+      '${p.jobId}|${p.status}|${p.tries}|${p.printedOn}|${p.reprints}|${p.events.length}|${p.found}',
     page.next ?? '',
     for (final p in page.printers) '${p.id}=${p.name}',
+    page.types?.join(',') ?? '-',
   ].join('\n');
+
+  /// Whether the log is still read the way it was when a read was sent: an answer to another question is
+  /// not shown.
+  bool _asksStill(String? printer, bool trouble, String? type, String q) =>
+      printer == _printer && trouble == _trouble && type == _type && q == _q;
 
   /// Reads the newest prints. The older ones already on the screen stay under them.
   Future<void> _load() async {
     _poll.asked();
-    final printer = _printer, trouble = _trouble;
+    final printer = _printer, trouble = _trouble, type = _type, q = _q;
     try {
-      final page = await widget.api.printLog(widget.token, printer: printer, trouble: trouble, limit: _page);
-      if (!mounted || printer != _printer || trouble != _trouble) return;
+      final page = await widget.api.printLog(
+        widget.token,
+        printer: printer,
+        trouble: trouble,
+        type: type,
+        q: q,
+        limit: _page,
+      );
+      if (!mounted || !_asksStill(printer, trouble, type, q)) return;
       if (page == null) return setState(() => _old = true);
       final mark = _mark(page);
       if (_read && !_away && _refused == null && mark == _shown) return;
@@ -111,13 +140,14 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         if (older.isEmpty) _next = page.next;
         _printers = page.printers;
         _keeps = page.keepsDays;
+        _types = page.types;
         _shown = mark;
         _read = true;
         _away = false;
         _refused = null;
       });
     } on ApiException catch (err) {
-      if (!mounted || printer != _printer || trouble != _trouble) return;
+      if (!mounted || !_asksStill(printer, trouble, type, q)) return;
       setState(() {
         _away = err.status == null;
         _refused = err.status == null ? null : _words(err);
@@ -129,17 +159,19 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   Future<void> _older() async {
     final from = _next;
     if (_more || from == null) return;
-    final printer = _printer, trouble = _trouble;
+    final printer = _printer, trouble = _trouble, type = _type, q = _q;
     setState(() => _more = true);
     try {
       final page = await widget.api.printLog(
         widget.token,
         printer: printer,
         trouble: trouble,
+        type: type,
+        q: q,
         before: from,
         limit: _page,
       );
-      if (!mounted || printer != _printer || trouble != _trouble) return;
+      if (!mounted || !_asksStill(printer, trouble, type, q)) return;
       final have = {for (final p in _prints) p.jobId};
       setState(() {
         _prints = [
@@ -156,11 +188,16 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     }
   }
 
-  void _show({String? printer, bool? trouble, bool allPrinters = false}) {
+  /// Reads the log another way: for one printer or all, the prints with a problem, one type or all
+  /// ([type] with [typed]), searched for [q].
+  void _show({String? printer, bool? trouble, bool allPrinters = false, String? type, bool typed = false, String? q}) {
+    _typing?.cancel();
     setState(() {
       if (allPrinters) _printer = null;
       if (printer != null) _printer = printer;
       if (trouble != null) _trouble = trouble;
+      if (typed) _type = type;
+      if (q != null) _q = q;
       _prints = const [];
       _next = null;
       _read = false;
@@ -168,6 +205,38 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
       _open.clear();
     });
     unawaited(_reader.now());
+  }
+
+  /// The box was typed in: the log is searched once the typing stops, not at every letter.
+  void _typed(String text) {
+    setState(() {}); // the button that empties the box
+    _typing?.cancel();
+    _typing = Timer(const Duration(milliseconds: 350), () => _find(text));
+  }
+
+  void _find(String text) {
+    _typing?.cancel();
+    final q = printSearch(text);
+    if (q != _q) _show(q: q);
+  }
+
+  /// Opens the box to search in, or closes it: a closed box searches for nothing.
+  void _searchOpen(bool open) {
+    _typing?.cancel();
+    setState(() => _searching = open);
+    if (open) {
+      _searchFocus.requestFocus();
+    } else {
+      _search.clear();
+      if (_q.isNotEmpty) _show(q: '');
+    }
+  }
+
+  /// Every print again, of the printer picked: no type, no search, not only the problems.
+  void _everything() {
+    _search.clear();
+    setState(() => _searching = false);
+    _show(trouble: false, typed: true, q: '');
   }
 
   static String _words(ApiException err) => switch (err.status) {
@@ -258,8 +327,49 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Print log'),
+        title: _searching
+            // Escape backs out of the search, like every level the keyboard is in
+            ? CallbackShortcuts(
+                bindings: {const SingleActivator(LogicalKeyboardKey.escape): () => _searchOpen(false)},
+                child: TextField(
+                  key: const ValueKey('log-search-box'),
+                  controller: _search,
+                  focusNode: _searchFocus,
+                  textInputAction: TextInputAction.search,
+                  inputFormatters: [LengthLimitingTextInputFormatter(100)], // as long as the hub reads
+                  style: Theme.of(context).textTheme.titleMedium,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'A dish, a table, a name',
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    suffixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 44),
+                    suffixIcon: _search.text.isEmpty
+                        ? null
+                        : IconButton(
+                            key: const ValueKey('log-search-clear'),
+                            tooltip: 'Empty the search',
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.clear, size: 18),
+                            onPressed: () {
+                              setState(_search.clear);
+                              _find('');
+                              _searchFocus.requestFocus();
+                            },
+                          ),
+                  ),
+                  onChanged: _typed,
+                  onSubmitted: _find,
+                ),
+              )
+            : const Text('Print log'),
         actions: [
+          if (_types != null && !_old)
+            IconButton(
+              key: const ValueKey('log-search'),
+              tooltip: _searching ? 'Close the search' : 'Search the prints',
+              icon: Icon(_searching ? Icons.search_off : Icons.search),
+              onPressed: () => _searchOpen(!_searching),
+            ),
           IconButton(
             key: const ValueKey('log-papers'),
             tooltip: _everyPaper ? 'Show the list' : 'Show every paper',
@@ -284,8 +394,45 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     );
   }
 
-  /// Which printer's prints, and whether only the ones to look at: one line, on a phone too.
+  /// Which printer's prints, and whether only the ones to look at: one line, on a phone too. Under it the
+  /// types to read the log by, when the hub says them: one line as well, that slides sideways when the
+  /// screen is narrower than its chips.
   Widget _filters(BuildContext context) {
+    final types = _types;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _whose(context),
+        if (types != null && types.isNotEmpty)
+          SingleChildScrollView(
+            key: const ValueKey('log-types'),
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Row(
+              children: [
+                for (final type in <String?>[null, ...types])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ChoiceChip(
+                      key: ValueKey('log-type:${type ?? 'all'}'),
+                      label: Text(type == null ? 'All' : printTypeName(type)),
+                      selected: _type == type,
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) {
+                        if (_type != type) _show(type: type, typed: true);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _whose(BuildContext context) {
     final theme = Theme.of(context);
     final known = {for (final p in _printers) p.id};
     final picked = _printer;
@@ -342,12 +489,30 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     if (_prints.isEmpty) {
-      final words = _trouble
-          ? 'No problems in the last $_keeps days: every print came out at its own printer, first time.'
-          : _printer != null
-          ? 'Nothing was printed at this printer in the last $_keeps days.'
-          : 'Nothing was printed in the last $_keeps days.';
-      return _Says(words, key: const ValueKey('log-none'));
+      final String words;
+      if (_q.isNotEmpty || _type != null) {
+        // "No bar tickets with a problem at this printer in the last 14 days have “duck” on them."
+        final which = [
+          'No ${printTypeThings(_type)}',
+          if (_trouble) 'with a problem',
+          if (_printer != null) 'at this printer',
+          'in the last $_keeps days',
+          if (_q.isNotEmpty) 'have “$_q” on them',
+        ];
+        words = '${which.join(' ')}.';
+      } else {
+        words = _trouble
+            ? 'No problems in the last $_keeps days: every print came out at its own printer, first time.'
+            : _printer != null
+            ? 'Nothing was printed at this printer in the last $_keeps days.'
+            : 'Nothing was printed in the last $_keeps days.';
+      }
+      return _Says(
+        words,
+        key: const ValueKey('log-none'),
+        again: _q.isNotEmpty || _type != null ? _everything : null,
+        againSays: 'Show all prints',
+      );
     }
     // the rows of the list: a day's name where the day changes, then its prints, and what ends the list
     final rows = <Object>[];
@@ -402,7 +567,44 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
               key: const ValueKey('log-end'),
               style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
+          if (_types == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Update the hub to read the log by kind of print and to search it.',
+                key: const ValueKey('log-no-types'),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  /// The line of a paper a search found its words on, with the words it was searched for in bold.
+  Widget _found(BuildContext context, PrintEntry entry) {
+    final theme = Theme.of(context);
+    final line = entry.found;
+    final at = _q.isEmpty ? -1 : line.toLowerCase().indexOf(_q.toLowerCase());
+    final hit = at >= 0 && at + _q.length <= line.length;
+    const bold = TextStyle(fontWeight: FontWeight.w700);
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            const TextSpan(text: 'On the paper: '),
+            if (hit) ...[
+              TextSpan(text: line.substring(0, at)),
+              TextSpan(text: line.substring(at, at + _q.length), style: bold),
+              TextSpan(text: line.substring(at + _q.length)),
+            ] else
+              TextSpan(text: line),
+          ],
+        ),
+        key: ValueKey('print-found:${entry.jobId}'),
+        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface),
       ),
     );
   }
@@ -465,6 +667,7 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
                           color: failing ? scheme.error : scheme.onSurfaceVariant,
                         ),
                       ),
+                      if (entry.found.isNotEmpty) _found(context, entry),
                     ],
                   ),
                 ),
@@ -664,10 +867,11 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
 
 /// A screen with one thing to say.
 class _Says extends StatelessWidget {
-  const _Says(this.words, {super.key, this.again});
+  const _Says(this.words, {super.key, this.again, this.againSays = 'Try again'});
 
   final String words;
   final VoidCallback? again;
+  final String againSays;
 
   @override
   Widget build(BuildContext context) {
@@ -681,7 +885,7 @@ class _Says extends StatelessWidget {
             Text(words, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
             if (again != null) ...[
               const SizedBox(height: 12),
-              OutlinedButton(onPressed: again, child: const Text('Try again')),
+              OutlinedButton(onPressed: again, child: Text(againSays)),
             ],
           ],
         ),

@@ -3,6 +3,7 @@ screen as it came out, and can be printed again, headed REPRINT (docs/printing.m
 
 from __future__ import annotations
 
+import copy
 import os
 import uuid
 from dataclasses import replace
@@ -10,12 +11,28 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from pos.api.app import create_app
+from pos.api.prints import bar_stations
 from pos.printing.bill import SAMPLE, render_bill
 from pos.printing.jobs import FALLBACK_AFTER
 from pos.printing.labels import BagLabels, render_labels
-from pos.printing.log import DAY_MS, EVENTS, KEEP_DAYS, Event, PgPrintLog, Print, PrintLog
+from pos.printing.log import (
+    DAY_MS,
+    EVENTS,
+    KEEP_DAYS,
+    TYPES,
+    Event,
+    PgPrintLog,
+    Print,
+    PrintLog,
+    found_in,
+    pattern_of,
+    search_for,
+    types_of,
+    words_of,
+)
 from pos.printing.script import REPRINT, carried, clean, original, pages, play, reprinted
 from pos.printing.service import NoPrinter, NoSuchPrint, Printer, PrintService
 from pos.printing.ticket import DEMO, DIALECTS, SCRIPT, render
@@ -29,6 +46,10 @@ from .test_stations import manager, menu_with_takeout
 DSN = os.environ.get("POS_TEST_DATABASE_URL")
 MINUTE = 60_000
 LABELS = BagLabels(order_id="0193f2a7-two-bags", bags=2, order_no=45, customer="Wu", at=datetime(2026, 11, 26, 18, 42))
+
+
+def jobs_of(prints: list[Print]) -> list[str]:
+    return [entry.job_id for entry in prints]
 
 
 def texts(script: list[list[dict]]) -> list[str]:
@@ -467,6 +488,223 @@ def test_a_test_print_is_called_one_in_the_log():
     assert (entry.sort, entry.title, entry.printer) == ("ticket", "Test print", "wok")
 
 
+# Read by type, and searched ---------------------------------------------------------------------------------
+
+
+def test_the_bar_is_where_the_menu_makes_its_drinks():
+    # the liquor, the beer and the cocktails print at `bar` (with a pot of tea); the sushi bar is a kitchen
+    assert bar_stations(menu_with_takeout().defs) == {"bar"}
+
+
+def test_a_print_is_of_the_types_a_manager_reads_the_log_by():
+    def made(**what) -> Print:
+        return Print("j", T0, printer="p", name="P", address="10.0.0.1", **what)
+
+    assert types_of(made(places=("kitchen",))) == ("kitchen",)
+    assert types_of(made(places=("bar",))) == ("bar",)
+    assert types_of(made(places=("kitchen", "bar"))) == ("kitchen", "bar")  # one ticket with dishes of both
+    assert types_of(made(sort="bill")) == ("bill",)
+    assert types_of(made(sort="day")) == types_of(made(sort="labels")) == ("other",)
+    assert types_of(made()) == ("other",)  # a ticket that is nobody's order: a test print, a notice
+    # whatever is printed again is a reprint, and still what it was
+    assert types_of(made(places=("bar",), reprint_of="first")) == ("bar", "reprint")
+    assert types_of(made(sort="bill", reprint_of="first")) == ("bill", "reprint")
+    assert set(TYPES) == {"kitchen", "bar", "bill", "reprint", "other"}
+    # what is kept of a print says where it is made, and a print from before that says nothing
+    assert Print.from_json(made(places=("bar",)).as_json()).places == ("bar",)
+    old = {k: v for k, v in made().as_json().items() if k != "places"}
+    assert Print.from_json(old).places == ()
+
+
+def test_a_tickets_dishes_say_whether_it_is_the_kitchens_or_the_bars():
+    printing = service()
+    c = hub(printing)
+    key = send(c, "o1", CHICKEN, BEER)
+    by_job = {entry.job_id: entry for entry in printing.log.list()}
+    assert by_job[f"{key}:wok"].places == ("kitchen",)
+    assert by_job[f"{key}:bar"].places == ("bar",)
+    assert [e.job_id for e in printing.log.list(type="bar")] == [f"{key}:bar"]
+    assert [e.job_id for e in printing.log.list(type="kitchen")] == [f"{key}:wok"]
+    # a test print and a bill are neither
+    assert c.post("/print/test", json={"printer": "bar"}).status_code == 202
+    printing.queue(SAMPLE, printing.printers[1], job_id="bill")
+    assert {e.job_id for e in printing.log.list(type="bar")} == {f"{key}:bar"}
+    assert [e.job_id for e in printing.log.list(type="bill")] == ["bill"]
+    assert [e.title for e in printing.log.list(type="other")] == ["Test print"]
+
+
+def test_one_printer_for_the_wok_and_the_bar_files_each_ticket_by_what_is_on_it():
+    both = Printer("wok", "10.0.0.1", id="line", stations=("wok", "bar"))
+    printing = PrintService([both], now=lambda: T0, send=Wires())
+    printing._start = lambda job: None
+    c = hub(printing)
+    drinks = send(c, "o1", BEER)
+    food = send(c, "o2", CHICKEN)
+    mixed = send(c, "o3", CHICKEN, BEER)
+    by_job = {entry.job_id: entry.places for entry in printing.log.list()}
+    assert by_job == {
+        f"{drinks}:line": ("bar",),
+        f"{food}:line": ("kitchen",),
+        f"{mixed}:line": ("kitchen", "bar"),  # under both
+    }
+    assert {e.job_id for e in printing.log.list(type="bar")} == {f"{drinks}:line", f"{mixed}:line"}
+    assert {e.job_id for e in printing.log.list(type="kitchen")} == {f"{food}:line", f"{mixed}:line"}
+
+
+def test_a_hub_that_was_not_told_its_bar_files_every_ticket_under_the_kitchen():
+    printing = service()  # no API, so nobody said which stations are the bar's
+    printing.queue(DEMO, printing.printers[1], job_id="t")
+    assert printing.log.get("t")[0].places == ("kitchen",)
+    printing.bar_stations = lambda: 1 / 0  # and a menu that cannot be read holds up no ticket
+    printing.queue(DEMO, printing.printers[1], job_id="u")
+    assert printing.log.get("u")[0].places == ("kitchen",)
+
+
+def test_a_reprint_is_listed_under_the_reprints_and_under_what_it_repeats():
+    printing = service()
+    c = hub(printing)
+    key = send(c, "o1", BEER)
+    _, again = printing.reprint(f"{key}:bar", by="Mike")
+    assert again.places == ("bar",)
+    assert [e.job_id for e in printing.log.list(type="reprint")] == [again.job_id]
+    assert {e.job_id for e in printing.log.list(type="bar")} == {again.job_id, f"{key}:bar"}
+    assert printing.log.list(type="kitchen") == []
+
+
+def test_the_prints_of_an_older_hub_are_filed_by_what_their_printer_prints_for_now():
+    printing = service()
+    printing.bar_stations = lambda: {"bar"}
+    asked = []
+    printing.log.restamp = lambda how: asked.append(how) or 3
+    assert printing.catch_up_log() == 3
+    (placed,) = asked
+
+    def old(printer: str = "wok", **what) -> Print:
+        return Print("j", T0, printer=printer, name="P", address="10.0.0.1", **what)
+
+    assert placed(old()).places == ("kitchen",) and placed(old("bar")).places == ("bar",)
+    assert placed(old("taken away since")).places == ("kitchen",)
+    assert placed(old("bar", reprint_of="first")).places == ("bar",)
+    # what is nobody's order stays with the rest, and a print that says where it is made is left as it is
+    for other in (old(sort="bill"), old(sort="day"), old(title="Test print"), old(kind="notice")):
+        assert placed(other) == other
+    assert placed(old("bar", places=("kitchen",))).places == ("kitchen",)
+    # a log that cannot be brought up to date stops no hub from starting
+    printing.log.restamp = lambda how: 1 / 0
+    assert printing.catch_up_log() == 0
+
+
+def test_the_words_a_search_looks_through_are_the_logs_line_and_the_paper():
+    script = pages(render(replace(DEMO, kind="void"), dialect=SCRIPT))
+    entry = Print("j", T0, printer="wok", name="Wok", address="10.0.0.1", kind="void", title="Table 12", head="Wok")
+    about, *paper = words_of(entry, script).split("\n")
+    assert about == "Void Table 12 Wok Wok"
+    assert paper[0] == "*** VOID *** WOK" and "2 x Kung Pao Chicken (Pt) [s1]" in paper
+    assert "#3412 dine in " in paper[1]  # the two sides of a pair of columns, one line
+    again = replace(entry, reprint_of="first", by="Mike", sort="bill", kind="")
+    assert words_of(again, []) == "Reprint Bill Table 12 Wok Wok Mike"
+    words = words_of(entry, script)
+    # found on the paper: the line is shown; found in the log's own line: there is nothing more to show
+    assert found_in(words, "kung pao") == "2 x Kung Pao Chicken (Pt) [s1]"
+    assert found_in(words, "table 12") == "" and found_in(words, "VOID") == ""
+    assert found_in(words, "no peanuts") == "+ no peanuts"
+    assert found_in(words, "pao kung") is None and found_in(words, "table peanuts") is None  # as typed, on one line
+    assert found_in("About\n" + "x" * 200, "xxx").endswith("…") and len(found_in("A\n" + "x" * 200, "x")) == 80
+
+
+def test_a_search_is_the_words_as_typed_and_a_number_in_it_is_a_whole_number():
+    assert search_for("  Kung   PAO chicken ") == "Kung PAO chicken"
+    assert search_for(None) == search_for("   ") == ""  # nothing typed is no search
+
+    def finds(wanted: str, line: str) -> bool:
+        return found_in(f"About\n{line}", wanted) is not None
+
+    assert finds("table 1", "Table 1") and not finds("table 1", "Table 12") and not finds("table 1", "Table 21")
+    assert finds("#45", "#45 dine in") and not finds("#45", "#451 dine in") and not finds("45", "#3451")
+    assert finds("8.00", "Add shrimp +8.00") and not finds("8.00", "Peking Duck 48.00")
+    assert finds("12", "Table 12") and finds("chick", "Kung Pao Chicken")  # a word may be only begun
+    # what is typed is letters, never a pattern
+    assert finds("7%", "Sales tax 7% 2.37") and not finds("100%", "Sales tax 7% 2.37")
+    assert not finds("t.ble", "Table 12") and not finds("_", "Table 12") and not finds(".*", "Table 12")
+    assert finds("(qt)", "1 x 左宗鸡 (Qt)") and finds("左宗", "1 x 左宗鸡 (Qt)") and finds("[s1]", "Chicken [s1]")
+    assert finds("a\\b", "a\\b") and not finds("a\\b", "ab")
+    assert pattern_of("table 1") == "table\\ 1(?![0-9])"
+
+
+def test_the_log_is_searched_by_what_is_on_the_paper():
+    printing = service()
+    c = hub(printing)
+    boss = manager(c)
+    food = send(c, "o1", CHICKEN)
+    drinks = send(c, "o2", BEER, table="7", order_type="dine_in")
+    printing.queue(SAMPLE, printing.printers[1], job_id="bill")
+
+    def jobs(**asked) -> list[str]:
+        answer = c.get("/print/log", params=asked, headers=boss)
+        assert answer.status_code == 200
+        return [p["job_id"] for p in answer.json()["prints"]]
+
+    assert jobs(q="左宗") == [f"{food}:wok"]  # a dish, in the kitchen's own letters
+    assert jobs(q="TSINGTAO") == jobs(q="tsingtao") == [f"{drinks}:bar"]
+    assert jobs(q="table 7") == [f"{drinks}:bar"]
+    assert jobs(q="table 12") == jobs(q=" Table   12 ") == ["bill", f"{food}:wok"]
+    assert jobs(q="table 1") == [] and jobs(q="12 table") == []  # a whole number, and the words as typed
+    assert jobs(q="peking duck") == ["bill"] and jobs(q="7%") == ["bill"]
+    assert jobs(q="bill") == ["bill"] and jobs(q="ticket table 7") == [f"{drinks}:bar"]  # the log's own line
+    assert jobs(q="table", type="kitchen") == [f"{food}:wok"]
+    assert jobs(q="table", printer="bar") == ["bill", f"{drinks}:bar"]
+    assert jobs(q="nobody ordered this") == [] and jobs(q="100%") == [] and jobs(q="t.ble") == []
+    assert jobs(q="   ") == jobs()  # nothing typed is no search
+    # where on the paper it was found, when the line of the log does not show it
+    found = c.get("/print/log", params={"q": "duck"}, headers=boss).json()["prints"][0]
+    assert found["found"] == "1 Peking Duck 48.00"
+    assert "found" not in c.get("/print/log", params={"q": "table 12"}, headers=boss).json()["prints"][0]
+    assert "found" not in c.get("/print/log", headers=boss).json()["prints"][0]
+
+
+def test_the_types_on_the_wire():
+    printing = service()
+    c = hub(printing)
+    boss = manager(c)
+    key = send(c, "o1", CHICKEN, BEER)
+    printing.queue(SAMPLE, printing.printers[1], job_id="bill")
+    c.post("/print/log/reprint", json={"job": "bill"}, headers=boss)
+
+    def read(**asked) -> dict:
+        return c.get("/print/log", params=asked, headers=boss).json()
+
+    assert read()["types"] == ["kitchen", "bar", "bill", "reprint", "other"]
+    assert [p["job_id"] for p in read(type="kitchen")["prints"]] == [f"{key}:wok"]
+    assert [p["job_id"] for p in read(type="bar")["prints"]] == [f"{key}:bar"]
+    assert [p["sort"] for p in read(type="bill")["prints"]] == ["bill", "bill"]
+    (again,) = read(type="reprint")["prints"]
+    assert again["reprint_of"] == "bill" and again["places"] == []
+    assert read(type="other")["prints"] == []
+    assert [p["places"] for p in read(type="bar")["prints"]] == [["bar"]]
+    # by type page by page, like the rest
+    first = read(type="bill", limit=1)
+    assert first["next"] is not None and len(read(type="bill", limit=1, before=first["next"])["prints"]) == 1
+    assert c.get("/print/log", params={"type": "pizza"}, headers=boss).status_code == 422
+    assert c.get("/print/log", params={"q": "x" * 101}, headers=boss).status_code == 422
+
+
+def test_a_restaurant_with_no_bar_is_not_offered_its_tickets():
+    printing = service()
+    c = hub(printing)
+    boss = manager(c)
+    assert "bar" in c.get("/print/log", headers=boss).json()["types"]
+    # the manager moves the drinks to the wok's station: no station is the bar's any more
+    defs = copy.deepcopy(c.app.state.menu.defs)
+    for kept in (defs.categories, defs.items):
+        for code, thing in list(kept.items()):
+            if thing.station == "bar":
+                kept[code] = replace(thing, station="wok")
+    c.app.state.menu.save(defs, actor="test")
+    assert c.get("/print/log", headers=boss).json()["types"] == ["kitchen", "bill", "reprint", "other"]
+    key = send(c, "o1", BEER)
+    assert [e.places for e in printing.log.list() if e.job_id.startswith(key)] == [("kitchen",)]
+
+
 # In the database -----------------------------------------------------------------------------------------------
 
 
@@ -498,6 +736,53 @@ def test_the_log_is_kept_in_postgresql():
             assert again.get(f"{run}:1")[0] == after
         finally:
             again.close()
+        # by type: none of these says where it is made, so they are not the kitchen's
+        assert len(log.list(printer=run, type="other")) == 3 and log.list(printer=run, type="kitchen") == []
+        bar = Print(f"{run}:bar", T0 + 9 * MINUTE, printer=run, name="Bar", address="10.0.0.2", places=("bar",))
+        twice = replace(bar, job_id=f"{run}:twice", at_ms=T0 + 10 * MINUTE, reprint_of=bar.job_id, by="Mike")
+        assert log.add(bar, script) and log.add(twice, script)
+        assert [e.job_id for e in log.list(printer=run, type="bar")] == [twice.job_id, bar.job_id]
+        assert [e.job_id for e in log.list(printer=run, type="reprint")] == [twice.job_id]
+        assert log.list(printer=run, type="bill") == []
+        # searched, the same as in memory: the words as typed, a number whole, what is typed never a pattern
+        assert [e.job_id for e in log.list(printer=run, q="table 1")] == [f"{run}:1"]
+        assert [e.job_id for e in log.list(printer=run, q="TABLE  2")] == [f"{run}:2"]
+        assert [e.job_id for e in log.list(printer=run, q="mike")] == [twice.job_id]
+        assert len(log.list(printer=run, q="kung pao")) == 5 and log.list(printer=run, q="pao kung") == []
+        assert len(log.list(printer=run, q="(pt)")) == 5 and len(log.list(printer=run, q="#3412")) == 5
+        assert log.list(printer=run, q="#341") == [] and log.list(printer=run, q="k.ng") == []
+        assert log.list(printer=run, q="%") == [] and log.list(printer=run, q="_") == []
+        assert [e.job_id for e in log.list(printer=run, q="kung pao", type="reprint")] == [twice.job_id]
+        assert log.page(printer=run, q="kung pao", limit=1) == [(twice, "2 x Kung Pao Chicken (Pt) [s1]")]
+        assert log.page(printer=run, q="table 1") == [(log.get(f"{run}:1")[0], "")]  # the log's own line has it
+        assert log.page(printer=run, limit=1) == [(twice, "")]
+        # a print an older hub wrote has neither its types nor its words: it is in no type and no search,
+        # until the hub brings it up to date at its start
+        old = Print(f"{run}:old", T0 + 20 * MINUTE, printer=run, name="Wok", address="10.0.0.1", title="Table 44")
+        with log._pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO print_log (job_id, at_ms, printer, trouble, entry, script) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    old.job_id,
+                    old.at_ms,
+                    run,
+                    True,
+                    Jsonb({k: v for k, v in old.as_json().items() if k != "places"}),
+                    Jsonb(script),
+                ),
+            )
+        assert [e.job_id for e in log.list(printer=run, limit=1)] == [old.job_id]
+        assert log.list(printer=run, q="table 44") == [] and old.job_id not in jobs_of(
+            log.list(printer=run, type="other")
+        )
+        assert (
+            log.restamp(lambda entry: replace(entry, places=("kitchen",)) if entry.job_id == old.job_id else entry) >= 1
+        )
+        assert log.restamp(lambda entry: entry) == 0  # once
+        assert [e.places for e in log.list(printer=run, q="table 44")] == [("kitchen",)]
+        assert [e.job_id for e in log.list(printer=run, type="kitchen")] == [old.job_id]
+        assert log.get(f"{run}:1")[0] == after  # and what was up to date is as it was
     finally:
         with log._pool.connection() as conn:
             conn.execute("DELETE FROM print_log WHERE printer = %s", (run,))

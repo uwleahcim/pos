@@ -2809,7 +2809,11 @@ class Hub {
   /// what each read of the log asked for, [paperAsks] the jobs whose paper was read, [reprints] what was
   /// asked to be printed again, with the token each carried in [printLogAuth]. [logPrinters] are the printers
   /// it names for a reprint, and [refuseReprint] the words it refuses the next one with (409).
+  /// [printLogTypes] are the types it reads its log by (`type`), and it searches it (`q`): in a print's
+  /// title, its printer and who asked for it, then on the lines of its paper, which it then says (`found`).
+  /// Null is a hub from before both: it says no `types` and reads neither.
   List<Map<String, dynamic>>? printLog = [];
+  List<String>? printLogTypes = ['kitchen', 'bar', 'bill', 'reprint', 'other'];
   final papers = <String, List<List<Map<String, dynamic>>>>{};
   List<Map<String, dynamic>> logPrinters = [];
   final printLogAsks = <Map<String, String>>[];
@@ -2817,6 +2821,33 @@ class Hub {
   final reprints = <Map<String, dynamic>>[];
   String? printLogAuth;
   String? refuseReprint;
+
+  /// The types the log lists a print under, as the hub works them out.
+  static Set<String> _printTypes(Map<String, dynamic> p) {
+    final places = [for (final place in p['places'] as List? ?? const []) '$place'];
+    return {
+      if ((p['sort'] ?? 'ticket') == 'ticket' && places.isNotEmpty)
+        ...places
+      else
+        p['sort'] == 'bill' ? 'bill' : 'other',
+      if ('${p['reprint_of'] ?? ''}'.isNotEmpty) 'reprint',
+    };
+  }
+
+  /// Where a search finds its words in a print: nothing to show when its own line has them, the line of
+  /// its paper when that does, null when neither.
+  String? _printFound(Map<String, dynamic> p, String q) {
+    final about = [p['title'], p['name'], p['by']].join(' ').toLowerCase();
+    if (about.contains(q)) return '';
+    for (final page in papers[p['job_id']] ?? const <List<Map<String, dynamic>>>[]) {
+      for (final step in page) {
+        final wrote = step['k'] == 'cols' ? '${step['left']}  ${step['right']}' : '${step['text'] ?? ''}';
+        final said = wrote.trim().split(RegExp(r'\s+')).join(' '); // a line of the paper, one space between words
+        if (said.toLowerCase().contains(q)) return said;
+      }
+    }
+    return null;
+  }
 
   /// What the tickets say beyond their dishes (`GET/PUT /settings/tickets`), the token the last save carried
   /// and a reason to refuse the next save with. Null is a hub older than the setting (404); one with no `paid`
@@ -4674,14 +4705,20 @@ class Hub {
         printLogAuth = request.headers['authorization'];
         final asked = request.url.queryParameters;
         printLogAsks.add(asked);
+        final type = printLogTypes == null ? null : asked['type'];
+        final q = printLogTypes == null ? '' : (asked['q'] ?? '').toLowerCase();
         var listed = [
           for (final p in printLog!)
             if ((asked['printer'] == null || p['printer'] == asked['printer']) &&
                 (asked['only'] != 'trouble' ||
                     p['status'] != 'printed' ||
                     ((p['tries'] as int?) ?? 0) > 0 ||
-                    ((p['printed_on'] ?? p['address']) != p['address'])))
-              p,
+                    ((p['printed_on'] ?? p['address']) != p['address'])) &&
+                (type == null || _printTypes(p).contains(type)))
+              if (q.isEmpty)
+                p
+              else if (_printFound(p, q) case final String where)
+                {...p, if (where.isNotEmpty) 'found': where},
         ];
         final before = asked['before'];
         if (before != null) {
@@ -4695,6 +4732,7 @@ class Hub {
           'next': listed.length > limit ? '${page.last['at_ms']}:${page.last['job_id']}' : null,
           'printers': logPrinters,
           'keeps_days': 14,
+          'types': ?printLogTypes,
         });
       case '/print/log/paper':
         if (printLog == null) return json({'detail': 'Not Found'}, 404);

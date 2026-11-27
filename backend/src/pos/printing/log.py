@@ -19,6 +19,7 @@ Writing the log never holds up a print and never stops one: whoever calls it cat
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -33,6 +34,29 @@ EVENTS = 12
 """The most that is kept of what happened to one print: the first of them, and the latest."""
 
 DAY_MS = 24 * 60 * 60 * 1000
+
+TYPES = ("kitchen", "bar", "bill", "reprint", "other")
+"""The types a manager reads the log by (`types_of`), in the order a screen offers them: the kitchen's
+tickets, the bar's, the guests' bills, whatever was printed again, and the rest (the day's report, pack
+sheets, prep lists, bag labels, notices, test prints)."""
+
+PLACES = ("kitchen", "bar")
+"""Where a ticket's dishes are made, as `PrintService` writes it on the ticket's print (`Print.places`)."""
+
+SORTS = {"bill": "Bill", "day": "Day report", "pack": "Pack sheet", "prep": "Prep list", "labels": "Bag labels"}
+KINDS = {
+    "modify": "Change",
+    "void": "Void",
+    "allergy": "Allergy notice",
+    "moved": "Moved slip",
+    "bag": "Bag slip",
+    "notice": "Notice",
+}
+"""What a print is called on the screen (the app's `PrintEntry.what`), so that a search for the words a
+manager reads there finds it."""
+
+FOUND_CHARS = 80
+"""How much of a paper's line a search shows as the place it found its words."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +91,9 @@ class Print:
     the screen that carried it to the printer), and at which printer when it was not its own
     (`printed_on`, `printed_name`). `tries` and `error` are the tries that failed and the last thing that
     went wrong. A reprint names the print it repeats (`reprint_of`, the first one, never another reprint),
-    when that one came out (`first_ms`) and who asked (`by`); the first one counts its `reprints`."""
+    when that one came out (`first_ms`) and who asked (`by`); the first one counts its `reprints`.
+    `places` says where an order's ticket is made: `kitchen`, `bar`, or both for a ticket with dishes of
+    each; nothing for every other paper, and for a slip that is nobody's order."""
 
     job_id: str
     at_ms: int
@@ -91,6 +117,7 @@ class Print:
     by: str = ""
     reprints: int = 0
     events: tuple[Event, ...] = field(default=())
+    places: tuple[str, ...] = ()
 
     @property
     def printed(self) -> bool:
@@ -144,6 +171,7 @@ class Print:
             "by": self.by,
             "reprints": self.reprints,
             "events": [event.as_json() for event in self.events],
+            "places": list(self.places),
         }
 
     @staticmethod
@@ -162,6 +190,7 @@ class Print:
             return value if isinstance(value, str) else ""
 
         events = (Event.from_json(e) for e in raw.get("events") or ())
+        places = raw.get("places")
         return Print(
             job_id=raw["job_id"],
             at_ms=number("at_ms") or 0,
@@ -185,7 +214,79 @@ class Print:
             by=words("by"),
             reprints=number("reprints") or 0,
             events=tuple(e for e in events if e is not None),
+            places=tuple(p for p in PLACES if p in places) if isinstance(places, list) else (),
         )
+
+
+def types_of(entry: Print) -> tuple[str, ...]:
+    """The types a print is listed under (`TYPES`): a ticket under where it is made (the kitchen, the bar,
+    or both), a bill under the bills, every other paper under the rest; and a reprint, whatever it repeats,
+    under the reprints as well."""
+    if entry.sort == "ticket" and entry.places:
+        found = [place for place in PLACES if place in entry.places]
+    else:
+        found = ["bill" if entry.sort == "bill" else "other"]
+    return (*found, "reprint") if entry.reprint_of else tuple(found)
+
+
+def called(entry: Print) -> str:
+    """What the screen calls a print, in a word or two: "Ticket", "Void", "Bill", "Day report"."""
+    return SORTS.get(entry.sort) or KINDS.get(entry.kind) or "Ticket"
+
+
+def words_of(entry: Print, script: Script) -> str:
+    """What a search looks through, a line each: first what the log's own line says of the print (that it is
+    a reprint, what it is called, what it is for, its stations, its printer, who asked for it), then every
+    line of the paper itself as it was written down, the two sides of a pair of columns together."""
+    about = (
+        "Reprint" if entry.reprint_of else "",
+        called(entry),
+        entry.title,
+        entry.head,
+        entry.name,
+        entry.by,
+    )
+    lines = [" ".join(part for part in about if part)]
+    for page in script:
+        for step in page:
+            if step.get("k") == "line":
+                said = str(step.get("text") or "")
+            elif step.get("k") == "cols":
+                said = f"{step.get('left') or ''}  {step.get('right') or ''}"
+            else:
+                continue
+            if said.strip():
+                lines.append(" ".join(said.split()))
+    return "\n".join(lines)
+
+
+def search_for(q: str | None) -> str:
+    """What was typed, as a search: the words with one space between them. Nothing typed is no search."""
+    return " ".join((q or "").split())
+
+
+def pattern_of(wanted: str) -> str:
+    """A search as the pattern its words are found by (the same here and in PostgreSQL, either case): the
+    words as they were typed, letter for letter, anywhere on a line. A number at either end is a whole
+    number there, so "table 1" is not table 12, and "#45" is not order 451."""
+    literal = "".join(c if c.isalnum() else "\\" + c for c in wanted)
+    before = "(?<![0-9])" if wanted[:1].isascii() and wanted[:1].isdigit() else ""
+    after = "(?![0-9])" if wanted[-1:].isascii() and wanted[-1:].isdigit() else ""
+    return f"{before}{literal}{after}"
+
+
+def found_in(words: str, wanted: str) -> str | None:
+    """Where a search finds its words in what is kept of a print (`words_of`): None when it does not; the
+    line of the paper they are on, for a screen to put under the print so it is plain why it is listed; and
+    nothing to show when the log's own line of the print already has them."""
+    found = re.compile(pattern_of(wanted), re.IGNORECASE)
+    about, _, paper = words.partition("\n")
+    if found.search(about):
+        return ""
+    for line in paper.split("\n"):
+        if found.search(line):
+            return line if len(line) <= FOUND_CHARS else line[: FOUND_CHARS - 1].rstrip() + "…"
+    return None
 
 
 Before = tuple[int, str]
@@ -201,6 +302,7 @@ class PrintLog:
 
     def __init__(self) -> None:
         self._prints: dict[str, tuple[Print, Script]] = {}
+        self._words: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def add(self, entry: Print, script: Script) -> bool:
@@ -210,6 +312,7 @@ class PrintLog:
             if entry.job_id in self._prints:
                 return False
             self._prints[entry.job_id] = (entry, script)
+            self._words[entry.job_id] = words_of(entry, script)
             return True
 
     def get(self, job_id: str) -> tuple[Print, Script] | None:
@@ -228,20 +331,54 @@ class PrintLog:
             return after
 
     def list(
-        self, *, printer: str | None = None, trouble: bool = False, before: Before | None = None, limit: int = 50
+        self,
+        *,
+        printer: str | None = None,
+        trouble: bool = False,
+        type: str | None = None,  # noqa: A002 - what the log itself calls it
+        q: str | None = None,
+        before: Before | None = None,
+        limit: int = 50,
     ) -> list[Print]:
         """A page of the log, newest first: the prints made for `printer` (by its id; all of them without),
-        only the ones with `trouble` when asked, starting after `before`."""
+        only the ones with `trouble` when asked, only the ones of one `type` (`TYPES`), only the ones that
+        have the words of `q` (in their line of the log or on a line of their paper: `pattern_of`), starting
+        after `before`."""
+        found = self.page(printer=printer, trouble=trouble, type=type, q=q, before=before, limit=limit)
+        return [entry for entry, _ in found]
+
+    def page(
+        self,
+        *,
+        printer: str | None = None,
+        trouble: bool = False,
+        type: str | None = None,  # noqa: A002
+        q: str | None = None,
+        before: Before | None = None,
+        limit: int = 50,
+    ) -> list[tuple[Print, str]]:
+        """`list`, and beside each print the line of its paper a search found its words on (`found_in`)."""
+        wanted = search_for(q)
         with self._lock:
-            prints = [entry for entry, _ in self._prints.values()]
-        prints = [
-            entry
-            for entry in prints
+            prints = [(entry, self._words.get(job_id, "")) for job_id, (entry, _) in self._prints.items()]
+        listed = [
+            (entry, found_in(words, wanted) if wanted else "")
+            for entry, words in prints
             if (printer is None or entry.printer == printer)
             and (not trouble or entry.trouble)
+            and (type is None or type in types_of(entry))
             and (before is None or _newest_first(entry) > (-before[0], before[1]))
         ]
-        return sorted(prints, key=_newest_first)[: max(0, limit)]
+        found = sorted(
+            ((entry, where) for entry, where in listed if where is not None), key=lambda f: _newest_first(f[0])
+        )
+        return found[: max(0, limit)]
+
+    def restamp(self, how: Callable[[Print], Print]) -> int:
+        """Brings the prints an older hub wrote up to what this one keeps of a print (its types, the words
+        a search looks through): `how` gives each as it should stand. Gives how many there were; none here,
+        where every print is written whole."""
+        return 0
 
     def prune(self, before_ms: int) -> int:
         """Drops the prints queued before `before_ms`; gives how many went."""
@@ -249,6 +386,7 @@ class PrintLog:
             old = [job_id for job_id, (entry, _) in self._prints.items() if entry.at_ms < before_ms]
             for job_id in old:
                 del self._prints[job_id]
+                self._words.pop(job_id, None)
             return len(old)
 
 
@@ -263,7 +401,15 @@ CREATE TABLE IF NOT EXISTS print_log (
 );
 CREATE INDEX IF NOT EXISTS print_log_newest ON print_log (at_ms DESC, job_id);
 CREATE INDEX IF NOT EXISTS print_log_printer ON print_log (printer, at_ms DESC, job_id);
+ALTER TABLE print_log ADD COLUMN IF NOT EXISTS types TEXT;
+ALTER TABLE print_log ADD COLUMN IF NOT EXISTS words TEXT;
 """
+"""`types` is the print's types between spaces (" kitchen reprint "), `words` what a search looks through
+(`words_of`). Both are null on a print written by a hub from before them, until `restamp` fills them."""
+
+
+def _typed(entry: Print) -> str:
+    return f" {' '.join(types_of(entry))} "
 
 
 class PgPrintLog(PrintLog):
@@ -290,10 +436,19 @@ class PgPrintLog(PrintLog):
         with self._pool.connection() as conn:
             done = conn.execute(
                 """
-                INSERT INTO print_log (job_id, at_ms, printer, trouble, entry, script)
-                VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (job_id) DO NOTHING
+                INSERT INTO print_log (job_id, at_ms, printer, trouble, entry, script, types, words)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (job_id) DO NOTHING
                 """,
-                (entry.job_id, entry.at_ms, entry.printer, entry.trouble, Jsonb(entry.as_json()), Jsonb(script)),
+                (
+                    entry.job_id,
+                    entry.at_ms,
+                    entry.printer,
+                    entry.trouble,
+                    Jsonb(entry.as_json()),
+                    Jsonb(script),
+                    _typed(entry),
+                    words_of(entry, script),
+                ),
             )
             return done.rowcount > 0
 
@@ -323,30 +478,76 @@ class PgPrintLog(PrintLog):
             )
             return after
 
-    def list(
-        self, *, printer: str | None = None, trouble: bool = False, before: Before | None = None, limit: int = 50
-    ) -> list[Print]:
+    def page(
+        self,
+        *,
+        printer: str | None = None,
+        trouble: bool = False,
+        type: str | None = None,  # noqa: A002
+        q: str | None = None,
+        before: Before | None = None,
+        limit: int = 50,
+    ) -> list[tuple[Print, str]]:
         from psycopg import errors
 
-        where, args = ["TRUE"], []
+        wanted = search_for(q)
+        where: list[str] = ["TRUE"]
+        args: list[Any] = []
         if printer is not None:
             where.append("printer = %s")
             args.append(printer)
         if trouble:
             where.append("trouble")
+        if type is not None:
+            where.append("types LIKE %s")
+            args.append(f"% {type} %")
+        if wanted:
+            where.append("words ~* %s")
+            args.append(pattern_of(wanted))
         if before is not None:
             where.append("(at_ms < %s OR (at_ms = %s AND job_id > %s))")
             args.extend([before[0], before[0], before[1]])
+        found = "words" if wanted else "''"
         try:
             with self._pool.connection() as conn:
                 rows = conn.execute(
-                    f"SELECT entry FROM print_log WHERE {' AND '.join(where)} ORDER BY at_ms DESC, job_id LIMIT %s",
+                    f"SELECT entry, {found} FROM print_log WHERE {' AND '.join(where)} "  # noqa: S608 - fixed parts
+                    "ORDER BY at_ms DESC, job_id LIMIT %s",
                     (*args, max(0, limit)),
                 ).fetchall()
-        except errors.UndefinedTable:
-            return []
-        prints = (Print.from_json(row[0]) for row in rows)
-        return [entry for entry in prints if entry is not None]
+        except (errors.UndefinedTable, errors.UndefinedColumn):
+            return []  # a standby whose primary has not been updated yet
+        prints = ((Print.from_json(row[0]), row[1] or "") for row in rows)
+        return [
+            (entry, (found_in(words, wanted) or "") if wanted else "") for entry, words in prints if entry is not None
+        ]
+
+    def restamp(self, how: Callable[[Print], Print]) -> int:
+        from psycopg.types.json import Jsonb
+
+        with self._pool.connection() as conn:
+            standby = conn.execute("SELECT pg_is_in_recovery()").fetchone()
+        if standby is not None and standby[0]:
+            return 0  # its primary does it, and the standby has what the primary wrote
+        done = 0
+        while True:
+            with self._pool.connection() as conn, conn.transaction():
+                rows = conn.execute(
+                    "SELECT job_id, entry, script FROM print_log WHERE words IS NULL LIMIT 200 FOR UPDATE"
+                ).fetchall()
+                for job_id, raw, script in rows:
+                    before = Print.from_json(raw)
+                    after = how(before) if before is not None else None
+                    if after is None:  # not a print anybody can read: marked, so it is not looked at again
+                        conn.execute("UPDATE print_log SET types = '', words = '' WHERE job_id = %s", (job_id,))
+                        continue
+                    conn.execute(
+                        "UPDATE print_log SET entry = %s, types = %s, words = %s WHERE job_id = %s",
+                        (Jsonb(after.as_json()), _typed(after), words_of(after, clean(script)), job_id),
+                    )
+            done += len(rows)
+            if len(rows) < 200:
+                return done
 
     def prune(self, before_ms: int) -> int:
         with self._pool.connection() as conn:
