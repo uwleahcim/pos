@@ -74,7 +74,8 @@ In this order, after the pull request is merged:
      `pos-recordings`.
 
    No PBX setting is changed and FreePBX is not touched. The PBX is the one `hubctl pbx link` already
-   knows; it may ask for the PBX's root password once. At the end it says how many calls it found.
+   knows; it asks for the PBX's root password once where the hub's desk-phone key is limited to its
+   tunnel (`desk-phones.md`, "Limiting the hub's key"). At the end it says how many calls it found.
 3. Rebuild the app on every device.
 4. In the app: Location settings, **Who may do what**, **Listen to recorded calls**, if anyone besides
    managers should listen.

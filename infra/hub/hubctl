@@ -107,7 +107,7 @@ case "${1:-status}" in
   pbx)
     # hubctl pbx key                         this hub's key for the PBX (made on first use) and the command that adds it by hand
     # hubctl pbx link root@pbx.example.org   puts the key on the PBX (its password once), asks for the AMI secret, saves the link in .env, starts the tunnel and the watcher and waits for them to meet
-    # hubctl pbx status                      the tunnel and what the API says about the PBX
+    # hubctl pbx status                      the tunnel, what the hub's key may do on the PBX, and what the API says about the PBX
     # hubctl pbx tail                        prints each call as a desk phone answers it, as the hub sees it (Ctrl-C to stop)
     # hubctl pbx unlink                      stops the tunnel and forgets the link, secret included
     # hubctl pbx recordings link [user@pbx]  lets the hub read the PBX's call recordings (docs/call-recordings.md): puts two small programs and one key line on the PBX (its password once, if it asks) and changes no PBX setting
@@ -124,11 +124,36 @@ case "${1:-status}" in
     unset_env() {
       for name in "$@"; do sed -i -E "/^$name=/d" "$POS_HOME/.env"; done
     }
-    pbx_ssh() { # to the PBX as the tunnel goes: the hub's key, and the PBX's host key kept where the tunnel reads it
-      ssh -i "$pbx_dir/id_ed25519" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$pbx_dir/known_hosts" "$@"
+    # To the PBX as the tunnel goes: the hub's key, and the PBX's host key kept where the tunnel reads it. A
+    # caller that only looks (status) sets pbx_wait (seconds to wait for the PBX) and pbx_meet=yes (a PBX the
+    # hub does not know yet is not met from there).
+    pbx_ssh() {
+      ssh -i "$pbx_dir/id_ed25519" -o ConnectTimeout="${pbx_wait:-15}" -o StrictHostKeyChecking="${pbx_meet:-accept-new}" -o UserKnownHostsFile="$pbx_dir/known_hosts" "$@"
     }
-    pbx_line() { # the authorized_keys line: with it the hub may only forward to the manager port, no shell on the PBX
-      printf 'restrict,port-forwarding,permitopen="127.0.0.1:5038" %s\n' "$(cat "$pbx_dir/id_ed25519.pub")"
+    # The authorized_keys line: with it the hub's key may open the tunnel to the manager port and nothing else.
+    # restrict gives it no terminal; command= answers whatever it asks to run with one word and runs nothing;
+    # permitopen lets it forward to the manager port alone; permitlisten keeps it from making the PBX listen
+    # anywhere of use (the one port it names, 1 on the PBX's own loopback, is nobody's).
+    pbx_word="pos-tunnel-only"
+    pbx_limits="restrict,port-forwarding,permitopen=\"127.0.0.1:5038\",permitlisten=\"127.0.0.1:1\",command=\"echo $pbx_word\""
+    pbx_line() {
+      printf '%s %s\n' "$pbx_limits" "$(cat "$pbx_dir/id_ed25519.pub")"
+    }
+    # What the PBX lets the hub's key do: "limited" (the tunnel and nothing else), "loose" (it also runs what
+    # it is told: a line from before the key was limited; docs/desk-phones.md, "Limiting the hub's key") or
+    # "refused". Asked by having it run `true`: a limited key answers with its one word instead.
+    pbx_holds() {
+      local said
+      if said=$(pbx_ssh -o BatchMode=yes "$@" true < /dev/null 2> /dev/null); then
+        if [[ "$said" == "$pbx_word" ]]; then echo limited; else echo loose; fi
+      else
+        echo refused
+      fi
+    }
+    pbx_loose() { # what to say of a key that may do more than open the tunnel
+      echo "=> On the PBX the hub's key may still run commands, not only open the tunnel: its line there is from"
+      echo "   before the key was limited. docs/desk-phones.md, \"Limiting the hub's key\", has the change (three"
+      echo "   lines pasted on the PBX); the tunnel goes on working through it."
     }
     ago() { # seconds, for people
       if (( $1 < 60 )); then echo "$1 s"; elif (( $1 < 3600 )); then echo "$(( $1 / 60 )) min"; else echo "$(( $1 / 3600 )) h $(( $1 % 3600 / 60 )) min"; fi
@@ -157,6 +182,16 @@ case "${1:-status}" in
         if grep -q "Host key verification failed\|HOST IDENTIFICATION HAS CHANGED" <<< "$logs"; then
           echo "=> the PBX's host key is not the one the hub knows (reinstalled?): rm $pbx_dir/known_hosts, then hubctl pbx link again"
         fi
+      fi
+      # what the key may do there, asked of a PBX the hub already knows (never a first meeting from here)
+      local target
+      target=$(sed -nE 's/^POS_PBX_SSH=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1)
+      if [[ -n "$target" && -f "$pbx_dir/id_ed25519" && -s "$pbx_dir/known_hosts" ]]; then
+        case "$(pbx_wait=5 pbx_meet=yes pbx_holds "$target")" in
+          limited) echo "key: on the PBX it may open the tunnel and nothing else" ;;
+          loose) pbx_loose ;;
+          *) ;; # the tunnel's own words above say why
+        esac
       fi
       curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
     }
@@ -287,17 +322,20 @@ case "${1:-status}" in
       link)
         [[ $# -ge 3 ]] || { echo "usage: hubctl pbx link user@pbx-host [ami-user]" >&2; exit 2; }
         pbx_key
-        if pbx_ssh -o BatchMode=yes "$3" true 2> /dev/null; then
-          echo "The PBX accepts the hub's key."
-        else
+        holds=$(pbx_holds "$3")
+        if [[ "$holds" == refused ]]; then
           echo "The PBX does not accept the hub's key yet: adding it (the PBX asks for the password of $3 once)."
           line=$(pbx_line)
           pbx_ssh "$3" "umask 077; mkdir -p ~/.ssh; grep -qxF '$line' ~/.ssh/authorized_keys 2> /dev/null || echo '$line' >> ~/.ssh/authorized_keys" \
             || { echo "Could not add the key; nothing changed. hubctl pbx key prints it, to add by hand." >&2; exit 1; }
-          pbx_ssh -o BatchMode=yes "$3" true 2> /dev/null \
+          holds=$(pbx_holds "$3")
+          [[ "$holds" != refused ]] \
             || { echo "The key is on the PBX, but the PBX still refuses it (sshd there does not read ~/.ssh/authorized_keys?); the link was not written." >&2; exit 1; }
           echo "The PBX accepts the hub's key now."
+        else
+          echo "The PBX accepts the hub's key."
         fi
+        if [[ "$holds" == loose ]]; then pbx_loose; else echo "On the PBX the key may open the tunnel and nothing else."; fi
         chown "$POS_UID:$POS_UID" "$pbx_dir/known_hosts" 2> /dev/null || true
         saved=$(sed -nE 's/^POS_AMI_SECRET=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1)
         keeps=""
