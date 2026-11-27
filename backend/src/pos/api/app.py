@@ -88,6 +88,7 @@ from ..orders.taken_off import by_check, taken_off_rows
 from ..orders.typed import typed_rows
 from ..orders.voids import void_ops, void_rows
 from ..phones.deskphones import AmiWatcher, AnsweredCalls, watcher_from_env
+from ..phones.recordings import Recordings, default_recording_store, pbx_from_env
 from ..printing import discover
 from ..printing.bill import SAMPLE, bill_for
 from ..printing.held import default_held
@@ -132,6 +133,7 @@ from ..waitlist import Waitlist, default_wait_store
 from ..waste import WasteLog, default_waste_store
 from .addresses import add_address_list
 from .auth import holder_from, manager_from, powers_of
+from .calls import add_calls
 from .conditional import ConditionalGet
 from .contests import add_contests
 from .day import add_day_report
@@ -934,6 +936,7 @@ def create_app(
     keys: HubKeys | None = None,
     wayin: WayIn | None = None,
     staff_list: StaffList | None = None,
+    recordings: Recordings | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -945,6 +948,8 @@ def create_app(
         pbx: AmiWatcher | None = app.state.watcher
         if pbx is not None:
             pbx.start()
+        if recordings is None:
+            app.state.recordings.start()  # looks at the PBX's call recordings, where the hub is linked to them
         if faces is None:
             app.state.faces.start(FaceEngine.from_env)
         if online is None:
@@ -1094,6 +1099,15 @@ def create_app(
         else PushRelay(app.state.push_devices, pusher if pusher is not None else sender_for(app.state.keys))
     )
     app.state.watcher = watcher if watcher is not None else watcher_from_env(app.state.answered, app.state.relay)
+    # Call recordings on phone orders (docs/call-recordings.md): the PBX records, the hub reads what it has
+    # (POS_PBX_RECORDINGS, written by `hubctl pbx recordings link`). The watcher says when a call has ended,
+    # so its recording is found a few seconds later.
+    app.state.recordings = (
+        recordings if recordings is not None else Recordings(default_recording_store(), pbx_from_env())
+    )
+    if app.state.watcher is not None:
+        app.state.watcher.on_call_end = app.state.recordings.call_ended
+    app.state.recordings.on_change = lambda: app.state.feed.changed("calls")  # an open order shows its new call
     app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
     # Face sign-in: templates in the database, the location's switch in its settings, the models from the image.
     app.state.faces = (
@@ -2692,6 +2706,7 @@ def create_app(
     add_today(app)
     add_guest_list(app)
     add_history(app)
+    add_calls(app)
     add_runs(app)
     add_online_orders(app, number_orders)
     add_hub_keys(app)

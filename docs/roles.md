@@ -5,7 +5,7 @@ Each person on the staff has a role: server, bartender, host, cashier, kitchen, 
 opened the back office, the servers and the bartenders took tables, and the hosts gave them out.
 
 Now the location has a table, **Location › Who may do what**, where a manager or an owner hands any of
-fifteen powers to the other roles, or takes them back. It starts exactly as the rules were, so nothing
+sixteen powers to the other roles, or takes them back. It starts exactly as the rules were, so nothing
 changes for anybody until somebody changes it. (The drivers and the power to take deliveries out came with
 deliveries, `delivery.md`: nobody who was on the staff before holds anything new.)
 
@@ -34,7 +34,7 @@ is saved. Leaving with changes not saved asks first.
 
 A change holds on every screen from the moment it is saved.
 
-## The fifteen powers
+## The sixteen powers
 
 | Power | What it lets a person do | Who has it to start, besides managers and owners |
 | --- | --- | --- |
@@ -42,6 +42,7 @@ A change holds on every screen from the moment it is saved.
 | **Approve a discount or a comp** | Their PIN gives a discount or a comp that asks for one, and takes a service charge off (`discounts.md`) | Nobody |
 | **Approve a tax-exempt check** | Their PIN marks a check exempt from sales tax (`tax-exempt.md`) | Nobody |
 | **Read a check's history** | Every step of a check: who did it, on which screen and when (`check-history.md`) | Nobody |
+| **Listen to recorded calls** | Their PIN plays the phone calls recorded on an order (`call-recordings.md`) | Nobody |
 | **Take tables** | A table can be theirs, and a host can seat a party for them (`table-servers.md`) | Servers, bartenders |
 | **Give tables out** | Seat a party for another server, hand a table over, and say who is in tonight's turn (`table-servers.md`) | Hosts |
 | **Take deliveries out** | A delivery can be handed to them: they are offered as a driver (`delivery.md`) | Drivers |

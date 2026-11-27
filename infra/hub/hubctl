@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hubctl: everyday commands for a POS hub.
-#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget | staff [pin <id or name>]
+#   hubctl status | logs [service] | update | restart | psql | backup | printers <list> | print <printer-ip> [demo|ascii|drawer] [escpos|star] | menu import [--apply] | pbx key|link|status|tail|unlink|recordings link|status|unlink | push apple|status|test|forget | maps key|google|status|test|forget | online key|status|fetch|show|forget|push key|push test|push forget|tunnel token|tunnel status|tunnel forget | staff [pin <id or name>]
 set -euo pipefail
 POS_HOME=/opt/pos
 POS_UID=10001 # the backend image's own user, which the pbx tunnel runs as
@@ -110,6 +110,9 @@ case "${1:-status}" in
     # hubctl pbx status                      the tunnel and what the API says about the PBX
     # hubctl pbx tail                        prints each call as a desk phone answers it, as the hub sees it (Ctrl-C to stop)
     # hubctl pbx unlink                      stops the tunnel and forgets the link, secret included
+    # hubctl pbx recordings link [user@pbx]  lets the hub read the PBX's call recordings (docs/call-recordings.md): puts two small programs and one key line on the PBX (its password once, if it asks) and changes no PBX setting
+    # hubctl pbx recordings status           whether the hub reads the recordings, how many calls it knows, what the PBX has to read them with, whether the stereo step is in place
+    # hubctl pbx recordings unlink           the hub stops reading the recordings; says what to take off the PBX by hand
     pbx_dir="$POS_HOME/pbx"
     pbx_key() {
       install -d -m 0700 -o "$POS_UID" -g "$POS_UID" "$pbx_dir"
@@ -157,7 +160,120 @@ case "${1:-status}" in
       fi
       curl -fsS http://127.0.0.1:8000/phones/status | jq . || echo "api: down"
     }
+    # Call recordings (docs/call-recordings.md): a key of its own, kept apart from the tunnel's, that runs one
+    # program on the PBX and nothing else. The API reads it from /opt/pos/pbx-recordings (mounted read-only).
+    rec_dir="$POS_HOME/pbx-recordings"
+    rec_src="$POS_HOME/src/infra/hub/pbx"
+    rec_ssh() { # to the PBX as the API goes for a recording: the recordings key and no other
+      ssh -i "$rec_dir/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$rec_dir/known_hosts" "$@"
+    }
+    rec_payload() { # what runs on the PBX, as root: the two programs into /usr/local/sbin, the key's line into authorized_keys
+      local name line
+      line="restrict,command=\"/usr/local/sbin/pos-recordings\" $(cat "$rec_dir/id_ed25519.pub")"
+      echo 'set -eu'
+      echo 'umask 022'
+      for name in pos-recordings pos-stereo; do
+        printf "echo '%s' | base64 -d > /usr/local/sbin/%s.new\n" "$(base64 -w 0 "$rec_src/$name")" "$name"
+        printf 'chmod 0755 /usr/local/sbin/%s.new\nmv -f /usr/local/sbin/%s.new /usr/local/sbin/%s\n' "$name" "$name" "$name"
+      done
+      echo 'umask 077'
+      echo 'mkdir -p ~/.ssh'
+      printf "grep -qxF '%s' ~/.ssh/authorized_keys 2> /dev/null || echo '%s' >> ~/.ssh/authorized_keys\n" "$line" "$line"
+      echo 'echo pos-recordings-installed'
+    }
+    rec_status() { # the API's view, in words
+      local said wanted
+      said=$(curl -fsS http://127.0.0.1:8000/phones/recordings 2> /dev/null) || { echo "api: down"; return 1; }
+      if [[ "$(jq -r '.configured' <<< "$said")" != true ]]; then
+        echo "call recordings: the hub does not read them (hubctl pbx recordings link)"
+        return 0
+      fi
+      wanted=$(sed -nE 's/^VERSION=//p' "$rec_src/pos-recordings" | head -n 1)
+      jq -r --arg wanted "$wanted" '
+        "call recordings: read from \(.pbx)",
+        "  calls with a customer the hub knows of: \(.calls)",
+        (if .looked_ms then "  last look at the PBX: \(.looked_ms / 1000 | floor | strftime("%Y-%m-%d %H:%M:%S")) UTC" else "  the hub has not looked at the PBX yet" end),
+        (if .problem then "  => the last ask failed (\(.problem.code)): \(.problem.message)" else empty end),
+        (if .program == null then "  the program on the PBX did not answer"
+         elif .program != $wanted then "  => the program on the PBX is version \(.program), this hub brings \($wanted): hubctl pbx recordings link again"
+         else "  the program on the PBX: version \(.program)" end),
+        (if .tools == null then empty
+         elif (.tools.sox and .tools.lame) or .tools.ffmpeg then "  the PBX can turn a recording into an MP3 (sox with lame, or ffmpeg)"
+         else "  => the PBX has neither sox with lame nor ffmpeg: no recording can be played (apt install sox lame, on the PBX)" end),
+        (if .stereo == null then empty
+         elif .stereo then "  stereo: the step is in place on the PBX (calls sent through it get the caller left, the restaurant right)"
+         else "  stereo: not set up on the PBX; the recordings are both voices in one channel (docs/call-recordings.md, Stereo)" end)
+      ' <<< "$said"
+    }
     case "${2:-status}" in
+      recordings)
+        case "${3:-status}" in
+          link)
+            target=${4:-$(sed -nE 's/^POS_PBX_SSH=//p' "$POS_HOME/.env" 2> /dev/null | tail -n 1)}
+            [[ -n "$target" ]] || { echo "Which PBX? hubctl pbx recordings link user@pbx-host (or hubctl pbx link first: the same PBX is used)" >&2; exit 2; }
+            [[ "$target" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "the PBX is named user@host" >&2; exit 2; }
+            install -d -m 0700 -o "$POS_UID" -g "$POS_UID" "$rec_dir"
+            if [[ ! -f "$rec_dir/id_ed25519" ]]; then
+              ssh-keygen -q -t ed25519 -N '' -C "pos-recordings-$(hostname)" -f "$rec_dir/id_ed25519"
+            fi
+            # the PBX's host key as the tunnel already knows it, so the two never disagree on who the PBX is
+            if [[ ! -s "$rec_dir/known_hosts" && -s "$pbx_dir/known_hosts" ]]; then cp "$pbx_dir/known_hosts" "$rec_dir/known_hosts"; fi
+            echo "Putting what the hub reads call recordings with on $target:"
+            echo "  /usr/local/sbin/pos-recordings  lists the recordings and hands one over as an MP3; it only reads"
+            echo "  /usr/local/sbin/pos-stereo      puts the two sides of a call into one stereo file; nothing runs it until you add the stereo step"
+            echo "  one line in ~/.ssh/authorized_keys: the hub's recordings key, which may run pos-recordings and nothing else"
+            echo "No setting of the PBX is changed. If the PBX asks for a password, it is the one of $target."
+            if [[ -t 0 ]]; then # a change to the PBX is the owner's to say yes to
+              read -r -p "Put them there? [y/N] " yes
+              [[ "$yes" =~ ^[Yy] ]] || { echo "Nothing was put on the PBX, and the hub was not linked."; exit 1; }
+            fi
+            out=$(rec_payload | ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$rec_dir/known_hosts" -i "$pbx_dir/id_ed25519" "$target" 'sh -s' || true)
+            if ! grep -q pos-recordings-installed <<< "$out"; then
+              # a key that got in but may run nothing: ask again with the password alone
+              out=$(rec_payload | ssh -o ConnectTimeout=15 -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$rec_dir/known_hosts" "$target" 'sh -s' || true)
+            fi
+            grep -q pos-recordings-installed <<< "$out" \
+              || { echo "Could not put them on the PBX; the hub was not linked to the recordings. Nothing on the hub changed." >&2; exit 1; }
+            chown "$POS_UID:$POS_UID" "$rec_dir"/id_ed25519 "$rec_dir"/id_ed25519.pub "$rec_dir"/known_hosts
+            chmod 0600 "$rec_dir/id_ed25519"
+            about=$(rec_ssh "$target" about 2>&1) \
+              || { echo "The programs are on the PBX, but the PBX refuses the hub's recordings key; the hub was not linked. What it said:" >&2; echo "$about" >&2; exit 1; }
+            chown "$POS_UID:$POS_UID" "$rec_dir/known_hosts"
+            unset_env POS_PBX_RECORDINGS
+            printf 'POS_PBX_RECORDINGS=%s\n' "$target" >> "$POS_HOME/.env"
+            compose up -d api
+            echo "The PBX answers the hub's recordings key. Waiting for the hub to look at the recordings..."
+            for _ in $(seq 1 60); do
+              sleep 1
+              if [[ "$(curl -fsS http://127.0.0.1:8000/phones/recordings 2> /dev/null | jq -r '.looked_ms // empty' 2> /dev/null || true)" != "" ]]; then
+                rec_status
+                echo "A phone order shows its calls in the app now (docs/call-recordings.md)."
+                exit 0
+              fi
+            done
+            echo "The hub has not looked within a minute. Where it stands:"
+            rec_status
+            exit 1
+            ;;
+          status)
+            rec_status
+            ;;
+          unlink)
+            unset_env POS_PBX_RECORDINGS
+            compose up -d api
+            echo "The hub no longer reads the PBX's call recordings. Nothing on the PBX was touched: the recordings are"
+            echo "all there. To take the hub's part off the PBX too, by hand, on the PBX: first undo the stereo step if"
+            echo "you added it (docs/call-recordings.md, \"Taking stereo off\"), then"
+            echo "  rm /usr/local/sbin/pos-recordings /usr/local/sbin/pos-stereo"
+            echo "and delete the line that ends in pos-recordings-$(hostname) from ~/.ssh/authorized_keys."
+            ;;
+          *)
+            echo "usage: hubctl pbx recordings link [user@pbx-host] | status | unlink" >&2
+            exit 2
+            ;;
+        esac
+        ;;
       key)
         pbx_key
         line=$(pbx_line)
@@ -226,7 +342,7 @@ case "${1:-status}" in
         echo "The hub no longer watches the PBX; the key in $pbx_dir stays."
         ;;
       *)
-        echo "usage: hubctl pbx key | link user@pbx-host [ami-user] | status | tail | unlink" >&2
+        echo "usage: hubctl pbx key | link user@pbx-host [ami-user] | status | tail | unlink | recordings link|status|unlink" >&2
         exit 2
         ;;
     esac

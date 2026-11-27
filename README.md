@@ -188,6 +188,9 @@ merges after any disconnect.
   `docs/check-history.md`
 - Desk phones linked to screens (a call taken on a desk phone opens the caller's order on its screen; the hub's
   link to the PBX): `docs/desk-phones.md`
+- Recorded calls on a phone order (the PBX's own recordings of the calls with the order's number, listed on
+  the order and played back behind a PIN; the steps for stereo recordings on FreePBX and for telling callers
+  they are recorded): `docs/call-recordings.md`
 - Setting up a Mac for development (Xcode, Flutter, Android Studio, the backend, SSH to the hub and the PBX;
   what to copy from the old Mac and what to install fresh): `docs/developer-mac.md`
 - Competitive review against Toast, Square, Clover, Lightspeed and TouchBistro (1 Nov 2026): `docs/competitive-review-2026-11-01.md`

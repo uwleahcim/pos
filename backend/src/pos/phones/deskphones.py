@@ -339,6 +339,9 @@ class AmiWatcher:
         self._secret, self._calls, self._backoff, self._clock = secret, calls, backoff, clock
         self._tracker = tracker if tracker is not None else CallTracker(clock=clock)
         self.relay = relay
+        self.on_call_end: Callable[[str], None] | None = None
+        """Told the id of every call whose first channel hung up: the call is over (its recording is on the
+        PBX in a moment; `pos.phones.recordings`)."""
         self._task: asyncio.Task[None] | None = None
         self._client: AMIClient | None = None
         self._since: float | None = None
@@ -363,6 +366,19 @@ class AmiWatcher:
             pass
         self._client = None
         self._since = None
+
+    def _ended(self, packet: Message) -> None:
+        """Tells `on_call_end` of a call whose first channel hung up; what it does with that never stops the
+        watching."""
+        if self.on_call_end is None or packet.get("Event", "") != "Hangup":
+            return
+        call = packet.get("Uniqueid", "")
+        if not call or call != (packet.get("Linkedid") or call):
+            return
+        try:
+            self.on_call_end(call)
+        except Exception as err:  # noqa: BLE001
+            log.warning("a call's end could not be passed on (%s)", type(err).__name__)
 
     @property
     def tracker(self) -> CallTracker:
@@ -414,6 +430,7 @@ class AmiWatcher:
                         if self.relay is not None:
                             self.relay.feed(packet, self._tracker)
                         answered = self._tracker.feed(packet)
+                        self._ended(packet)
                         if answered is not None:
                             pop = self._calls.record(answered)
                             log.info(

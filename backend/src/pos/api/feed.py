@@ -117,8 +117,9 @@ class ChangeFeed:
         sat down or taken off), `reservations` (a table was booked, or a booking changed or ended; both
         of these also when a guest's tags changed, which the list and the book show),
         `online` (there is an online order to look at, or somebody looked), `floor` (who is in tonight's
-        turn for a table changed: a host's word, or the time clock) or `prints` (the print log has a new
-        print, or one printed or failed). A screen that does not know a topic ignores it."""
+        turn for a table changed: a host's word, or the time clock), `prints` (the print log has a new
+        print, or one printed or failed) or `calls` (the PBX has a call recording that is new or changed:
+        an order may list another call). A screen that does not know a topic ignores it."""
         self._tell((), (topic,), None)
 
     def _tell(self, order_ids: Iterable[str], topics: Iterable[str], cursor: int | None) -> None:

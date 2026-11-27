@@ -317,6 +317,7 @@ def test_a_power_handed_out_approves_a_comp_and_a_tax_exempt_check():
 
 DOORS = [
     ("history", "get", "/orders/o1/history", None),
+    ("calls", "get", "/orders/o1/calls/1795735800.101/audio", None),  # no such call: 404 for whoever may listen
     ("rush", "put", "/settings/rush", {"minutes": 10}),
     ("notes", "get", "/notes/board", None),
     ("notes", "post", "/notes", {"text": "Duck is out", "lasts": "today"}),
