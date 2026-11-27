@@ -54,6 +54,9 @@ merges after any disconnect.
 - The floor map at a glance (every table where the plan has it and as large as the aisles allow, words at
   a size that reads on a phone as on a Mac, a small table saying less and its room saying the rest, the
   marks no table loses): `docs/floor-map.md`
+- The floor editor (Location › Floor plan: a manager moves, sizes and turns the tables on the plan, adds
+  ready-made ones, lines several up, and adds, names and takes off rooms; nothing takes effect before Save,
+  and a table in use keeps its name and its place on the plan): `docs/floor-editor.md`
 - Whose table it is (the server's name on each busy table, a server taking a table by opening it, the host
   giving a table to a server and handing one over, the `host` role, whose turn the next table is, and
   **Mine**, which fades the other servers' tables on the floor map): `docs/table-servers.md`

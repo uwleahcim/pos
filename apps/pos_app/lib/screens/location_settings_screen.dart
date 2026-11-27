@@ -37,6 +37,7 @@ import 'delivery_fee_dialog.dart';
 import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
+import 'floor_editor.dart';
 import 'guests_screen.dart';
 import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
@@ -1543,6 +1544,22 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 subtitle: Text(PointsDialog.summary(_points)),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _points == null ? null : _pointsRules,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // the floor the map shows: tables and rooms moved, added and taken off (docs/floor-editor.md)
+            Card(
+              child: ListTile(
+                key: const ValueKey('floor-plan'),
+                leading: const Icon(Icons.dashboard_customize_outlined),
+                title: const Text('Floor plan'),
+                subtitle: const Text('Move, size and turn the tables, add and take off tables and rooms'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => FloorEditorScreen(api: widget.api, token: widget.token),
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 12),

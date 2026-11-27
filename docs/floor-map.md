@@ -4,7 +4,7 @@ The floor map used to draw the plan to scale and write on each table whatever fi
 On a tablet that was small; on a phone the names of the tables were a few points high and the rest could
 not be read at all. Mike asked (2026-11-27) for the information to be larger and easy to take in at a
 glance, without losing the shape of the room. This is how the map works now. It is all in the app: the hub
-and the plan are as they were.
+and the plan are as they were. (The plan itself is drawn in the floor editor, `floor-editor.md`.)
 
 ## What you see
 

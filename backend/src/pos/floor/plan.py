@@ -5,6 +5,10 @@ position in the plan's own frame, so the app can draw it at any size. Which tabl
 it is read from the open orders, whose `table` field holds the table id. The courses a line can belong to
 are a location setting (`pos.settings`, key `coursing`), not part of the plan.
 
+A manager can redraw the plan from the app's floor editor: the edited plan is a location setting
+(`floor_plan`), checked by `clean_floor_plan`, and stands in for the file from then on (`plan_of`) until it
+is put back.
+
 Each open check also says what its table is waiting on and since when (`check_timer`), read from the order
 log's own stamps, so every screen draws the same timer ring around the table whatever its own clock says.
 """
@@ -12,8 +16,10 @@ log's own stamps, so every screen draws the same timer ring around the table wha
 from __future__ import annotations
 
 import json
+import math
 import os
-from collections.abc import Callable, Iterable, Sequence
+import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -80,6 +86,206 @@ class FloorPlan:
 def load_floor(path: str | None = None) -> FloorPlan:
     path = path if path is not None else os.environ.get("POS_FLOOR")
     return FloorPlan.from_json(json.loads(Path(path or DEFAULT).read_text(encoding="utf-8")))
+
+
+def plan_of(state: Any) -> FloorPlan:
+    """The floor plan as it stands now: the one a manager drew in the floor editor (the location setting
+    `floor_plan`) when there is one, the plan the hub came with (`state.floor`) otherwise. `state` is the
+    app's: its `settings` and its `floor`."""
+    settings = getattr(state, "settings", None)
+    saved = settings.get("floor_plan").get("plan") if settings is not None else None
+    if not saved:
+        return state.floor
+    kept = getattr(state, "floor_drawn", None)
+    if kept is None or kept[0] != saved:
+        kept = (saved, FloorPlan.from_json(saved))
+        state.floor_drawn = kept  # read on every poll of the map: parsed once per plan
+    return kept[1]
+
+
+TABLE_ID = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+ROOM_ID = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+SHAPES = ("rect", "round")
+KINDS = ("table", "booth", "counter")
+LABEL_MAX = 8
+ROOM_NAME_MAX = 32
+ROOMS_MAX = 24
+TABLES_MAX = 400
+SEATS_MAX = 60
+SIDE_MIN, SIDE_MAX = 16, 1200
+"""A table's sides in the plan's own units; the plan the hub comes with draws a seat at the bar 30 across and
+a table for six 45 by 100."""
+SPAN_MAX = 20000
+"""How far apart two tables can be drawn, either way."""
+MARGIN = 60
+"""The room a plan keeps round its tables, and a room's frame round its own."""
+
+
+def _number(value: Any, what: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise ValueError(f"{what} must be a number")
+    return float(value)
+
+
+def _slug(name: str, taken: set[str], fallback: str) -> str:
+    """An id from a name ("Patio 2" gives `patio-2`), with a number after it when that one is taken."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:20] or fallback
+    ident, n = base, 2
+    while ident in taken:
+        ident, n = f"{base}-{n}", n + 1
+    return ident
+
+
+def clean_floor_plan(data: Mapping[str, Any]) -> dict[str, Any]:
+    """A floor plan as the floor editor may save it, checked; raises ValueError with the reason otherwise.
+
+    `rooms`, in the order the map lists them: each a `name`, and an `id` once it has one (a room sent
+    without is new and gets its id from its name). `tables`: each an `id` (the name orders carry: letters,
+    figures, `-` and `_`), a `label` (what the map writes on it), the `room` it stands in, where its middle
+    is (`x`, `y`) and how large it is (`w`, `h`) in the plan's own units, its `seats`, `shape` (rect or
+    round), `rotation` in degrees and `kind` (table, booth or counter). A new table's room may be named by
+    the room's place in `rooms` ("#0") while the room has no id yet.
+
+    What is stored is drawn from the tables: they are moved together so the plan starts a margin from its
+    corner, the plan is as wide and high as they need, and each room's frame is the one round its own
+    tables (an empty room keeps a small frame of its own under the others), so an app that draws the
+    frames it is given draws them right."""
+    raw_rooms, raw_tables = data.get("rooms"), data.get("tables")
+    if not isinstance(raw_rooms, list) or not raw_rooms:
+        raise ValueError("a floor plan has at least one room")
+    if len(raw_rooms) > ROOMS_MAX:
+        raise ValueError(f"a floor plan has {ROOMS_MAX} rooms at most")
+    if not isinstance(raw_tables, list):
+        raise ValueError("tables must be a list")
+    if len(raw_tables) > TABLES_MAX:
+        raise ValueError(f"a floor plan has {TABLES_MAX} tables at most")
+
+    rooms: list[dict[str, Any]] = []
+    taken = {str(r.get("id")) for r in raw_rooms if isinstance(r, Mapping) and r.get("id")}
+    names: set[str] = set()
+    for at, room in enumerate(raw_rooms):
+        if not isinstance(room, Mapping):
+            raise ValueError("a room is its name and its id")
+        name = " ".join(str(room.get("name") or "").split())
+        if not name:
+            raise ValueError("every room has a name")
+        if len(name) > ROOM_NAME_MAX:
+            raise ValueError(f"a room's name is {ROOM_NAME_MAX} letters at most: {name!r}")
+        if name.lower() in names:
+            raise ValueError(f"two rooms are called {name!r}")
+        names.add(name.lower())
+        ident = room.get("id")
+        if ident:
+            ident = str(ident)
+            if not ROOM_ID.match(ident):
+                raise ValueError(f"a room's id is letters, figures, - and _: {ident!r}")
+            if any(r["id"] == ident for r in rooms):
+                raise ValueError(f"two rooms have the id {ident!r}")
+        else:
+            ident = _slug(name, taken, f"room-{at + 1}")
+            taken.add(ident)
+        rooms.append({"id": ident, "name": name})
+    by_place = {f"#{at}": room["id"] for at, room in enumerate(rooms)}
+    room_ids = {room["id"] for room in rooms}
+
+    tables: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for table in raw_tables:
+        if not isinstance(table, Mapping):
+            raise ValueError("a table is its id, label, room, place and size")
+        ident = str(table.get("id") or "")
+        if not TABLE_ID.match(ident):
+            raise ValueError(f"a table's id is 1 to 24 letters, figures, - and _: {ident!r}")
+        if ident in seen:
+            raise ValueError(f"two tables have the id {ident!r}")
+        seen.add(ident)
+        label = " ".join(str(table.get("label") or "").split()) or ident
+        if len(label) > LABEL_MAX:
+            raise ValueError(f"a table's name is {LABEL_MAX} letters at most: {label!r}")
+        room = str(table.get("room") or "")
+        room = by_place.get(room, room)
+        if room not in room_ids:
+            raise ValueError(f"table {label} stands in a room the plan does not have")
+        shape = table.get("shape", "rect")
+        if shape not in SHAPES:
+            raise ValueError(f"table {label}: its shape is one of {', '.join(SHAPES)}")
+        kind = table.get("kind", "table")
+        if kind not in KINDS:
+            raise ValueError(f"table {label}: its kind is one of {', '.join(KINDS)}")
+        seats = table.get("seats", 2)
+        if isinstance(seats, bool) or not isinstance(seats, int | float) or seats != int(seats):
+            raise ValueError(f"table {label}: its seats are a whole number")
+        if not 1 <= seats <= SEATS_MAX:
+            raise ValueError(f"table {label}: 1 to {SEATS_MAX} seats")
+        w, h = (
+            _number(table.get("w"), f"table {label}: its width"),
+            _number(table.get("h"), f"table {label}: its depth"),
+        )
+        if shape == "round":
+            w = h = min(w, h)
+        if not (SIDE_MIN <= w <= SIDE_MAX and SIDE_MIN <= h <= SIDE_MAX):
+            raise ValueError(f"table {label}: each side is {SIDE_MIN} to {SIDE_MAX} units")
+        rotation = _number(table.get("rotation", 0), f"table {label}: its turn")
+        rotation = 0.0 if shape == "round" else ((rotation + 180) % 360) - 180  # -180 up to 180
+        tables.append(
+            {
+                "id": ident,
+                "label": label,
+                "room": room,
+                "x": _number(table.get("x"), f"table {label}: where it stands"),
+                "y": _number(table.get("y"), f"table {label}: where it stands"),
+                "w": round(w, 2),
+                "h": round(h, 2),
+                "seats": int(seats),
+                "shape": shape,
+                "rotation": round(rotation, 2),
+                "kind": kind,
+            }
+        )
+    labels = [t["label"].lower() for t in tables]
+    twice = sorted({t["label"] for t in tables if labels.count(t["label"].lower()) > 1})
+    if twice:
+        raise ValueError(f"two tables are called {twice[0]}")
+
+    def reach(table: Mapping[str, Any]) -> tuple[float, float]:
+        """Half the width and half the height of the upright frame that holds the table as it is turned."""
+        turn = math.radians(table["rotation"])
+        c, s = abs(math.cos(turn)), abs(math.sin(turn))
+        return (table["w"] * c + table["h"] * s) / 2, (table["w"] * s + table["h"] * c) / 2
+
+    def frame(of: Iterable[Mapping[str, Any]]) -> tuple[float, float, float, float] | None:
+        boxes = [(t["x"] - rx, t["y"] - ry, t["x"] + rx, t["y"] + ry) for t in of for rx, ry in [reach(t)]]
+        if not boxes:
+            return None
+        return min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)
+
+    whole = frame(tables)
+    if whole is None:
+        width, height = 2.0 * MARGIN + 400, 2.0 * MARGIN + 300
+    else:
+        if whole[2] - whole[0] > SPAN_MAX or whole[3] - whole[1] > SPAN_MAX:
+            raise ValueError("the tables are drawn too far apart")
+        dx, dy = MARGIN - whole[0], MARGIN - whole[1]
+        for table in tables:
+            table["x"], table["y"] = round(table["x"] + dx, 2), round(table["y"] + dy, 2)
+        width, height = round(whole[2] - whole[0] + 2 * MARGIN, 2), round(whole[3] - whole[1] + 2 * MARGIN, 2)
+    empty = 0
+    for room in rooms:
+        own = frame(t for t in tables if t["room"] == room["id"])
+        if own is None:
+            # a room with no table yet: a small frame of its own, so an app that draws frames shows it
+            own = (MARGIN + empty * 140.0, height, MARGIN + empty * 140.0 + 120, height + 80)
+            empty += 1
+        pad = MARGIN / 3
+        room.update(
+            x=round(own[0] - pad, 2),
+            y=round(own[1] - pad, 2),
+            w=round(own[2] - own[0] + 2 * pad, 2),
+            h=round(own[3] - own[1] + 2 * pad, 2),
+        )
+    if empty:
+        height = round(height + 80 + MARGIN, 2)
+    return {"width": width, "height": height, "rooms": rooms, "tables": tables}
 
 
 STAGES = ("sat", "unsent", "held", "fired")

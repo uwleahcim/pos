@@ -2596,6 +2596,58 @@ class Hub {
   /// The floor it serves when a test changed it (the fixture otherwise), and what each person saved of their
   /// own settings (`PUT /staff/<id>/preferences`), in order.
   Map<String, dynamic>? floor;
+
+  /// The floor editor (`GET/PUT/DELETE /settings/floor_plan`): whether the hub has it at all (an older one
+  /// has not), the plan a manager saved (null for the hub's own), every plan that was sent, the token the
+  /// last change carried, the tables in use, and a refusal for the next save: (status, error, message).
+  bool floorEditor = true;
+  Map<String, dynamic>? floorDrawn;
+  final floorPlansSent = <Map<String, dynamic>>[];
+  String? floorPlanAuth;
+  List<String> floorBusy = [], floorBooked = [];
+  (int, String, String)? refuseFloorPlan;
+
+  /// The plan as the floor editor is told it.
+  Map<String, dynamic> get floorPlanNow {
+    final plan = floorDrawn ?? floor ?? fixture('floor');
+    return {
+      'width': plan['width'],
+      'height': plan['height'],
+      'rooms': plan['rooms'],
+      'tables': plan['tables'],
+      'edited': floorDrawn != null,
+      'by': floorDrawn == null ? '' : 'Mike',
+      'saved_ms': floorDrawn == null ? 0 : clockNow,
+      'busy': floorBusy,
+      'booked': floorBooked,
+    };
+  }
+
+  /// What the hub makes of a plan the editor sent: a new room gets an id from its name, a table said to be
+  /// in room "#2" is in the third room, and the plan is as large as its tables reach.
+  static Map<String, dynamic> _cleanFloor(Map<String, dynamic> sent) {
+    final rooms = [
+      for (final room in (sent['rooms'] as List).cast<Map<String, dynamic>>())
+        {
+          'id': room['id'] ?? (room['name'] as String).toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '-'),
+          'name': room['name'],
+        },
+    ];
+    final tables = [
+      for (final table in (sent['tables'] as List).cast<Map<String, dynamic>>())
+        {
+          ...table,
+          'room': switch (table['room']) {
+            final String room when room.startsWith('#') => rooms[int.parse(room.substring(1))]['id'],
+            final room => room,
+          },
+        },
+    ];
+    double far(String at, String size) =>
+        tables.fold(0, (most, table) => max(most, (table[at] as num).toDouble() + (table[size] as num).toDouble() / 2));
+    return {'width': far('x', 'w') + 40, 'height': far('y', 'h') + 40, 'rooms': rooms, 'tables': tables};
+  }
+
   final prefsSaved = <(String, Map<String, dynamic>)>[];
 
   /// Desk phones: the links it keeps, the token the last save carried, a reason to refuse the next save with,
@@ -4403,6 +4455,28 @@ class Hub {
           kitchenMinutes = {...kitchenMinutes, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
         return json(kitchenMinutes);
+      case '/settings/floor_plan':
+        if (!floorEditor) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'GET') return json(floorPlanNow);
+        floorPlanAuth = request.headers['authorization'];
+        if (floorPlanAuth != 'Bearer tok-admin') {
+          return json({
+            'detail': {'error': 'forbidden'},
+          }, 403);
+        }
+        if (refuseFloorPlan case (final status, final error, final message)) {
+          return json({
+            'detail': {'error': error, 'message': message},
+          }, status);
+        }
+        if (request.method == 'DELETE') {
+          floorDrawn = null;
+        } else {
+          final sent = jsonDecode(request.body) as Map<String, dynamic>;
+          floorPlansSent.add(sent);
+          floorDrawn = _cleanFloor(sent);
+        }
+        return json(floorPlanNow);
       case '/settings/table_timers':
         if (tableTimers == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {

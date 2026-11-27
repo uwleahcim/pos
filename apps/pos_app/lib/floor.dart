@@ -227,6 +227,44 @@ class TableHold {
       : TimerLevel.ok;
 }
 
+/// The floor plan as the floor editor reads it (`GET /settings/floor_plan`): the plan, whether it is one a
+/// manager drew, and the tables that cannot be renamed or taken off it just now.
+class FloorPlanEdit {
+  const FloorPlanEdit({
+    required this.plan,
+    this.edited = false,
+    this.by = '',
+    this.savedMs = 0,
+    this.busy = const {},
+    this.booked = const {},
+  });
+  factory FloorPlanEdit.fromJson(Map<String, dynamic> json) => FloorPlanEdit(
+    plan: FloorPlan.fromJson(json),
+    edited: json['edited'] == true,
+    by: json['by'] as String? ?? '',
+    savedMs: (json['saved_ms'] as num? ?? 0).toInt(),
+    busy: {
+      if (json['busy'] case final List<dynamic> ids)
+        for (final id in ids) '$id',
+    },
+    booked: {
+      if (json['booked'] case final List<dynamic> ids)
+        for (final id in ids) '$id',
+    },
+  );
+  final FloorPlan plan;
+
+  /// A manager drew this plan; false for the one the hub came with.
+  final bool edited;
+
+  /// Who saved it and when, for a plan a manager drew.
+  final String by;
+  final int savedMs;
+
+  /// The tables with an open check, and the ones a reservation still to come holds.
+  final Set<String> busy, booked;
+}
+
 class FloorPlan {
   const FloorPlan({
     required this.width,
