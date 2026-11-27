@@ -148,7 +148,7 @@ speaks plain HTTP; the HTTPS must end at the proxy. Forward to port 8090 only, n
 ### Turning push on
 
 After `sudo hubctl update` and the apps rebuilt, and with the asking already on. All of it is on one page
-of the app: Orders screen › the three dots › Location › **Keys and connections** (`hub-keys.md`). The
+of the app: Orders screen › More › Location › **Keys and connections** (`hub-keys.md`). The
 hub's terminal does the same, and its command is under each step.
 
 1. **The key.** On the card **GloriaFood push key**: **Type the key**, then **Make one**, **Copy**, and

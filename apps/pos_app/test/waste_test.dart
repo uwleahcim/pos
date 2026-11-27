@@ -506,7 +506,7 @@ void main() {
     testWidgets('anybody signed in opens Waste from the orders screen', (tester) async {
       final t = await pumpOrders(tester, [], role: 'server');
       t.hub.waste = [t.hub.wasteEntry('w1', 'Chicken wings', 1, 'Dropped', each: '8.95', byId: 's3', by: 'Mike')];
-      await tester.tap(find.byTooltip('Waste'));
+      await openHome(tester, 'waste');
       await tester.pumpAndSettle();
       expect(find.byType(WasteScreen), findsOneWidget);
       expect(find.text('Chicken wings'), findsOneWidget);

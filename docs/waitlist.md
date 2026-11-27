@@ -9,14 +9,14 @@ Since 17 November 2026 (the Toast comparison, row 14). Hub and app; nothing to t
 
 ## Where it is
 
-On the orders screen, in the bar at the top: the button with the group of people. A number on it says how
+On the orders screen, in the row at the top: the button with the group of people (`home-screen.md`). A number on it says how
 many parties are waiting. The number turns amber when a party's time is nearly up and red once one has
 waited longer than it was told, so the whole floor sees it without opening the list.
 
 - **Tablets and Macs** always have the button.
 - **A phone** has it while a party is waiting, and always for a host, a manager or an owner. A server's
-  phone with nobody waiting keeps the room for their name: the list is then under the three dots,
-  **Waitlist**.
+  phone with nobody waiting keeps the room for their name: the list is then under **More**, the tile
+  **Waitlist**. That tile is there on every screen, and says how many are waiting.
 
 Anyone signed in can open the list, add a party and seat one. No PIN is asked: on a busy night whoever is
 at the door keeps it.

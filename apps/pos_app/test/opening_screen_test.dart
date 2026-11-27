@@ -6,6 +6,7 @@ import 'package:pos_app/main.dart';
 import 'package:pos_app/phone.dart';
 import 'package:pos_app/print_relay.dart';
 import 'package:pos_app/screens/floor_view.dart';
+import 'package:pos_app/screens/home_bar.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/screens/settings_screen.dart';
@@ -56,17 +57,20 @@ Future<Terminal> pumpDevice(WidgetTester tester, {String? opensOn}) async {
   return t;
 }
 
-/// The floor map is up: its tables, and the bar's button offers the list.
+/// Which half of the row's switch is up: the floor map, or the list of checks.
+bool switchOnFloor() => (find.byType(ViewSwitch).evaluate().single.widget as ViewSwitch).floor;
+
+/// The floor map is up: its tables, and the row's switch says so.
 void expectFloor() {
   expect(find.byType(FloorView), findsOneWidget);
-  expect(find.byTooltip('List of checks'), findsOneWidget);
+  expect(switchOnFloor(), isTrue);
   expect(find.byKey(const ValueKey('orders-list')), findsNothing);
 }
 
-/// The list of checks is up, the to-go order in it and its stages above: the bar's button offers the map.
+/// The list of checks is up, the to-go order in it and its stages above: the row's switch says so.
 void expectList() {
   expect(find.byType(FloorView), findsNothing);
-  expect(find.byTooltip('Floor map'), findsOneWidget);
+  expect(switchOnFloor(), isFalse);
   expect(find.byKey(const ValueKey('orders-list')), findsOneWidget);
   expect(find.byKey(const ValueKey('to-go-chips')), findsOneWidget);
   expect(find.textContaining('Linda'), findsWidgets);

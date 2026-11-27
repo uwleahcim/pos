@@ -14,8 +14,8 @@ On the device itself: **Settings › This screen opens on**, tap **Floor map** o
 ## What it does
 
 - **Each sign-in starts there**, by PIN, face or tag, whatever the last person was looking at.
-- **The button in the bar still switches** between the map and the list, and the screen stays on what the
-  person picked: opening a check and leaving it comes back to the same one.
+- **The Floor | Checks switch in the row at the top still switches** between the map and the list
+  (`home-screen.md`), and the screen stays on what the person picked: opening a check and leaving it comes back to the same one.
 - **When another person takes the screen over** without a sign-out in between (a hands-free switch, or
   signing in on a locked screen), the screen under an open order goes back to the device's pick.
 - **The person who comes back to a locked screen** finds it as they left it (`idle-lock.md`).

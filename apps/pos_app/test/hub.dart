@@ -16,6 +16,7 @@ import 'package:pos_app/photos.dart';
 import 'package:pos_app/powers.dart';
 import 'package:pos_app/printers.dart' show PrinterConfig;
 import 'package:pos_app/queue_store.dart';
+import 'package:pos_app/screens/home_bar.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
@@ -5283,6 +5284,34 @@ Future<void> pumpOrdersOn(WidgetTester tester, Terminal t, {PhoneClient? phone})
 }
 
 Future<void> stop(WidgetTester tester) => tester.pumpWidget(const SizedBox()); // stops the refresh timers
+
+/// Taps one of the home screen's ways out by its id ("location", docs/home-screen.md): its button in the
+/// bar where it stands there, its tile in the menu behind More otherwise. What it opens is the test's to
+/// pump for, as after any tap.
+Future<void> openHome(WidgetTester tester, String id) async {
+  final inBar = find.byKey(ValueKey('home-quick:$id'));
+  if (inBar.evaluate().isNotEmpty) return tester.tap(inBar);
+  await openMore(tester);
+  final tile = find.byKey(ValueKey('home-tile:$id'));
+  await tester.ensureVisible(tile);
+  await tester.pumpAndSettle();
+  await tester.tap(tile);
+}
+
+/// Opens the menu behind More on the home screen.
+Future<void> openMore(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('home-more')));
+  await tester.pumpAndSettle();
+}
+
+/// A tile of the home screen's menu, by its id.
+Finder homeTile(String id) => find.byKey(ValueKey('home-tile:$id'));
+
+/// The ids of every way out of the home screen for whoever is signed in: the buttons of its row and the
+/// tiles of its menu, without opening it.
+Set<String> homeIds(WidgetTester tester) => {
+  for (final entry in tester.widget<HomeBar>(find.byType(HomeBar)).entries) entry.id,
+};
 
 /// A pretend hub that also has the change feed (`GET /live`): the other calls go to [hub], and the test
 /// says what the feed tells with [hello], [changed], [beat] and [drop]. With [beats], it writes its

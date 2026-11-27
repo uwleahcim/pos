@@ -15,7 +15,7 @@ approved it. A dish taken off a check is still a **void**. The log only says wha
 
 ## What the staff see
 
-Orders screen › **Waste** (the bin icon in the bar on a tablet, under **More** on a phone). Anybody signed
+Orders screen › **More** › **Waste** (the bin). Anybody signed
 in opens it: no PIN.
 
 The screen is **today's log**: every entry of the day of service that is running, the newest first, and

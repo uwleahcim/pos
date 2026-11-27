@@ -85,15 +85,9 @@ Future<Terminal> pumpDeliveries(
   return t;
 }
 
-/// Deliveries, from the bar of a wide screen or from More on a phone.
+/// Deliveries, from the row of a wide screen or from More on a phone.
 Future<void> openDeliveries(WidgetTester tester) async {
-  if (find.byTooltip('Deliveries').evaluate().isEmpty) {
-    await tester.tap(find.byTooltip('More'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Deliveries'));
-  } else {
-    await tester.tap(find.byTooltip('Deliveries'));
-  }
+  await openHome(tester, 'deliveries');
   await tester.pumpAndSettle();
   expect(find.byType(DeliveriesScreen), findsOneWidget);
 }
@@ -410,7 +404,7 @@ void main() {
       final t = await stand(tester);
       t.hub.withDrivers();
       await pumpOrdersOn(tester, t);
-      expect(find.byTooltip('Deliveries'), findsOneWidget);
+      expect(homeIds(tester), contains('deliveries'));
       await stop(tester);
 
       // a hub older than drivers: no entry, and a packed delivery is Delivered in one step, as it was
@@ -419,7 +413,7 @@ void main() {
         ..olderThanDrivers()
         ..orders.add(bag('o1', 7));
       await pumpOrdersOn(tester, older);
-      expect(find.byTooltip('Deliveries'), findsNothing);
+      expect(homeIds(tester), isNot(contains('deliveries')));
       expect(find.widgetWithText(FilledButton, 'Out'), findsNothing);
       expect(find.widgetWithText(FilledButton, 'Delivered'), findsOneWidget);
       await stop(tester);
