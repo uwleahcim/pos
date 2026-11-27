@@ -123,6 +123,7 @@ void main() {
     expect(state.editor!.guides, isEmpty); // the lines go when the finger is lifted
     await tester.pumpAndSettle();
     expect(find.text('Floor plan not saved'), findsOneWidget);
+    final shown = at(tester, state, 'A9'), a8 = state.editor!.table('A8')!.center;
 
     await save(tester);
     expect(hub.floorPlanAuth, 'Bearer tok-admin');
@@ -131,7 +132,10 @@ void main() {
     expect((hub.floorPlansSent.single['tables'] as List), hasLength(42));
     expect(find.text('Floor plan saved'), findsOneWidget);
     expect(state.editor!.changed, isFalse);
-    expect(state.editor!.table('A9')!.center, after);
+    // The hub keeps a plan a margin from its corner, and may hand it back with every table moved by the
+    // same amount. On the screen nothing has moved.
+    expect((at(tester, state, 'A9') - shown).distance, lessThan(1));
+    expect(state.editor!.table('A9')!.center - state.editor!.table('A8')!.center, after - a8);
     await stop(tester);
   });
 
@@ -525,6 +529,74 @@ void main() {
       }
       await stop(tester);
     }
+  });
+
+  testWidgets('the plan stands still while the Save bar comes up, and while it goes', (tester) async {
+    for (final size in [phone, tablet]) {
+      final (_, state) = await pumpEditor(tester, size: size);
+      await pick(tester, state, 'A9');
+      await tester.ensureVisible(key('seats-more'));
+      await tester.pumpAndSettle();
+      final shown = at(tester, state, 'C3'), scale = scaleOf(state);
+
+      /// Frame by frame for as long as the bar takes, and a while after: nothing is seen to move.
+      Future<void> still(String when) async {
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          expect((at(tester, state, 'C3') - shown).distance, lessThan(1), reason: '$when, frame $frame, $size');
+          expect(scaleOf(state) / scale, closeTo(1, 0.004), reason: '$when, frame $frame, $size');
+        }
+        await tester.pumpAndSettle();
+        expect((at(tester, state, 'C3') - shown).distance, lessThan(1), reason: '$when, at rest, $size');
+      }
+
+      // a change made in the list, with no finger on the plan
+      await tester.tap(key('seats-more'));
+      await still('the bar comes up');
+      expect(key('floor-save'), findsOneWidget);
+      // the only change is taken back, and the bar goes
+      await tester.tap(key('floor-undo'));
+      await still('the bar goes');
+      expect(key('floor-save'), findsNothing);
+      await stop(tester);
+    }
+  });
+
+  testWidgets('after Save the plan is where it was on the screen, made larger and moved or not', (tester) async {
+    final (hub, state) = await pumpEditor(tester);
+    // (the hub keeps a plan a margin from its corner: it hands this one back with every table moved)
+    await pick(tester, state, 'D8');
+    await drag(tester, at(tester, state, 'D8'), const Offset(-60, -40));
+    await tester.pumpAndSettle();
+    var shown = at(tester, state, 'A9');
+    await save(tester);
+    expect(hub.floorPlansSent, hasLength(1));
+    expect((at(tester, state, 'A9') - shown).distance, lessThan(1));
+
+    // made larger and moved by hand: to the point
+    // "Floor plan saved" is said in the middle of the foot, off the list and off the plan's buttons: the
+    // manager goes on at once
+    expect(find.text('Floor plan saved'), findsOneWidget);
+    final said = tester.getRect(find.descendant(of: find.byType(SnackBar), matching: find.byType(Material)).first);
+    expect(said.overlaps(tester.getRect(key('floor-panel'))), isFalse);
+    expect(said.overlaps(tester.getRect(key('zoom-in'))), isFalse);
+    await pick(tester, state, 'D8');
+    await tapIn(tester, 'table-delete');
+    expect(state.editor!.table('D8'), isNull);
+    final whole = scaleOf(state);
+    await tester.tap(key('zoom-in'));
+    await tester.pump();
+    await pick(tester, state, 'A9');
+    await drag(tester, at(tester, state, 'A9'), const Offset(40, 20));
+    await tester.pumpAndSettle();
+    shown = at(tester, state, 'A9');
+    final larger = scaleOf(state);
+    expect(larger, greaterThan(whole));
+    await save(tester);
+    expect(hub.floorPlansSent, hasLength(2));
+    expect(scaleOf(state), larger);
+    expect((at(tester, state, 'A9') - shown).distance, lessThan(0.01));
+    await stop(tester);
   });
 
   testWidgets('Location has the way in, and a hub older than the editor says so', (tester) async {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -49,6 +50,14 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
   /// changes (the Save bar comes up, the list is put away, the device is turned).
   bool _fitted = false;
 
+  /// The Save bar is coming up or going: the room the plan had when that began, null while the bar is at
+  /// rest. The room changes a little with every frame of it, and the plan is not fitted to each (it would
+  /// leap and come back): the bar's room is kept free from the start, so the plan stays as it is and is
+  /// fitted once, when the bar has come to rest ([_barRests]).
+  ({double height, double foot})? _barMoves;
+  Timer? _barRests;
+  bool _barWanted = false;
+
   // What the finger that is down is doing, and where things were when it came down.
   bool _moving = false, _handling = false;
   Offset _downAt = Offset.zero, _originThen = Offset.zero, _pressedAt = Offset.zero;
@@ -81,6 +90,7 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
 
   @override
   void dispose() {
+    _barRests?.cancel();
     editor?.removeListener(_changed);
     editor?.dispose();
     _focus.dispose();
@@ -114,14 +124,38 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
       _refused = const [];
       if (!keepView) _placed = false;
       _nameOf = null;
+      _barTurns();
     });
   }
 
   void _changed() {
     if (!mounted) return;
     // the hub's last word is about the plan as it was sent: any change since makes it stale
-    setState(() => _refused = const []);
+    setState(() {
+      _refused = const [];
+      _barTurns();
+    });
   }
+
+  /// Takes note when the Save bar starts up (the first change) or starts down (saved, or all taken back).
+  void _barTurns() {
+    final wanted = editor?.changed ?? false;
+    if (wanted == _barWanted) return;
+    // (turned again before it came to rest: the room it first had is the one to keep)
+    _barMoves ??= (height: _canvas.height, foot: _barWanted ? 0 : _barRoom);
+    _barWanted = wanted;
+    _barRests?.cancel();
+    _barRests = Timer(_barTakes, () {
+      if (!mounted) return;
+      setState(() {
+        _barMoves = null;
+        if (_fitted && !_moving && !_handling && !_canvas.isEmpty) _fit();
+      });
+    });
+  }
+
+  /// A little longer than the Save bar takes to come up or go (`SaveBarScaffold`: 200 ms).
+  static const _barTakes = Duration(milliseconds: 240);
 
   Future<void> _save() async {
     final editor = this.editor;
@@ -130,7 +164,16 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
     try {
       final plan = await widget.api.saveFloorPlan(widget.token, editor.toJson());
       if (!mounted) return;
+      // The hub keeps a plan a margin from its corner, so a saved plan can come back with every table moved
+      // by the same amount: the screen moves with it, and nothing is seen to jump.
+      final was = {for (final table in editor.tables) table.label: table.center};
       _open(plan, keepView: true);
+      for (final table in this.editor!.tables) {
+        if (was[table.label] case final before?) {
+          _origin += (before - table.center) * _scale;
+          break;
+        }
+      }
       _say('Floor plan saved');
     } on ApiException catch (err) {
       if (mounted) setState(() => _refused = [(about: null, text: _said(err))]);
@@ -139,10 +182,21 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
     }
   }
 
-  /// Says [text] in passing, in place of whatever was being said.
-  void _say(String text) => ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(text)));
+  /// Says [text] in passing, in place of whatever was being said. A few words ("Floor plan saved") are said
+  /// briefly, and on a wide screen take the middle of its foot only: the buttons of the plan and the end of
+  /// the list are there, and the manager goes on drawing.
+  void _say(String text) {
+    final few = text.length <= 32;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text, textAlign: few ? TextAlign.center : null),
+          duration: Duration(seconds: few ? 2 : 4),
+          width: few && MediaQuery.sizeOf(context).width >= 600 ? 280 : null,
+        ),
+      );
+  }
 
   static String _said(ApiException err) => switch (err.detail?['message']) {
     final String message when message.isNotEmpty => message,
@@ -196,8 +250,9 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
     // from the start, so that nothing moves and nothing is hidden when it comes up.
     // (More is kept free at the top than at the sides: the knob that turns a table of the first row stands
     // above it.)
-    final foot = (editor?.changed ?? false) ? 0 : _barRoom;
-    final high = math.max(_canvas.height - foot - _headRoom - 12, 80.0);
+    // (While the bar is on its way the plan keeps the room it had: [_barMoves].)
+    final foot = _barMoves?.foot ?? ((editor?.changed ?? false) ? 0 : _barRoom);
+    final high = math.max((_barMoves?.height ?? _canvas.height) - foot - _headRoom - 12, 80.0);
     _scale = math.min((_canvas.width - 24) / frame.width, high / frame.height).clamp(_least, 2.0);
     _origin = Offset(_canvas.width / 2, _headRoom + high / 2) - frame.center * _scale;
     _fitted = true;
@@ -550,8 +605,9 @@ class FloorEditorScreenState extends State<FloorEditorScreen> {
         final resized = box.biggest != _canvas;
         _canvas = box.biggest;
         // The whole plan, to fit: the first time it is drawn, and whenever the room for it changes while
-        // nobody has moved it (never under a finger that has a table).
-        if (!_canvas.isEmpty && (!_placed || (resized && _fitted && !_moving && !_handling))) {
+        // nobody has moved it (never under a finger that has a table, nor while the Save bar is on its way).
+        final settled = !_moving && !_handling && _barMoves == null;
+        if (!_canvas.isEmpty && (!_placed || (resized && _fitted && settled))) {
           _placed = true;
           _fit();
         }

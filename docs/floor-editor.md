@@ -8,7 +8,8 @@ off. Until now the plan was a file on the hub that only a developer changed.
 
 Nothing reaches the floor until **Save**. The Save bar comes up at the bottom as soon as something is
 changed, and leaving with changes waiting asks first. Once saved, every floor map on every device redraws
-at once.
+at once. The plan stays where it is on the screen all the while: as the bar comes up, as it goes, and
+after Save, made larger or not.
 
 ## On the plan
 
@@ -129,7 +130,10 @@ nothing.
   make; `toJson` is what is sent. A table that keeps its name keeps its id; a new or renamed one is sent
   with its name as its id. `lib/screens/floor_editor.dart` is the screen: one painter draws the plan and
   one gesture moves it (`_down`, `_dragged`), the two handles are widgets over it, and `_Panel` is the
-  list. It saves through `SaveBarScaffold`, as every settings page does.
+  list. It saves through `SaveBarScaffold`, as every settings page does. The room for that bar is kept
+  free under the plan from the start, and the plan is not fitted again while the bar is on its way
+  (`_barMoves`); the hub hands a saved plan back a margin from its corner, and the screen moves with it
+  (`_save`).
 - **Tests.** Hub: `backend/tests/test_floor_plan.py`. App: `test/floor_edit_test.dart` (the rules of
   editing), `test/floor_editor_test.dart` (the screen: picking, dragging with a finger and a mouse, two
   fingers, the handles, the list, rooms, a table in use, what the Save bar says, the original plan, the

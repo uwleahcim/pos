@@ -2643,9 +2643,19 @@ class Hub {
           },
         },
     ];
+    // (the hub keeps the plan a margin of 60 from its corner: every table moves by the same amount)
+    double near(String at, String size) => tables.fold(
+      double.infinity,
+      (least, table) => min(least, (table[at] as num).toDouble() - (table[size] as num).toDouble() / 2),
+    );
+    final dx = tables.isEmpty ? 0.0 : 60 - near('x', 'w'), dy = tables.isEmpty ? 0.0 : 60 - near('y', 'h');
+    for (final table in tables) {
+      table['x'] = (table['x'] as num).toDouble() + dx;
+      table['y'] = (table['y'] as num).toDouble() + dy;
+    }
     double far(String at, String size) =>
         tables.fold(0, (most, table) => max(most, (table[at] as num).toDouble() + (table[size] as num).toDouble() / 2));
-    return {'width': far('x', 'w') + 40, 'height': far('y', 'h') + 40, 'rooms': rooms, 'tables': tables};
+    return {'width': far('x', 'w') + 60, 'height': far('y', 'h') + 60, 'rooms': rooms, 'tables': tables};
   }
 
   final prefsSaved = <(String, Map<String, dynamic>)>[];
