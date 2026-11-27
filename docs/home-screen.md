@@ -47,7 +47,7 @@ there only where the thing is in use and the person signed in may open it, as th
 
 | Group | Tiles |
 | --- | --- |
-| **Guests & orders** | Waitlist, Reservations, Orders ahead, Deliveries, Online orders, Kitchen rush |
+| **Guests & orders** | Waitlist, Reservations, Orders ahead, Deliveries, Online orders, Texts, Kitchen rush |
 | **Shift** | Time clock, Notes, Contests, Waste |
 | **Manager** | Today, Location, Menu editor |
 | **This device** | Closed checks, Display, Settings |
@@ -58,6 +58,8 @@ Some tiles say what is going on behind them:
   when a party or a table is near its time and red when one is past it.
 - **Kitchen rush** is filled while a rush runs, and says how many minutes it adds and until when.
 - **Online orders** has a red dot and "Take a look" while there is something to look at.
+- **Texts** carries the number of conversations that hold something nobody has read ("2 not read"), and
+  puts the red dot on **More** while one waits (`text-inbox.md`).
 - **Notes** says how many are up.
 - **Closed checks** is a switch: "Hidden", or filled and "Shown in the list" (it used to be "Show closed"
   and "Hide closed"). Turned on from the floor map, the list of checks comes up, since the map shows

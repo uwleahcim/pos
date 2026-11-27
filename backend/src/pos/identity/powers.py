@@ -60,6 +60,12 @@ POWERS: tuple[Power, ...] = (
     Power(
         "deliver", "a delivery can be handed to them: the Deliveries screen offers them as a driver", ("driver",), False
     ),
+    Power(
+        "texts",
+        "read what customers text the restaurant, answer, and start a conversation (docs/text-inbox.md)",
+        ("server", "bartender", "host", "cashier"),
+        False,
+    ),
     Power("rush", "say the kitchen is behind: minutes on every new quote for tonight"),
     Power("notes", "write, change and take down the notes for the shift, and see who has read them"),
     Power("logbook", "read and write the manager's log"),

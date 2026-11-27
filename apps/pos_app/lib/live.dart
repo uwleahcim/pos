@@ -20,6 +20,7 @@ class LiveChange {
     this.floor = false,
     this.prints = false,
     this.calls = false,
+    this.texts = false,
   });
 
   /// The orders that changed, by id.
@@ -57,6 +58,10 @@ class LiveChange {
   /// (docs/call-recordings.md).
   final bool calls;
 
+  /// A customer's text came, one of ours went or was delivered, or a conversation was read
+  /// (docs/text-inbox.md).
+  final bool texts;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -65,7 +70,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', if (texts) 'texts', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -273,6 +278,7 @@ class LiveFeed extends ChangeNotifier {
             floor: topics.contains('floor'),
             prints: topics.contains('prints'),
             calls: topics.contains('calls'),
+            texts: topics.contains('texts'),
           ),
         );
     }

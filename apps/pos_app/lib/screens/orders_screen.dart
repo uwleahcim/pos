@@ -32,6 +32,7 @@ import '../tags.dart';
 import '../settings.dart';
 import '../check_search.dart';
 import '../takeout.dart';
+import '../texts.dart';
 import '../to_go_stages.dart';
 import '../reservations.dart';
 import '../waitlist.dart';
@@ -63,6 +64,7 @@ import 'shift_notes_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'tab_dialog.dart';
+import 'texts_screen.dart';
 import 'table_moves.dart';
 import 'theme.dart';
 import 'time_clock_card.dart';
@@ -170,6 +172,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Book? _book;
   bool _bookStale = true;
   DateTime _bookRead = DateTime.fromMillisecondsSinceEpoch(0);
+  // The conversations by text with customers (docs/text-inbox.md): how many hold something nobody has
+  // opened shows on the Texts button. Null until it was read, for somebody who may not read them, and from
+  // a hub older than them. Read when the hub says a text came or was read, and now and then.
+  TextsUnread? _texts;
+  bool _textsStale = true;
+  DateTime _textsRead = DateTime.fromMillisecondsSinceEpoch(0);
   // How the online orders are doing (docs/online-orders.md), for a manager's alert: read only while a
   // manager or an owner is signed in, when the hub says there is something to look at, and now and then (that
   // the website stopped answering is nothing the hub announces). Null until it was read, and from an older hub.
@@ -221,12 +229,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (change.waitlist || change.everything) _waitStale = true;
       if (change.reservations || change.everything) _bookStale = true;
       if (change.online || change.everything) _onlineStale = true;
+      if (change.texts || change.everything) _textsStale = true;
       // a party seated from the book or the waitlist, or put back: its check says whose it is
       if (_inFront && (change.anyOrder || change.reservations || change.waitlist)) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
       if (_inFront && change.waitlist) unawaited(_readWait());
       if (_inFront && change.reservations) unawaited(_readBook());
       if (_inFront && change.online) unawaited(_readOnline());
+      if (_inFront && change.texts) unawaited(_readTexts());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
@@ -355,6 +365,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_readWait());
     unawaited(_readBook());
     unawaited(_readOnline());
+    unawaited(_readTexts());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -408,6 +419,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!mounted || now == before) return;
     setState(() {});
     unawaited(_readRoster());
+    _textsStale = true; // who reads the texts may have changed with the table
+    unawaited(_readTexts());
   }
 
   /// The waitlist, for the count on its button: read when the hub says the list changed, and now and then
@@ -424,6 +437,49 @@ class _OrdersScreenState extends State<OrdersScreen> {
       _armClock();
     } on ApiException {
       // nothing answers and nothing was read before: the button keeps what it showed
+    }
+  }
+
+  /// How many conversations by text hold something nobody has opened, for the count on the Texts button
+  /// (docs/text-inbox.md): read when the hub says a text came or a conversation was read, and now and then
+  /// while it cannot say (twice a minute at most). Nobody is asked for somebody who may not read the texts.
+  Future<void> _readTexts() async {
+    final staff = widget.session.staff;
+    if (staff == null || !widget.api.powers.value.holds(staff.role, 'texts')) {
+      if (_texts != null && mounted) setState(() => _texts = null);
+      return;
+    }
+    final now = DateTime.now();
+    if (!_textsStale && now.difference(_textsRead) < const Duration(seconds: 30)) return;
+    _textsStale = false;
+    _textsRead = now;
+    final texts = await widget.api.textsUnread(staff.staffId);
+    // nothing answers and something was read before: the button keeps what it showed
+    if (!mounted || texts == _texts || (texts == null && !widget.api.connection.value.isOnline)) return;
+    setState(() => _texts = texts);
+  }
+
+  /// The Texts screen (docs/text-inbox.md). A customer who texts for food or for a table gets it from
+  /// there: **Start order** brings the to-go form up with their number and name, **Book a table** the
+  /// reservation form.
+  Future<void> _openTexts() async {
+    final staff = widget.session.staff;
+    if (staff == null) return;
+    final left = await Navigator.of(context).push<Object?>(
+      PosPageRoute(
+        builder: (_) => TextsScreen(api: widget.api, staffId: staff.staffId, device: widget.settings.device),
+      ),
+    );
+    if (!mounted) return;
+    _textsStale = true;
+    unawaited(_readTexts());
+    switch (left) {
+      case StartOrderFor wanted:
+        await _newOrder(
+          caller: Caller(number: wanted.phone, name: wanted.name.isEmpty ? null : wanted.name),
+        );
+      case BookTableFor wanted:
+        await _bookForCaller(_BookForCaller(wanted.name, wanted.phone));
     }
   }
 
@@ -585,9 +641,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (id == null) return;
     _notesStale = true;
     _onlineStale = true; // a manager who has just signed in is alerted now, not within the half minute
+    _textsStale = true; // and whether this person reads the texts is theirs, not the last person's
     if (mounted && _inFront) {
       unawaited(_readNotes());
       unawaited(_readOnline());
+      unawaited(_readTexts());
     }
   }
 
@@ -1763,6 +1821,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
     // waiting: whoever gives tables out sees both at a glance. The menu says the count on Reservations.
     final toCome = _book?.toCome.length ?? 0;
     final bookLevel = _book?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
+    // Texts with customers, for whoever may read them (docs/text-inbox.md): a tile of the menu with the
+    // number of conversations that hold something nobody has read, and the dot on More while one waits. A
+    // hub with no Twilio account shows it to a manager only, who is told there where the account goes.
+    final texts = _texts;
+    final unreadTexts = texts?.unread ?? 0;
+    final showsTexts = texts != null && (texts.on || manages);
     // Every way out of this screen, by its group in the menu behind More (docs/home-screen.md). A new one
     // is one more line here: the bar and the menu lay themselves out. The quick ones also stand in the bar
     // of a tablet or a Mac while it has the room.
@@ -1800,6 +1864,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _onlineOrders,
           note: OnlineAlertStrip.shows(_online) ? 'Take a look' : null,
           attention: OnlineAlertStrip.shows(_online),
+        ),
+      if (showsTexts)
+        HomeEntry(
+          'texts',
+          'Texts',
+          Icons.sms_outlined,
+          _openTexts,
+          note: unreadNote(unreadTexts),
+          count: unreadTexts,
+          attention: unreadTexts > 0,
         ),
       if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
         HomeEntry(

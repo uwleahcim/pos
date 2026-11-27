@@ -3796,9 +3796,210 @@ class Hub {
     });
   }
 
+  /// Conversations by text with customers (docs/text-inbox.md). [textThreads] are the conversations as
+  /// `GET /texts` lists them, the one with the newest text first; null is a hub older than them (404).
+  /// [textsOf] are the texts of each, by its number, the oldest first. [textsOn] false is a hub with no
+  /// Twilio account, [textsNumber] the number the restaurant texts from, [textsListening] whether Twilio
+  /// answers the hub. [textPosts] are the texts sent from a screen (the number, what the call carried),
+  /// [textReads] the conversations opened (the number, who), [refuseText] what the next text is refused
+  /// with (status, error, words), [textPictures] the pictures by text and place (`t1/0`), and [textAsks]
+  /// how often the count for the button was asked for.
+  List<Map<String, dynamic>>? textThreads;
+  final textsOf = <String, List<Map<String, dynamic>>>{};
+  bool textsOn = true;
+  String textsNumber = '+17815550100';
+  Map<String, dynamic> textsListening = {'ok': true, 'at_ms': 0, 'said': ''};
+  final textPosts = <(String, Map<String, dynamic>)>[];
+  final textReads = <(String, String)>[];
+  (int, String, String)? refuseText;
+  final textPictures = <String, List<int>>{};
+  int textAsks = 0;
+
+  /// A text as the hub lists it.
+  static Map<String, dynamic> aText(
+    String id,
+    String phone,
+    String body, {
+    required int atMs,
+    bool inbound = true,
+    String? state,
+    String kind = '',
+    String orderId = '',
+    String by = '',
+    String channel = 'sms',
+    List<String> pictures = const [],
+    int? code,
+    String said = '',
+  }) => {
+    'id': id,
+    'phone': phone,
+    'inbound': inbound,
+    'body': body,
+    'at_ms': atMs,
+    'state': state ?? (inbound ? 'received' : 'delivered'),
+    'channel': channel,
+    'pictures': [
+      for (final (n, type) in pictures.indexed) {'n': n, 'type': type, 'image': type.startsWith('image/')},
+    ],
+    'pictures_n': pictures.length,
+    'code': code,
+    'said': said,
+    'kind': kind,
+    'order_id': orderId,
+    'by': by,
+  };
+
+  /// Puts a conversation on the hub: its [texts] the oldest first, [unread] of the customer's not opened.
+  void conversation(
+    String phone,
+    List<Map<String, dynamic>> texts, {
+    String name = '',
+    int unread = 0,
+    int? stoppedMs,
+  }) {
+    textsOf[phone] = [...texts];
+    final threads = textThreads ??= [];
+    threads.removeWhere((thread) => thread['phone'] == phone);
+    threads.add(_textThread(phone, name: name, unread: unread, stoppedMs: stoppedMs));
+    _sortThreads();
+  }
+
+  Map<String, dynamic> _textThread(String phone, {String name = '', int unread = 0, int? stoppedMs}) {
+    final last = textsOf[phone]?.lastOrNull;
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    return {
+      'phone': phone,
+      'digits': digits.length == 11 && digits.startsWith('1') ? digits.substring(1) : digits,
+      'name': name,
+      'unread': unread,
+      'read_by': '',
+      'stopped_ms': stoppedMs,
+      'last': last == null
+          ? null
+          : {
+              'body': last['body'],
+              'at_ms': last['at_ms'],
+              'inbound': last['inbound'],
+              'state': last['state'],
+              'pictures_n': last['pictures_n'],
+              'kind': last['kind'],
+            },
+    };
+  }
+
+  void _sortThreads() => textThreads!.sort(
+    (a, b) => ((b['last'] as Map?)?['at_ms'] as int? ?? 0).compareTo((a['last'] as Map?)?['at_ms'] as int? ?? 0),
+  );
+
+  static final _textsWith = RegExp(r'^/texts/with/([^/]+)(/read)?$');
+  static final _textPicture = RegExp(r'^/texts/picture/([^/]+)/(\d+)$');
+
+  http.Response _texts(http.Request request) {
+    final threads = textThreads;
+    if (threads == null) return json({'detail': 'Not Found'}, 404);
+    final path = request.url.path;
+    final unread = threads.where((thread) => (thread['unread'] as int) > 0).length;
+    if (path == '/texts/unread') {
+      textAsks += 1;
+      return json({'on': textsOn, 'unread': unread});
+    }
+    if (path == '/texts') {
+      final q = (request.url.queryParameters['q'] ?? '').toLowerCase();
+      bool holds(Map<String, dynamic> thread) => [
+        thread['name'],
+        thread['phone'],
+        for (final text in textsOf[thread['phone']] ?? const <Map<String, dynamic>>[]) text['body'],
+      ].join(' ').toLowerCase().contains(q);
+      return json({
+        'on': textsOn,
+        'number': textsOn ? textsNumber : '',
+        'listening': textsListening,
+        'unread': unread,
+        'threads': [
+          for (final thread in threads)
+            if (holds(thread)) thread,
+        ],
+      });
+    }
+    final picture = _textPicture.firstMatch(path);
+    if (picture != null) {
+      final bytes = textPictures['${picture.group(1)}/${picture.group(2)}'];
+      if (bytes == null) {
+        return json({
+          'detail': {'error': 'unknown_picture', 'message': 'There is no such picture.'},
+        }, 404);
+      }
+      return http.Response.bytes(bytes, 200, headers: const {'content-type': 'image/png'});
+    }
+    final one = _textsWith.firstMatch(path);
+    if (one == null) return json({'detail': 'Not Found'}, 404);
+    final phone = Uri.decodeComponent(one.group(1)!);
+    final texts = textsOf[phone] ??= [];
+    Map<String, dynamic> thread() =>
+        threads.where((thread) => thread['phone'] == phone).firstOrNull ?? _textThread(phone);
+    if (request.method == 'GET') {
+      final before = int.tryParse(request.url.queryParameters['before_ms'] ?? '');
+      final limit = int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 100;
+      final shown = [
+        for (final text in texts)
+          if (before == null || (text['at_ms'] as int) < before) text,
+      ];
+      return json({
+        'on': textsOn,
+        'thread': thread(),
+        'texts': shown.length > limit ? shown.sublist(shown.length - limit) : shown,
+        'more': shown.length > limit,
+        'wrap': texts.isEmpty
+            ? {'before': 'China Sky: ', 'after': '\nReply STOP to opt out.'}
+            : {'before': '', 'after': ''},
+      });
+    }
+    final body = (jsonDecode(request.body) as Map).cast<String, dynamic>();
+    final staffId = body['staff_id'] as String? ?? '';
+    if (one.group(2) != null) {
+      textReads.add((phone, staffId));
+      final at = threads.indexWhere((thread) => thread['phone'] == phone);
+      if (at >= 0) threads[at] = {...threads[at], 'unread': 0};
+      return json(thread());
+    }
+    textPosts.add((phone, body));
+    final refused = refuseText;
+    if (refused != null) {
+      refuseText = null;
+      return json({
+        'detail': {'error': refused.$2, 'message': refused.$3},
+      }, refused.$1);
+    }
+    final typed = body['body'] as String;
+    final by = (roster ?? const <Map<String, dynamic>>[]).where((row) => row['staff_id'] == staffId).firstOrNull;
+    final text = aText(
+      body['id'] as String,
+      phone,
+      texts.isEmpty ? 'China Sky: $typed\nReply STOP to opt out.' : typed,
+      atMs: clockNow,
+      inbound: false,
+      state: 'waiting',
+      by: by?['name'] as String? ?? '',
+    );
+    texts.add(text);
+    final had = thread();
+    threads.removeWhere((thread) => thread['phone'] == phone);
+    threads.add(
+      _textThread(
+        phone,
+        name: (had['name'] as String).isEmpty ? body['name'] as String? ?? '' : had['name'] as String,
+        unread: had['unread'] as int,
+        stoppedMs: had['stopped_ms'] as int?,
+      ),
+    );
+    _sortThreads();
+    return json(text);
+  }
+
   Future<http.Response> answer(http.Request request) async {
     final path = request.url.path;
     if (path == '/orders') return json({'orders': orders});
+    if (path.startsWith('/texts')) return _texts(request);
     if (path == '/customers/lookup') {
       final known = customers[phoneDigits(request.url.queryParameters['phone'])];
       if (known != null) return json(known);

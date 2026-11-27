@@ -107,6 +107,7 @@ const everything = {
   'take_tables',
   'assign_tables',
   'deliver',
+  'texts',
   'rush',
   'notes',
   'logbook',
@@ -145,13 +146,15 @@ void main() {
           final usual =
               (power == 'take_tables' && (role == 'server' || role == 'bartender')) ||
               (power == 'assign_tables' && role == 'host') ||
-              (power == 'deliver' && role == 'driver');
+              (power == 'deliver' && role == 'driver') ||
+              // and the texts with customers, which came later, to whoever is out front
+              (power == 'texts' && const {'server', 'bartender', 'host', 'cashier'}.contains(role));
           expect(table.holds(role, power), usual, reason: '$role, $power');
         }
         expect(table.opensLocation(role), isFalse);
       }
       expect(table.summary, 'As it started: managers and owners approve and open the back office');
-      expect(powersById.length, 16);
+      expect(powersById.length, 17);
     });
 
     test('a manager and an owner hold everything whatever it says, and nobody else the settings', () {
@@ -251,8 +254,8 @@ void main() {
         }
       }
       // six roles to hand a power to, and no button for a manager or an owner: theirs is not the table's
-      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(16));
-      expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(16));
+      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(17));
+      expect(find.widgetWithText(FilterChip, 'Drivers'), findsNWidgets(17));
       expect(find.widgetWithText(FilterChip, 'Managers'), findsNothing);
       expect(find.widgetWithText(FilterChip, 'Owners'), findsNothing);
       // nothing to save, so no Save at all, and nothing to put back
@@ -582,6 +585,7 @@ void main() {
       expect(find.byType(LocationSettingsScreen), findsOneWidget);
       expect(tester.widget<LocationSettingsScreen>(find.byType(LocationSettingsScreen)).holds, {
         'assign_tables',
+        'texts',
         'reports',
       });
       expect(tester.widget<LocationSettingsScreen>(find.byType(LocationSettingsScreen)).token, 'tok-s4');

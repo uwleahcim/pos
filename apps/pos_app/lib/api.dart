@@ -49,6 +49,7 @@ import 'shift_notes.dart';
 import 'staff_list.dart';
 import 'suggestions_report.dart';
 import 'takeout.dart';
+import 'texts.dart';
 import 'timeclock.dart';
 import 'today.dart';
 import 'voids.dart';
@@ -2179,6 +2180,80 @@ class PosApi {
   Future<Uint8List?> eventPhoto(String photoId) async {
     try {
       final response = await _send((base) => _client.get(Uri.parse('$base/events/photos/$photoId')));
+      return response.statusCode == 200 && response.bodyBytes.isNotEmpty ? response.bodyBytes : null;
+    } on ApiException {
+      return null;
+    }
+  }
+
+  // Conversations by text with customers (docs/text-inbox.md). ------------------------------------------------
+
+  /// How many conversations hold a text nobody has opened, for a button's badge, and whether the hub has a
+  /// Twilio account at all. Null where there is nothing to show: a hub older than the conversations, a
+  /// person who may not read them, or no hub answering.
+  Future<TextsUnread?> textsUnread(String staffId) async {
+    try {
+      return TextsUnread.fromJson(await _get('/texts/unread', query: {'staff_id': staffId}));
+    } on ApiException {
+      return null;
+    }
+  }
+
+  /// The conversations, the one with the newest text first; [q] narrows them to the ones that hold every
+  /// word of it in the name, the number or a text. 403 `not_allowed` for somebody who may not read them,
+  /// 404 from a hub older than the conversations.
+  Future<TextInbox> texts(String staffId, {String q = ''}) async =>
+      TextInbox.fromJson(await _get('/texts', query: {'staff_id': staffId, if (q.trim().isNotEmpty) 'q': q.trim()}));
+
+  /// One conversation: its newest hundred texts the oldest first, or the hundred before [beforeMs]; with
+  /// [limit], no more than that many (an order's Text button wants the newest one alone).
+  Future<TextPage> textsWith(String staffId, String phone, {int? beforeMs, int? limit}) async => TextPage.fromJson(
+    await _get(
+      '/texts/with/${Uri.encodeComponent(phone)}',
+      query: {
+        'staff_id': staffId,
+        if (beforeMs != null) 'before_ms': '$beforeMs',
+        if (limit != null) 'limit': '$limit',
+      },
+    ),
+  );
+
+  /// Sends a text to a customer. [id] is this screen's own name for it, so a tap sent twice is one text;
+  /// [name] is what the screen knows the customer by. The answer is the text, `waiting`: what becomes of it
+  /// is told on the change feed. 409 `no_service` without a Twilio account, 409 `stopped` for a customer
+  /// who answered STOP, 422 `no_number`, `no_text`, `too_long`.
+  Future<TextMessage> sendText(
+    String staffId,
+    String phone, {
+    required String body,
+    required String id,
+    String name = '',
+    String device = '',
+  }) async => TextMessage.fromJson(
+    await _post('/texts/with/${Uri.encodeComponent(phone)}', {
+      'staff_id': staffId,
+      'body': body,
+      'device': device,
+      'id': id,
+      'name': name,
+    }, timeout: const Duration(seconds: 6)),
+  );
+
+  /// The conversation was opened: what the customer wrote in it is read, for everybody.
+  Future<void> textsRead(String staffId, String phone) =>
+      _post('/texts/with/${Uri.encodeComponent(phone)}/read', {'staff_id': staffId});
+
+  /// A picture a text carries. The hub fetches it from Twilio the first time somebody looks, which can take
+  /// a few seconds. Null when it cannot be had.
+  Future<Uint8List?> textPicture(String staffId, String textId, int n) async {
+    try {
+      final response = await _send(
+        (base) => _client.get(
+          Uri.parse('$base/texts/picture/${Uri.encodeComponent(textId)}/$n')
+              .replace(queryParameters: {'staff_id': staffId}),
+        ),
+        timeout: const Duration(seconds: 20),
+      );
       return response.statusCode == 200 && response.bodyBytes.isNotEmpty ? response.bodyBytes : null;
     } on ApiException {
       return null;

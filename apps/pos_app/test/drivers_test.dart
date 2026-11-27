@@ -292,7 +292,7 @@ void main() {
       expect(find.text('Take deliveries out'), findsNothing);
       expect(find.text('Deliveries'), findsNothing);
       expect(find.widgetWithText(FilterChip, 'Drivers'), findsNothing);
-      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(15));
+      expect(find.widgetWithText(FilterChip, 'Bartenders'), findsNWidgets(16));
       await tapKey(tester, 'power:void:bartender');
       await tapKey(tester, 'powers-save');
       expect(t.hub.powers!['void'], ['bartender']);

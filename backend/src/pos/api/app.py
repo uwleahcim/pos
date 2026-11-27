@@ -140,7 +140,9 @@ from ..settings import (
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
+from ..texts import Listener, Texts, default_text_store
 from ..timeclock import TimeClock, default_clock_store
+from ..twilio import TwilioMessenger
 from ..waitlist import Waitlist, default_wait_store
 from ..waste import WasteLog, default_waste_store
 from .addresses import add_address_list
@@ -164,6 +166,7 @@ from .reservations import add_reservations
 from .runs import add_runs
 from .sales import add_sales_report
 from .staff import add_staff_list, use_staff, watch_staff
+from .texts import add_texts
 from .timeclock import add_time_clock
 from .today import add_today
 from .waitlist import add_waitlist
@@ -981,6 +984,7 @@ def create_app(
     wayin: WayIn | None = None,
     staff_list: StaffList | None = None,
     recordings: Recordings | None = None,
+    texts: Texts | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -996,6 +1000,13 @@ def create_app(
             app.state.recordings.start()  # looks at the PBX's call recordings, where the hub is linked to them
         if faces is None:
             app.state.faces.start(FaceEngine.from_env)
+        if texts is None and messenger is None:
+            # Twilio is asked for the texts that came to the restaurant's number (docs/text-inbox.md), only
+            # where the API is serving. Nothing without a Twilio account; one typed in the app later starts
+            # the asking (`use_texts`).
+            app.state.listens_texts = True
+            if isinstance(app.state.messenger, TwilioMessenger):
+                app.state.text_listener.start()
         if online is None:
             # Only where the API is serving, never where this module is merely loaded: an order GloriaFood
             # hands over is put on the POS and printed by the one that asked. Nothing without a key.
@@ -1102,6 +1113,31 @@ def create_app(
     app.state.texts_given = messenger is not None
     app.state.texts_made_with = {}
     app.state.messenger = messenger if messenger is not None else texts_for(app.state.keys)
+    # The conversations by text (docs/text-inbox.md): every text to and from the restaurant's number, by the
+    # customer's number. The messenger writes down in them what it sends (it is their `keeper`), and what
+    # Twilio says came is written down by the listener, which asks it every few seconds.
+    app.state.texts = (
+        texts
+        if texts is not None
+        else Texts(
+            default_text_store(),
+            # what the orders call a number, for a conversation that begins with the customer's own text
+            name_of=lambda digits: str(
+                customer_card(app.state.store, app.state.customers, digits, total=lambda state: "")["name"]
+            ),
+            on_change=lambda: app.state.feed.changed("texts"),
+            now=lambda: app.state.store.now_ms() / 1000,  # the clock the orders go by
+        )
+    )
+    if isinstance(app.state.messenger, TwilioMessenger) and app.state.messenger.keeper is None:
+        app.state.messenger.keeper = app.state.texts
+    app.state.text_listener = Listener(
+        app.state.texts,
+        lambda: app.state.messenger if isinstance(app.state.messenger, TwilioMessenger) else None,
+        now=lambda: app.state.store.now_ms() / 1000,
+        screens=lambda: app.state.feed.screens,
+    )
+    app.state.listens_texts = False
     outside = app.state.keys.environ()
     app.state.keys_mark = keys_mark(app.state.keys, app.state.settings)
     app.state.asks_online = False
@@ -1118,6 +1154,9 @@ def create_app(
     # counted against the same month's free amount as the list's own askings
     app.state.lookups.count_with(app.state.suggester.spend)
     app.state.location = location if location is not None else os.environ.get("POS_LOCATION") or NO_NAME
+    if texts is None:
+        # who the first text to a number says it is from; a hub without a name says nothing there
+        app.state.texts.location = app.state.location if app.state.location != NO_NAME else ""
     # The location's day (POS_TIMEZONE): order numbers count through it, and a caller's orders are looked up in it.
     app.state.today = today if today is not None else localtime.today
     app.state.numbers = numbers if numbers is not None else OrderNumbers(app.state.store, today=app.state.today)
@@ -2838,6 +2877,7 @@ def create_app(
     add_guest_list(app)
     add_history(app)
     add_calls(app)
+    add_texts(app)
     add_runs(app)
     add_online_orders(app, number_orders)
     add_hub_keys(app)

@@ -22,6 +22,7 @@ import '../local_order.dart';
 import '../menu.dart';
 import '../outbox.dart';
 import '../phone.dart';
+import '../texts.dart';
 import '../points.dart';
 import '../photos.dart';
 import '../pricing.dart';
@@ -58,6 +59,7 @@ import 'status_bar.dart';
 import 'tab_dialog.dart';
 import 'table_moves.dart';
 import 'tax_exempt_dialog.dart';
+import 'texts_screen.dart';
 import 'theme.dart';
 import 'void_dialog.dart';
 
@@ -150,6 +152,8 @@ class _OrderScreenState extends State<OrderScreen> {
   OrderCalls _calls = OrderCalls.none; // the recorded calls with this order's number (docs/call-recordings.md)
   String? _callsFor; // the number's digits they were read for
   final _callsAccess = CallsAccess(); // the session somebody opened here to listen to them
+  TextThread? _texting; // the conversation by text with a to-go order's customer; null shows no Text button
+  String? _textsFor; // who was signed in and the number it was read for
   TableGuests _table = TableGuests.none; // the parties the host seated on this check, and their tags
   bool _tableAsked = false; // they were asked for, once it was known that this is a table's check
   int _ticks = 0; // of the timer: the table's guests are asked for again every fifteenth
@@ -184,6 +188,8 @@ class _OrderScreenState extends State<OrderScreen> {
       // the phone server has a new recording: the call that just ended may be this order's
       final order = _order;
       if (order != null && (change.calls || change.everything)) unawaited(_readCalls(order, again: true));
+      // the customer wrote, or somebody read what they wrote: the Text button says so
+      if (order != null && (change.texts || change.everything)) unawaited(_readTexts(order, again: true));
     });
     widget.outbox.addListener(_onOutbox);
     _refresh();
@@ -346,6 +352,7 @@ class _OrderScreenState extends State<OrderScreen> {
         _sayIfBig(); // another screen may have added the dishes that make it one
         unawaited(_readCustomer(order));
         unawaited(_readCalls(order));
+        unawaited(_readTexts(order));
         if (!_tableAsked) unawaited(_readTable());
         unawaited(_readQuotes(order));
         unawaited(_readFees(order));
@@ -398,6 +405,45 @@ class _OrderScreenState extends State<OrderScreen> {
     if (!mounted || calls == null) return; // no hub has the order yet: asked again when it is read next
     _callsFor = digits;
     if (calls != _calls) setState(() => _calls = calls);
+  }
+
+  /// The conversation by text with a to-go order's customer (docs/text-inbox.md), for the Text button under
+  /// the title: read once for the number and whoever is signed in, and [again] when the hub says a text
+  /// came or was read. No button on a table's check, for a number no text can go to, for somebody who may
+  /// not read the texts, or where the hub has no Twilio account.
+  Future<void> _readTexts(Order order, {bool again = false}) async {
+    final staff = widget.session?.staff;
+    final phone = order.isTakeout ? textNumber(order.phone) : null;
+    final key = '${staff?.staffId}/$phone';
+    if (key == _textsFor && !again) return;
+    if (staff == null || phone == null || !widget.api.powers.value.holds(staff.role, 'texts')) {
+      _textsFor = key;
+      if (_texting != null) setState(() => _texting = null);
+      return;
+    }
+    try {
+      final page = await widget.api.textsWith(staff.staffId, phone, limit: 1);
+      if (!mounted) return;
+      _textsFor = key;
+      setState(() => _texting = page.on ? page.thread : null);
+    } on ApiException catch (err) {
+      // a hub older than the texts says so once; one that does not answer is asked again with the order
+      if (err.status != null) _textsFor = key;
+    }
+  }
+
+  Future<void> _showTexts(Order order) async {
+    final staff = widget.session?.staff;
+    if (staff == null) return;
+    await showTextsWith(
+      context,
+      api: widget.api,
+      staffId: staff.staffId,
+      phone: order.phone,
+      name: order.customerName.trim(),
+      device: widget.api.settings.device,
+    );
+    if (mounted) unawaited(_readTexts(order, again: true));
   }
 
   Future<void> _showCalls() => showCalls(
@@ -1947,6 +1993,9 @@ class _OrderScreenState extends State<OrderScreen> {
             // the phone calls recorded with this order's number, to listen to (docs/call-recordings.md):
             // only where there are any
             if (order != null && !_calls.isEmpty) CallsStrip(calls: _calls, onTap: () => unawaited(_showCalls())),
+            // a to-go order's customer can be texted, and what they wrote is one tap away (docs/text-inbox.md)
+            if (order != null && _texting != null)
+              TextStrip(name: order.customerName, thread: _texting!, onTap: () => unawaited(_showTexts(order))),
             // an order for later says its day and time, a catering order what its event needs, and a
             // delivery where it goes; a tap changes them
             if (order != null && order.isTakeout && ((order.forLater && order.promisedAt != null) || order.isDelivery))

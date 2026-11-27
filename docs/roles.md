@@ -5,9 +5,10 @@ Each person on the staff has a role: server, bartender, host, cashier, kitchen, 
 opened the back office, the servers and the bartenders took tables, and the hosts gave them out.
 
 Now the location has a table, **Location › Who may do what**, where a manager or an owner hands any of
-sixteen powers to the other roles, or takes them back. It starts exactly as the rules were, so nothing
+seventeen powers to the other roles, or takes them back. It starts exactly as the rules were, so nothing
 changes for anybody until somebody changes it. (The drivers and the power to take deliveries out came with
-deliveries, `delivery.md`: nobody who was on the staff before holds anything new.)
+deliveries, `delivery.md`: nobody who was on the staff before holds anything new. Texts with customers
+came on 2026-11-27 with a power of its own, which starts with whoever is out front: `text-inbox.md`.)
 
 ## Two rules that do not change
 
@@ -34,7 +35,7 @@ is saved. Leaving with changes not saved asks first.
 
 A change holds on every screen from the moment it is saved.
 
-## The sixteen powers
+## The seventeen powers
 
 | Power | What it lets a person do | Who has it to start, besides managers and owners |
 | --- | --- | --- |
@@ -46,6 +47,7 @@ A change holds on every screen from the moment it is saved.
 | **Take tables** | A table can be theirs, and a host can seat a party for them (`table-servers.md`) | Servers, bartenders |
 | **Give tables out** | Seat a party for another server, hand a table over, and say who is in tonight's turn (`table-servers.md`) | Hosts |
 | **Take deliveries out** | A delivery can be handed to them: they are offered as a driver (`delivery.md`) | Drivers |
+| **Text with customers** | Read what customers text the restaurant, answer them, and start a conversation (`text-inbox.md`) | Servers, bartenders, hosts, cashiers |
 | **Set the kitchen rush** | Add minutes to every new quote while the kitchen is behind | Nobody |
 | **Write the notes for the shift** | Put a note up for everybody, change it, take it down, and see who has read it (`shift-notes.md`) | Nobody |
 | **Keep the manager's log** | Read and write what happened in a shift | Nobody |
