@@ -48,8 +48,9 @@ On the hub:
 
 1. `hubctl pbx link root@freepbx.chinasky.org` puts the hub's SSH key on the PBX (made on first use, kept in
    `/opt/pos/pbx`; the PBX asks for root's password this once, and from then on the key alone opens the
-   tunnel). The line it adds to `/root/.ssh/authorized_keys` lets the key forward to the manager port and
-   nothing else: no shell on the PBX. Then it asks for the AMI user's secret (FreePBX, Settings, Asterisk
+   tunnel). The line it adds to `/root/.ssh/authorized_keys` lets the key open the tunnel to the manager
+   port and nothing else: no terminal, no command, no other port (see "Limiting the hub's key" below for
+   a PBX linked before 27 Nov 2026). Then it asks for the AMI user's secret (FreePBX, Settings, Asterisk
    Manager Users, user `pos`; the user needs `call` among its read rights, which it has), writes the link to
    `/opt/pos/.env`, starts the tunnel and the watcher and waits until the hub reaches the PBX, which it says
    (or, after 45 seconds, shows where it stands). From then on `hubctl pbx status` shows the tunnel up and
@@ -125,12 +126,72 @@ answers from whichever hub it talks to, and the same call is one call on both.
   API does. Code: `backend/src/pos/phones/deskphones.py`; the app side: `apps/pos_app/lib/desk_phone.dart`,
   `desk_phone_watcher.dart`.
 
+## Limiting the hub's key
+
+The hub's key is on the PBX as one line in root's `~/.ssh/authorized_keys`, and the words in front of the
+key say what it may do. `hubctl pbx link` writes this line:
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:5038",permitlisten="127.0.0.1:1",command="echo pos-tunnel-only" ssh-ed25519 AAAA... pos-<hub>
+```
+
+| Word | What it does |
+| --- | --- |
+| `restrict` | No terminal, no agent or X11 forwarding |
+| `port-forwarding`, `permitopen="127.0.0.1:5038"` | The key may open a tunnel, and only to Asterisk's manager port on the PBX itself |
+| `permitlisten="127.0.0.1:1"` | It cannot make the PBX listen on a port (the one it names, 1 on the PBX's own loopback, is nobody's) |
+| `command="echo pos-tunnel-only"` | Whatever the key asks the PBX to run, the PBX runs this instead: it says one word and runs nothing |
+
+**A PBX linked before 27 Nov 2026 has an older line** without the last two words:
+`restrict,port-forwarding,permitopen="127.0.0.1:5038" ssh-ed25519 ...`. That line gives no terminal, but a
+command sent with the key still ran, as root. Nothing of the POS ever used that, and somebody would need
+the hub's key file to do it, but the key should not be able to. `hubctl pbx status` and `hubctl pbx link`
+say so while it is like that ("the hub's key may still run commands").
+
+The change is to that one line, on the PBX, as root. Paste these three lines as they are:
+
+```sh
+[ -e ~/.ssh/authorized_keys.before-limit ] || cp -p ~/.ssh/authorized_keys ~/.ssh/authorized_keys.before-limit
+sed -i 's|^restrict,port-forwarding,permitopen="127.0.0.1:5038" |restrict,port-forwarding,permitopen="127.0.0.1:5038",permitlisten="127.0.0.1:1",command="echo pos-tunnel-only" |' ~/.ssh/authorized_keys
+grep -c 'command="echo pos-tunnel-only"' ~/.ssh/authorized_keys
+```
+
+The first keeps a copy of the file as it was (and leaves a copy that is already there alone). The second
+adds the two words to the hub's line and touches no other line: your own keys and the line of the
+recordings key (`call-recordings.md`) do not begin that way. The third counts the lines that now have
+them: 1, or 2 where an old line that never worked is still in the file. Run again, the three lines change
+nothing more. If the count is 0, nothing was changed: the hub's line is not written the way these lines
+expect, and `grep -n permitopen ~/.ssh/authorized_keys` shows how it is written (it holds a public key
+and no secret).
+
+Then check it from the hub, because the tunnel that is up now was let in by the old line and proves nothing:
+
+```sh
+sudo hubctl pbx link root@freepbx.chinasky.org
+```
+
+Press Enter at the question for the secret (it keeps the saved one). It starts the tunnel afresh, through
+the changed line, and ends with "The hub watches the PBX". On a hub from 27 Nov 2026 on it also says "On
+the PBX the key may open the tunnel and nothing else"; an older hub prints the word `pos-tunnel-only`
+there instead, which is the same news. Desk phones open no orders for the few seconds the tunnel takes to
+come back.
+
+If it does not end that way, put the file back on the PBX and link again; nothing else was changed:
+
+```sh
+cp -p ~/.ssh/authorized_keys.before-limit ~/.ssh/authorized_keys
+```
+
+After the change `hubctl pbx recordings link` cannot use this key to put its programs on the PBX any more
+and asks for the PBX's root password instead, which is as it should be.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `hubctl pbx status`: tunnel `restarting`, last words `Permission denied (publickey)` | The hub's key is not on the PBX (a line pasted from an example, `AAAA...`, is not the key) | `hubctl pbx link` again: it puts the key on the PBX; or check `/root/.ssh/authorized_keys` there holds the line `hubctl pbx key` prints |
 | `"connected": false`, `last_error` `pbx does not resolve ...: the tunnel service is probably down` | The tunnel container is not running (as a rule the row above), so its name `pbx` resolves to nothing | `hubctl pbx status` shows the tunnel's log; fix what it says and the watcher connects on its own |
+| `hubctl pbx status` or `link` says the hub's key may still run commands | The key's line on the PBX is from before 27 Nov 2026 | "Limiting the hub's key" above: three lines pasted on the PBX. The tunnel works either way |
 | Log says `Host key verification failed` | The PBX was reinstalled since the first connection | Delete `/opt/pos/pbx/known_hosts` on the hub, `hubctl restart` |
 | `"connected": false`, `last_error` `Authentication failed` | The AMI secret | `hubctl pbx link` again with the secret from FreePBX |
 | `last_error` `Connection refused` | The tunnel is down, or Asterisk's manager interface is off | `hubctl logs pbx`; on the PBX `asterisk -rx "manager show settings"` |
