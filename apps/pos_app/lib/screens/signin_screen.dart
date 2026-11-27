@@ -73,6 +73,9 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
+    // The pad is on the screen: on a device that stands as a kitchen screen or the pickup board, the camera
+    // looks for a face only for as long as it is (somebody tapped Staff).
+    _faces.padUp();
     _faces.addListener(_changed);
     // A phone's camera comes up after the first build: the ready dot (and the preview) follow it.
     widget.camera.addListener(_changed);
@@ -109,6 +112,7 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
     unawaited(_live?.cancel());
     widget.camera.removeListener(_changed);
     _faces.removeListener(_changed);
+    _faces.padDown();
     if (widget.faces == null) _faces.dispose();
     _shake.dispose();
     super.dispose();

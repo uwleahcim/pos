@@ -36,6 +36,13 @@ enum FaceState {
 /// While something [hold]s the loop (an enrollment, a manager typing a PIN for an approval), nothing is sent
 /// and nothing switches.
 ///
+/// A device that stands as something while nobody is signed in (a station's kitchen screen, the pickup
+/// board: [Settings.stands]) is the exception to the first rule. The people in front of such a screen are
+/// reading it, not signing in, so while it shows ([standing]) no frame goes and no face signs anyone in,
+/// or the cook at the tickets would be signed in and the tickets gone. The camera looks there only while a
+/// sign-in pad is on the screen ([padUp], [padDown]): somebody tapped Staff and asked for it. A tag held to
+/// the reader is somebody asking too, and signs in from the standing screen as from any other.
+///
 /// The pace. While a face is in view the next frame leaves as soon as the hub answers the last one: a
 /// strong match signs in on one frame, a weaker one on the next frame that agrees. After a few frames with
 /// a face but no sign-in (or the same person, signed in) the pace drops to one every [quick], after many to
@@ -119,7 +126,42 @@ class FaceSignIn extends ChangeNotifier {
   bool _recognised = false; // the hub has recognised the signed-in person at the screen at least once
   DateTime? _settingsAt;
 
+  int _pads = 0; // the sign-in pads on the screen now
+
   bool get running => _running;
+
+  /// Whether this device is showing what it stands as (a kitchen screen, the pickup board) and no sign-in
+  /// pad: it stands as something, nobody is signed in (a screen that locked itself counts: its tickets
+  /// stand over the lock) and no pad is up. The camera then looks for nobody.
+  bool get standing => settings.stands && !session.signedIn && _pads == 0;
+
+  /// A sign-in pad came onto the screen, and [padDown] when it leaves it. On a device that stands as
+  /// something the camera looks for a face only between the two; everywhere else they change nothing.
+  void padUp() {
+    _pads += 1;
+    if (_pads == 1) _padChanged();
+  }
+
+  void padDown() {
+    if (_pads == 0) return;
+    _pads -= 1;
+    if (_pads == 0) _padChanged();
+  }
+
+  /// The pad came up over the standing screen, or went back to it: the counters start over, and the loop
+  /// takes its next step at once (a frame for the pad, the camera let go for the standing screen). Nobody
+  /// is told: this is called while the widgets build, and the pad reads the state as it comes up.
+  void _padChanged() {
+    if (!settings.stands || session.signedIn) return;
+    unknownInARow = 0;
+    faceInARow = 0;
+    noFaceInARow = 0;
+    if (state != FaceState.off) {
+      state = FaceState.looking;
+      message = 'Look at the camera, or tap your PIN';
+    }
+    if (_running && !_busy && state != FaceState.off) _schedule(Duration.zero);
+  }
 
   /// Whether the camera keeps its frames coming and reports a change in its view.
   bool get watched => _watched;
@@ -247,6 +289,19 @@ class FaceSignIn extends ChangeNotifier {
   /// the camera no longer sees.
   bool get _watchesSignedIn => switching || (awaySeconds > 0 && _recognised);
 
+  /// Whether frames go at all now: for whoever is signed in when they are watched, and with nobody signed
+  /// in unless the screen stands as something and shows it.
+  bool get _looks => session.signedIn ? _watchesSignedIn : !standing;
+
+  /// On a screen that shows what it stands as: the camera is let go and the loop only comes by again later
+  /// (a pad coming up starts it at once). Whether it was.
+  bool _standsBy() {
+    if (!standing) return false;
+    _unwatch();
+    _schedule(recheck);
+    return true;
+  }
+
   /// One step: the status when not looking, else one frame to the hub.
   Future<void> _step() async {
     if (!_running || _busy) return;
@@ -256,6 +311,8 @@ class FaceSignIn extends ChangeNotifier {
         _schedule(recheck); // released: a frame goes at once (the hold's listener)
       } else if (state == FaceState.off || status == null) {
         await _checkStatus();
+      } else if (_standsBy()) {
+        // the tickets or the board show: nothing is sent and nothing asked
       } else {
         await _refreshHandsFree();
         if (session.signedIn && !_watchesSignedIn) {
@@ -308,7 +365,7 @@ class FaceSignIn extends ChangeNotifier {
         }
         noFaceInARow = 0;
         faceInARow = 0;
-        if (!session.signedIn || _watchesSignedIn) await _watch();
+        if (_looks) await _watch();
         _schedule(Duration.zero);
       } else {
         _unwatch();
@@ -326,7 +383,7 @@ class FaceSignIn extends ChangeNotifier {
   Future<void> _sendFrame() async {
     await _watch();
     final jpeg = await camera.frame();
-    if (!_running) return;
+    if (!_running || _standsBy()) return;
     if (jpeg == null) {
       _schedule(const Duration(seconds: 1)); // the camera is not up yet, or the app is in the background
       return;
@@ -342,6 +399,8 @@ class FaceSignIn extends ChangeNotifier {
     }
     if (!_running) return;
     lastError = null;
+    // The pad went back to the tickets while this frame was at the hub: what it saw signs nobody in.
+    if (_standsBy()) return;
     frames += 1;
     noFaceInARow = answer.face ? 0 : noFaceInARow + 1;
     faceInARow = answer.face ? faceInARow + 1 : 0;

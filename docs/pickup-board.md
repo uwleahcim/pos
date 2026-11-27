@@ -61,7 +61,8 @@ Settings › Display › Screen timeout.)
 
 The device is still a POS screen.
 
-- **Staff**, small in the board's bottom corner, brings up the sign-in pad. A PIN signs in as on any screen.
+- **Staff**, small in the board's bottom corner, brings up the sign-in pad. A PIN signs in as on any screen,
+  and so does a face where the location signs in by face: the camera looks for as long as the pad is up.
 - The pad has **Pickup board** in its bar (an icon on a phone) to go back.
 - **A pad nobody touches for a minute goes back to the board by itself**, so the shelf's screen never
   stays on a PIN pad because somebody tapped Staff and walked off.
@@ -74,8 +75,12 @@ The device is still a POS screen.
 
 - **With the hub away** the board keeps its last picture and says at the bottom "This board may be behind:
   the hub is not answering." It catches up by itself when the hub is back.
-- **Signing in by face or by tag** does not run while the board shows: the pad is not on the screen. Tap
-  **Staff** first.
+- **The camera signs nobody in while the board shows**, whoever stands in front of it: a server walking
+  past the shelf is not signing in, and a board that signed them in would show the customers the orders
+  screen. No picture leaves the device meanwhile. Tap **Staff** first; a sign-out, or the camera no longer
+  seeing the person, puts the board back, and it stays. A board that locked itself is not unlocked by a
+  face walking by either.
+- **A tag held to the reader** signs in straight from the board: that is somebody asking.
 - **Leave Phone off on this device.** A call ringing shows the caller over every screen of a device that is
   a phone, and it would show over the board.
 - **A customer who can touch the screen** can tap Staff and reach the pad and the device's Settings, as on
@@ -110,4 +115,5 @@ The device is still a POS screen.
   the home and in the `LockLayer`, and shows the board (or a station's kitchen screen) or the pad.
 - `Settings.pickupBoard` (the preference `pickup_board`), `savePickupBoard`. `SignInScreen.onBoard` is the
   pad's way back.
-- Tests: `apps/pos_app/test/pickup_board_test.dart`.
+- The camera and the board: `FaceSignIn.standing` (`kitchen-screens.md`, For developers).
+- Tests: `apps/pos_app/test/pickup_board_test.dart`, and `standing_faces_test.dart` for the camera.
