@@ -10,7 +10,7 @@ class FeeBand {
   factory FeeBand.fromJson(Map<String, dynamic> json) =>
       FeeBand(upTo: json['up_to']?.toString() ?? '', fee: json['fee']?.toString() ?? '0.00');
 
-  /// How far it reaches, as the hub writes it: "2", "2.5" miles, or "15" minutes.
+  /// How far it reaches, as the hub writes it: "2", "2.5", "0.25" miles (to a hundredth), or "15" minutes.
   final String upTo;
 
   /// Dollars and cents, "5.00". A band may cost nothing.
@@ -127,7 +127,7 @@ class Measured {
     return Measured(miles: miles, minutes: minutes, service: marked ? service : null, from: marked ? from : null);
   }
 
-  /// "3.2", as the hub writes it.
+  /// "3.2", "0.25": as the hub writes it, to a hundredth of a mile.
   final String miles;
   final int minutes;
 

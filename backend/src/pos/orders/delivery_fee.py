@@ -47,7 +47,7 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from ..maps import may_keep
+from ..maps import may_keep, miles_text
 from ..sync.oplog import ORDER_FIELDS, Op, is_delivery
 
 FIELD = "delivery_fee"
@@ -67,7 +67,8 @@ BANDS_MAX = 8
 """One screenful of buttons on a phone, beside "No fee"."""
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
-TENTH = Decimal("0.1")
+HUNDREDTH = Decimal("0.01")
+"""How fine a band's miles may be listed, and how fine the map's are read: "up to 0.25 miles"."""
 MEASURED_MILES_MAX = Decimal(1000)
 MEASURED_MINUTES_MAX = 24 * 60
 """What the map may have said and still be kept: further is no delivery."""
@@ -76,8 +77,8 @@ _MARK = re.compile(r"[0-9a-f]{8}")
 
 
 def measure(value: Any, by: str) -> Decimal | None:
-    """How far a band reaches, read: miles to a tenth, whole minutes, above nothing and within reason. None
-    when it is no such number."""
+    """How far a band reaches, read: miles to a hundredth (0.25, 1.5), whole minutes, above nothing and within
+    reason. None when it is no such number."""
     if isinstance(value, bool) or not isinstance(value, int | float | str | Decimal):
         return None
     try:
@@ -86,14 +87,14 @@ def measure(value: Any, by: str) -> Decimal | None:
         return None
     if not number.is_finite() or number <= ZERO:
         return None
-    step, most = (TENTH, MILES_MAX) if by == "miles" else (Decimal(1), MINUTES_MAX)
+    step, most = (HUNDREDTH, MILES_MAX) if by == "miles" else (Decimal(1), MINUTES_MAX)
     if number > most or number != number.quantize(step):
         return None
     return number
 
 
 def measure_text(number: Decimal) -> str:
-    """A band's reach as it is stored and compared: "2", "2.5", "10"."""
+    """A band's reach as it is stored and compared: "2", "2.5", "0.25", "10"."""
     return format(number.normalize(), "f")
 
 
@@ -154,9 +155,9 @@ def measured_of(value: Any) -> dict[str, Any] | None:
         far = Decimal(str(miles).strip())
     except InvalidOperation:
         return None
-    if not far.is_finite() or far < ZERO or far > MEASURED_MILES_MAX or far != far.quantize(TENTH):
+    if not far.is_finite() or far < ZERO or far > MEASURED_MILES_MAX or far != far.quantize(HUNDREDTH):
         return None
-    kept: dict[str, Any] = {"miles": format(far.quantize(TENTH), "f"), "minutes": minutes}
+    kept: dict[str, Any] = {"miles": miles_text(far), "minutes": minutes}
     service, mark = told.get("service"), told.get("from")
     if isinstance(service, str) and isinstance(mark, str) and _SERVICE.fullmatch(service) and _MARK.fullmatch(mark):
         kept.update({"service": service, "from": mark})

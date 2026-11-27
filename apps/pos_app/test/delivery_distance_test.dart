@@ -437,6 +437,42 @@ void main() {
       }
     });
 
+    testWidgets('prices a quarter of a mile apart: an address a quarter of a mile away picks "up to 0.25"', (
+      tester,
+    ) async {
+      // the owner's words, 2026-11-27: "Allow fractional miles like 0.25 miles"
+      final t = await pumpForm(
+        tester,
+        size: const Size(320, 640),
+        type: 1.3,
+        fees: {
+          ...Hub.mapFees,
+          'bands': [
+            {'up_to': '0.25', 'fee': '0.00'},
+            {'up_to': '0.5', 'fee': '2.00'},
+            {'up_to': '12.75', 'fee': '9.00'},
+          ],
+        },
+      );
+      const near = '2 Main St, Winchester', nextDoor = '6 Main St, Winchester';
+      t.hub.distances[near] = {'miles': '0.25', 'minutes': 1};
+      t.hub.distances[nextDoor] = {'miles': '0.26', 'minutes': 1};
+      await lindaTo(tester, near);
+      expect(said(tester, 'fee-lookup-found'), '0.25 mi · 1 min drive');
+      expect((picked(tester, '0.25'), picked(tester, '0.5')), (true, false));
+      expect(tester.takeException(), isNull); // on a small phone with large type too
+      // a hundredth of a mile further is the next price
+      await typeAddress(tester, nextDoor);
+      expect(said(tester, 'fee-lookup-found'), '0.26 mi · 1 min drive');
+      expect((picked(tester, '0.25'), picked(tester, '0.5')), (false, true));
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {
+        'up_to': '0.5',
+        'measured': {'miles': '0.26', 'minutes': 1, ...Hub.mapMark},
+      });
+      await stop(tester);
+    });
+
     testWidgets('it fits a small phone with large type, found or not', (tester) async {
       final t = await pumpForm(tester, fees: Hub.mapFees, size: const Size(320, 640), type: 1.3);
       await lindaTo(tester, oak);

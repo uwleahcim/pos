@@ -89,6 +89,7 @@ START_AGAIN = 3600.0
 """How long after Geocodio did not say where the restaurant stands it is asked again."""
 METERS_A_MILE = Decimal("1609.344")
 TENTH = Decimal("0.1")
+HUNDREDTH = Decimal("0.01")
 MILES_MOST = Decimal(1000)
 """An answer further than this is no delivery: the address was read as one somewhere else."""
 
@@ -127,12 +128,12 @@ SAID = {
 class Trip:
     """A drive from the restaurant to a delivery's address."""
 
-    miles: Decimal  # along the road, to a tenth
+    miles: Decimal  # along the road, to a hundredth: as fine as a band of the fee may be listed
     minutes: int  # the usual drive, to the nearest minute and never less than one
     service: str = field(default="", compare=False)  # who measured it, once `Lookups` knows
 
     def as_json(self) -> dict[str, Any]:
-        return {"miles": format(self.miles, "f"), "minutes": self.minutes}
+        return {"miles": miles_text(self.miles), "minutes": self.minutes}
 
 
 @dataclass(frozen=True)
@@ -200,8 +201,16 @@ class Maps(Protocol):
         ...
 
 
+def miles_text(miles: Decimal) -> str:
+    """Road miles as they are said and kept: to a hundredth, "3.24", and with one figure after the point
+    where the hundredths are nothing, "3.2", "3.0", as every distance read before a band could be listed
+    finer than a tenth."""
+    far = miles.quantize(HUNDREDTH, rounding=ROUND_HALF_UP)
+    return format(far.quantize(TENTH) if far == far.quantize(TENTH) else far, "f")
+
+
 def trip_of(miles: Any, seconds: Any) -> Trip | None:
-    """A service's two numbers, read: road miles to a tenth and the drive in whole minutes. None when
+    """A service's two numbers, read: road miles to a hundredth and the drive in whole minutes. None when
     either is no such number."""
     try:
         far = Decimal(str(miles))
@@ -213,7 +222,7 @@ def trip_of(miles: Any, seconds: Any) -> Trip | None:
     if far < 0 or took < 0 or far > MILES_MOST:
         return None
     minutes = int((took / 60).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-    return Trip(miles=far.quantize(TENTH, rounding=ROUND_HALF_UP), minutes=max(1, minutes))
+    return Trip(miles=far.quantize(HUNDREDTH, rounding=ROUND_HALF_UP), minutes=max(1, minutes))
 
 
 class _NoAddresses(logging.Filter):
@@ -1018,6 +1027,7 @@ __all__ = [
     "origin_mark",
     "others_from_env",
     "same_address",
+    "miles_text",
     "trip_of",
     "turned_on",
 ]

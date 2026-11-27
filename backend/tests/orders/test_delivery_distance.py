@@ -155,11 +155,43 @@ def test_an_address_is_told_how_far_it_is_and_the_band_it_falls_in():
     assert atlas.asked == [(HOME, ELM)]
 
 
+def test_prices_a_quarter_of_a_mile_apart_are_picked_by_the_hundredth_of_a_mile():
+    """Miles go to a hundredth from the map to the order (the owner's words, 2026-11-27: "Allow fractional
+    miles like 0.25 miles"): an address a quarter of a mile away is "up to 0.25", not rounded up to 0.3 and
+    charged the next price."""
+    quarters = {
+        "enabled": True,
+        "by": "miles",
+        "bands": [{"up_to": "0.25", "fee": "0.00"}, {"up_to": "0.5", "fee": "2.00"}, {"up_to": "1.25", "fee": "3.00"}],
+    }
+    near, next_door, further = "9 Main St, Winchester, MA", "11 Main St, Winchester, MA", "40 Main St, Winchester, MA"
+    trips = {near: trip_of("0.25", 70), next_door: trip_of("0.254", 75), further: trip_of("0.255", 80)}
+    c, _ = mapped(quarters, atlas=Atlas(trips))
+    told = far(c, near, phone=LINDA).json()
+    assert (told["miles"], told["band"]) == ("0.25", {"up_to": "0.25", "fee": "0.00"})
+    assert far(c, next_door).json()["band"]["up_to"] == "0.25"
+    told_further = far(c, further).json()
+    assert (told_further["miles"], told_further["band"]) == ("0.26", {"up_to": "0.5", "fee": "2.00"})
+    # the pick carries what the map said, to the hundredth, and the customer's next order reads it off this one
+    takeout(c, "o1", 0, channel="phone", handover="delivery", address=near, phone=LINDA)
+    assert pick(c, {"up_to": told["band"]["up_to"], "measured": measured(told)})["refused"] == []
+    kept = {"miles": "0.25", "minutes": 1, **MARKS}
+    assert carried(c) == {"by": "miles", "up_to": "0.25", "amount": "0.00", "taxed": False, "measured": kept}
+    again_told = far(c, near, phone=LINDA).json()
+    assert (again_told["saved"], again_told["miles"], again_told["band"]["up_to"]) == (True, "0.25", "0.25")
+    # a figure kept to a tenth before this is read as it was
+    assert measured_of({"measured": {"miles": "3.2", "minutes": 9, **MARKS}}) == {"miles": "3.2", "minutes": 9, **MARKS}
+
+
 def test_the_band_is_the_nearest_one_that_reaches():
     two, mid, eight = (band["up_to"] for band in MILES["bands"])
     for miles, band in (("0.3", two), ("2.0", two), ("2.1", mid), ("4.5", mid), ("4.6", eight), ("8.0", eight)):
         assert band_for(MILES, Decimal(miles), 5)["up_to"] == band, miles
     assert band_for(MILES, Decimal("8.1"), 5) is None  # further than the list reaches
+    # bands a quarter of a mile apart: an address a hundredth past one falls in the next
+    quarters = {**MILES, "bands": [{"up_to": up_to, "fee": "1.00"} for up_to in ("0.25", "0.5", "0.75", "1")]}
+    for miles, band in (("0.01", "0.25"), ("0.25", "0.25"), ("0.26", "0.5"), ("0.5", "0.5"), ("0.51", "0.75")):
+        assert band_for(quarters, Decimal(miles), 5)["up_to"] == band, miles
     # by the minutes of the drive it is the minutes that count, however far
     assert band_for(MINUTES, Decimal("30"), 10)["up_to"] == "10"
     assert band_for(MINUTES, Decimal("1"), 11)["up_to"] == "20"
@@ -300,7 +332,11 @@ def test_a_pick_carries_what_the_map_said_and_the_band_still_decides_the_amount(
 
 
 def test_what_the_map_said_is_read_with_care():
-    assert measured_of({"measured": {"miles": 3.25, "minutes": 9}}) is None  # miles to a tenth
+    # miles to a hundredth, as fine as a band may be listed, and said the short way where that is all there is
+    assert measured_of({"measured": {"miles": 3.25, "minutes": 9}}) == {"miles": "3.25", "minutes": 9}
+    assert measured_of({"measured": {"miles": "3.20", "minutes": 9}}) == {"miles": "3.2", "minutes": 9}
+    assert measured_of({"measured": {"miles": 3, "minutes": 9}}) == {"miles": "3.0", "minutes": 9}
+    assert measured_of({"measured": {"miles": 3.255, "minutes": 9}}) is None
     for bad in (
         None,
         "3.2",
@@ -735,7 +771,7 @@ def test_google_is_sent_the_two_addresses_in_the_body_and_the_key_in_a_header(ca
 
     with caplog.at_level(logging.INFO, logger="httpx"):
         trip = google(answer).trip(HOME, ELM)
-    assert trip == Trip(Decimal("3.2"), 9)  # 5,214 meters, 545 seconds
+    assert trip == Trip(Decimal("3.24"), 9)  # 5,214 meters, 545 seconds
     (request,) = seen
     assert (request.method, str(request.url)) == ("POST", "https://routes.googleapis.com/directions/v2:computeRoutes")
     assert json.loads(request.content) == {
@@ -1052,7 +1088,7 @@ def test_the_service_is_sent_the_two_addresses_and_the_key_in_a_header(caplog):
 
     with caplog.at_level(logging.INFO, logger="httpx"):
         trip = geocodio(answer).trip(HOME, ELM)
-    assert trip == Trip(Decimal("3.2"), 9)
+    assert trip == Trip(Decimal("3.24"), 9)
     (request,) = seen
     assert (request.method, request.url.path) == ("GET", "/v2.1/distance")
     assert dict(request.url.params) == {"origin": HOME, "destinations[]": ELM, "mode": "driving"}
@@ -1179,11 +1215,14 @@ def test_a_service_that_does_not_answer_is_unreachable_and_the_log_names_no_addr
     assert "Elm" not in caplog.text and "Restaurant Row" not in caplog.text and "key-123" not in caplog.text
 
 
-def test_miles_to_a_tenth_and_the_drive_to_the_nearest_minute():
-    assert trip_of(2.04, 0) == Trip(Decimal("2.0"), 1)  # never less than a minute
-    assert trip_of("2.05", 89) == Trip(Decimal("2.1"), 1)
-    assert trip_of(2.05, 90) == Trip(Decimal("2.1"), 2)
-    assert trip_of(0, 600) == Trip(Decimal("0.0"), 10)
+def test_miles_to_a_hundredth_and_the_drive_to_the_nearest_minute():
+    assert trip_of(2.004, 0) == Trip(Decimal("2.00"), 1)  # never less than a minute
+    assert trip_of("2.005", 89) == Trip(Decimal("2.01"), 1)
+    assert trip_of(2.25, 90) == Trip(Decimal("2.25"), 2)
+    assert trip_of(0, 600) == Trip(Decimal("0.00"), 10)
+    # said to a hundredth, and the short way where the hundredths are nothing
+    said = [trip_of(miles, 60).as_json()["miles"] for miles in (0.254, 0.255, 3.2, 3.204, 3, 12.5)]
+    assert said == ["0.25", "0.26", "3.2", "3.2", "3.0", "12.5"]
     for bad in ((None, 60), (3.2, None), ("far", 60), (-1, 60), (3.2, -5), (True, 60), (float("inf"), 60), (1001, 60)):
         assert trip_of(*bad) is None, bad
 

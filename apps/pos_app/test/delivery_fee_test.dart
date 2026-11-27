@@ -12,7 +12,7 @@ import 'package:pos_app/screens/menu_panel.dart';
 import 'package:pos_app/screens/order_screen.dart';
 
 import 'catering_test.dart' show dataOf, enabled, kinds, platters, tapKey;
-import 'delivery_test.dart' show bell, created, elm, enterAddress, key, order, stand;
+import 'delivery_test.dart' show bell, created, elm, enterAddress, key, order, stand, typed;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -350,6 +350,35 @@ void main() {
       await stop(tester);
     });
 
+    testWidgets('prices by a fraction of a mile are buttons like any other, on a small phone too', (tester) async {
+      const quarters = {
+        'enabled': true,
+        'by': 'miles',
+        'bands': [
+          {'up_to': '0.25', 'fee': '0.00'},
+          {'up_to': '0.5', 'fee': '2.00'},
+          {'up_to': '12.75', 'fee': '9.00'},
+        ],
+        'taxed': false,
+      };
+      var t = await pumpForm(tester, fees: quarters);
+      await typeDelivery(tester);
+      expect(offered(tester), ['Free, Up to 0.25 mi', r'$2.00, Up to 0.5 mi', r'$9.00, Up to 12.75 mi', 'No fee']);
+      await tapKey(tester, 'fee:0.25');
+      expect((picked(tester, '0.25'), picked(tester, '0.5')), (true, false));
+      await tapKey(tester, 'takeout-start');
+      expect(created(t.hub)['delivery_fee'], {'up_to': '0.25'});
+      await stop(tester);
+
+      t = await pumpForm(tester, fees: quarters, size: const Size(320, 640), type: 1.3);
+      await typeDelivery(tester);
+      expect(offered(tester), ['Free, 0.25 mi', r'$2.00, 0.5 mi', r'$9.00, 12.75 mi', 'No fee']);
+      await tapKey(tester, 'fee:12.75');
+      expect(tester.takeException(), isNull);
+      expect(picked(tester, '12.75'), isTrue);
+      await stop(tester);
+    });
+
     testWidgets('it fits a small phone with large type', (tester) async {
       await pumpForm(tester, fees: Hub.milesFees, size: const Size(320, 640), type: 1.3);
       await typeDelivery(tester);
@@ -644,9 +673,12 @@ void main() {
       await tester.enterText(key('fee-band-reach:1'), '2.0');
       await tapKey(tester, 'fee-save');
       expect(find.text('Two prices reach the same number of miles'), findsOneWidget);
-      await tester.enterText(key('fee-band-reach:1'), '2.25');
-      await tapKey(tester, 'fee-save');
-      expect(find.text('How far a price reaches is a number of miles, such as 2 or 2.5'), findsOneWidget);
+      // a fraction of a mile goes to a hundredth and no finer
+      for (final finer in ['2.255', '0.001', '0', 'two']) {
+        await tester.enterText(key('fee-band-reach:1'), finer);
+        await tapKey(tester, 'fee-save');
+        expect(find.text('How far a price reaches is a number of miles, such as 2, 2.5 or 0.25'), findsOneWidget);
+      }
       await tester.enterText(key('fee-band-reach:1'), '4.5');
       await tester.enterText(key('fee-band-fee:1'), 'five');
       await tapKey(tester, 'fee-save');
@@ -675,6 +707,127 @@ void main() {
         await tapKey(tester, 'fee-band-add');
       }
       expect(enabled(tester, 'fee-band-add'), isFalse);
+      await stop(tester);
+    });
+
+    /// How far each row of the dialog reaches as it reads, from the top row down.
+    List<String> reaches(WidgetTester tester) {
+      final boxes =
+          [
+            for (final box in find.byType(TextField).evaluate())
+              if (box.widget.key case ValueKey<String>(:final value) when value.startsWith('fee-band-reach:')) box,
+          ]..sort(
+            (a, b) =>
+                tester.getTopLeft(find.byWidget(a.widget)).dy.compareTo(tester.getTopLeft(find.byWidget(b.widget)).dy),
+          );
+      return [for (final box in boxes) (box.widget as TextField).controller!.text];
+    }
+
+    testWidgets('miles may be a fraction of a mile, to a hundredth', (tester) async {
+      // the owner's words, 2026-11-27: "Allow fractional miles like 0.25 miles"
+      final t = await pumpLocation(tester, fees: Hub.milesFees);
+      await tapKey(tester, 'delivery-fee');
+      await tapKey(tester, 'fee-band-add');
+      await tester.enterText(key('fee-band-reach:3'), '0.25');
+      await tester.enterText(key('fee-band-fee:3'), '0');
+      await tapKey(tester, 'fee-band-add');
+      await tester.enterText(key('fee-band-reach:4'), '.75');
+      await tester.enterText(key('fee-band-fee:4'), '1.50');
+      await tester.enterText(key('fee-band-reach:1'), '4.25');
+      await tapKey(tester, 'fee-save');
+      expect(find.byType(DeliveryFeeDialog), findsNothing);
+      expect(t.hub.deliveryFees!['bands'], [
+        {'up_to': '0.25', 'fee': '0.00'},
+        {'up_to': '0.75', 'fee': '1.50'},
+        {'up_to': '2', 'fee': '3.00'},
+        {'up_to': '4.25', 'fee': '5.00'},
+        {'up_to': '8', 'fee': '8.50'},
+      ]);
+      expect(
+        rowWords(tester),
+        r'Free up to 0.25 mi, $1.50 up to 0.75 mi, $3.00 up to 2 mi, $5.00 up to 4.25 mi, $8.50 up to 8 mi',
+      );
+      // and it opens again as it was saved
+      await tapKey(tester, 'delivery-fee');
+      expect(reaches(tester), ['0.25', '0.75', '2', '4.25', '8']);
+      await stop(tester);
+    });
+
+    testWidgets('the prices keep themselves nearest first as they are typed', (tester) async {
+      // the owner's words, 2026-11-27: "the list of the delivery distance should auto sort by distance"
+      final t = await pumpLocation(tester, fees: Hub.milesFees);
+      await tapKey(tester, 'delivery-fee');
+      expect(reaches(tester), ['2', '4.5', '8']);
+      // a new row waits under them all, and stays where it is while it is typed in
+      await tapKey(tester, 'fee-band-add');
+      await tester.enterText(key('fee-band-reach:3'), '0.25');
+      await tester.pump();
+      expect(reaches(tester), ['2', '4.5', '8', '0.25']);
+      await tester.enterText(key('fee-band-fee:3'), '0'); // its own fee: still the same row
+      await tester.pump();
+      expect(reaches(tester), ['2', '4.5', '8', '0.25']);
+      // on to another row: it goes to its place
+      await tester.showKeyboard(key('fee-band-fee:0'));
+      await tester.pumpAndSettle();
+      expect(reaches(tester), ['0.25', '2', '4.5', '8']);
+      expect(tester.takeException(), isNull);
+      // a distance changed goes to its new place once the keyboard is put away, and not before
+      await tester.enterText(key('fee-band-reach:0'), '6');
+      await tester.pump();
+      expect(reaches(tester), ['0.25', '6', '4.5', '8']);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(reaches(tester), ['0.25', '4.5', '6', '8']);
+      // "Add a price" puts the row typed last in its place too, with the new one under them all
+      await tester.enterText(key('fee-band-reach:1'), '9');
+      await tapKey(tester, 'fee-band-add');
+      expect(reaches(tester), ['0.25', '6', '8', '9', '']);
+      // what is no distance yet waits at the foot, in the order it was added; the same distance twice stays put
+      await tester.enterText(key('fee-band-reach:4'), 'far');
+      await tapKey(tester, 'fee-band-add');
+      await tester.enterText(key('fee-band-reach:5'), '6.0');
+      await tester.showKeyboard(key('fee-band-reach:3'));
+      await tester.pumpAndSettle();
+      expect(reaches(tester), ['0.25', '6', '6.0', '8', '9', 'far']);
+      // each row kept its own fee on the way
+      expect(typed(tester, 'fee-band-fee:3'), '0');
+      expect(typed(tester, 'fee-band-fee:0'), '3.00');
+      // removing one moves no other
+      await tapKey(tester, 'fee-band-remove:5');
+      await tapKey(tester, 'fee-band-remove:4');
+      expect(reaches(tester), ['0.25', '6', '8', '9']);
+      await tapKey(tester, 'fee-save');
+      expect(t.hub.deliveryFees!['bands'], [
+        {'up_to': '0.25', 'fee': '0.00'},
+        {'up_to': '6', 'fee': '3.00'},
+        {'up_to': '8', 'fee': '8.50'},
+        {'up_to': '9', 'fee': '5.00'},
+      ]);
+      await stop(tester);
+    });
+
+    testWidgets('by minutes they sort the same way, and a list the hub hands over out of order is put right', (
+      tester,
+    ) async {
+      await pumpLocation(
+        tester,
+        fees: {
+          'enabled': true,
+          'by': 'minutes',
+          'bands': [
+            {'up_to': '20', 'fee': '6.00'},
+            {'up_to': '5', 'fee': '2.00'},
+            {'up_to': '10', 'fee': '4.00'},
+          ],
+          'taxed': false,
+        },
+      );
+      await tapKey(tester, 'delivery-fee');
+      expect(reaches(tester), ['5', '10', '20']);
+      await tester.enterText(key('fee-band-reach:1'), '25');
+      await tester.showKeyboard(key('fee-band-reach:0'));
+      await tester.pumpAndSettle();
+      expect(reaches(tester), ['10', '20', '25']);
       await stop(tester);
     });
 

@@ -664,7 +664,7 @@ def clean_address_list(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
     """The delivery fee as the app may set it, checked: `enabled`, whether a fee is charged; `by`, miles or
-    minutes; `bands`, a list of `{up_to, fee}` (miles to a tenth or whole minutes, and dollars), kept in
+    minutes; `bands`, a list of `{up_to, fee}` (miles to a hundredth or whole minutes, and dollars), kept in
     order of how far they reach; `taxed`, whether sales tax is charged on the fee; `origin`, the
     restaurant's own address, where every delivery starts when the distance is looked up (`pos.maps`; empty:
     nothing is looked up). Charged, it needs at least one band. A band may cost nothing (free close by).
@@ -697,7 +697,7 @@ def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
         reach = fees.measure(entry.get("up_to"), by)
         if reach is None:
             raise ValueError(
-                f"a band reaches up to a number of miles, to a tenth, from 0.1 to {fees.MILES_MAX}"
+                f"a band reaches up to a number of miles, to a hundredth, from 0.01 to {fees.MILES_MAX}"
                 if by == "miles"
                 else f"a band reaches up to a whole number of minutes, from 1 to {fees.MINUTES_MAX}"
             )
