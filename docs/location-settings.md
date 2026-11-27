@@ -36,7 +36,7 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   dishes are sold out and how many have a number left, and the list of them with the fewest left at the top
   (see `eighty-six.md`). Not a setting: a dish is put on it from the order screen.
 - **Today**, under it, for during service: the night as it stands on one screen, beside the same day last
-  week at this time (see `today.md`). It is in the orders screen's menu as well. Not a setting either.
+  week at this time (see `today.md`). It is under **More** on the orders screen as well. Not a setting either.
 - **The day**, under that, for when service is over: what is still open, the day's sales, the money taken and
   what came off the checks, for any day, with a print (see `day-report.md`). Not a setting either.
 - **Sales**, under that: any days, from one to 92, with every figure beside the same days whole weeks

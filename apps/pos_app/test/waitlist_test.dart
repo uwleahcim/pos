@@ -601,20 +601,17 @@ void main() {
       // a server with nobody waiting: the list is in the menu, and the bar keeps its room
       await pumpFloorWith(tester, amy, parties: (_) => [], size: phone);
       expect(key('waitlist-open'), findsNothing);
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Waitlist'));
+      await openHome(tester, 'waitlist');
       await tester.pumpAndSettle();
       expect(find.byType(WaitlistScreen), findsOneWidget);
       await stop(tester);
 
-      // a party waits: every phone shows the number
+      // a party waits: every phone shows the number, and the menu's tile says how many
       await pumpFloorWith(tester, amy, size: phone);
       expect(key('waitlist-open'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      expect(find.text('Waitlist'), findsNothing);
+      await openMore(tester);
+      expect(find.descendant(of: homeTile('waitlist'), matching: find.text('3 waiting')), findsOneWidget);
       await stop(tester);
 
       // the host has the button whether anybody waits or not

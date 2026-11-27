@@ -667,7 +667,7 @@ void main() {
       t.session.staff = const Staff(staffId: 's1', name: 'Amy', role: 'server', method: 'pin');
       maiTais(t.hub);
       await pumpOrdersOn(tester, t);
-      await tester.tap(find.byTooltip('Contests'));
+      await openHome(tester, 'contests');
       await tester.pumpAndSettle();
       expect(find.byType(ContestsScreen), findsOneWidget);
       expect(words(tester, 'contest-mine:mai-tai-month'), '2nd of 3 · 14');
@@ -678,17 +678,17 @@ void main() {
     testWidgets('with no contest, or only one long over, the menu does not', (tester) async {
       final t = await terminal(tester, role: 'server');
       await pumpOrdersOn(tester, t);
-      expect(find.byTooltip('Contests'), findsNothing);
+      expect(homeIds(tester), isNot(contains('contests')));
       await stop(tester);
       final old = await terminal(tester, role: 'server');
       maiTais(old.hub, first: '2026-10-01', last: '2026-10-31');
       await pumpOrdersOn(tester, old);
-      expect(find.byTooltip('Contests'), findsNothing);
+      expect(homeIds(tester), isNot(contains('contests')));
       await stop(tester);
       final older = await terminal(tester, role: 'server');
       older.hub.contests = null; // a hub older than contests
       await pumpOrdersOn(tester, older);
-      expect(find.byTooltip('Contests'), findsNothing);
+      expect(homeIds(tester), isNot(contains('contests')));
       await stop(tester);
     });
 

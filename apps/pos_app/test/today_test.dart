@@ -803,7 +803,7 @@ void main() {
   group('the way in', () {
     testWidgets('is in the menu of whoever may see the reports, behind their PIN', (tester) async {
       final t = await pumpMenu(tester, 'manager', hub: (hub) => hub.today = tonight());
-      await tester.tap(find.byTooltip('Today'));
+      await openHome(tester, 'today');
       await tester.pumpAndSettle();
       expect(find.text('Manager PIN'), findsOneWidget);
       await typePin(tester, '9999', 'Open Today');
@@ -818,10 +818,10 @@ void main() {
 
     testWidgets('is not there for a role without the reports, and is for one handed them', (tester) async {
       await pumpMenu(tester, 'host');
-      expect(find.byTooltip('Today'), findsNothing);
+      expect(homeIds(tester), isNot(contains('today')));
       await stop(tester);
       await pumpMenu(tester, 'server', hub: (hub) => hub.powers = null); // a hub from before the table
-      expect(find.byTooltip('Today'), findsNothing);
+      expect(homeIds(tester), isNot(contains('today')));
       await stop(tester);
 
       final t = await pumpMenu(
@@ -831,7 +831,7 @@ void main() {
           ..powers!['reports'] = ['host']
           ..today = tonight(),
       );
-      await tester.tap(find.byTooltip('Today'));
+      await openHome(tester, 'today');
       await tester.pumpAndSettle();
       // a server's PIN opens nothing; the host's own does, with what a host may do and no more
       await typePin(tester, '1111', 'Open Today');

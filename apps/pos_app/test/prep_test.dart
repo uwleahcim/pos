@@ -166,7 +166,7 @@ void main() {
     }
 
     Future<void> open(WidgetTester tester, String day) async {
-      await tester.tap(find.byTooltip('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       await tapKey(tester, 'ahead-prep:$day');
     }
@@ -264,9 +264,7 @@ void main() {
       tester.platformDispatcher.textScaleFactorTestValue = 1.3;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       await pumpAhead(tester, size: const Size(320, 568));
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Orders ahead'));
+      await openHome(tester, 'ahead');
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(find.byKey(const ValueKey('ahead-prep:2026-11-21')), 200);
       await tapKey(tester, 'ahead-prep:2026-11-21');

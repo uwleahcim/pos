@@ -1075,7 +1075,7 @@ kept in the check's history.
 
 ### Adding a driver
 
-In the app: Orders screen › the three dots › **Location**, a manager's PIN, **Staff and PINs**, then **Add
+In the app: Orders screen › **More** › **Location**, a manager's PIN, **Staff and PINs**, then **Add
 a person**: the driver's name, the role **Driver** and a PIN of four digits that nobody else has. They
 sign in with it at once, and are offered on the next delivery handed out. The whole of it is in
 `staff.md`.
@@ -1104,7 +1104,8 @@ from that minute.
 
 ### The Deliveries screen
 
-The three dots of the list of checks › **Deliveries** (on a wide screen it is in the bar). It has two lists,
+Orders screen › **Deliveries**: a button in the row at the top of a tablet or a Mac, a tile under **More** on
+every screen (`home-screen.md`). It has two lists,
 one under the other on a phone and side by side on a tablet:
 
 - **Waiting**: the deliveries that have not left, the packed ones first and then by the time promised.

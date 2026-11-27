@@ -74,8 +74,8 @@ back is not built (payments are parked).
 
 ## Orders ahead
 
-On the list of checks: the menu (or the button in the bar on a wide screen), **Orders ahead**. Anyone
-signed in can open it.
+On the orders screen: **Orders ahead**, a button in the row at the top of a tablet or a Mac, and a tile
+under **More** on every screen (`home-screen.md`). Anyone signed in can open it.
 
 It lists every to-go order a customer named a time for that has not been handed over, by the day it is for,
 the earliest first.
