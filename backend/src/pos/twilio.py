@@ -22,13 +22,21 @@ The commonest fault of a new account shows only there: a number that is not regi
 (A2P 10DLC) is taken by Twilio and thrown away by the carrier. So the hub asks Twilio after each text what
 became of it, a few seconds on and once more later, and keeps the answer.
 
-**What is kept** (`about`, for the page Keys and connections): for each of the last few hundred texts when
-it was, of which kind, for which order, and what became of it. Never the number and never the words. The
-log names the order and the outcome, nothing of the customer.
+**What is kept** here (`about`, for the page Keys and connections): for each of the last few hundred texts
+when it was, of which kind, for which order, and what became of it. Never the number and never the words:
+those are the conversation's to keep (below). The log names the order and the outcome, nothing of the
+customer.
 
 **Two guards against a text gone wrong.** The same words to the same number are sent once in ten minutes
 (a Ready pressed, taken back and pressed again tells the customer once), and no more than `MOST_AN_HOUR`
 texts go out in an hour, whatever asks for them.
+
+**The other way** (docs/text-inbox.md). The same account is asked for the texts that came to the
+restaurant's number (`heard`: Twilio's list of the account's messages since a moment), which pictures a
+text carries (`pictures_of`) and for a picture itself (`picture`). A hub has no address on the internet for
+Twilio to call, so it asks. And a text a person typed at a terminal goes out by the same line as the POS's
+own (`deliver`). With a `keeper` (`pos.texts.Texts`) every text that goes out is written down in its
+conversation, and what becomes of it is told there: that is where the words are kept, and only there.
 """
 
 from __future__ import annotations
@@ -41,15 +49,20 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from typing import Any, Protocol
 
 import httpx
 
 from .messaging import Message
+from .texts import PICTURE_MAX, Picture, number_of
 
 log = logging.getLogger("pos.messaging")
 
 API = "https://api.twilio.com"
+SERVICES = "https://messaging.twilio.com"
+"""Where Twilio says which numbers a Messaging Service sends from and is texted at."""
 ACCOUNT_SID = re.compile(r"^AC[0-9a-fA-F]{32}$")
 """A Twilio account's own name: AC and 32 letters and digits. It is on the first page of Twilio's console."""
 KEY_SID = re.compile(r"^SK[0-9a-fA-F]{32}$")
@@ -58,6 +71,10 @@ SERVICE_SID = re.compile(r"^MG[0-9a-fA-F]{32}$")
 """A Messaging Service's name: Twilio then picks the number to send from itself."""
 ANY_SID = re.compile(r"^[A-Z]{2}[0-9a-fA-F]{32}$")
 """Any name Twilio gives a thing of its own. None of them is a secret."""
+TEXT_SID = re.compile(r"^(SM|MM)[0-9a-fA-F]{32}$")
+"""A text's own name at Twilio."""
+PICTURE_SID = re.compile(r"^ME[0-9a-fA-F]{32}$")
+"""The name of a picture a text carries."""
 SECRET = re.compile(r"^[!-~]{20,128}$")
 """The Auth Token, or an API key's secret: 32 letters and digits today. Only what is plainly none is turned
 away here. Whether it is the right one Twilio says, on a try."""
@@ -73,7 +90,15 @@ KEPT = 400
 """How many texts' outcomes are kept, the newest."""
 TIMEOUT = 10.0
 
-WAITING, SENT, DELIVERED, FAILED = "waiting", "sent", "delivered", "failed"
+WAITING, SENT, DELIVERED, READ, FAILED = "waiting", "sent", "delivered", "read", "failed"
+TYPED = "text"
+"""The kind of a text a person typed at a terminal, among the outcomes kept for the page Keys and connections."""
+LIST_PAGE = 100
+"""How many messages Twilio is asked for at a time."""
+LIST_PAGES = 5
+"""The most pages one asking reads: a hub that was off for days catches up over a few askings."""
+NUMBERS_FOR = 600.0
+"""For how long the numbers of a Messaging Service are remembered before Twilio is asked again, in seconds."""
 
 NOT_REACHED = "Twilio could not be reached"
 NO_ANSWER = "Twilio did not answer: the text may or may not have gone"
@@ -201,9 +226,18 @@ def config_of(data: Mapping[str, str] | None) -> TwilioConfig | None:
     return TwilioConfig(data["account"], data["key"], data["sender"], data.get("key_sid", ""))
 
 
+class Keeper(Protocol):
+    """Where the texts that go out are written down (`pos.texts.Texts`): the conversations."""
+
+    def wrote(self, *, to: str, body: str, kind: str, order_id: str = "", name: str = "") -> str | None: ...
+
+    def became(self, text_id: str, *, state: str, sid: str = "", code: int | None = None, said: str = "") -> None: ...
+
+
 @dataclass
 class Outcome:
-    """What became of one text. No number and no words: the order it was for, and how it went."""
+    """What became of one text. No number and no words: the order it was for, and how it went. `text_id`
+    names it in its conversation, where there is a keeper."""
 
     at_ms: int
     kind: str
@@ -212,6 +246,7 @@ class Outcome:
     code: int | None = None
     said: str = ""
     sid: str = field(default="", repr=False)
+    text_id: str = field(default="", repr=False)
 
     def about(self) -> dict[str, Any]:
         return {
@@ -238,8 +273,13 @@ class TwilioMessenger:
         now: Callable[[], float] = time.time,
         background: bool = True,
         sleep: Callable[[float], None] = time.sleep,
+        keeper: Keeper | None = None,
     ) -> None:
         self.config = config
+        self.keeper = keeper
+        self._numbers: tuple[float, frozenset[str]] | None = None  # of the Messaging Service, and when asked
+        self.heard_fault = ""
+        """Why Twilio's list of messages could not be read the last time it was asked; nothing when it was."""
         self._client = httpx.Client(
             base_url=API, auth=(config.user, config.secret), transport=transport, timeout=TIMEOUT
         )
@@ -257,7 +297,8 @@ class TwilioMessenger:
     # --- the line ----------------------------------------------------------------------------------------
 
     def send(self, message: Message) -> None:
-        """Puts a text in the line. Answers at once; what becomes of it is kept (`about`)."""
+        """Puts a text in the line. Answers at once; what becomes of it is kept (`about`), and with a keeper
+        the text itself is written down in the customer's conversation."""
         outcome = Outcome(int(self._now() * 1000), message.kind, message.order_id)
         with self._lock:
             self._outcomes.append(outcome)
@@ -269,15 +310,44 @@ class TwilioMessenger:
         if held:
             self._settle(outcome, FAILED, said=held)
             return
+        if self.keeper is not None:
+            try:
+                outcome.text_id = (
+                    self.keeper.wrote(
+                        to=to, body=message.body, kind=message.kind, order_id=message.order_id, name=message.name
+                    )
+                    or ""
+                )
+            except Exception as err:  # noqa: BLE001 - an order's text goes whether or not it could be written down
+                log.warning("texts: one could not be written down (%s)", type(err).__name__)
         self._later(0.0, lambda: self._try(outcome, to, message.body, 1))
 
-    def _held_back(self, to: str, body: str) -> str:
-        """Why this text is not sent at all: the same went to the same number just now, or too many went
-        out this hour. Nothing when it may go; it is then counted as one that went."""
+    def deliver(self, text_id: str, to: str, body: str) -> None:
+        """Puts a text a person typed in the line. It is in its conversation already (`pos.texts`), under
+        `text_id`: what becomes of it is told there. The same words twice are a person's to send; the hour's
+        limit holds for them as for every text."""
+        outcome = Outcome(int(self._now() * 1000), TYPED, "", text_id=text_id)
+        with self._lock:
+            self._outcomes.append(outcome)
+        number = e164(to)
+        if number is None:
+            self._settle(outcome, FAILED, said=NO_MOBILE)
+            return
+        held = self._held_back(number, body, twice=True)
+        if held:
+            self._settle(outcome, FAILED, said=held)
+            return
+        self._later(0.0, lambda: self._try(outcome, number, body, 1))
+
+    def _held_back(self, to: str, body: str, *, twice: bool = False) -> str:
+        """Why this text is not sent at all: the same went to the same number just now (unless it may go
+        `twice`), or too many went out this hour. Nothing when it may go; it is then counted as one that
+        went."""
         now = self._now()
         with self._lock:
             hour = [went for went in self._went if went[0] > now - 3600]
-            if any(went[1] == to and went[2] == body and went[0] > now - SAME_AGAIN_MS / 1000 for went in hour):
+            same = any(went[1] == to and went[2] == body and went[0] > now - SAME_AGAIN_MS / 1000 for went in hour)
+            if same and not twice:
                 return SAME_AGAIN
             if len(hour) >= MOST_AN_HOUR:
                 return TOO_MANY
@@ -398,8 +468,8 @@ class TwilioMessenger:
 
     def _look(self, outcome: Outcome, n: int) -> None:
         status, code = self._status(outcome.sid)
-        if status == "delivered":
-            self._settle(outcome, DELIVERED)
+        if status in ("delivered", "read"):
+            self._settle(outcome, READ if status == "read" else DELIVERED)
         elif status in ("undelivered", "failed"):
             self._settle(outcome, FAILED, code=code, said=said_of(code) if code else NOT_DELIVERED)
         elif n + 1 < len(LOOKS):
@@ -409,10 +479,16 @@ class TwilioMessenger:
     def _settle(self, outcome: Outcome, state: str, *, code: int | None = None, said: str = "") -> None:
         with self._lock:
             outcome.state, outcome.code, outcome.said = state, code, said
+        what = f"the {outcome.kind} text for order {outcome.order_id}" if outcome.order_id else "a typed text"
         if state == FAILED:
-            log.warning("texts: the %s text for order %s did not go: %s", outcome.kind, outcome.order_id, said)
+            log.warning("texts: %s did not go: %s", what, said)
         else:
-            log.info("texts: the %s text for order %s: %s", outcome.kind, outcome.order_id, state)
+            log.info("texts: %s: %s", what, state)
+        if self.keeper is not None and outcome.text_id:
+            try:
+                self.keeper.became(outcome.text_id, state=state, sid=outcome.sid, code=code, said=said)
+            except Exception as err:  # noqa: BLE001 - the text went as it went, written down or not
+                log.warning("texts: what became of one could not be written down (%s)", type(err).__name__)
 
     # --- by hand -----------------------------------------------------------------------------------------
 
@@ -432,7 +508,7 @@ class TwilioMessenger:
             self._sleep(every)
             waited += every
             status, fault = self._status(sid)
-            if status == "delivered":
+            if status in ("delivered", "read"):
                 return {"ok": True, "state": DELIVERED, "code": None, "said": ""}
             if status in ("undelivered", "failed"):
                 return {"ok": False, "state": FAILED, "code": fault, "said": said_of(fault) if fault else NOT_DELIVERED}
@@ -448,16 +524,132 @@ class TwilioMessenger:
         with self._lock:
             day = [outcome for outcome in self._outcomes if outcome.at_ms >= since]
             failed = [outcome for outcome in day if outcome.state == FAILED]
+            # a text a person typed says in its conversation that it did not go: the page names an order's
+            of_orders = [outcome for outcome in failed if outcome.order_id]
             return {
                 "provider": self.name,
                 "sender": self.config.sender,
                 "day": {
                     "texts": len(day),
-                    "delivered": sum(1 for outcome in day if outcome.state == DELIVERED),
+                    "delivered": sum(1 for outcome in day if outcome.state in (DELIVERED, READ)),
                     "failed": len(failed),
                 },
-                "last_failed": failed[-1].about() if failed else None,
+                "last_failed": of_orders[-1].about() if of_orders else None,
             }
+
+    # --- the other way: what came -------------------------------------------------------------------------
+
+    def heard(self, since_ms: int) -> list[dict[str, Any]] | None:
+        """The texts of the restaurant's number that Twilio has from `since_ms` on, in and out, the newest
+        first, each as Twilio's list of messages describes it. None when Twilio could not be asked or would
+        not say (`heard_fault` says why). Texts to and from the account's other numbers are left out."""
+        since = datetime.fromtimestamp(since_ms / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path = f"/2010-04-01/Accounts/{self.config.account}/Messages.json"
+        params: dict[str, str] | None = {"DateSent>": since, "PageSize": str(LIST_PAGE)}
+        numbers = self._service_numbers() if self.config.by_service else frozenset()
+        found: list[dict[str, Any]] = []
+        for _ in range(LIST_PAGES):
+            try:
+                answer = self._client.get(path, params=params)
+            except (httpx.HTTPError, RuntimeError):
+                self.heard_fault = NOT_REACHED
+                return None
+            told = _json(answer)
+            rows = told.get("messages")
+            if answer.status_code != 200 or not isinstance(rows, list):
+                code = told.get("code")
+                if answer.status_code == 401 and not isinstance(code, int):
+                    code = 20003
+                self.heard_fault = _why(code if isinstance(code, int) else answer.status_code)[1]
+                return None
+            older = False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if _sent_ms(row) is not None and _sent_ms(row) < since_ms - 60_000:  # type: ignore[operator]
+                    older = True  # Twilio went by the day alone: the rest of the list is older still
+                    continue
+                if self._ours(row, numbers):
+                    found.append(row)
+            following = told.get("next_page_uri")
+            if older or not rows or not isinstance(following, str) or not following.startswith("/2010-04-01/"):
+                break
+            path, params = following, None
+        self.heard_fault = ""
+        return found
+
+    def _ours(self, row: Mapping[str, Any], numbers: frozenset[str]) -> bool:
+        """Whether a message of the account's is one of this restaurant's texts: to or from the number the
+        POS sends from, or through its Messaging Service (by the service's name on the message, by one of
+        its numbers, or as a chat message, which only a service carries)."""
+        inbound = str(row.get("direction") or "").startswith("inbound")
+        mine = str((row.get("to") if inbound else row.get("from")) or "")
+        if not self.config.by_service:
+            return not mine.startswith("rcs:") and number_of(mine) == self.config.sender
+        if row.get("messaging_service_sid") == self.config.sender:
+            return True
+        return mine.startswith("rcs:") or number_of(mine) in numbers
+
+    def _service_numbers(self) -> frozenset[str]:
+        """The numbers of the Messaging Service the POS sends through, asked of Twilio now and then: a text
+        that came to one of them is the restaurant's. What was known last where Twilio does not say."""
+        now = self._now()
+        if self._numbers is not None and now - self._numbers[0] < NUMBERS_FOR:
+            return self._numbers[1]
+        known = self._numbers[1] if self._numbers is not None else frozenset()
+        try:
+            answer = self._client.get(
+                f"{SERVICES}/v1/Services/{self.config.sender}/PhoneNumbers", params={"PageSize": "100"}
+            )
+            rows = _json(answer).get("phone_numbers") if answer.status_code == 200 else None
+        except (httpx.HTTPError, RuntimeError):
+            rows = None
+        if isinstance(rows, list):
+            listed = (number_of(row.get("phone_number")) for row in rows if isinstance(row, dict))
+            known = frozenset(number for number in listed if number)
+        self._numbers = (now, known)
+        return known
+
+    def pictures_of(self, sid: str) -> list[Picture] | None:
+        """The pictures a text carries, as Twilio lists them: each one's name and what it is. None when
+        Twilio could not be asked."""
+        if not TEXT_SID.fullmatch(sid):
+            return None
+        try:
+            answer = self._client.get(f"/2010-04-01/Accounts/{self.config.account}/Messages/{sid}/Media.json")
+        except (httpx.HTTPError, RuntimeError):
+            return None
+        rows = _json(answer).get("media_list") if answer.status_code == 200 else None
+        if not isinstance(rows, list):
+            return None
+        return [
+            Picture(str(row["sid"]), str(row.get("content_type") or ""))
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("sid"), str) and PICTURE_SID.fullmatch(row["sid"])
+        ]
+
+    def picture(self, sid: str, picture_sid: str) -> tuple[str, bytes] | None:
+        """One picture of a text, fetched from Twilio: what it says it is, and the picture. None when it
+        could not be had, and for one bigger than a screen is handed (`PICTURE_MAX`)."""
+        if not TEXT_SID.fullmatch(sid) or not PICTURE_SID.fullmatch(picture_sid):
+            return None
+        url = f"/2010-04-01/Accounts/{self.config.account}/Messages/{sid}/Media/{picture_sid}"
+        try:
+            # Twilio answers with where the picture is kept: the account's key is not sent on there
+            with self._client.stream("GET", url, follow_redirects=True) as answer:
+                if answer.status_code != 200:
+                    return None
+                parts: list[bytes] = []
+                size = 0
+                for part in answer.iter_bytes():
+                    size += len(part)
+                    if size > PICTURE_MAX:
+                        return None
+                    parts.append(part)
+                kind = answer.headers.get("content-type", "").split(";")[0].strip().lower()
+        except (httpx.HTTPError, RuntimeError):
+            return None
+        return kind, b"".join(parts)
 
 
 def _json(answer: httpx.Response) -> dict[str, Any]:
@@ -468,8 +660,24 @@ def _json(answer: httpx.Response) -> dict[str, Any]:
     return told if isinstance(told, dict) else {}
 
 
+def _sent_ms(row: Mapping[str, Any]) -> int | None:
+    """When Twilio says a message was sent, as wall-clock ms; None where it does not say (one still in
+    its line)."""
+    raw = row.get("date_sent")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        at = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    return int(at.timestamp() * 1000)
+
+
 __all__ = [
     "MOST_AN_HOUR",
+    "Keeper",
     "Outcome",
     "TwilioConfig",
     "TwilioMessenger",

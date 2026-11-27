@@ -269,10 +269,15 @@ def use_texts(app: FastAPI) -> None:
     fresh: Messenger = (
         TwilioMessenger(config, **app.state.texts_made_with) if config is not None else messenger_from_env()
     )
+    if isinstance(fresh, TwilioMessenger) and fresh.keeper is None:
+        fresh.keeper = app.state.texts  # what goes out is written down in the customer's conversation
     app.state.messenger = fresh
     app.state.notifier.messenger = fresh
     if isinstance(old, TwilioMessenger):
         old.close()
+    if isinstance(fresh, TwilioMessenger) and app.state.listens_texts:
+        app.state.text_listener.start()  # and Twilio is asked for the texts that come; nothing where it already is
+    app.state.feed.changed("texts")  # the screens say whether the hub can text
     log.warning("texts to customers: %s", "they go out through Twilio" if config is not None else "no service now")
 
 

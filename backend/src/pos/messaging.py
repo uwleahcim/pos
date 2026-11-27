@@ -28,6 +28,7 @@ class Message:
     locale: str
     order_id: str
     kind: str  # ready | delayed | out
+    name: str = ""  # the customer's name as the order has it: what their conversation is listed under
 
     def as_json(self) -> dict[str, Any]:
         return {"to": self.to, "body": self.body, "locale": self.locale, "order_id": self.order_id, "kind": self.kind}
@@ -116,7 +117,8 @@ def text_for(
         pay=TEMPLATES["pay"][lang] if unpaid else "",
         time=at.strftime("%H:%M") if at is not None else "",
     )
-    return Message(to=phone, body=body, locale=lang, order_id=state.order_id, kind=kind)
+    name = str(fields.get("customer_name") or "").strip()
+    return Message(to=phone, body=body, locale=lang, order_id=state.order_id, kind=kind, name=name)
 
 
 class Notifier:

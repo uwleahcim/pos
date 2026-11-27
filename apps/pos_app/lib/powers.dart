@@ -62,6 +62,13 @@ const powerGroups = [
   PowerGroup('Deliveries', [
     Power('deliver', 'Take deliveries out', 'A delivery can be handed to them: they are offered as a driver.'),
   ]),
+  PowerGroup('Customers', [
+    Power(
+      'texts',
+      'Text with customers',
+      'Read what customers text the restaurant, answer them, and start a conversation.',
+    ),
+  ]),
   PowerGroup('The shift', [
     Power('rush', 'Set the kitchen rush', 'Add minutes to every new quote while the kitchen is behind.'),
     Power('notes', 'Write the notes for the shift', 'Put a note up for everybody, change it, take it down.'),
@@ -138,11 +145,13 @@ class Powers {
 
   /// What the hub did before the table could be changed, and what a hub older than the table still does:
   /// the servers and the bartenders take tables, the hosts give them out, and everything else is a
-  /// manager's or an owner's. The drivers take deliveries out, where a hub knows of drivers.
+  /// manager's or an owner's. The drivers take deliveries out, where a hub knows of drivers, and whoever
+  /// is out front texts with customers, where a hub keeps the texts (docs/text-inbox.md).
   static const standard = Powers({
     'take_tables': ['server', 'bartender'],
     'assign_tables': ['host'],
     'deliver': ['driver'],
+    'texts': ['server', 'bartender', 'host', 'cashier'],
   }, handed: handedRoles);
 
   final Map<String, List<String>> roles;

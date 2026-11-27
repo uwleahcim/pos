@@ -107,15 +107,18 @@ def test_the_table_starts_as_the_hub_always_was():
     assert roles == STANDARD == DEFAULTS["powers"]["roles"]
     # nothing is handed out to start but the tables: servers and bartenders take them, hosts give them out.
     # A driver, the role that came with deliveries, starts with the one power that came with it
-    # (docs/delivery.md): nobody who was on the staff before holds anything new.
+    # (docs/delivery.md). The customers' texts came later, with nothing before them to keep as it was: they
+    # start with everybody who takes an order or a booking (docs/text-inbox.md), not the kitchen or a driver.
     assert {power: handed for power, handed in roles.items() if handed} == {
         "take_tables": ["server", "bartender"],
         "assign_tables": ["host"],
         "deliver": ["driver"],
+        "texts": ["server", "bartender", "host", "cashier"],
     }
-    assert held(None, "server") == held(None, "bartender") == ["take_tables"]
-    assert held(None, "host") == ["assign_tables"]
-    assert held(None, "cashier") == held(None, "kitchen") == []
+    assert held(None, "server") == held(None, "bartender") == ["take_tables", "texts"]
+    assert held(None, "host") == ["assign_tables", "texts"]
+    assert held(None, "cashier") == ["texts"]
+    assert held(None, "kitchen") == []
     assert held(None, "driver") == ["deliver"]
     assert clean_powers(DEFAULTS["powers"]) == DEFAULTS["powers"]
 
@@ -196,6 +199,7 @@ def test_any_screen_reads_the_table_with_what_it_needs_to_draw_it():
         "take_tables",
         "assign_tables",
         "deliver",
+        "texts",
     ]
 
 
@@ -376,7 +380,8 @@ def test_a_power_opens_its_own_doors_and_no_others(power):
     supper(c)
     assert hand(c, **{power: ["host"]}).status_code == 200
     answer = session(c, "Holly")
-    assert answer.status_code == 200 and answer.json()["powers"] == sorted(["assign_tables", power], key=EVERY.index)
+    assert answer.status_code == 200
+    assert answer.json()["powers"] == sorted(["assign_tables", "texts", power], key=EVERY.index)
     headers = {"authorization": f"Bearer {answer.json()['token']}"}
     for door, method, path, body in DOORS:
         status = call(c, method, path, body, headers)
@@ -400,6 +405,7 @@ def test_a_power_that_is_no_session_opens_no_session():
         "exempt",
         "take_tables",
         "assign_tables",
+        "texts",
     ]
 
 

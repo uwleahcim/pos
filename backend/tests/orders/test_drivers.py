@@ -32,8 +32,9 @@ def test_a_driver_delivers_to_start_and_nobody_else_holds_anything_new():
     assert held(None, "driver") == ["deliver"]  # and nothing else: no voids, no reports, no tables
     for role in ("server", "bartender", "host", "cashier", "kitchen"):
         assert not holds(None, role, "deliver")
-    # the powers there were are whose they were
-    assert {power: roles for power, roles in STANDARD.items() if power != "deliver" and roles} == {
+    # the powers there were are whose they were (texts with customers came later, to roles of its own:
+    # docs/text-inbox.md)
+    assert {power: roles for power, roles in STANDARD.items() if power not in ("deliver", "texts") and roles} == {
         "take_tables": ["server", "bartender"],
         "assign_tables": ["host"],
     }

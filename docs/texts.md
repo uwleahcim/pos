@@ -117,18 +117,21 @@ Only once an account is typed in, and only to Twilio:
   number, and the restaurant's name. Nothing else of the order: no dishes, no prices, no address.
 - For a try: the number the manager typed, used for that one text and kept nowhere.
 
-What the hub keeps of a text is when it was, of which kind, for which order, and what became of it. **Never
-the number and never the words.** The hub's log names the order and the outcome. The Auth Token is sealed
-like every key (`hub-keys.md`, "Where a typed key is kept"), is never shown again, and is in no log and no
-answer.
+What the hub keeps of a text changed on 27 November 2026, with the conversations (`text-inbox.md`, "What
+the hub keeps"): the number, the words and what became of it, in the hub's own database, so that the text
+shows in the conversation with that customer. Before that it kept neither the number nor the words. The
+hub's log still names only the order and the outcome. The Auth Token is sealed like every key
+(`hub-keys.md`, "Where a typed key is kept"), is never shown again, and is in no log and no answer.
 
 Twilio keeps its own record of every text in its console, under its own terms.
 
 ## Replies, and STOP
 
-A customer who answers a text answers the Twilio number, not the POS: nobody reads replies at the POS.
-Twilio handles STOP, START and HELP by itself, and the hub is told "the customer answered STOP" when it
-tries such a number again. The texts themselves do not say "Reply STOP to opt out": they are the words the
+A customer who answers a text answers the restaurant's Twilio number, and since 27 November 2026 that
+answer shows on the POS: the Texts button on the Orders screen, in the conversation with that customer,
+under the order text they answered (`text-inbox.md`). Twilio handles STOP, START and HELP by itself; the
+POS reads STOP and marks the conversation, and the hub is told "the customer answered STOP" when it tries
+such a number again. The order texts themselves do not say "Reply STOP to opt out": they are the words the
 POS always had.
 
 ## What it costs
@@ -144,7 +147,6 @@ Each hub sends the texts for what its own screens write. Both use the same accou
 ## What is not built
 
 - A text when a table is ready for a party on the waitlist (`waitlist.md`), and anything for a reservation.
-- Reading what a customer answers.
 - A switch for each kind of text: with an account all three go, without one none.
 - An alert to a manager, or a mark on the order, when a text did not go.
 - Setting the account from the hub's terminal: it is typed in the app only.
@@ -166,7 +168,7 @@ All of them a manager's or an owner's, like every key's.
 | `POST /hub/texts/try` | `{"to": "781 555 0142"}`: one text now. Answers like the `GET`, with `tried`: `ok`, `state` (`delivered`, `sent`, `failed`), `code`, `said`. 409 `no_service` without an account |
 
 `GET /messages` lists what a hub without a texting service would have sent (the bench's view). With an
-account it lists nothing: no number is kept to show.
+account it lists nothing: what went is in the conversations (`GET /texts`, `text-inbox.md`).
 
 The code: `backend/src/pos/messaging.py` words the texts and decides when one is due,
 `backend/src/pos/twilio.py` sends them, `backend/src/pos/api/keys.py` puts a typed account to work, and
