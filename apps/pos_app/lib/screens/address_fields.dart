@@ -5,6 +5,7 @@ import '../address_list.dart';
 import '../address_parts.dart';
 import '../takeout.dart';
 import 'address_box.dart';
+import 'state_box.dart';
 
 /// A delivery's address in its parts, each in a box of its own (docs/delivery.md, "The address in its
 /// parts"): the number and the street, the apartment or unit, the town, the state and the ZIP.
@@ -19,6 +20,9 @@ import 'address_box.dart';
 /// line fills every box: with the parts the map service said, and with what the line reads as where it
 /// said none. Where the service's list leaves the ZIP out (Google's), the hub is asked for it once, for
 /// that line ([whole]), and the address is done when it has answered.
+///
+/// The state's box is a list of the fifty states ([StateBox]): a tap opens it, typing narrows it down, and
+/// whatever fills an address in fills it like the other boxes.
 ///
 /// Space is short on a phone: the unit and the town share a line there, and the state and the ZIP the
 /// next. On anything wider the unit stands beside the street, and the town, the state and the ZIP share
@@ -173,7 +177,7 @@ class _AddressFieldsState extends State<AddressFields> {
     street: oneLine(_street.text),
     unit: oneLine(_unit.text),
     city: oneLine(_city.text),
-    state: _state.text.trim().toUpperCase(),
+    state: StateBox.stateIn(_state.text), // one letter is a state still being typed, and none yet
     zip: _zip.text.trim(),
   );
 
@@ -283,8 +287,6 @@ class _AddressFieldsState extends State<AddressFields> {
         );
       });
 
-  static final _capitals = TextInputFormatter.withFunction((_, to) => to.copyWith(text: to.text.toUpperCase()));
-
   InputDecoration _small(String label) => InputDecoration(
     labelText: label,
     counterText: '',
@@ -337,21 +339,16 @@ class _AddressFieldsState extends State<AddressFields> {
             onChanged: (_) => _typed(),
             onEditingComplete: () => _entered(_stateFocus),
           );
-          final state = TextField(
-            key: const ValueKey('event-address:state'),
+          // a list of the fifty states, which typing narrows down; a tap on the list of addresses fills it
+          // like any other box
+          final state = StateBox(
+            fieldKey: const ValueKey('event-address:state'),
             controller: _state,
             focusNode: _stateFocus,
-            textCapitalization: TextCapitalization.characters,
-            textInputAction: TextInputAction.next,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp('[A-Za-z]')),
-              _capitals,
-              LengthLimitingTextInputFormatter(2),
-              _room((now, text) => now.copyWith(state: text)),
-            ],
+            inputFormatters: [_room((now, text) => now.copyWith(state: StateBox.stateIn(text)))],
             decoration: _small('State'),
-            onChanged: (_) => _typed(),
-            onEditingComplete: () => _entered(_zipFocus),
+            onChanged: _typed,
+            onNext: () => _entered(_zipFocus),
           );
           final zip = TextField(
             key: const ValueKey('event-address:zip'),
@@ -399,7 +396,7 @@ class _AddressFieldsState extends State<AddressFields> {
                   children: [
                     Expanded(child: city),
                     gap,
-                    SizedBox(width: 72 * scale, child: state),
+                    SizedBox(width: 84 * scale, child: state),
                     gap,
                     SizedBox(width: 104 * scale, child: zip),
                   ],

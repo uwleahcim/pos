@@ -53,8 +53,14 @@ class AddressSuggestion {
   /// out; null where there is nothing more to ask.
   final String? ref;
 
-  /// What a tap puts in a form's boxes.
-  AddressParts get boxes => parts ?? AddressParts.parse(address);
+  /// What a tap puts in a form's boxes: the parts the service said, or what the line reads as where it said
+  /// none. A state the service left out of its parts is the one the line itself names, so the state's box
+  /// is filled whichever way a service says it.
+  AddressParts get boxes {
+    final parts = this.parts;
+    if (parts == null) return AddressParts.parse(address);
+    return parts.state.isEmpty ? parts.copyWith(state: AddressParts.parse(address).state) : parts;
+  }
 
   /// One of the restaurant's own earlier deliveries, not a map service's answer.
   bool get own => from == 'customer' || from == 'orders';
