@@ -914,7 +914,7 @@ void main() {
   group('on the floor', () {
     testWidgets('the book is one tap past the waitlist, and each leads to the other', (tester) async {
       final t = await pumpFloorWith(tester, holly);
-      expect(find.byTooltip('Reservations'), findsNothing); // the bar keeps its room
+      expect(key('home-quick:reservations'), findsOneWidget); // a tablet's row has a button of its own as well
       await tapKey(tester, 'waitlist-open');
       expect(find.descendant(of: key('waitlist-reservations'), matching: find.text('Reservations')), findsOneWidget);
       await tapKey(tester, 'waitlist-reservations');
@@ -934,9 +934,10 @@ void main() {
 
     testWidgets('on a phone the book is in the menu', (tester) async {
       await pumpFloorWith(tester, amy, size: const Size(390, 800));
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Reservations · 3 to come')); // today's, still to sit down
+      await openMore(tester);
+      // today's, still to sit down
+      expect(find.descendant(of: homeTile('reservations'), matching: find.text('3 to come')), findsOneWidget);
+      await tester.tap(homeTile('reservations'));
       await tester.pumpAndSettle();
       expect(find.byType(ReservationsScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -1095,10 +1096,12 @@ void main() {
     testWidgets('a 320-wide phone: the menu\'s way in, the seating strip and the question fit', (tester) async {
       await pumpFloorWith(tester, holly, size: const Size(320, 640));
       expect(tester.takeException(), isNull);
-      await tester.tap(find.byTooltip('More'));
+      await openMore(tester);
+      expect(tester.takeException(), isNull); // the tile with its count fits the menu
+      expect(find.descendant(of: homeTile('reservations'), matching: find.text('3 to come')), findsOneWidget);
+      await tester.ensureVisible(homeTile('reservations'));
       await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull); // the row with its count fits the menu
-      await tester.tap(find.text('Reservations · 3 to come'));
+      await tester.tap(homeTile('reservations'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tapKey(tester, 'booking-seat:b2');

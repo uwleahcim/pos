@@ -49,8 +49,8 @@ merges after any disconnect.
 - Customers remembered by their phone number (who is calling on the to-go form, how often they ordered, one
   note line, the tags a manager put on them, their past orders with Same again at today's menu):
   `docs/customers.md`
-- Location settings (coursing on or off, the courses by name, quote times; manager only) and arranging the check
-  by dragging its lines: `docs/location-settings.md`
+- Location settings (coursing on or off, the courses by name, seat numbers on or off, quote times; manager
+  only) and arranging the check by dragging its lines: `docs/location-settings.md`
 - The floor map at a glance (every table where the plan has it and as large as the aisles allow, words at
   a size that reads on a phone as on a Mac, a small table saying less and its room saying the rest, the
   marks no table loses): `docs/floor-map.md`

@@ -23,6 +23,7 @@ import 'package:pos_app/settings.dart';
 import 'package:pos_app/takeout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'hub.dart' show homeIds, openHome;
 import 'location_rows.dart';
 
 /// Counter mode and takeout (architecture section 12): a to-go order is named and numbered, paid before the
@@ -659,7 +660,7 @@ void main() {
 
   testWidgets('a manager sets the quote times for every terminal; a server has no such button', (tester) async {
     final t = await pumpOrders(tester, const []);
-    await tester.tap(find.byTooltip('Location'));
+    await openHome(tester, 'location');
     await tester.pumpAndSettle();
     expect(find.text('Manager PIN'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, '1111');
@@ -692,7 +693,7 @@ void main() {
     await stop(tester);
 
     await pumpOrders(tester, const [], role: 'server');
-    expect(find.byTooltip('Location'), findsNothing);
+    expect(homeIds(tester), isNot(contains('location')));
     await stop(tester);
   });
 }

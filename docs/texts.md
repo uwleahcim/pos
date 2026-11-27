@@ -51,7 +51,7 @@ The registration at Twilio names what kind of texts the number sends. These are 
 who gave their number with an order. If the registration was made for something else alone (offers, say),
 add order updates to it in Twilio's console, or the phone companies may filter these.
 
-1. On a terminal: the Orders screen, the three dots, **Location**, a manager's PIN, **Keys and
+1. On a terminal: the Orders screen, **More**, **Location**, a manager's PIN, **Keys and
    connections**, and the card **Texts to customers (Twilio)**.
 2. **Type the account**:
    - **Account SID**: on the first page of Twilio's console (console.twilio.com). It begins with `AC`.

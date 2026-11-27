@@ -116,9 +116,10 @@ class _AddressListDialogState extends State<AddressListDialog> {
     });
   }
 
-  /// One service: its place in the order and its name with the switch, how it stands, and the button that
-  /// tries it where the hub has a key for it. [index] is where it stands in the order, from 0. With
-  /// [handle], a handle before its badge moves it in the order.
+  /// One service: its name with the switch, how it stands, and the button that tries it where the hub has a
+  /// key for it. Where it stands in the list says when it is asked, so no number is put before its name.
+  /// [index] is where it stands in the order, from 0. With [handle], a handle before its badge moves it in
+  /// the order.
   Widget _service(BuildContext context, int index, AddressService service, {bool handle = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
@@ -152,7 +153,7 @@ class _AddressListDialogState extends State<AddressListDialog> {
       ),
       value: on,
       onChanged: (to) => setState(() => _on[service.name] = to),
-      title: Text('${index + 1}. ${service.title}', key: ValueKey('address-list-name:${service.name}')),
+      title: Text(service.title, key: ValueKey('address-list-name:${service.name}')),
       subtitle: Text(
         now.words,
         key: ValueKey('address-list-state:${service.name}'),

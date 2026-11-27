@@ -10,7 +10,7 @@ PIN they have.
 
 ## The page
 
-Orders screen › the three dots › **Location**, a manager's PIN, then **Staff and PINs**. The row itself
+Orders screen › **More** › **Location**, a manager's PIN, then **Staff and PINs**. The row itself
 says how many people there are and what needs doing ("4 people · all with PINs from the guide, which
 anybody can read"). Only a manager or an owner sees the row and opens the page. It is not a power that can
 be handed to another role (`roles.md`).

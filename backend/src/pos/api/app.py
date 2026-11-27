@@ -127,6 +127,7 @@ from ..settings import (
     clean_printers,
     clean_quotes,
     clean_rush,
+    clean_seats,
     clean_table_timers,
     clean_ticket_skips,
     clean_tickets,
@@ -418,6 +419,12 @@ class CoursingIn(BaseModel):
     enabled: bool = True
     default: str | None = Field(None, description="the course a new dish goes to; the first one when left out")
     courses: list[CourseIn] = Field(default_factory=list)
+
+
+class SeatsIn(BaseModel):
+    """Whether a table's dishes are rung in on seats."""
+
+    enabled: bool
 
 
 class VoidReasonIn(BaseModel):
@@ -1684,6 +1691,20 @@ def create_app(
         them. Every terminal follows on its next order."""
         manager_from(app.state.tokens, authorization)
         return write_setting("coursing", body.model_dump(), clean_coursing)
+
+    @app.get("/settings/seats")
+    def read_seats() -> dict[str, Any]:
+        """Whether a table's dishes are rung in on seats (`enabled`): on unless a manager turned it off."""
+        settings: SettingStore = app.state.settings
+        return settings.get("seats")
+
+    @app.put("/settings/seats")
+    def write_seats(body: SeatsIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager turns the seats of a table's order on or off. Off, the order screen offers none: a dish
+        is the table's, and the party's size is still set there. Every terminal follows on its next order;
+        a dish already on a seat keeps it."""
+        manager_from(app.state.tokens, authorization)
+        return write_setting("seats", body.model_dump(), clean_seats)
 
     @app.get("/settings/table_timers")
     def read_table_timers() -> dict[str, Any]:

@@ -117,8 +117,8 @@ kitchen.
 
 ### The rush
 
-When the kitchen is behind, a manager taps **Kitchen rush** on the orders screen (the flame; on a phone it
-is under More), gives the PIN and picks **+10, +15, +20, +30 or +45 min**, or **Off**. From then on every
+When the kitchen is behind, a manager taps **More** on the orders screen, then **Kitchen rush** (the
+flame), gives the PIN and picks **+10, +15, +20, +30 or +45 min**, or **Off**. From then on every
 new to-go quote on every screen is that much longer, and one line above the checks says so. Tapping that
 line changes the rush the same way (it asks for a manager's PIN, whoever taps). The Kitchen card on Today
 (`today.md`) sets it too, with the PIN that opened Today.

@@ -275,20 +275,20 @@ void main() {
       // a server with nobody waiting: no button for booked tables alone, the count is on the menu's row
       await pumpFloor(tester, amy, size: phone);
       expect(key('waitlist-open'), findsNothing);
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      expect(find.text('Waitlist'), findsOneWidget);
-      await tester.tap(find.text('Reservations · 2 to come'));
+      await openMore(tester);
+      expect(homeTile('waitlist'), findsOneWidget);
+      expect(find.descendant(of: homeTile('reservations'), matching: find.text('2 to come')), findsOneWidget);
+      expect(key('home-count:reservations:ok'), findsOneWidget);
+      await tester.tap(homeTile('reservations'));
       await tester.pumpAndSettle();
       expect(find.byType(ReservationsScreen), findsOneWidget);
       expect(tester.takeException(), isNull);
       await stop(tester);
 
-      // nothing booked for today: the row is as it was
+      // nothing booked for today: the tile has its name and no count
       await pumpFloor(tester, amy, size: phone, bookings: (_) => []);
-      await tester.tap(find.byTooltip('More'));
-      await tester.pumpAndSettle();
-      expect(find.text('Reservations'), findsOneWidget);
+      await openMore(tester);
+      expect(find.descendant(of: homeTile('reservations'), matching: find.byType(Text)), findsOneWidget);
       await stop(tester);
 
       // the host's button, and everybody's while a party waits, carries the mark

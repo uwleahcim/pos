@@ -5,6 +5,7 @@ import 'package:pos_app/screens/rush.dart';
 import 'package:pos_app/takeout.dart';
 
 import 'counter_test.dart';
+import 'hub.dart' show homeIds, openHome;
 import 'location_rows.dart';
 
 /// Quote times that follow the kitchen (the Toast comparison, 2026-11-15): a manager's rush adds minutes to
@@ -122,7 +123,7 @@ void main() {
     final t = await pumpOrders(tester, const [], before: (hub) async => hub.quotes = quotesNow());
     expect(find.byKey(const ValueKey('rush-strip')), findsNothing);
 
-    await tester.tap(find.byTooltip('Kitchen rush'));
+    await openHome(tester, 'rush');
     await tester.pumpAndSettle();
     expect(find.text('Manager PIN'), findsOneWidget);
     await tester.enterText(find.byType(TextField).last, '9999');
@@ -187,7 +188,7 @@ void main() {
       before: (hub) async => hub.quotes = quotesNow(rush: 30),
     );
     expect(find.text('Kitchen is busy: new quotes +30 min'), findsOneWidget);
-    expect(find.byTooltip('Kitchen rush'), findsNothing);
+    expect(homeIds(tester), isNot(contains('rush')));
     await tester.tap(find.byKey(const ValueKey('rush-strip')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '1111');
@@ -198,7 +199,7 @@ void main() {
     await stop(tester);
 
     await pumpOrders(tester, const []); // a manager, on a hub that was not updated yet
-    expect(find.byTooltip('Kitchen rush'), findsNothing);
+    expect(homeIds(tester), isNot(contains('rush')));
     expect(find.byKey(const ValueKey('rush-strip')), findsNothing);
     await stop(tester);
   });
@@ -344,7 +345,7 @@ void main() {
 
   testWidgets('a manager sets the big-order rule with the quote times; one box alone is not a rule', (tester) async {
     final t = await pumpOrders(tester, const [], before: (hub) async => hub.quotes = quotesNow(rush: 20));
-    await tester.tap(find.byTooltip('Location'));
+    await openHome(tester, 'location');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));
@@ -383,7 +384,7 @@ void main() {
 
   testWidgets('a hub from before big orders is not offered the boxes', (tester) async {
     await pumpOrders(tester, const []);
-    await tester.tap(find.byTooltip('Location'));
+    await openHome(tester, 'location');
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, '9999');
     await tester.tap(find.widgetWithText(FilledButton, 'Open location settings'));

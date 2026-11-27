@@ -596,7 +596,7 @@ void main() {
       final t = await terminal(tester, role: 'server');
       t.hub.timeClock = clockOn();
       await pumpOrdersOn(tester, t);
-      await tester.tap(find.byTooltip('Time clock'));
+      await openHome(tester, 'clock');
       await tester.pumpAndSettle();
       expect(find.text('Your PIN'), findsOneWidget);
 
@@ -620,7 +620,7 @@ void main() {
       final t = await terminal(tester, role: 'server');
       t.hub.timeClock = {...clockOn(), 'enabled': false};
       await pumpOrdersOn(tester, t);
-      expect(find.byTooltip('Time clock'), findsNothing);
+      expect(homeIds(tester), isNot(contains('clock')));
       await stop(tester);
     });
   });

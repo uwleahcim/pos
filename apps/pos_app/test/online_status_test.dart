@@ -406,8 +406,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(key('online-alert'), findsNothing);
       // the way back to them is in the menu, for as long as the hub takes online orders
-      expect(find.byTooltip('Online orders'), findsOneWidget);
-      await tester.tap(find.byTooltip('Online orders'));
+      expect(homeIds(tester), contains('online'));
+      await openHome(tester, 'online');
       await tester.pumpAndSettle();
       expect(key('online-look:7781'), findsOneWidget);
       expect(key('online-new:7781'), findsNothing); // somebody looked: it is new on no screen
@@ -478,13 +478,13 @@ void main() {
     testWidgets('a hub that takes no online orders, or is older than them, shows nothing of them', (tester) async {
       final t = await terminal(tester);
       await pumpOrdersOn(tester, t); // older: 404
-      expect((shown('online-alert'), find.byTooltip('Online orders').evaluate().length), (0, 0));
+      expect((shown('online-alert'), homeIds(tester).contains('online')), (0, false));
       await stop(tester);
 
       final off = await terminal(tester);
       off.hub.online = Hub.onlineStatus(asks: false, pushes: false);
       await pumpOrdersOn(tester, off);
-      expect((shown('online-alert'), find.byTooltip('Online orders').evaluate().length), (0, 0));
+      expect((shown('online-alert'), homeIds(tester).contains('online')), (0, false));
       await stop(tester);
     });
 

@@ -14,11 +14,12 @@ waitlist ([On the waitlist's button](#on-the-waitlists-button)).
 
 ## Where it is
 
-- **A phone**: on the orders screen, under the three dots, **Reservations**. With tables booked for today
-  that are still to sit down, the row says how many: "Reservations · 4 to come".
-- **Tablets and Macs**: open the waitlist (the button with the group of people in the bar at the top), then
-  **Reservations** at its top right. The bar itself has no room for one more button. The book has
-  **Waitlist** at its top right, so the two are one tap apart at the door. With tables booked for today,
+- **A phone**: on the orders screen, under **More**, the tile **Reservations**. With tables booked for
+  today that are still to sit down, the tile says how many: "4 to come", and the number is on its icon.
+- **Tablets and Macs**: **Reservations** is a button in the row at the top of the orders screen
+  (`home-screen.md`), and the same tile is under **More**. It is one tap from the waitlist too: open the
+  waitlist (the button with the group of people in the row at the top), then **Reservations** at its top
+  right. The book has **Waitlist** at its top right, so the two are one tap apart at the door. With tables booked for today,
   the waitlist has a row about them at its top, which leads to the book as well.
 
 - **On a call**: the form that opens when a call is picked up has **Book a table** at its top right
@@ -84,7 +85,7 @@ lands on that order when they call back, as before; the book is then reached the
 ## On the waitlist's button
 
 Whoever is at the door answers two questions at once: who is waiting, and what is booked. The button of the
-waitlist, in the bar at the top of the orders screen, says both.
+waitlist, in the row at the top of the orders screen, says both.
 
 - **The round number**, at the top right of the button, is the parties waiting, as before.
 - **The square number**, at its bottom left, is the **booked tables of today that are still to come**:
@@ -100,9 +101,9 @@ next one, its time first: "Next at 18:30: Chen, 4 guests · table A8". It reads 
 the party is marked Here and waits for its table, and "Due since 18:30: …" when the time is past. A tap on
 the row opens the book. So a walk-in is told a wait with the book in sight.
 
-**On a phone** the button is in the bar when it was before: while a party waits, and always for whoever
-gives tables out. Booked tables alone do not put it there. The count is on the menu's row instead
-("Reservations · 4 to come").
+**On a phone** the button is in the row when it was before: while a party waits, and always for whoever
+gives tables out. Booked tables alone do not put it there. The count is on the **Reservations** tile under
+**More** instead ("4 to come").
 
 The count changes the moment a table is booked, changed, seated or called off on any screen, and starts
 over when the night ends (4 AM). It is the app's part only: the hub already told every screen the book.

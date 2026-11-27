@@ -18,6 +18,9 @@ menu). A tap opens one box:
 
 - **Who**: Table, or a seat. It opens on the seat the next dish goes to. Each seat keeps its own, so two
   guests' allergies are noted in one visit. A to-go order has no seats: the allergy is the order's.
+  Where the location turned **Seat numbers** off (`location-settings.md`, "Seats on the order screen") a
+  table's allergy is the whole table's and the box does not ask who; a seat that has one noted all the same
+  can still be picked, to change it or take it off.
 - **The allergens** the menu names, as buttons that stay down, red, while the guest cannot have them:
   Milk, Eggs, Fish, Crustacean shellfish, Tree nuts, Peanuts, Wheat, Soybeans, Sesame, and anything else
   the menu's allergen list is given. Three across on a phone, so the box fits without scrolling.

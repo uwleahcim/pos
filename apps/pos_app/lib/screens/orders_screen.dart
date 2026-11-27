@@ -26,6 +26,7 @@ import '../print_relay.dart';
 import '../roster.dart';
 import '../session.dart';
 import '../shift_notes.dart';
+import '../staff_list.dart' show roleName;
 import '../switching.dart';
 import '../tags.dart';
 import '../settings.dart';
@@ -48,6 +49,7 @@ import 'fee_lookup.dart';
 import 'floor_view.dart';
 import 'guest_tag_mark.dart';
 import 'hand_over.dart';
+import 'home_bar.dart';
 import 'location_settings_screen.dart';
 import 'menu_editor.dart';
 import 'online_orders_screen.dart';
@@ -341,7 +343,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!_ordering) await _newOrder(caller: caller);
   }
 
-  /// How far back "Show closed" lists: a day of checks, not every check the restaurant ever took.
+  /// How far back the closed checks are listed: a day of checks, not every check the restaurant ever took.
   static const _closedWithin = Duration(hours: 24);
 
   Future<void> _refresh() => _reader.now();
@@ -1308,15 +1310,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(what)));
   }
 
-  Future<void> _open(String orderId) async {
-    // The location's coursing as the hub has it now, or as last read: a manager's change reaches every
-    // terminal on the next order it opens. With nothing read yet, the standard courses.
-    Coursing coursing;
+  /// The location's coursing as the hub has it now, or as last read; with nothing read yet, the standard
+  /// courses.
+  Future<Coursing> _coursingNow() async {
     try {
-      coursing = await widget.api.coursing();
+      return await widget.api.coursing();
     } on ApiException {
-      coursing = Coursing.defaults;
+      return Coursing.defaults;
     }
+  }
+
+  /// Whether a table has seats here, as the hub has it now or as last read; with nothing read yet it has,
+  /// as every table had before a location could say.
+  Future<bool> _seatsNow() async {
+    try {
+      return await widget.api.seats();
+    } on ApiException {
+      return true;
+    }
+  }
+
+  Future<void> _open(String orderId) async {
+    // How the location takes a table's order (its courses, and whether it has seats), asked together: a
+    // manager's change reaches every terminal on the next order it opens.
+    final (coursing, seats) = await (_coursingNow(), _seatsNow()).wait;
     if (!mounted) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
@@ -1327,6 +1344,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           photos: widget.photos,
           orderId: orderId,
           coursing: coursing,
+          seats: seats,
           session: widget.session,
           phone: widget.phone,
         ),
@@ -1734,50 +1752,85 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final role = widget.session.staff?.role;
     final manages = alwaysRoles.contains(role); // a manager finds a check of any day
     final rush = _quotes?.rush;
+    final runs = rush != null && rush.runsAt(now);
     // The waitlist: its button stands in the bar wherever there is room, and on a phone while a party is
-    // waiting or for whoever gives tables out; everybody else on a phone finds it in the menu.
+    // waiting or for whoever gives tables out. It is in the menu behind More on every screen.
     final wait = _wait;
     final waiting = wait?.waiting.length ?? 0;
     final waitInBar = wait != null && (!small || waiting > 0 || _roster.assigns(widget.session.staff?.staffId));
     final waitLevel = wait?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
     // The booked tables of today still to sit down are counted on the same button, under the parties
-    // waiting: whoever gives tables out sees both at a glance. A phone's menu says the count on its row.
+    // waiting: whoever gives tables out sees both at a glance. The menu says the count on Reservations.
     final toCome = _book?.toCome.length ?? 0;
     final bookLevel = _book?.levelAt(widget.api.nowMs()) ?? TimerLevel.ok;
-    final more = <(String, IconData, VoidCallback)>[
-      ('Sign out', Icons.logout, widget.session.signOut),
-      if (wait != null && !waitInBar) ('Waitlist', Icons.groups_2_outlined, _waitlist),
-      // The reservation book: in a phone's menu; where the bar has every button out it is one tap past the
-      // waitlist's, which leads to it, so the bar keeps its room.
-      if (small)
-        (
-          toCome == 0 ? 'Reservations' : 'Reservations · $toCome to come',
-          Icons.event_available_outlined,
-          _reservations,
+    // Every way out of this screen, by its group in the menu behind More (docs/home-screen.md). A new one
+    // is one more line here: the bar and the menu lay themselves out. The quick ones also stand in the bar
+    // of a tablet or a Mac while it has the room.
+    final entries = <HomeEntry>[
+      if (wait != null)
+        HomeEntry(
+          'waitlist',
+          'Waitlist',
+          Icons.groups_2_outlined,
+          _waitlist,
+          note: waiting == 0 ? null : '$waiting waiting',
+          count: waiting,
+          level: waitLevel,
         ),
-      (
-        _showClosed ? 'Hide closed' : 'Show closed',
-        _showClosed ? Icons.visibility_off : Icons.visibility,
-        () => setState(() {
-          _showClosed = !_showClosed;
-          _refresh();
-        }),
+      HomeEntry(
+        'reservations',
+        'Reservations',
+        Icons.event_available_outlined,
+        _reservations,
+        note: toCome == 0 ? null : '$toCome to come',
+        count: toCome,
+        level: bookLevel,
+        quick: true,
       ),
-      ('Orders ahead', Icons.event_note_outlined, _ahead),
+      HomeEntry('ahead', 'Orders ahead', Icons.event_note_outlined, _ahead, quick: true),
       // where the hub says who takes deliveries out (docs/delivery.md)
-      if (_roster.drivers.isNotEmpty) ('Deliveries', Icons.delivery_dining_outlined, _deliveries),
-      if (_notesUp > 0) ('Notes', Icons.sticky_note_2_outlined, _notes),
-      if (_contestsShown > 0) ('Contests', Icons.emoji_events_outlined, _contests),
-      if (_clockOn) ('Time clock', Icons.punch_clock_outlined, _timeClock),
-      ('Waste', Icons.delete_sweep_outlined, _waste),
-      if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
-        ('Kitchen rush', Icons.local_fire_department_outlined, _rush),
+      if (_roster.drivers.isNotEmpty)
+        HomeEntry('deliveries', 'Deliveries', Icons.delivery_dining_outlined, _deliveries, quick: true),
       // where the hub takes orders from the website: how they are doing, and the ones to look at
-      if (manages && (_online?.isOn ?? false)) ('Online orders', Icons.language, _onlineOrders),
-      if (powers.holds(role, 'reports')) ('Today', Icons.today_outlined, _today),
-      if (powers.opensLocation(role)) ('Location', Icons.storefront_outlined, _location),
+      if (manages && (_online?.isOn ?? false))
+        HomeEntry(
+          'online',
+          'Online orders',
+          Icons.language,
+          _onlineOrders,
+          note: OnlineAlertStrip.shows(_online) ? 'Take a look' : null,
+          attention: OnlineAlertStrip.shows(_online),
+        ),
+      if (powers.holds(role, 'rush') && (_quotes?.takesRush ?? false))
+        HomeEntry(
+          'rush',
+          'Kitchen rush',
+          Icons.local_fire_department_outlined,
+          _rush,
+          note: runs ? '+${rush.minutes} min until ${clockTime(rush.until)}' : null,
+          on: runs,
+        ),
+      if (_clockOn)
+        HomeEntry('clock', 'Time clock', Icons.punch_clock_outlined, _timeClock, section: HomeSection.shift),
+      if (_notesUp > 0)
+        HomeEntry(
+          'notes',
+          'Notes',
+          Icons.sticky_note_2_outlined,
+          _notes,
+          section: HomeSection.shift,
+          note: _notesUp == 1 ? '1 up' : '$_notesUp up',
+        ),
+      if (_contestsShown > 0)
+        HomeEntry('contests', 'Contests', Icons.emoji_events_outlined, _contests, section: HomeSection.shift),
+      HomeEntry('waste', 'Waste', Icons.delete_sweep_outlined, _waste, section: HomeSection.shift),
+      if (powers.holds(role, 'reports'))
+        HomeEntry('today', 'Today', Icons.today_outlined, _today, section: HomeSection.manage),
+      if (powers.opensLocation(role))
+        HomeEntry('location', 'Location', Icons.storefront_outlined, _location, section: HomeSection.manage),
       if (powers.holds(role, 'menu'))
-        (
+        HomeEntry(
+          'menu',
           'Menu editor',
           Icons.edit_note,
           () => Navigator.of(context).push(
@@ -1785,18 +1838,43 @@ class _OrdersScreenState extends State<OrdersScreen> {
               builder: (_) => MenuEditorScreen(api: widget.api, settings: widget.settings),
             ),
           ),
+          section: HomeSection.manage,
         ),
-      (
+      // the list of checks with the last day's closed ones in it: a switch, filled while it is on
+      HomeEntry(
+        'closed',
+        'Closed checks',
+        _showClosed ? Icons.visibility : Icons.visibility_off_outlined,
+        () {
+          setState(() {
+            _showClosed = !_showClosed;
+            // turned on, the list they are in comes up: nothing of it shows on the floor map
+            if (_showClosed && _floor) {
+              _floor = false;
+              _moving = null;
+            }
+            _refresh();
+          });
+          if (_showClosed) _endSeating();
+        },
+        section: HomeSection.device,
+        note: _showClosed ? 'Shown in the list' : 'Hidden',
+        on: _showClosed,
+      ),
+      HomeEntry(
+        'display',
         'Display',
         Icons.text_fields,
         () => showDialog<void>(
           context: context,
           builder: (_) => DisplayDialog(session: widget.session),
         ),
+        section: HomeSection.device,
       ),
-      (
+      HomeEntry(
+        'settings',
         'Settings',
-        Icons.settings,
+        Icons.settings_outlined,
         () => Navigator.of(context).push(
           PosPageRoute(
             builder: (_) => SettingsScreen(
@@ -1809,101 +1887,69 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ),
           ),
         ),
+        section: HomeSection.device,
       ),
     ];
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          small
-              ? widget.session.staff?.name ?? 'Orders'
-              : 'Orders · ${widget.session.staff?.name ?? ''} · ${widget.settings.device}',
-        ),
-        actions: [
-          StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-            child: Container(
-              width: small ? 40 : 60,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: scheme.outlineVariant),
-              ),
-              child: ClipRRect(borderRadius: BorderRadius.circular(7), child: widget.camera.preview()),
-            ),
-          ),
-          if (waitInBar)
-            IconButton(
-              key: const ValueKey('waitlist-open'),
-              tooltip: [
-                waiting == 0 ? 'Waitlist' : 'Waitlist: $waiting waiting',
-                if (toCome > 0) bookedToComeWords(toCome),
-              ].join(' · '),
-              onPressed: _waitlist,
-              icon: Badge(
-                key: ValueKey('waitlist-badge:${waitLevel.name}'),
-                isLabelVisible: waiting > 0,
-                label: Text('$waiting'),
-                backgroundColor: switch (waitLevel) {
-                  TimerLevel.ok => scheme.primary,
-                  TimerLevel.warn => posColors.timerWarn,
-                  TimerLevel.late => posColors.timerLate,
-                },
-                textColor: switch (waitLevel) {
-                  TimerLevel.ok => scheme.onPrimary,
-                  TimerLevel.warn => posColors.timerWarnText,
-                  TimerLevel.late => posColors.timerLateText,
-                },
-                child: toCome == 0
-                    ? const Icon(Icons.groups_2_outlined)
-                    : Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          const Icon(Icons.groups_2_outlined),
-                          // across the icon from the round badge, so the two numbers never meet, large type
-                          // or not
-                          Positioned(
-                            left: -10,
-                            bottom: -10,
-                            child: BookedMark(
-                              key: ValueKey('waitlist-booked:${bookLevel.name}'),
-                              count: toCome,
-                              level: bookLevel,
+      appBar: HomeBar(
+        name: widget.session.staff?.name ?? '',
+        role: role == null || role.isEmpty ? '' : roleName(role),
+        device: widget.settings.device,
+        camera: widget.camera.preview(),
+        floor: _floor,
+        onFloor: (floor) {
+          setState(() {
+            _floor = floor;
+            _moving = null; // a table is moved on the map: leaving it leaves the move
+          });
+          _endSeating(); // and so is a tab seated there
+        },
+        status: StatusIcon(api: widget.api, outbox: widget.outbox, phone: widget.phone),
+        entries: entries,
+        onSignOut: widget.session.signOut,
+        waitlist: !waitInBar
+            ? null
+            : HomeWaitlist(
+                tooltip: [
+                  waiting == 0 ? 'Waitlist' : 'Waitlist: $waiting waiting',
+                  if (toCome > 0) bookedToComeWords(toCome),
+                ].join(' · '),
+                onTap: _waitlist,
+                icon: ({required worded}) => Badge(
+                  key: ValueKey('waitlist-badge:${waitLevel.name}'),
+                  isLabelVisible: waiting > 0,
+                  label: Text('$waiting'),
+                  backgroundColor: switch (waitLevel) {
+                    TimerLevel.ok => scheme.primary,
+                    TimerLevel.warn => posColors.timerWarn,
+                    TimerLevel.late => posColors.timerLate,
+                  },
+                  textColor: switch (waitLevel) {
+                    TimerLevel.ok => scheme.onPrimary,
+                    TimerLevel.warn => posColors.timerWarnText,
+                    TimerLevel.late => posColors.timerLateText,
+                  },
+                  child: toCome == 0
+                      ? const Icon(Icons.groups_2_outlined)
+                      : Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            const Icon(Icons.groups_2_outlined),
+                            // across the icon from the round badge, so the two numbers never meet, large
+                            // type or not; beside the button's word it keeps inside the outline
+                            Positioned(
+                              left: worded ? -8 : -10,
+                              bottom: worded ? -6 : -10,
+                              child: BookedMark(
+                                key: ValueKey('waitlist-booked:${bookLevel.name}'),
+                                count: toCome,
+                                level: bookLevel,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                ),
               ),
-            ),
-          IconButton(
-            tooltip: _floor ? 'List of checks' : 'Floor map',
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: Icon(_floor ? Icons.list_alt_rounded : Icons.table_restaurant_rounded, key: ValueKey(_floor)),
-            ),
-            onPressed: () {
-              setState(() {
-                _floor = !_floor;
-                _moving = null; // a table is moved on the map: leaving it leaves the move
-              });
-              _endSeating(); // and so is a tab seated there
-            },
-          ),
-          if (small)
-            // a phone: the rest go in one menu, so the title still fits
-            PopupMenuButton<VoidCallback>(
-              tooltip: 'More',
-              onSelected: (action) => action(),
-              itemBuilder: (_) => [
-                for (final (label, icon, action) in more)
-                  PopupMenuItem(
-                    value: action,
-                    child: ListTile(leading: Icon(icon), title: Text(label), contentPadding: EdgeInsets.zero),
-                  ),
-              ],
-            )
-          else
-            for (final (label, icon, action) in more) IconButton(tooltip: label, icon: Icon(icon), onPressed: action),
-        ],
       ),
       body: Column(
         children: [

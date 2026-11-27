@@ -1,13 +1,13 @@
 """Location settings a manager changes from the app and every terminal reads: coursing (on or off, the
-courses by name in kitchen order, which one a new dish goes to) beside the quote times. Stored on the hub
-like the quote times, under one key each."""
+courses by name in kitchen order, which one a new dish goes to) and whether a table has seats, beside the
+quote times. Stored on the hub like the quote times, under one key each."""
 
 from __future__ import annotations
 
 import pytest
 
 from pos.printing.service import Printer, PrintService
-from pos.settings import DEFAULTS, SettingStore, clean_coursing
+from pos.settings import DEFAULTS, SettingStore, clean_coursing, clean_seats
 
 from .orders.test_menu_orders import GTC_QUART, client, payload
 from .printing.fake_printer import FakePrinter, decode
@@ -106,6 +106,44 @@ def test_coursing_is_set_by_a_manager_and_read_by_every_terminal():
     off = c.put("/settings/coursing", json={**body, "enabled": False}, headers=auth).json()
     assert off["enabled"] is False and pairs(off) == pairs(saved)
     assert c.get("/floor").json()["courses"] == []  # nothing to course by while it is off
+
+
+def test_a_table_has_seats_until_a_manager_turns_them_off():
+    assert SettingStore().get("seats") == {"enabled": True}  # as it was before a location could say
+    assert clean_seats({}) == {"enabled": True}
+    assert clean_seats({"enabled": False}) == {"enabled": False}
+    with pytest.raises(ValueError, match="enabled"):
+        clean_seats({"enabled": "no"})
+
+
+def test_seats_are_turned_off_by_a_manager_and_a_dish_on_a_seat_keeps_it():
+    c = client()
+    assert c.get("/settings/seats").json() == {"enabled": True}
+    assert c.put("/settings/seats", json={"enabled": False}).status_code == 401
+    token = c.post("/admin/session", json={"device": "t1", "pin": "9999"}).json()["token"]
+    auth = {"authorization": f"Bearer {token}"}
+    assert c.put("/settings/seats", json={}, headers=auth).status_code == 422  # on or off has to be said
+    assert c.put("/settings/seats", json={"enabled": False}, headers=auth).json() == {"enabled": False}
+    assert c.get("/settings/seats").json() == {"enabled": False}
+    assert c.get("/settings/coursing").json() == DEFAULTS["coursing"]  # the courses are their own setting
+
+    # nothing is refused for it: a screen that has not heard yet still rings a dish in on a seat, and the
+    # party's size is kept as before
+    r = c.post(
+        "/orders/o1/ops",
+        json=[
+            payload("a", "create", 0, table="A7", guests=3),
+            payload("b", "add_line", 1, line_id="L1", item="?", seat=2, request=GTC_QUART),
+            payload("c", "add_line", 2, line_id="L2", item="?", request=GTC_QUART),
+            payload("d", "set_field", 3, guests=4),
+        ],
+    )
+    assert r.status_code == 202
+    order = c.get("/orders/o1").json()
+    assert {line_id: line["seat"] for line_id, line in order["lines"].items()} == {"L1": 2, "L2": None}
+    assert order["fields"]["guests"] == 4
+
+    assert c.put("/settings/seats", json={"enabled": True}, headers=auth).json() == {"enabled": True}
 
 
 def test_the_kitchen_ticket_names_the_course_as_the_manager_did():

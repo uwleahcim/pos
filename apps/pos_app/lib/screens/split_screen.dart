@@ -24,8 +24,21 @@ class SplitView {
 /// The dishes stay on the one order: a dish that changes checks keeps its seat and the kitchen hears nothing.
 /// Which dish is on which check shows at once, worked out here the hub's way; what a check comes to is the
 /// hub's to say, and reads "…" until it has.
+///
+/// Where the location's tables have no seats ([bySeat] false) there are two ways at the top, Evenly and One
+/// check: By seat is left out, unless dishes are on seats all the same (rung in before the switch).
 class SplitScreen extends StatefulWidget {
-  const SplitScreen({super.key, required this.changes, required this.read, required this.onOps, required this.onBill});
+  const SplitScreen({
+    super.key,
+    required this.changes,
+    required this.read,
+    required this.onOps,
+    required this.onBill,
+    this.bySeat = true,
+  });
+
+  /// Whether a table has seats here (the location's setting): By seat is offered.
+  final bool bySeat;
 
   /// Tells when [read] has something new.
   final Listenable changes;
@@ -110,7 +123,7 @@ class _SplitScreenState extends State<SplitScreen> {
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
                 child: Row(
                   children: [
-                    if (!order.isTakeout) ...[
+                    if (!order.isTakeout && (widget.bySeat || seated)) ...[
                       Expanded(
                         child: _Way(
                           key: const ValueKey('split-by-seat'),
@@ -187,7 +200,7 @@ class _SplitScreenState extends State<SplitScreen> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Text(
-                    order.isTakeout || seated
+                    order.isTakeout || seated || !widget.bySeat
                         ? 'Tap dishes to pick them, then put them on a new check or share them.'
                         : 'Tap dishes to pick them, then put them on a new check or share them. '
                               'By seat needs dishes rung in on seats.',

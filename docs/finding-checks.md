@@ -81,8 +81,8 @@ day shows beside the box; its cross comes back to now. The words narrow that day
   from before this shows no opening time, and a day picked from the calendar lists nothing (the app sends
   `hours=24` along with `day`, so such a hub answers with a day of orders, not all it ever took, and the
   app leaves out what carries no opening time).
-- The search itself asks for `GET /orders?hours=24&brief=true`, the list "Show closed" already used, and is
-  answered `304` until something changes.
+- The search itself asks for `GET /orders?hours=24&brief=true`, the list **Closed checks** (once "Show
+  closed") already used, and is answered `304` until something changes.
 - A check of a `brief` list that a party was seated on carries `seated`: the names of its parties, the
   first to sit first, each once (`names_by_check` in `backend/src/pos/api/guests.py`). A check nobody was
   seated on has no `seated`, and neither has an order read by itself or a list that is not `brief`. The

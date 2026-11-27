@@ -11,6 +11,10 @@
 - `coursing`: whether dishes are coursed at all, the courses by name in the order the kitchen serves them
   (any number of them; the standard four to start) and which course a new dish goes to. A line in the order
   log carries only its course's id, so a course can be renamed or moved without touching any order.
+- `seats`: whether a table's dishes are rung in on seats (`enabled`, on to start, as it was before a location
+  could say). Off, the order screen offers no seats: every dish is the table's, a table's allergy is the
+  table's, and a check is not split by seat. The party's size stays on the order either way. Nothing is
+  refused for it: a dish already on a seat keeps it, on the check and on its ticket.
 - `desk_phones`: which screen each desk phone is linked to (a PBX extension to a device name), so a call
   taken on the phone opens the caller's order on that screen (`pos/phones/deskphones.py`).
 - `faces`: whether staff may sign in by face at this location (`pos/identity/faces.py`); off until a manager
@@ -164,6 +168,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # typed it for trying the way in. No secret, and no screen but a manager's is told it (`GET /hub/keys`).
     "online_push_address": {"address": ""},
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
+    # On, as before a location could say: turning seats off is for a house that rings dishes for the table.
+    "seats": {"enabled": True},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},
     "presence": {"switch": True, "away_seconds": 60},
@@ -383,6 +389,15 @@ def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:
     elif not any(c["id"] == default for c in courses):
         raise ValueError(f"the default course {default!r} is not on the list")
     return {"enabled": enabled, "default": default, "courses": courses}
+
+
+def clean_seats(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The seats setting as the app may set it, checked: `enabled`, whether a table's dishes are rung in on
+    seats. Raises ValueError on a bad value."""
+    enabled = data.get("enabled", DEFAULTS["seats"]["enabled"])
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be true or false")
+    return {"enabled": enabled}
 
 
 def clean_voids(data: Mapping[str, Any]) -> dict[str, Any]:
