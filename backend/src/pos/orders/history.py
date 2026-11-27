@@ -47,7 +47,8 @@ Each step is a dict:
   was wanted), and `changed` when an earlier answer stood;
 - `delivery_fee` (what a delivery costs the customer was picked, changed or taken back): `now` and `was`,
   each `{by, up_to, amount, taxed}` as the order carried it (pos.orders.delivery_fee; an `amount` of "0.00"
-  with no band is no fee on purpose) or None while nobody had said.
+  with no band is no fee on purpose, and `by` is `custom` for an amount that was typed for a delivery further
+  than the bands reach) or None while nobody had said.
 """
 
 from __future__ import annotations

@@ -116,8 +116,9 @@ ORDER_FIELDS = frozenset(
         "out_at",
         # What a delivery costs the customer (pos.orders.delivery_fee): the band it was picked by and what
         # that band cost then, {by, up_to, amount, taxed}; {up_to: null, amount: "0.00"} is no fee on
-        # purpose. A screen says only the band, and the hub fills in the rest. Charged only while the order
-        # is a delivery.
+        # purpose. A screen says only the band, and the hub fills in the rest; for a delivery further than
+        # the bands reach it says the amount that was typed, {custom: "12.50"}, kept as {by: "custom",
+        # up_to: null, amount, taxed}. Charged only while the order is a delivery.
         "delivery_fee",
         # An order that came from the restaurant's website (pos.online.place): where from, the website's
         # own number for it, how the customer chose to pay and what they were charged, {source, id, type,

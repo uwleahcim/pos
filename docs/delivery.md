@@ -180,12 +180,17 @@ Back office › Location › **Delivery fee**:
   to its place by distance, and so does a row whose distance you change. Nothing moves while you are still
   typing in a row. The hub keeps the prices nearest first as well, so the buttons on a delivery are always
   in that order.
+- **Custom fee past the last distance**: on to start. A delivery that goes further than your last price
+  reaches is then charged what whoever takes the order types
+  ([A custom fee for a delivery further away](#a-custom-fee-for-a-delivery-further-away)). Turn it off and
+  a delivery costs one of the listed prices or nothing, as before.
 - **Charge sales tax on the fee**: off to start. Whether a delivery fee is taxed is for your accountant
   to say. (Massachusetts leaves a delivery charge out of the sales tax when it is stated on its own on the
   bill and is a fair price for the trip, DOR Directive 04-5; that directive does not speak of meals, so
   ask. Nothing here is tax advice.)
 
-The row under Location says what is set: "$3.00 up to 2 mi, $5.00 up to 4.5 mi, $8.50 up to 8 mi".
+The row under Location says what is set: "$3.00 up to 2 mi, $5.00 up to 4.5 mi, $8.50 up to 8 mi, custom
+fee further out".
 
 ### Picking it on an order
 
@@ -201,7 +206,8 @@ the bar). The fee is a line of the check, **Delivery fee**, under the subtotal, 
 opens the same buttons.
 
 - **The hub sets the amount.** A screen says only which price was picked, and the hub writes what that
-  price costs. Nobody types an amount.
+  price costs. The one amount anybody types is a
+  [custom fee](#a-custom-fee-for-a-delivery-further-away), for a delivery further than the prices reach.
 - **An order keeps the fee it was given.** When the prices are changed later, an order already taken is
   charged what it was told. Its own fee then shows as a button of its own, "as taken", until another is
   picked.
@@ -216,7 +222,66 @@ opens the same buttons.
 - **Tax**: with the switch off the fee adds no tax, and the food is taxed as before. With it on, the fee
   is taxed with the food. A check a manager marked tax exempt pays the fee and no tax.
 
-The price is tapped by hand unless the hub looks the distance up, which is the next section.
+The price is tapped by hand unless the hub looks the distance up, which is the section after the next two.
+
+### More than four prices
+
+Up to four prices are a button each, as above. **With five or more, the prices are one line** (the owner's
+words, 2026-11-27: "delivery fees with lots of options (over 4) change it something that fit better on the
+screen than a bunch of buttons (maybe like a slider or something better)"):
+
+- The line says the fee that is picked, "$5.00 · Up to 4 mi", or "Pick the fee" while nobody has. It
+  takes one line of the form whatever the number of prices; eight prices as buttons took five rows on a
+  phone.
+- **A tap on the line opens the whole list**, up from the bottom of the screen: each price on a line of its
+  own, how far it reaches on the left and what it costs on the right, nearest first, with a tick on the
+  one that is picked. Where the hub looked the distance up, the list says it under its heading ("3.24 mi ·
+  9 min drive"), so the right line is easy to find.
+- **A tap on a line picks it** and puts the list away. A tap beside the list puts it away with nothing
+  changed. The custom fee and **No fee** are its last two lines.
+- Where the hub looks the distance up, the line is filled in by itself and is mostly something to read:
+  the list is for the times somebody knows better than the map.
+- The custom fee is not counted among the four, nor is No fee: four prices with both are six buttons, which
+  is the three rows on a phone that four prices and No fee always were.
+
+Why a list and not a slider: a slider has no place for "nobody picked yet", for No fee or for the custom
+fee; it shows one price at a time, so the others have to be found by dragging; and a thumb that only meant
+to scroll the form moves it. The list shows every price with its distance at once and takes a tap.
+
+### A custom fee for a delivery further away
+
+Your prices end somewhere: "up to 8 miles, $8.50". An address past that has no price on the list. **With
+the custom fee on, whoever takes the order types what that delivery costs** (the owner's words, 2026-11-27:
+"Allow custom delivery fee for distance more than the max delivery fee distance in the delivery fee
+settings").
+
+- **It is one more choice, after the prices**: a button "Custom fee, Past 8 mi", or the line "Custom fee ·
+  past 8 mi" of a long list. Tap it and a box, **Custom fee**, opens under the choices with the keyboard
+  in it. Type the dollars and cents ("12" or "12.50"). Once it is an amount, the button is headed by it
+  like a price: "$12.50, Past 8 mi".
+- **The order cannot start on half of one.** Until an amount is typed the form says "Type the delivery
+  fee." and Start waits. Nothing, zero and "12.345" are no amount, and the box says so; the most is
+  $999.99. For no charge at all, tap **No fee**: that is what it is for.
+- **Where the hub looks the distance up, a far address asks for it by itself.** "9.3 mi · 21 min drive:
+  further than the prices reach", the custom fee is picked, and the box waits for the amount. The keyboard
+  is not moved there for you, since the answer may come while you are typing the note. Typing the amount
+  is not "a price tapped by hand": if the address turns out wrong and a nearer one is typed, that one gets
+  its own price.
+- **It can be tapped for any delivery**, also one the map found within the prices (the bridge is closed
+  and it is the long way round tonight), and with no map service at all, where only whoever takes the
+  order knows how far it is. The hub does not check the distance: anybody who takes orders may already
+  pick any price, or No fee.
+- **Tap a price after all and the box goes away**; tap the custom fee again and what was typed is still
+  there.
+- **On the order** (**Pickup or delivery**) it is the same choice, with the amount it was given in the box.
+  Type another amount and Save sends it; the same amount is no change.
+- **It is a delivery fee like any other**: the same line of the check and of the bill, "Delivery fee", in
+  the sales under **Charges**, taxed or not as the switch under Location says, charged only while the
+  order is a delivery.
+- **The history says who typed it**: "Delivery fee $12.50. Custom fee. The map said 9.3 mi · 21 min. It
+  was $8.50 · up to 8 mi", with the name and the screen.
+- **Turned off under Location**, the choice is gone from every form and the hub refuses a typed amount. An
+  order that was given one before keeps it, shown "as taken" until another is picked.
 
 ## Looking the distance up
 
@@ -245,9 +310,10 @@ has a key for the map service and the restaurant's own address is typed in** (se
   address it was tapped for. From that tap on the map only says how far: it does not move the price when
   its answer comes late, nor when the address is typed over or a box of it is changed. Nobody's "No fee"
   turns into a charge by itself. Only another address chosen off the list is priced anew, as above.
-- **Too far**: "9.3 mi · 21 min drive: further than the prices reach". Nothing is picked. Whoever takes
-  the order decides (the last price, No fee, or no delivery that far), and the order cannot start until a
-  price is tapped.
+- **Too far**: "9.3 mi · 21 min drive: further than the prices reach". With the
+  [custom fee](#a-custom-fee-for-a-delivery-further-away) on, it is picked and the form asks for the
+  amount: "Type the delivery fee." With it off, nothing is picked: whoever takes the order decides (the
+  last price, No fee, or no delivery that far), and the order cannot start until a price is tapped.
 - **No answer**: the line says why and ends "Pick the fee by hand.", over a **Try again** button. The
   address could not be found (check the spelling, add the town); the map service is not answering, which
   is also what a restaurant without internet sees; the map service refused the hub's key; or it has been
@@ -1140,7 +1206,10 @@ it and when.
 - **No fee by itself, and no tip.** A fee goes on a check only when somebody picked one. (The pricing
   rules have had an automatic delivery fee since discounts were built, `discounts.md`, but it is for
   orders of the type `delivery`, which no screen makes. It stays as it was, and is not this fee.)
-- **No amount typed by hand.** A delivery costs one of the listed prices or nothing.
+- **No amount typed by hand but the custom fee.** A delivery costs one of the listed prices, nothing, or,
+  where the location lets it, the custom fee that was typed for one further away. The custom fee has no
+  least amount and is not behind a manager's PIN; nothing suggests what it should be (no price per extra
+  mile), and a customer who orders again to the same far address is not offered what they paid last time.
 - **No line of its own in the reports.** Delivery fees are in **Charges** with any other charge.
 - **With no hub answering, the total on the screen leaves out a fee just picked** and says "Total
   (updating)". The price is on the button that was tapped; the check adds it when the hub answers.
@@ -1176,6 +1245,11 @@ would refuse.
 
 Runs likewise: on a hub from before the runs, the Runs screen says "This hub does not list runs yet.
 Update the hub."
+
+The custom fee needs both: a hub from before it says nothing of one, so the forms offer none and the
+dialog under Location shows no switch for it; an app from before it on a new hub offers none either, shows
+no fee on the form of an order that carries one (the check still charges it) and leaves the switch as it
+stands when it saves the prices. More than four prices as one line is the app's alone.
 
 The fee likewise: on a hub from before the fee, the forms show no prices, and the row under Location says
 "The hub has not answered about the delivery fee (an older hub: update it)". An app from before the fee on
@@ -1516,13 +1590,21 @@ The delivery fee:
 - The setting `delivery_fee` (`pos.settings.clean_delivery_fee`, `GET/PUT /settings/delivery_fee`, a
   manager's token to write): `enabled` (false to start), `by` (`miles` | `minutes`), `bands` (each
   `{up_to, fee}`, `up_to` a string such as `"2"`, `"2.5"` or `"0.25"`: miles to a hundredth, whole
-  minutes; kept in order of reach, at most 8) and `taxed`.
+  minutes; kept in order of reach, at most 8), `taxed` and `custom` (true to start: a delivery may be
+  charged an amount typed on it; an app that does not send `custom` leaves it as it is stored).
 - The order field `delivery_fee` (`pos.orders.delivery_fee`). A screen sends the band alone,
   `{"up_to": "4.5"}`, `{"up_to": null}` for no fee on purpose, or null to take the answer back. `fee_ops`
   (in `append_ops`, after `bag_ops`) fills it in from the setting as it arrives:
   `{by, up_to, amount, taxed}`. A band the setting does not list is refused (`invalid_delivery_fee`) and
   left out, and whatever else the operation said is kept. Anything a screen sends beside `up_to` is
-  dropped, so no screen sets an amount.
+  dropped, so no screen sets the amount of a listed price.
+- The custom fee: a screen sends `{"custom": "12.50"}` (and `measured`, as with a band) and `fee_ops`
+  keeps `{by: "custom", up_to: null, amount, taxed}`, taxed as the setting says. It is refused
+  (`invalid_delivery_fee`) while the fee is off, while the setting's `custom` is false
+  (`custom_allowed`), with an amount outside 0.01 to 999.99, and with a band beside it. The hub does not
+  ask how far the address is: the map only offers the custom fee (`beyond` in the answer of
+  `/delivery/distance`), a person may pick it for any delivery. The check's row says
+  `delivery: {by: "custom", up_to: null}`.
 - The check (`pos.orders.check.check_for`): `fee_charged(fields)` gives the fee only while
   `is_delivery(fields)` and the amount is above zero. It is a row of `charges` with the id `fee:delivery`
   (not the pricing rule's code `delivery_fee`), `automatic: false`, `taxed`, and `delivery: {by, up_to}`.
@@ -1532,10 +1614,19 @@ The delivery fee:
   `fee_of` reads it or null. An order opened with its fee says it in a step after `opened`.
 - App: `lib/delivery_fee.dart` (`DeliveryFees`, `FeeBand`, `OrderFee`, `FeePick`),
   `PosApi.deliveryFees` (null from a hub older than the fee) and `saveDeliveryFees`,
-  `lib/screens/fee_picker.dart` (the buttons, inside `EventFields`), `WhenDialog.fees` and `.fee`,
+  `lib/screens/fee_picker.dart` (the choices, inside `EventFields`), `WhenDialog.fees` and `.fee`,
   `TakeoutRequest.fee`, `CheckCharge.isDeliveryFee` (a tap opens `_changeWhen`),
   `lib/screens/delivery_fee_dialog.dart` and the row `delivery-fee` under Location.
-- Tests: `backend/tests/orders/test_delivery_fee.py`, `apps/pos_app/test/delivery_fee_test.dart`.
+- What a screen holds while a fee is picked is one string (`FeePick`): a band's reach, `none`, `kept`,
+  or `custom` (`+`) followed by what is typed, such as `+12.5`. `FeePick.field` turns it into what is
+  sent, `FeePick.unfinished` says a custom fee has no amount yet (the order cannot be saved), and
+  `FeePick.found` is what an answer of the map picks. `DeliveryFees.custom` is null from a hub older
+  than the custom fee: no switch is shown, nothing is sent and no screen offers it.
+- `FeePicker` shows a button for each choice up to `DeliveryFees.mostButtons` listed prices (4) and,
+  past that (`crowded`), the line `fee-list` that opens the sheet `fee-list-sheet` of `FeeListLine`s.
+  The custom fee and "No fee" are not counted. The box `fee-custom-amount` is under either.
+- Tests: `backend/tests/orders/test_delivery_fee.py`, `apps/pos_app/test/delivery_fee_test.dart`,
+  `apps/pos_app/test/delivery_fee_far_test.dart` (the custom fee and the list).
 
 Looking the distance up:
 

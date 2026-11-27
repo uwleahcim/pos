@@ -164,6 +164,29 @@ class Hub {
   Map<String, dynamic>? deliveryFees;
   String? deliveryFeesAuth;
   String? refuseDeliveryFees;
+
+  /// [milesFees] on a hub that lets the fee of a delivery further than the last band be typed ("A custom
+  /// fee for a delivery further away"), and [mapFees] on one: what a hub of today says. [milesFees] and
+  /// [mapFees] themselves say nothing of it, as a hub older than the custom fee does.
+  static Map<String, dynamic> get customFees => {...milesFees, 'custom': true};
+  static Map<String, dynamic> get customMapFees => {...mapFees, 'custom': true};
+
+  /// Six prices by miles: more than a form shows as a button each ("More than four prices").
+  static Map<String, dynamic> get manyFees => {
+    'enabled': true,
+    'by': 'miles',
+    'bands': [
+      {'up_to': '0.5', 'fee': '0.00'},
+      {'up_to': '1', 'fee': '2.00'},
+      {'up_to': '2', 'fee': '3.00'},
+      {'up_to': '3', 'fee': '4.00'},
+      {'up_to': '4.5', 'fee': '5.00'},
+      {'up_to': '8', 'fee': '8.50'},
+    ],
+    'taxed': false,
+    'custom': true,
+  };
+
   static Map<String, dynamic> get milesFees => {
     'enabled': true,
     'by': 'miles',
@@ -724,8 +747,12 @@ class Hub {
     if (picked is! Map) return null;
     // what the map said of the address travels with the pick, and is kept beside it
     final told = {if (picked['measured'] case final Map measured) 'measured': measured};
-    if (picked['up_to'] == null) return {'up_to': null, 'amount': '0.00', ...told};
     final fees = deliveryFees;
+    // a custom fee, for a delivery further than the bands reach: the amount as it was typed
+    if (picked['custom'] case final String typed) {
+      return {'by': 'custom', 'up_to': null, 'amount': typed, 'taxed': fees?['taxed'] == true, ...told};
+    }
+    if (picked['up_to'] == null) return {'up_to': null, 'amount': '0.00', ...told};
     for (final band in (fees?['bands'] as List? ?? const []).cast<Map>()) {
       if (band['up_to'] == _reach(picked['up_to'])) {
         return {

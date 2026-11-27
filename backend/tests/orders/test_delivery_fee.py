@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 
 from pos.orders.check import check_for
-from pos.orders.delivery_fee import CHARGE_ID, band_of, fee_charged, fee_of, fee_ops
+from pos.orders.delivery_fee import CHARGE_ID, band_of, custom_allowed, fee_charged, fee_of, fee_ops
 from pos.printing.bill import bill_for
 from pos.settings import DEFAULTS, clean_delivery_fee
 from pos.sync.oplog import replay
@@ -32,8 +32,9 @@ MILES = {
     "taxed": False,
 }
 MINUTES = {"enabled": True, "by": "minutes", "bands": [{"up_to": 10, "fee": 3}, {"up_to": 20, "fee": "6.5"}]}
-NO_LOOKUP = {"origin": "", "maps": False, "lookup": False, "services": [], "live": False}
-"""What a hub with no map service says beside the prices (tests/orders/test_delivery_distance.py)."""
+NO_LOOKUP = {"origin": "", "maps": False, "lookup": False, "services": [], "live": False, "custom": True}
+"""What a hub with no map service says beside the prices (tests/orders/test_delivery_distance.py), and that
+the fee of a delivery further than the last band may be typed, which is so until a manager turns it off."""
 
 
 def priced(c, fee: dict = MILES) -> dict:
@@ -103,6 +104,10 @@ def test_a_manager_lists_the_prices_by_miles_or_by_minutes():
     # turned off, the prices may stay listed for the day it is turned on again, or go
     assert priced(c, {**MILES, "enabled": False})["bands"] == MILES["bands"]
     assert priced(c, {"enabled": False}) == {**DEFAULTS["delivery_fee"], **NO_LOOKUP}
+    # whether a far delivery's fee may be typed is kept as it stands by an app that does not say (an older one)
+    assert priced(c, {**MILES, "custom": False})["custom"] is False
+    assert priced(c, MILES)["custom"] is False and c.get("/settings/delivery_fee").json()["custom"] is False
+    assert priced(c, {**MILES, "custom": True})["custom"] is True
 
 
 def test_miles_may_be_a_fraction_of_a_mile_to_a_hundredth():
@@ -148,6 +153,7 @@ def test_what_the_prices_refuse():
     for bad, why in [
         ({"enabled": "yes"}, "enabled must be true or false"),
         ({"taxed": 1}, "taxed must be true or false"),
+        ({"custom": "yes"}, "custom must be true or false"),
         ({"by": "feet"}, "miles or minutes"),
         ({"enabled": True}, "at least one distance"),
         ({"bands": "2 miles"}, "a list of"),
@@ -269,6 +275,79 @@ def test_no_screen_makes_up_an_amount():
     assert check(c)["total"] == "19.21"
 
 
+def test_a_delivery_further_than_the_last_band_is_charged_the_fee_that_was_typed():
+    """The owner's words, 2026-11-27: "Allow custom delivery fee for distance more than the max delivery fee
+    distance in the delivery fee settings"."""
+    c = client()
+    priced(c)
+    brought(c)
+    assert pick(c, {"custom": "12.5"})["refused"] == []
+    assert carried(c) == {"by": "custom", "up_to": None, "amount": "12.50", "taxed": False}
+    fee = check(c)["charges"][0]
+    assert (fee["charge_id"], fee["name"], fee["amount"], fee["taxed"]) == (CHARGE_ID, "Delivery fee", "12.50", False)
+    assert fee["delivery"] == {"by": "custom", "up_to": None}
+    assert check(c)["total"] == "23.21"  # 10.00 of tea, 0.71 of tax on it, and the 12.50
+    # another amount, a band of the list after all, and no fee: each stands in the last one's place
+    pick(c, {"custom": 15}, 51)
+    assert carried(c)["amount"] == "15.00" and check(c)["total"] == "25.71"
+    pick(c, {"up_to": "8"}, 52)
+    assert carried(c) == {"by": "miles", "up_to": "8", "amount": "8.50", "taxed": False}
+    pick(c, {"custom": "20.00", "up_to": None}, 53)
+    assert carried(c)["by"] == "custom" and check(c)["total"] == "30.71"
+    # it is taxed as the location's fee is, and what the map said of the address stays beside it
+    priced(c, {**MILES, "taxed": True})
+    said = {"miles": "11.4", "minutes": 24, "service": "geocodio", "from": "3fa9c2d1"}
+    pick(c, {"custom": "10.00", "measured": said}, 54)
+    assert carried(c) == {"by": "custom", "up_to": None, "amount": "10.00", "taxed": True, "measured": said}
+    assert check(c)["total"] == "21.40"  # the tea and the fee are taxed together: 1.40 on 20.00
+    # an order taken with it, and one that is changed to pickup, which keeps it and is charged nothing
+    brought(c, "o2", 100, delivery_fee={"custom": "9"})
+    assert carried(c, "o2")["amount"] == "9.00" and check(c, "o2")["charges"][0]["amount"] == "9.00"
+    c.post("/orders/o2/ops", json=[payload("p", "set_field", 160, "o2", handover="pickup")])
+    assert carried(c, "o2")["amount"] == "9.00" and check(c, "o2")["charges"] == []
+
+
+def test_what_a_typed_fee_refuses():
+    c = client()
+    brought(c)
+    # nowhere a fee is not charged at all
+    assert "no delivery fee is charged here" in pick(c, {"custom": "12.50"})["refused"][0]["message"]
+    priced(c)
+    pick(c, {"up_to": "8"}, 51)
+    for when, wanted in enumerate(
+        (
+            {"custom": 0},  # nothing: that is "No fee", which says so
+            {"custom": "0.00"},
+            {"custom": "-5"},
+            {"custom": "12.505"},
+            {"custom": "1000"},
+            {"custom": "a lot"},
+            {"custom": True},
+            {"custom": ["12.50"]},
+            {"custom": "12.50", "up_to": "8"},  # a band and an amount: which of the two is it
+        ),
+        start=60,
+    ):
+        answer = pick(c, wanted, when)
+        assert [r["error"] for r in answer["refused"]] == ["invalid_delivery_fee"], wanted
+    assert "from 0.01 to 999.99" in pick(c, {"custom": 0}, 80)["refused"][0]["message"]
+    assert "not both" in pick(c, {"custom": "12.50", "up_to": "8"}, 81)["refused"][0]["message"]
+    assert carried(c)["up_to"] == "8" and check(c)["total"] == "19.21"  # the fee stands as it was picked
+    # and not where a manager turned the typing off: the list's prices are the only ones
+    priced(c, {**MILES, "custom": False})
+    refused = pick(c, {"custom": "12.50"}, 90)["refused"]
+    assert [r["error"] for r in refused] == ["invalid_delivery_fee"] and "cannot be typed here" in refused[0]["message"]
+    assert carried(c)["up_to"] == "8"
+    # one that was typed while it was allowed stays on its check
+    priced(c, MILES | {"custom": True})
+    pick(c, {"custom": "12.50"}, 91)
+    priced(c, {**MILES, "custom": False})
+    assert carried(c)["amount"] == "12.50" and check(c)["total"] == "23.21"
+    assert custom_allowed({**MILES, "custom": True}) and custom_allowed(MILES)  # on unless it is turned off
+    assert not custom_allowed({**MILES, "custom": False}) and not custom_allowed({**MILES, "enabled": False})
+    assert not custom_allowed({"enabled": True, "by": "miles", "bands": [], "custom": True})
+
+
 def test_an_order_taken_with_its_fee_already_picked():
     c = client()
     priced(c)
@@ -324,6 +403,8 @@ def test_only_a_delivery_is_charged():
 def test_what_an_order_carries_is_read_with_care():
     good = {"by": "minutes", "up_to": 15, "amount": "9", "taxed": True}
     assert fee_of({"delivery_fee": good}) == {"by": "minutes", "up_to": "15", "amount": "9.00", "taxed": True}
+    typed = {"by": "custom", "up_to": None, "amount": "12.5", "taxed": True}
+    assert fee_of({"delivery_fee": typed}) == {"by": "custom", "up_to": None, "amount": "12.50", "taxed": True}
     for unreadable in (
         None,
         "3.00",
@@ -331,6 +412,7 @@ def test_what_an_order_carries_is_read_with_care():
         {"amount": "three"},
         {"amount": "-1.00", "by": "miles", "up_to": "2"},
         {"amount": "3.00"},  # an amount with no band: nobody listed that
+        {"amount": "-2.00", "by": "custom"},  # a typed fee is above nothing
         {"amount": "3.00", "by": "feet", "up_to": "2"},
         {"amount": "3.00", "by": "miles", "up_to": "2.255"},
         {"amount": "3.00", "by": "minutes", "up_to": "2.5"},
@@ -422,9 +504,17 @@ def test_the_history_says_who_picked_the_fee_and_what_it_was_before():
     h.op("o1", "set_field", at(17, 6), delivery_fee={"up_to": "8"}, by="Ben", by_id="s2")  # the same: no step
     h.op("o1", "set_field", at(17, 7), delivery_fee={"up_to": None}, by="Mike", by_id="s3")
     h.op("o1", "set_field", at(17, 8), delivery_fee=None, by="Mike", by_id="s3")
+    h.op("o1", "set_field", at(17, 9), delivery_fee={"custom": "12.50"}, by="Amy", by_id="s1")  # typed, and by whom
     told = [(s["by"], s["was"], s["now"]) for s in steps(h) if s["what"] == "delivery_fee"]
     two = {"by": "miles", "up_to": "2", "amount": "3.00", "taxed": False}
     eight = {"by": "miles", "up_to": "8", "amount": "8.50", "taxed": False}
     none = {"by": None, "up_to": None, "amount": "0.00", "taxed": False}
-    assert told == [("Amy", None, two), ("Ben", two, eight), ("Mike", eight, none), ("Mike", none, None)]
+    typed = {"by": "custom", "up_to": None, "amount": "12.50", "taxed": False}
+    assert told == [
+        ("Amy", None, two),
+        ("Ben", two, eight),
+        ("Mike", eight, none),
+        ("Mike", none, None),
+        ("Amy", None, typed),
+    ]
     assert [s["what"] for s in steps(h)][:2] == ["opened", "delivery_fee"]

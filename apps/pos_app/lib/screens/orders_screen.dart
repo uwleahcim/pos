@@ -2397,11 +2397,13 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
     // not stand for it (Mike, 2026-11-26: when an address is selected, the fee for its distance is)
     if (chosen) _feeByHand = false;
     final now = (_fees?.live ?? false) && _delivery && !_named;
-    final band = (await _asker.ask(_address.text, again: again, fresh: fresh, now: now))?.band;
+    final found = await _asker.ask(_address.text, again: again, fresh: fresh, now: now);
     if (!mounted) return;
     // the time promised may go by the answer too
     setState(() {
-      if (band != null && !_feeByHand) _fee = band.upTo;
+      // an address further than every price asks for the custom fee, where the location has one
+      final pick = _feeByHand ? null : FeePick.found(found, _fees, _fee);
+      if (pick != null) _fee = pick;
     });
   }
 
@@ -2418,8 +2420,8 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   }
 
   void _pickFee(String pick) => setState(() {
+    if (FeePick.byHand(_fee, pick)) _feeByHand = true;
     _fee = pick;
-    _feeByHand = true;
   });
 
   @override
@@ -2517,8 +2519,12 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
   /// A delivery with nowhere to go yet.
   bool get _nowhere => _delivery && oneLine(_address.text).isEmpty;
 
-  /// A delivery nobody said the fee of, where the location charges one: "No fee" is a pick.
-  bool get _unpriced => _delivery && (_fees?.asks ?? false) && _fee == null;
+  /// A delivery on the custom fee with no amount typed yet (a catering order's too: what would it be sent as).
+  bool get _untyped => (_delivery || _catering) && _handover == 'delivery' && FeePick.unfinished(_fee);
+
+  /// A delivery nobody said the fee of, where the location charges one: "No fee" is a pick, and a custom
+  /// fee is one once its amount is typed.
+  bool get _unpriced => (_delivery && (_fees?.asks ?? false) && _fee == null) || _untyped;
 
   /// The customer names the time: the switch says so, and a catering order always does.
   bool get _named => _later || _catering;
@@ -2837,7 +2843,7 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
-                      'Pick the delivery fee.',
+                      _untyped ? 'Type the delivery fee.' : 'Pick the delivery fee.',
                       key: const ValueKey('fee-needed'),
                       style: theme.textTheme.bodySmall,
                     ),
@@ -2904,6 +2910,16 @@ class _TakeoutDialogState extends State<_TakeoutDialog> {
                   addresses: _addresses,
                   wholeAddress: widget.api.wholeAddress,
                 ),
+                // its fee may be said later, but not half said
+                if (_untyped)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Type the delivery fee.',
+                      key: const ValueKey('fee-needed'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
               ],
             ],
           ),

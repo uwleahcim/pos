@@ -187,7 +187,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     # On to start, with what the old POS rang as free dishes: the owner asked for the question.
     "bag": {"enabled": True, "question": BAG_QUESTION, "choices": STANDARD_BAG_CHOICES},
     # Off, with no prices: a fee is the owner's to set, and nothing is added to a check until it is.
-    "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False, "origin": ""},
+    "delivery_fee": {"enabled": False, "by": "miles", "bands": [], "taxed": False, "origin": "", "custom": True},
     # Off: asking a map service about every delivery costs money, and how long the kitchen needs is the
     # owner's to say.
     "live_drive": {"enabled": False, "before": 25},
@@ -667,10 +667,11 @@ def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
     minutes; `bands`, a list of `{up_to, fee}` (miles to a hundredth or whole minutes, and dollars), kept in
     order of how far they reach; `taxed`, whether sales tax is charged on the fee; `origin`, the
     restaurant's own address, where every delivery starts when the distance is looked up (`pos.maps`; empty:
-    nothing is looked up). Charged, it needs at least one band. A band may cost nothing (free close by).
-    Raises ValueError on a bad value."""
+    nothing is looked up); `custom`, whether whoever takes an order may type the fee of a delivery that goes
+    further than the last band reaches (on unless it is turned off). Charged, it needs at least one band. A
+    band may cost nothing (free close by). Raises ValueError on a bad value."""
     out: dict[str, Any] = {}
-    for name in ("enabled", "taxed"):
+    for name in ("enabled", "taxed", "custom"):
         value = data.get(name, DEFAULTS["delivery_fee"][name])
         if not isinstance(value, bool):
             raise ValueError(f"{name} must be true or false")
@@ -713,6 +714,7 @@ def clean_delivery_fee(data: Mapping[str, Any]) -> dict[str, Any]:
         "bands": [{"up_to": fees.measure_text(reach), "fee": bands[reach]} for reach in sorted(bands)],
         "taxed": out["taxed"],
         "origin": origin,
+        "custom": out["custom"],
     }
 
 
