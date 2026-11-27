@@ -75,6 +75,8 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   `to-go-question.md`).
 - **Kitchen notes**, on the same card: the one-tap notes a dish's sheet offers over its note ("Rush",
   "Split for 2"), twelve at most (see `kitchen-notes.md`).
+- **Floor plan**: the floor the map shows, drawn in the app: tables moved, sized and turned, new ones
+  ready-made, rooms added, named and taken off (see `floor-editor.md`).
 - **Table timers**: the countdown ring on each table of the floor map, on or off, and the minutes each thing
   a table can be waiting on is given (see "Table timers" below).
 - **Kitchen screens**: the minutes a ticket has been in the kitchen when a station's screen turns it amber,
@@ -254,6 +256,9 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
   the wall-clock ms it began (from the stamps in the order log). Nothing in the floor's answer moves with
   the clock, so it is still answered `304` until an order or a setting changes; the terminal runs the
   countdown.
+- `GET /settings/floor_plan`, `PUT /settings/floor_plan` and `DELETE /settings/floor_plan` (the manager
+  Bearer token for the last two): the floor as the floor editor reads and saves it; details in
+  `floor-editor.md`.
 - `GET /settings/kitchen_screens` and `PUT /settings/kitchen_screens` (the manager Bearer token): `{"warn":
   10, "late": 20}`, the minutes after which a ticket on a station's screen turns amber and red; details in
   `kitchen-screens.md`.

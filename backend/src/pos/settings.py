@@ -33,6 +33,9 @@
 - `table_timers`: the timer ring around each table on the floor map (`pos/floor/plan.py`, `check_timer`):
   whether it is drawn, and for each thing a table can be waiting on (`sat`, `unsent`, `held`, `fired`) after
   how many minutes the ring warns and after how many it is overdue; 0 for never.
+- `floor_plan`: the floor plan a manager drew in the app's floor editor (`pos/floor/plan.py`,
+  `clean_floor_plan`): `plan`, its rooms and tables, with who saved it and when (`by`, `saved_ms`); null to
+  start, which leaves the hub on the plan it came with (`POS_FLOOR`).
 - `voids`: what voiding a dish the kitchen already has takes (`pos/orders/voids.py`): `approval`, whether a
   manager's PIN is needed (`manager`, the default) or a reason alone will do (`none`), and `reasons`, the
   short list the person voiding picks from, by name in the order the screen shows them. A void in the order
@@ -183,6 +186,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "fired": {"warn": 25, "late": 0},
         },
     },
+    "floor_plan": {"plan": None, "by": "", "saved_ms": 0},
     "voids": {"approval": "manager", "reasons": STANDARD_VOID_REASONS},
     "tickets": {"numbered": True, "also_at": True, "paid": True, "moved": True, "pack": True},
     "ticket_skips": {"screens": []},

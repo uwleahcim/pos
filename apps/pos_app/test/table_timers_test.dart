@@ -13,7 +13,7 @@ import 'package:pos_app/screens/floor_view.dart';
 import 'package:pos_app/screens/theme.dart';
 import 'package:pos_app/settings.dart';
 
-import 'floor_test.dart' show floorJson;
+import 'floor_test.dart' show floorJson, roomy;
 import 'hub.dart';
 import 'location_rows.dart';
 
@@ -197,7 +197,7 @@ void main() {
     );
     final tapped = <String>[];
     tester.view
-      ..physicalSize = const Size(1200, 900)
+      ..physicalSize = roomy
       ..devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
@@ -216,7 +216,7 @@ void main() {
     final (whole, calm, thin) = ringsPainted(tester).single;
     final middle = ringLine(tester).$3.center; // of A7, a square table that stands on its corner
     expect(calm, isSameColorAs(colors.waitingBorder));
-    expect(thin, 4.0);
+    expect(thin, inInclusiveRange(2.0, 4.5)); // (a line in proportion to its table, within bounds)
     expect(find.byKey(const ValueKey('timer-badge:A7')), findsNothing);
     expect(find.byKey(const ValueKey('attention')), findsNothing);
     expect(find.text('4p 0m'), findsOneWidget);
@@ -252,7 +252,7 @@ void main() {
     expect(from.dy, lessThan(middle.dy));
     expect((to.dx > middle.dx, to.dy > middle.dy), (true, true));
     expect(amber, isSameColorAs(colors.timerWarn));
-    expect(thicker, 5.0);
+    expect(thicker, greaterThan(thin + 0.5));
     final badge = find.byKey(const ValueKey('timer-badge:A7'));
     expect(find.descendant(of: badge, matching: find.text('7m')), findsOneWidget);
     expect(find.descendant(of: badge, matching: find.byIcon(Icons.pause_rounded)), findsOneWidget);
@@ -275,7 +275,7 @@ void main() {
     final (full, red, thickest) = ringsPainted(tester).single;
     expect(full / whole, closeTo(1, 0.001));
     expect(red, isSameColorAs(colors.timerLate));
-    expect(thickest, 5.5);
+    expect(thickest, greaterThan(thicker));
     expect(find.descendant(of: badge, matching: find.text('+1m')), findsOneWidget);
     now += 1000;
     await tester.pump(const Duration(seconds: 1));
@@ -286,7 +286,10 @@ void main() {
     expect(rebuilt, contains('_Ticking<int>'));
     for (final part in const [
       'FloorView',
-      '_TablePositioned',
+      '_Placed',
+      '_TableTile',
+      '_TableWords',
+      '_EdgeMark',
       '_RoomOutline',
       'InteractiveViewer',
       'AnimatedContainer',

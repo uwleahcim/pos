@@ -38,7 +38,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from ..floor import FloorPlan
+from ..floor import plan_of
 from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..waitlist import Party, ReadOnlyError, Refused, Waitlist
@@ -153,7 +153,7 @@ def add_waitlist(app: FastAPI) -> None:
     def seat_party(party_id: str, body: SeatIn) -> dict[str, Any]:
         """The party sat down at a table of the floor plan."""
         staff = known(body.staff_id)
-        plan: FloorPlan = app.state.floor
+        plan = plan_of(app.state)
         table = plan.table(body.table)
         if table is None:
             raise HTTPException(404, {"error": "unknown_table", "message": "The floor plan has no such table."})

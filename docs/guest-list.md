@@ -405,10 +405,10 @@ carries a tag in this list.
 - **Beside the map, in the list of your tables** (the chip **Mine**, on a tablet on its side or a Mac;
   `table-servers.md`), each of your tables has a line with the names of all its parties, whole, each
   followed by its tags as labels: **Linda P.** `Catering client` `VIP`.
-- **It is one of the table's small words.** The name is as small as the party's size and the total under
-  it, and on a phone that is small: spread two fingers to make the map larger, or open the check. It is
-  drawn smaller sooner than it makes the table's own name smaller. A table that says whose it is has five
-  lines in place of four, so its other small words are drawn a little smaller than on a walk-in's table.
+- **A table with no room for the name leaves it out and keeps the star.** Nothing on a table is written
+  too small to read, so a small table says less (`floor-map.md`): the name goes before the server's
+  name and the party's size. The star stays, beside the table's name, or on the smallest tables as a
+  small mark on the table's right edge. The table's room, a tap away, has the room for the name.
 - It stands in the middle of the table, where a round table and one turned on its corner are widest.
 - A table that is seated and **booked again** later still says the time of that booking under the rest
   (`reservations.md`, "On the floor map"). A table that is booked and still free says the booking's name

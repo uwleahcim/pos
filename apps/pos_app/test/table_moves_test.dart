@@ -17,7 +17,7 @@ import 'comp_test.dart' as comps show rules;
 import 'floor_test.dart' show floorJson;
 import 'hub.dart';
 import 'lot_test.dart' as lot show check, dropOn, pickUp, target;
-import 'table_servers_test.dart' show amy, holly, mike, pumpFloor, serverTag;
+import 'table_servers_test.dart' show amy, holly, mike, pumpFloor, serverTag, showRoom;
 import 'voids_test.dart' as voids show rules;
 
 /// Move, merge and hand over (the Toast comparison, 2026-11-16): hold a seated table and move its check to
@@ -431,6 +431,7 @@ void main() {
 
   testWidgets('a server holds a table down and taps the free table it goes to', (tester) async {
     final t = await pumpFloor(tester, amy, hub: (hub) => hub.floor = floorThatMoves());
+    await showRoom(tester, 'Main dining'); // where a table has the room to say whose it is
     await tester.longPress(find.text('A7'));
     await tester.pumpAndSettle();
     expect(find.text('Who serves A7?'), findsNothing); // a server hands nothing over

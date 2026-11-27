@@ -809,6 +809,28 @@ class PosApi {
     ),
   );
 
+  /// The floor plan as the floor editor reads it: the rooms and tables, whether a manager drew it, and the
+  /// tables in use just now.
+  Future<FloorPlanEdit> floorPlan() async => FloorPlanEdit.fromJson(await _get('/settings/floor_plan'));
+
+  /// A manager (token from [adminSession]) saves the floor as the floor editor drew it ([FloorEditor.toJson]).
+  /// Every floor map redraws at once. Refused with the reason for a plan that cannot be (422), and while a
+  /// table that is in use would go (409).
+  Future<FloorPlanEdit> saveFloorPlan(String token, Map<String, dynamic> plan) async => FloorPlanEdit.fromJson(
+    await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/floor_plan'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode(plan),
+      ),
+    ),
+  );
+
+  /// A manager puts the floor back to the plan the hub came with.
+  Future<FloorPlanEdit> resetFloorPlan(String token) async => FloorPlanEdit.fromJson(
+    await _withFailover((base) => _client.delete(Uri.parse('$base/settings/floor_plan'), headers: _bearer(token))),
+  );
+
   /// The time now, in wall-clock ms, by the hub's clock as near as its answers tell it: what the countdowns
   /// on the floor map are measured with, so two screens whose own clocks disagree draw the same ring. Every
   /// answer says when the backend sent it, to the second; a device within two seconds of that is taken to be

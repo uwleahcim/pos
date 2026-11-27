@@ -210,7 +210,10 @@ seated at B5. The book keeps that table."
 - **"18:30 +1"**: the table is booked once more later today.
 - Under the map, **Booked** joins the legend on a day with a table booked, on tablets and Macs. A phone's
   legend is full, and the calendar on the table says it there.
-- The booking is drawn smaller sooner than it makes the table's own name smaller.
+- **A table with no room for all of it says less, in letters as large** (`floor-map.md`): the time
+  without the name, then the calendar by itself in the colour the time would have, beside the table's
+  name or, on the smallest tables, as a small mark on the table's left edge. The table's room, a tap
+  away, has the room for the time and the name.
 - **Once the party sits**, their table says their name, with a star for a guest who carries a tag
   (`guest-list.md`, "On the floor map"). That is the party at the table, not a booking still to come.
 

@@ -42,7 +42,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from ..floor import FloorPlan
+from ..floor import plan_of
 from ..guest_tags import with_tags
 from ..identity.staff import Directory, Staff
 from ..reservations import Booking, ReadOnlyError, Refused, Reservations, day_of
@@ -102,7 +102,7 @@ def add_reservations(app: FastAPI) -> None:
         """The table a reservation holds, as the floor plan has it; none when it holds none."""
         if not table_id:
             return "", ""
-        plan: FloorPlan = app.state.floor
+        plan = plan_of(app.state)
         table = plan.table(table_id)
         if table is None:
             raise HTTPException(404, {"error": "unknown_table", "message": "The floor plan has no such table."})

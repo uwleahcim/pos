@@ -43,7 +43,18 @@ from ..customers import (
 )
 from ..customers import ReadOnlyError as NotesReadOnly
 from ..devices import DevicesSeen
-from ..floor import FloorPlan, in_turn, last_sat, load_floor, punched, said, say, table_status
+from ..floor import (
+    FloorPlan,
+    clean_floor_plan,
+    in_turn,
+    last_sat,
+    load_floor,
+    plan_of,
+    punched,
+    said,
+    say,
+    table_status,
+)
 from ..guest_tags import GuestTags, default_guest_tags
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
@@ -534,6 +545,32 @@ class TableTimersIn(BaseModel):
 
     enabled: bool = True
     stages: dict[str, StageTimesIn] = Field(default_factory=dict)
+
+
+class FloorRoomIn(BaseModel):
+    id: str | None = Field(None, description="left out for a new room, which gets one from its name")
+    name: str
+
+
+class FloorTableIn(BaseModel):
+    id: str = Field(description="the name orders carry for the table; a new id is a new table")
+    label: str = Field("", description="what the map writes on the table; its id when left out")
+    room: str = Field(description='the room\'s id, or "#0" for the first of `rooms` while that has none yet')
+    x: float = Field(description="where its middle is, in the plan's own units")
+    y: float
+    w: float
+    h: float
+    seats: int = 2
+    shape: str = "rect"
+    rotation: float = 0
+    kind: str = "table"
+
+
+class FloorPlanIn(BaseModel):
+    """The floor as the floor editor drew it: the rooms in the order the map lists them, and every table."""
+
+    rooms: list[FloorRoomIn]
+    tables: list[FloorTableIn]
 
 
 class DeskPhoneLinkIn(BaseModel):
@@ -1518,7 +1555,7 @@ def create_app(
         store: OpStore | PgOpStore = app.state.store
         open_states = store.views(store.index(status="open"))
         totals = {s.order_id: Decimal(check_for(s, app.state.taxes, app.state.pricing)["total"]) for s in open_states}
-        plan: FloorPlan = app.state.floor
+        plan = plan_of(app.state)
         coursing = app.state.settings.get("coursing")
         return polled(
             {
@@ -1682,6 +1719,79 @@ def create_app(
         floor map follows at once (the change feed tells them a setting changed)."""
         manager_from(app.state.tokens, authorization)
         return write_setting("table_timers", body.model_dump(exclude_unset=True), clean_table_timers)
+
+    def floor_plan_now() -> dict[str, Any]:
+        """The plan as it stands, for the floor editor: with whether it is one a manager drew (`edited`,
+        with `by` and `saved_ms`) and the tables that cannot be taken off it just now: the ones with an open
+        check (`busy`) and the ones a reservation still to come holds (`booked`)."""
+        store: OpStore | PgOpStore = app.state.store
+        saved = app.state.settings.get("floor_plan")
+        return {
+            **plan_of(app.state).as_json(),
+            "edited": bool(saved["plan"]),
+            "by": saved["by"] if saved["plan"] else "",
+            "saved_ms": saved["saved_ms"] if saved["plan"] else 0,
+            "busy": sorted(
+                {
+                    str(state.fields["table"])
+                    for state in store.views(store.index(status="open"))
+                    if state.fields.get("table") not in (None, "")
+                }
+            ),
+            "booked": sorted(app.state.reservations.holds()),
+        }
+
+    def keep_floor_plan(plan: dict[str, Any] | None, by: str) -> dict[str, Any]:
+        """Stores the plan (None for the one the hub came with) unless that would take a table off the floor
+        that is in use: 409 `table_busy` for one with an open check, `table_booked` for one a reservation
+        still to come holds. Every floor map follows at once."""
+        now = floor_plan_now()
+        ids = {table["id"] for table in plan["tables"]} if plan else {table.id for table in app.state.floor.tables}
+        for error, held, why in (
+            ("table_busy", now["busy"], "has an open check: close it or move it to another table first"),
+            ("table_booked", now["booked"], "is held by a reservation: give that another table first"),
+        ):
+            gone = [table for table in held if table not in ids]
+            if gone:
+                raise HTTPException(409, {"error": error, "tables": gone, "message": f"Table {gone[0]} {why}."})
+        store: OpStore | PgOpStore = app.state.store
+        try:
+            app.state.settings.put(
+                "floor_plan", {"plan": plan, "by": by if plan else "", "saved_ms": store.now_ms() if plan else 0}
+            )
+        except ReadOnlyError as err:
+            raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("floor")
+        return floor_plan_now()
+
+    @app.get("/settings/floor_plan")
+    def read_floor_plan() -> dict[str, Any]:
+        """The floor plan as it stands, for the floor editor: `width`, `height`, `rooms` and `tables` as
+        `GET /floor` gives them, `edited` (a manager drew it; false for the plan the hub came with), and the
+        ids of the tables that cannot be taken off the plan just now (`busy`, `booked`)."""
+        return floor_plan_now()
+
+    @app.put("/settings/floor_plan")
+    def write_floor_plan(body: FloorPlanIn, authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager saves the floor as the floor editor drew it (`pos.floor.clean_floor_plan`: 422
+        `bad_value` with the reason for a plan that cannot be). A table's id is the name orders carry for
+        it: one that keeps its id keeps its open check, its reservations and its history wherever it is
+        moved and however it is sized. The app's editor sends a renamed table under its new name as its
+        id, which makes it a new table and the old one gone. A table in use cannot go (409 `table_busy`,
+        `table_booked`), so it cannot be renamed that way either. Every floor map redraws at once."""
+        grant = manager_from(app.state.tokens, authorization)
+        try:
+            plan = clean_floor_plan(body.model_dump())
+        except ValueError as err:
+            raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
+        return keep_floor_plan(plan, grant.name)
+
+    @app.delete("/settings/floor_plan")
+    def reset_floor_plan(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """A manager puts the floor back to the plan the hub came with. Refused like a save while a table
+        that plan does not have is in use."""
+        manager_from(app.state.tokens, authorization)
+        return keep_floor_plan(None, "")
 
     @app.get("/settings/voids")
     def read_voids() -> dict[str, Any]:

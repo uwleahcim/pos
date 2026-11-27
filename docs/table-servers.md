@@ -2,7 +2,8 @@
 
 Every busy table on the floor map says who serves it: a small name tag under the table's name, in the
 table's own colour. It is the server's first name, with an initial when there is more to the name ("Amy",
-"Mike W"). A free table has no tag: nobody has it until a party sits.
+"Mike W"). A free table has no tag: nobody has it until a party sits. A table too small for the tag on the
+map of the whole floor has it in its room, a tap away (`floor-map.md`).
 
 Under the server's tag, a table whose party the host seated from a reservation or the waitlist also says
 the party's name, with a small star for a guest who carries a tag (`guest-list.md`, "On the floor map").
