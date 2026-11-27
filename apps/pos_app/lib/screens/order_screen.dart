@@ -81,6 +81,7 @@ class OrderScreen extends StatefulWidget {
     required this.photos,
     required this.orderId,
     this.coursing = Coursing.defaults,
+    this.seats = true,
     this.staffName,
     this.session,
     this.phone,
@@ -106,6 +107,11 @@ class OrderScreen extends StatefulWidget {
 
   /// The location's coursing: whether dishes are coursed, the courses by name, where a new dish goes.
   final Coursing coursing;
+
+  /// Whether a table has seats here (the location's setting, docs/location-settings.md). Off, the bar
+  /// offers no seats and every dish is rung in for the table; the party's size is still set there. A dish
+  /// that is on a seat all the same (rung in before the switch) keeps saying so.
+  final bool seats;
 
   /// Who is signed in, named on each dish they add and each discount they apply. [session] says who it is now:
   /// a hands-free switch changes the person under an open order, and every dish added from then on is theirs;
@@ -536,8 +542,10 @@ class _OrderScreenState extends State<OrderScreen> {
         allergens: _allergens ?? const [],
         told: order.allergies,
         seated: order.hasTable,
-        seats: _seats(order),
+        // with no seats here it is the table's; a seat that has one noted all the same can still be changed
+        seats: widget.seats ? _seats(order) : order.allergies.fold(0, (top, told) => math.max(top, told.seat ?? 0)),
         seat: _seat,
+        bySeat: widget.seats,
       ),
     );
     if (changed == null || changed.isEmpty) return;
@@ -1248,6 +1256,7 @@ class _OrderScreenState extends State<OrderScreen> {
         read: _view,
         onOps: _appendAll,
         onBill: (check) => _printBill(check: check),
+        bySeat: widget.seats,
       ),
     ),
   );
@@ -1670,9 +1679,12 @@ class _OrderScreenState extends State<OrderScreen> {
     ]);
   }
 
+  /// The party's size, as the order says it.
+  int _party(Order? order) => (order?.fields['guests'] as int?) ?? 0;
+
   /// The party size, or more when a dish is on a higher seat.
   int _seats(Order? order) {
-    var seats = (order?.fields['guests'] as int?) ?? 0;
+    var seats = _party(order);
     for (final line in order?.activeLines ?? const <Line>[]) {
       if ((line.seat ?? 0) > seats) seats = line.seat!;
     }
@@ -1710,9 +1722,11 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   /// Seats are the order's party size, so every screen on the order shows the same ones. A seat comes off
-  /// only from the end, and only once its dishes are off it or moved.
+  /// only from the end, and only once its dishes are off it or moved. Where a table has no seats
+  /// ([OrderScreen.seats] off) this sets the party's size and nothing else.
   Future<void> _setSeats(Order? order, int seats) async {
     if (order == null || seats < 0) return;
+    if (!widget.seats) return _append('set_field', {'guests': seats});
     final current = _seats(order);
     if (seats < current) {
       final left = order.activeLines.where((l) => l.seat == current).length;
@@ -1745,7 +1759,8 @@ class _OrderScreenState extends State<OrderScreen> {
     // the last priced check carried, and the total shows as an estimate until a backend prices it.
     final check = order == null ? null : estimateCheck(_readCheck ?? widget.api.savedTaxes, order, _local);
     final open = order?.isOpen ?? true;
-    final seats = _seats(order);
+    // the seats at the table; where a table has none, the party's size alone
+    final seats = widget.seats ? _seats(order) : _party(order);
     final told = order?.allergies ?? const <Allergy>[];
     final ready = _readyLines(order);
     _readyShown = ready.length;
@@ -1753,7 +1768,7 @@ class _OrderScreenState extends State<OrderScreen> {
     // offered once the hub has said what the menu names (a hub older than allergies never does)
     final allergyChip = order == null || _allergens == null
         ? null
-        : _AllergyChip(noted: told.isNotEmpty, onTap: () => _noteAllergy(order));
+        : _AllergyChip(noted: told.isNotEmpty, bySeat: widget.seats, onTap: () => _noteAllergy(order));
     // a table's check and a bar tab take the number of a guest who left one (a walk-in earns points too)
     final guestChip = order == null || !open || order.isTakeout
         ? null
@@ -1769,6 +1784,7 @@ class _OrderScreenState extends State<OrderScreen> {
       open: open,
       allergenNames: _allergenNames,
       coursing: widget.coursing,
+      seats: widget.seats,
       lastAdded: _lastAdded,
       now: widget.now ?? _deviceNow,
       zhNameOf: (line) => line.zhName ?? _local[line.lineId]?.zhName,
@@ -1802,12 +1818,13 @@ class _OrderScreenState extends State<OrderScreen> {
     final menu = open
         ? Column(
             children: [
-              // a table's seats and courses; a to-go order has neither, and its bar is the Allergy chip and
-              // how it leaves (Pickup or Delivery); a bar tab has courses and no seats yet, and the way to
-              // a table instead
+              // a table's seats and courses (the party's size in the seats' place where a table has none);
+              // a to-go order has neither, and its bar is the Allergy chip and how it leaves (Pickup or
+              // Delivery); a bar tab has courses and no seats yet, and the way to a table instead
               if (order?.isTakeout != true || allergyChip != null || leavingChip != null)
                 _SeatCourseBar(
                   seated: order?.isTakeout != true,
+                  bySeat: widget.seats,
                   onSeatTab: order != null && order.isTab ? () => _seatTab(order) : null,
                   allergy: allergyChip,
                   guest: guestChip,
@@ -1987,6 +2004,7 @@ class _TicketPanel extends StatefulWidget {
     required this.check,
     required this.open,
     required this.coursing,
+    this.seats = true,
     required this.lastAdded,
     required this.now,
     required this.zhNameOf,
@@ -2012,6 +2030,10 @@ class _TicketPanel extends StatefulWidget {
   final Check? check;
   final bool open;
   final Coursing coursing;
+
+  /// Whether a table has seats here: each dish then says its seat, or "table". Off, only a dish that is on a
+  /// seat all the same says so.
+  final bool seats;
   final String? lastAdded;
 
   /// Takes money on the order: the Pay button on what is due. Null where there is none.
@@ -2434,10 +2456,11 @@ class _TicketPanelState extends State<_TicketPanel> {
                             fontFeatures: PosTheme.tabular,
                           ),
                         ),
-                        Text(
-                          line.seat == null ? 'table' : 'seat ${line.seat}',
-                          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
+                        if (widget.seats || line.seat != null)
+                          Text(
+                            line.seat == null ? 'table' : 'seat ${line.seat}',
+                            style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
                       ],
                     ),
                   ),
@@ -2827,10 +2850,13 @@ class _CourseHeader extends StatelessWidget {
 /// one away once nothing is on it. With coursing off ([courses] empty) the row is the seats alone. The
 /// Allergy chip leads the row, where a phone shows it without scrolling, and a seat with an allergy noted
 /// carries a warning mark. A to-go order has no seats ([seated] false): its bar is that chip and the one
-/// that says how it leaves ([leaving]).
+/// that says how it leaves ([leaving]). Where the location's tables have no seats ([bySeat] false) the
+/// party's size stands in their place, "Party 4" with the same − and +, since the seats were where it was
+/// set: every dish is the table's. On the one line of a phone it goes after the courses.
 class _SeatCourseBar extends StatelessWidget {
   const _SeatCourseBar({
     this.seated = true,
+    this.bySeat = true,
     this.onSeatTab,
     this.allergy,
     this.guest,
@@ -2847,6 +2873,10 @@ class _SeatCourseBar extends StatelessWidget {
   });
 
   final bool seated;
+
+  /// Whether a table has seats here; false where the location turned them off, and [seats] is then the
+  /// party's size and nothing else.
+  final bool bySeat;
 
   /// A bar tab, which has no seats yet: the bar starts with "Seat at a table" in their place, and this is
   /// what it does. Null for any other check.
@@ -2903,7 +2933,37 @@ class _SeatCourseBar extends StatelessWidget {
     final oneLine = compact(context) || courseChips.isEmpty;
     // On two lines "Guest" stands under "Allergy", in front of the courses: the seats keep the whole of
     // their line, so a table of six still has its last seat and the two round buttons in reach.
-    final guestBelow = guest != null && !oneLine && onSeatTab == null;
+    // (With no seats that line has room to spare, and "Guest" stays on it.)
+    final guestBelow = guest != null && !oneLine && onSeatTab == null && bySeat;
+    // The party's size, where a table has no seats: the two round buttons the seats had, and the number.
+    final party = bySeat
+        ? const <Widget>[]
+        : <Widget>[
+            const Text('Party  '),
+            Text(
+              '$seats',
+              key: const ValueKey('party-size'),
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700, fontFeatures: PosTheme.tabular),
+            ),
+            IconButton(
+              key: const ValueKey('party-fewer'),
+              tooltip: 'One guest fewer',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.remove_circle_outline),
+              onPressed: seats > 0 ? onRemoveSeat : null,
+            ),
+            IconButton(
+              key: const ValueKey('party-more'),
+              tooltip: 'One guest more',
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.add_circle_outline),
+              onPressed: onAddSeat,
+            ),
+          ];
+    // A course is picked for every dish and the party's size is changed now and then: on the one line of a
+    // phone the courses come first, where they are in reach without scrolling, and the party after them.
+    final partyLast = !bySeat && seated && onSeatTab == null && oneLine && courseChips.isNotEmpty;
     final seatChips = !seated
         ? [if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy), ?leaving]
         : onSeatTab != null
@@ -2925,21 +2985,24 @@ class _SeatCourseBar extends StatelessWidget {
         : [
             if (allergy != null) Padding(padding: const EdgeInsets.only(right: 10), child: allergy),
             if (guest != null && !guestBelow) Padding(padding: const EdgeInsets.only(right: 10), child: guest),
-            const Text('Seat  '),
-            chip('Table', seat == null, () => onSeat(null), alert: allergic.contains(0)),
-            for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i), alert: allergic.contains(i)),
-            IconButton(
-              tooltip: 'Remove seat $seats',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.remove_circle_outline),
-              onPressed: seats > 0 ? onRemoveSeat : null,
-            ),
-            IconButton(
-              tooltip: 'Add a seat',
-              visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.add_circle_outline),
-              onPressed: onAddSeat,
-            ),
+            if (bySeat) ...[
+              const Text('Seat  '),
+              chip('Table', seat == null, () => onSeat(null), alert: allergic.contains(0)),
+              for (var i = 1; i <= seats; i++) chip('$i', seat == i, () => onSeat(i), alert: allergic.contains(i)),
+              IconButton(
+                tooltip: 'Remove seat $seats',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: seats > 0 ? onRemoveSeat : null,
+              ),
+              IconButton(
+                tooltip: 'Add a seat',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.add_circle_outline),
+                onPressed: onAddSeat,
+              ),
+            ] else if (!partyLast)
+              ...party,
           ];
     Widget row(List<Widget> children) => SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -2954,7 +3017,12 @@ class _SeatCourseBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
       child: oneLine
           // a phone: both on one line that scrolls, to leave the screen to the menu
-          ? row([...seatChips, if (courseChips.isNotEmpty) const SizedBox(width: 8), ...courseChips])
+          ? row([
+              ...seatChips,
+              if (courseChips.isNotEmpty) const SizedBox(width: 8),
+              ...courseChips,
+              if (partyLast) ...[const SizedBox(width: 8), ...party],
+            ])
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2968,10 +3036,13 @@ class _SeatCourseBar extends StatelessWidget {
 
 /// "Allergy": opens the allergies told at the table. Red once one is noted.
 class _AllergyChip extends StatelessWidget {
-  const _AllergyChip({required this.noted, required this.onTap});
+  const _AllergyChip({required this.noted, required this.onTap, this.bySeat = true});
 
   final bool noted;
   final VoidCallback onTap;
+
+  /// Whether an allergy can be a seat's: false where the location's tables have no seats.
+  final bool bySeat;
 
   @override
   Widget build(BuildContext context) {
@@ -2983,7 +3054,11 @@ class _AllergyChip extends StatelessWidget {
       labelStyle: noted ? TextStyle(color: scheme.onError, fontWeight: FontWeight.w700) : null,
       backgroundColor: noted ? scheme.error : null,
       side: noted ? BorderSide(color: scheme.error) : null,
-      tooltip: noted ? 'Change the allergies noted' : 'Note an allergy for the table or a seat',
+      tooltip: noted
+          ? 'Change the allergies noted'
+          : bySeat
+          ? 'Note an allergy for the table or a seat'
+          : 'Note an allergy',
       visualDensity: VisualDensity.compact,
       onPressed: onTap,
     );

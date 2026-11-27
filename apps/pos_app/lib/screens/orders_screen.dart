@@ -1308,15 +1308,30 @@ class _OrdersScreenState extends State<OrdersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(what)));
   }
 
-  Future<void> _open(String orderId) async {
-    // The location's coursing as the hub has it now, or as last read: a manager's change reaches every
-    // terminal on the next order it opens. With nothing read yet, the standard courses.
-    Coursing coursing;
+  /// The location's coursing as the hub has it now, or as last read; with nothing read yet, the standard
+  /// courses.
+  Future<Coursing> _coursingNow() async {
     try {
-      coursing = await widget.api.coursing();
+      return await widget.api.coursing();
     } on ApiException {
-      coursing = Coursing.defaults;
+      return Coursing.defaults;
     }
+  }
+
+  /// Whether a table has seats here, as the hub has it now or as last read; with nothing read yet it has,
+  /// as every table had before a location could say.
+  Future<bool> _seatsNow() async {
+    try {
+      return await widget.api.seats();
+    } on ApiException {
+      return true;
+    }
+  }
+
+  Future<void> _open(String orderId) async {
+    // How the location takes a table's order (its courses, and whether it has seats), asked together: a
+    // manager's change reaches every terminal on the next order it opens.
+    final (coursing, seats) = await (_coursingNow(), _seatsNow()).wait;
     if (!mounted) return;
     final left = await Navigator.of(context).push<Object?>(
       PosPageRoute(
@@ -1327,6 +1342,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           photos: widget.photos,
           orderId: orderId,
           coursing: coursing,
+          seats: seats,
           session: widget.session,
           phone: widget.phone,
         ),
