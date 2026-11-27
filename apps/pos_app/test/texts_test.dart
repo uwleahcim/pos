@@ -8,6 +8,7 @@ import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/texts_screen.dart';
 import 'package:pos_app/session.dart';
 import 'package:pos_app/settings.dart';
+import 'package:pos_app/text_pictures.dart';
 import 'package:pos_app/texts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -54,6 +55,7 @@ Future<(Terminal, List<Object?>)> pumpTexts(
   Size size = const Size(1100, 800),
   String? open,
   bool only = false,
+  PicturePick? pick,
 }) async {
   final t = await terminal(tester);
   tester.view.physicalSize = size;
@@ -76,6 +78,7 @@ Future<(Terminal, List<Object?>)> pumpTexts(
                       open: open,
                       only: only,
                       nowMs: () => t.hub.clockNow,
+                      pick: pick,
                     ),
                   ),
                 ),

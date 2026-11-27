@@ -34,7 +34,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>The POS takes a small photo of the operator when an order is created, fired, closed or voided, for the audit log.</string>
+	<string>The POS takes a small photo of the operator when an order is created, fired, closed or voided, for the audit log, and the photos you take to send a customer in a text.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The POS sends the photos you choose to a customer in a text.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>The microphone carries your voice on phone calls taken in the POS.</string>
 	<key>UIBackgroundModes</key>

@@ -79,6 +79,9 @@ const _looksMost = 15;
 /// Where the page says what came of adding or removing an account: under the button that adds one.
 const _accountsSaid = 'online-accounts';
 
+/// Where the page says what came of Twilio's way in: under its own buttons, on the card of the texts.
+const _waySaid = 'texts-way';
+
 class _HubKeysScreenState extends State<HubKeysScreen> {
   late HubKeys _keys = widget.keys;
   String? _busy; // the key being tried or removed
@@ -442,6 +445,151 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     });
   }
 
+  /// Twilio's way in is turned on: the hub makes its address for Twilio. With [again] a new one, which
+  /// kills the one Twilio has, so it is asked first.
+  Future<void> _turnOnWay({bool again = false}) async {
+    if (again) {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Make a new address?'),
+          content: const Text(
+            'The address Twilio has stops working at once: until the new one is in Twilio\'s console, texts show '
+            'a few seconds later again, and a picture cannot be sent. Do it when the address may have been seen by '
+            'somebody who should not have it.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it')),
+            FilledButton(
+              key: const ValueKey('texts-way-sure'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Make a new one'),
+            ),
+          ],
+        ),
+      );
+      if (sure != true || !mounted) return;
+    }
+    await _trying(_waySaid, () async {
+      final HubKeys saved;
+      try {
+        saved = await widget.api.turnOnTextsWay(widget.token, again: again);
+      } on ApiException catch (err) {
+        if (err.status == 409) {
+          return (words: 'This hub has no Twilio account in force. Type it again here.', bad: true);
+        }
+        if (err.status == 404 || err.status == 405) {
+          return (words: 'This hub is older than instant delivery and pictures. Update it first.', bad: true);
+        }
+        return (words: 'Not turned on. ${_refusal(err)}', bad: true);
+      }
+      if (mounted) {
+        setState(() => _keys = saved);
+        widget.onChanged?.call(saved);
+      }
+      final way = saved.textsWay;
+      if (again) return (words: "A new address is made. Copy it into Twilio's console now.", bad: false);
+      if (way != null && way.ready) {
+        return (words: "On. Copy the address into Twilio's console: How to set it up says where.", bad: false);
+      }
+      return (
+        words: "On. Next the hub needs its name on the internet: press Try it. How to set it up has every step.",
+        bad: false,
+      );
+    });
+  }
+
+  Future<void> _turnOffWay() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Turn it off?'),
+        content: const Text(
+          "The hub turns Twilio's calls away from then on. Texts still come, a few seconds later, and a text "
+          'carries no picture. Turning it on again makes a new address, which has to go into Twilio\'s console '
+          'again.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep it on')),
+          FilledButton(
+            key: const ValueKey('texts-way-sure'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Turn off'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    await _trying(_waySaid, () async {
+      final HubKeys saved;
+      try {
+        saved = await widget.api.turnOffTextsWay(widget.token);
+      } on ApiException catch (err) {
+        return (words: 'Not turned off. ${_refusal(err)}', bad: true);
+      }
+      if (mounted) {
+        setState(() => _keys = saved);
+        widget.onChanged?.call(saved);
+      }
+      return (
+        words: "Off. Empty the box \"A message comes in\" in Twilio's console too, so Twilio stops calling.",
+        bad: false,
+      );
+    });
+  }
+
+  /// Twilio's way in is tried: the hub calls its own address for Twilio at its push door, and from outside
+  /// under its name on the internet. The name is asked for first, and the hub remembers it.
+  Future<void> _tryWay() async {
+    final asked = await showDialog<HubKeys>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => WayInDialog(api: widget.api, token: widget.token, keys: _keys, twilio: true),
+    );
+    if (asked == null || !mounted) return;
+    setState(() => _keys = asked);
+    widget.onChanged?.call(asked);
+    await _trying(_waySaid, () async {
+      final HubKeys answer;
+      try {
+        answer = await widget.api.tryTextsWay(widget.token);
+      } on ApiException catch (err) {
+        if (err.status == 409) return (words: 'It is not turned on yet. Turn it on first.', bad: true);
+        if (err.status == 404 || err.status == 405) {
+          return (words: 'This hub is older than instant delivery and pictures. Update it first.', bad: true);
+        }
+        rethrow;
+      }
+      if (mounted) {
+        setState(() => _keys = answer);
+        widget.onChanged?.call(answer);
+      }
+      final tried = answer.textsWayTried;
+      if (tried == null) return (words: 'The hub did not say what the try came to.', bad: true);
+      return (words: tried.words, bad: tried.bad);
+    });
+  }
+
+  /// The address for Twilio goes onto the clipboard, whole: the page shows it with its middle left out.
+  Future<void> _copyWay() async {
+    final url = _keys.textsWay?.url;
+    if (url == null) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    setState(
+      () => _said[_waySaid] = (
+        words:
+            "Copied. In Twilio's console it goes under your number, Messaging, \"A message comes in\": Webhook, "
+            'HTTP POST.',
+        bad: false,
+      ),
+    );
+  }
+
+  void _howWay() {
+    unawaited(showDialog<void>(context: context, builder: (_) => const TextsWayHelp()));
+  }
+
   void _try(HubKey key, OnlineAccount? account) {
     switch (key.name) {
       case 'texts':
@@ -579,10 +727,100 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
               ],
             ),
             if (said != null) _saidLine(context, said, ValueKey('key-${key.name}-said')),
+            ..._textsWayLines(context, key),
           ],
         ),
       ),
     );
+  }
+
+  /// Under the Twilio account's own lines and buttons: Twilio's way in (docs/text-inbox.md, "Instant
+  /// delivery and pictures"). How it stands, the address for Twilio's console with its middle left out, and
+  /// the buttons to turn it on, copy the address, try it, and read how it is set up. Only on a hub that
+  /// knows of it and has a Twilio account in force.
+  List<Widget> _textsWayLines(BuildContext context, HubKey key) {
+    final way = _keys.textsWay;
+    if (key.name != 'texts' || !key.set || way == null || !(_keys.texts?.on ?? false)) return const [];
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final busy = _busy == _waySaid;
+    final said = _said[_waySaid];
+    return [
+      const SizedBox(height: 10),
+      Divider(height: 1, color: scheme.outlineVariant),
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Icon(
+              way.ready ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 18,
+              color: way.ready ? scheme.primary : scheme.outline,
+            ),
+          ),
+          Expanded(child: Text('Instant delivery and pictures', style: theme.textTheme.titleSmall)),
+        ],
+      ),
+      const SizedBox(height: 2),
+      Text(way.words(widget.clock()), key: const ValueKey('texts-way-state'), style: theme.textTheme.bodyMedium),
+      if (way.on && way.door == false)
+        Text(
+          'The hub could not tell its push door of the address, so the door turns Twilio away. Update the hub '
+          '(sudo hubctl update).',
+          key: const ValueKey('texts-way-door'),
+          style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
+        ),
+      if (way.ready)
+        Text('For Twilio: ${way.shown}', key: const ValueKey('texts-way-url'), style: theme.textTheme.bodyMedium),
+      const SizedBox(height: 4),
+      Text(
+        "With it a customer's text shows the moment it comes, a text you sent says Delivered by itself, and a "
+        'text can carry pictures. Twilio reaches the hub through the Cloudflare Tunnel on this page.',
+        style: quiet,
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          if (!way.on)
+            FilledButton.tonal(
+              key: const ValueKey('texts-way-on'),
+              onPressed: _busy != null ? null : _turnOnWay,
+              child: const Text('Turn on'),
+            ),
+          if (way.ready)
+            FilledButton.tonalIcon(
+              key: const ValueKey('texts-way-copy'),
+              onPressed: _busy != null ? null : _copyWay,
+              icon: const Icon(Icons.copy_outlined, size: 18),
+              label: const Text('Copy the address'),
+            ),
+          if (way.on)
+            OutlinedButton(
+              key: const ValueKey('texts-way-try'),
+              onPressed: _busy != null ? null : _tryWay,
+              child: const Text('Try it'),
+            ),
+          TextButton(key: const ValueKey('texts-way-how'), onPressed: _howWay, child: const Text('How to set it up')),
+          if (way.on)
+            PopupMenuButton<String>(
+              key: const ValueKey('texts-way-more'),
+              tooltip: 'More',
+              enabled: _busy == null,
+              onSelected: (picked) => picked == 'again' ? _turnOnWay(again: true) : _turnOffWay(),
+              itemBuilder: (context) => const [
+                PopupMenuItem(key: ValueKey('texts-way-again'), value: 'again', child: Text('Make a new address')),
+                PopupMenuItem(key: ValueKey('texts-way-off'), value: 'off', child: Text('Turn off')),
+              ],
+            ),
+          if (busy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+        ],
+      ),
+      if (said != null) _saidLine(context, said, const ValueKey('texts-way-said')),
+    ];
   }
 
   /// What the two cards of the way in say beyond their key: the tunnel's, whether it has reached Cloudflare;
@@ -1312,11 +1550,14 @@ class _OnlineAccountDialogState extends State<OnlineAccountDialog> {
 /// dialog saves a changed address itself, so that what the hub says of it (not a name on the internet) shows
 /// here with the address still in the box. Pops with how the keys stand, to go on and try.
 class WayInDialog extends StatefulWidget {
-  const WayInDialog({super.key, required this.api, required this.token, required this.keys});
+  const WayInDialog({super.key, required this.api, required this.token, required this.keys, this.twilio = false});
 
   final PosApi api;
   final String token;
   final HubKeys keys;
+
+  /// It is Twilio's way in that is tried: the same name on the internet, asked for in Twilio's words.
+  final bool twilio;
 
   @override
   State<WayInDialog> createState() => _WayInDialogState();
@@ -1359,8 +1600,9 @@ class _WayInDialogState extends State<WayInDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final twilio = widget.twilio;
     return AlertDialog(
-      title: const Text('Try the way in'),
+      title: Text(twilio ? "Try Twilio's way in" : 'Try the way in'),
       content: SizedBox(
         width: 380,
         child: SingleChildScrollView(
@@ -1376,20 +1618,25 @@ class _WayInDialogState extends State<WayInDialog> {
                 enableSuggestions: false,
                 keyboardType: TextInputType.url,
                 onSubmitted: (_) => _busy ? null : _try(),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  labelText: 'Address GloriaFood sends to',
+                  labelText: twilio ? "The hub's name on the internet" : 'Address GloriaFood sends to',
                   hintText: 'orders.example.com',
-                  helperText:
-                      'The public hostname you gave the tunnel at Cloudflare. Leave it empty to try the push door '
-                      'alone',
-                  helperMaxLines: 3,
+                  helperText: twilio
+                      ? "The public hostname you gave the tunnel at Cloudflare, the same one GloriaFood's pushes "
+                            'use. Leave it empty to try the push door alone'
+                      : 'The public hostname you gave the tunnel at Cloudflare. Leave it empty to try the push door '
+                            'alone',
+                  helperMaxLines: 4,
                 ),
               ),
               const SizedBox(height: 10),
               Text(
-                'The hub knocks at its own push door, and with an address from outside, the way GloriaFood '
-                'comes. No key is sent anywhere, and nothing goes on the POS.',
+                twilio
+                    ? 'The hub calls its own address for Twilio at its push door, and with a name from outside, '
+                          'the way Twilio comes. Nothing is sent to Twilio, and nothing goes on the POS.'
+                    : 'The hub knocks at its own push door, and with an address from outside, the way GloriaFood '
+                          'comes. No key is sent anywhere, and nothing goes on the POS.',
                 style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               if (_message != null)
@@ -1408,6 +1655,99 @@ class _WayInDialogState extends State<WayInDialog> {
       actions: [
         TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(key: const ValueKey('way-in-try'), onPressed: _busy ? null : _try, child: const Text('Try')),
+      ],
+    );
+  }
+}
+
+/// **How to set it up**: what a manager does, once, so that Twilio can reach the hub (docs/text-inbox.md,
+/// "Instant delivery and pictures"). The steps at Cloudflare and at Twilio are theirs: the POS cannot do them.
+class TextsWayHelp extends StatelessWidget {
+  const TextsWayHelp({super.key});
+
+  static const steps = [
+    (
+      'The tunnel',
+      'On this page, the card Cloudflare Tunnel (the way in) has to say "Connected to Cloudflare". If it has no '
+          'token yet: at Cloudflare, under Zero Trust, Networks, Tunnels, create a tunnel of the kind '
+          'Cloudflared, and paste its token on that card. It needs a Cloudflare account (free) and a domain '
+          'name that Cloudflare looks after.',
+    ),
+    (
+      'The public hostname, at Cloudflare',
+      'Give the tunnel a public hostname: a subdomain (orders), your domain, the service type HTTP and the '
+          'address door:8090. Leave the Path box empty. If it says online/push from GloriaFood\'s pushes, empty '
+          'it: the hub\'s door lets in GloriaFood\'s pushes and Twilio\'s calls and turns everything else away.',
+    ),
+    (
+      'Turn it on, and try it',
+      'Here: Turn on, then Try it. It asks for the name from the step before (orders.example.com, your own) '
+          'and should say "The whole way in works".',
+    ),
+    (
+      "The address, in Twilio's console",
+      'Here: Copy the address. At console.twilio.com: Phone Numbers, Manage, Active numbers, your number, and '
+          'under Messaging, "A message comes in": Webhook, paste the address, HTTP POST, Save. If you send from '
+          'a Messaging Service, it is on the service instead: Integration, "Send a webhook", the same address.',
+    ),
+    (
+      'Look',
+      'Text the restaurant from your own phone: it is on the Texts screen at once, and this card says when '
+          'Twilio last called. Then answer with a picture.',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return AlertDialog(
+      key: const ValueKey('texts-way-help'),
+      title: const Text('Setting up instant delivery and pictures'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final (n, (title, words)) in steps.indexed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 22, child: Text('${n + 1}.', style: theme.textTheme.titleSmall)),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title, style: theme.textTheme.titleSmall),
+                            const SizedBox(height: 2),
+                            Text(words, style: theme.textTheme.bodyMedium),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Text(
+                'Until it is set up, and whenever the tunnel is down, nothing is lost: the hub asks Twilio for new '
+                'texts every few seconds, as before. The address holds a word only this hub and Twilio know: give '
+                "it to nobody else. The labels in Cloudflare's and Twilio's pages may read a little differently "
+                'from these.',
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('texts-way-help-close'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
       ],
     );
   }

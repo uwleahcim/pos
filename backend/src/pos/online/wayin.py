@@ -14,6 +14,9 @@ what it needs, in a folder it shares with that one program and no other:
   has to show it to Cloudflare; readable by the hub's own user alone, as `/opt/pos/.env` is root's alone.
   The tunnel writes `status.json` beside it: whether it has reached Cloudflare, and if not, why.
 
+The door is left a second file the same way, `twilio.json`: the SHA-256 of the hub's word for Twilio's
+calls (`pos.online.twilio_way`; docs/text-inbox.md), which a manager turns on in the app.
+
 Both look at their file as they work, so a key typed in the app is in force within a second or two, and
 nothing is restarted. What is handed is always the key in force (`pos.keys.HubKeys`: the app's over the
 hub's own file), so a hub set up with `hubctl` goes on as it did.
@@ -39,7 +42,7 @@ from typing import Any
 
 import httpx
 
-from .door import DOOR_DIR, KEY_FILE
+from .door import DOOR_DIR, KEY_FILE, TWILIO_FILE
 from .tunnel import REASONS, STATES, STATUS_FILE, TOKEN_FILE, TUNNEL_DIR, digest_of, mark_of, write_whole
 
 log = logging.getLogger(__name__)
@@ -108,10 +111,12 @@ class WayIn:
     ) -> None:
         self._door = door
         self._tunnel = tunnel
-        self._door_url = door_url.rstrip("/") + PATH
+        self._door_at = door_url.rstrip("/")
+        self._door_url = self._door_at + PATH
         self._client = client
         self._now = now
         self._door_told: bool | None = None
+        self._twilio_told: bool | None = None
         self._tunnel_told: bool | None = None
         self._mark = ""  # of the token the tunnel was last handed
 
@@ -127,6 +132,13 @@ class WayIn:
             self._door_told = self._write(self._door / KEY_FILE, said, "the door")
         if self._tunnel is not None:
             self._tunnel_told = self._hand_token(self._tunnel / TOKEN_FILE, token)
+
+    def hand_twilio(self, word: str | None) -> None:
+        """The hub's word for Twilio's calls in force now, or none: the door is told, so that a call whose
+        path carries the word gets in and no other of that kind does."""
+        if self._door is not None:
+            said = json.dumps({"sha256": digest_of(word) if word else None})
+            self._twilio_told = self._write(self._door / TWILIO_FILE, said, "the door, of Twilio's word,")
 
     def _write(self, path: Path, text: str, whom: str) -> bool:
         try:
@@ -188,6 +200,12 @@ class WayIn:
         null on a machine that runs none), and the tunnel as it stands."""
         return {"door": self._door_told, "tunnel_told": self._tunnel_told, "tunnel": self.tunnel()}
 
+    @property
+    def twilio_told(self) -> bool | None:
+        """Whether the door could be told the hub's word for Twilio; None on a machine that runs no door,
+        and before anything was handed."""
+        return self._twilio_told
+
     # --- knocking ----------------------------------------------------------------------------------------
 
     def _knocker(self) -> httpx.AsyncClient:
@@ -222,6 +240,20 @@ class WayIn:
             except ValueError:
                 refused = False
         return {"url": url, "code": answer.status_code, "refused": refused, "late": False}
+
+    async def knock_twilio(self, path: str, knock: str, host: str | None = None) -> dict[str, Any]:
+        """One knock the way Twilio comes (`path`: the hub's own text address, `/twilio/<word>/text`), with
+        `knock` in it where Twilio would name a text: at the door from inside the hub, or with `host` at
+        `https://<host><path>` from outside. Gives the answer's `code` (None when nothing answered) and
+        whether it was `late`. The address is not given back: it holds the hub's word."""
+        url = self._door_at + path if host is None else f"https://{host}{path}"
+        try:
+            answer = await self._knocker().post(url, data={"Knock": knock})
+        except httpx.TimeoutException:
+            return {"code": None, "late": True}
+        except (httpx.HTTPError, OSError):
+            return {"code": None, "late": False}
+        return {"code": answer.status_code, "late": False}
 
 
 def wayin_from_env(environ: Mapping[str, str] | None = None) -> WayIn:

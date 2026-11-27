@@ -52,6 +52,12 @@ from another. A key shorter than sixteen characters shows none of itself.
 from. `texts.md` says where each is found, what the card says once the texts go out, and what a failed text
 means.
 
+Once the account is set, its card has a second part, **Instant delivery and pictures**: Twilio's way in to
+the hub, through the tunnel above. **Turn on**, **Try it**, **Copy the address** (it goes into Twilio's
+console) and **How to set it up** are there; `text-inbox.md`, "Instant delivery and pictures", has the
+steps. The address is shown with its middle left out, because whoever has it can call the hub as Twilio
+does: copy it, paste it at Twilio, and give it to nobody else.
+
 Apple's key is a small text file. Open it in a text editor (TextEdit on a Mac), copy all of it with the two
 dashed lines, and paste it into the box. It needs two ids beside it: the **Key ID** (the ten letters and
 digits in the file's name) and the **Team ID** (ten more, under Membership details in the developer
@@ -181,7 +187,10 @@ token; null on a machine that runs neither), and `tunnel`: `there` (a tunnel pro
 text) and `version`.
 
 And `texts`, how the texts to customers are doing, with `POST /hub/texts/try` to send one: both are in
-`texts.md`.
+`texts.md`. And `texts_way`, Twilio's way in for instant delivery and pictures, with `POST` and `DELETE
+/hub/texts/way` and `POST /hub/texts/way/try`: `text-inbox.md`, "Instant delivery and pictures". The word
+in Twilio's address is kept sealed like a key (under the name `texts_way`), is made by the hub and never
+typed, and is on no card: the card of the Twilio account has a part for it once the account is set.
 
 The code is `backend/src/pos/keys.py` (what is kept and how) and `backend/src/pos/api/keys.py` (the calls,
 and putting a key to work without a restart); the page is `apps/pos_app/lib/screens/hub_keys_screen.dart`.

@@ -37,6 +37,12 @@ text carries (`pictures_of`) and for a picture itself (`picture`). A hub has no 
 Twilio to call, so it asks. And a text a person typed at a terminal goes out by the same line as the POS's
 own (`deliver`). With a `keeper` (`pos.texts.Texts`) every text that goes out is written down in its
 conversation, and what becomes of it is told there: that is where the words are kept, and only there.
+
+**Where Twilio can reach the hub** (`pos.online.twilio_way`; docs/text-inbox.md, "Instant delivery and
+pictures"): every text goes out with the address Twilio is to call when something becomes of it
+(`callback`), so "Delivered" shows when the phone company says so and not when the hub next asks. A text a
+person typed can carry pictures (`deliver`, `media`): Twilio is given an address for each and fetches it
+from the hub. And when Twilio calls about a text, the hub asks it for that one text (`one`).
 """
 
 from __future__ import annotations
@@ -116,6 +122,9 @@ SAID = {
     21601: NO_NUMBER,
     21606: "the number to send from is not one of this Twilio account's that can text",
     21608: "this Twilio account is a trial: it texts only the numbers verified in its console",
+    11200: "Twilio could not fetch the picture from this hub: look at the way in under Keys and connections",
+    11751: "the pictures are too big together for one text",
+    12300: "Twilio did not take the picture: it is not a kind a text carries",
     21610: "the customer answered STOP to an earlier text: Twilio sends them no more",
     21614: "the number on the order is no mobile number",
     21659: "the number to send from is not one of this Twilio account's",
@@ -127,6 +136,7 @@ SAID = {
     30007: "the phone company took it for spam and did not deliver it",
     30032: "the toll-free number to send from is not verified yet (Twilio's console)",
     30034: "the number to send from is not registered for business texts yet (A2P 10DLC, in Twilio's console)",
+    63019: "Twilio could not fetch the picture from this hub: look at the way in under Keys and connections",
 }
 """Twilio's error numbers a restaurant is likely to meet, in words for a manager. Any other is said by its
 number, which Twilio's own pages explain."""
@@ -277,6 +287,9 @@ class TwilioMessenger:
     ) -> None:
         self.config = config
         self.keeper = keeper
+        self.callback: Callable[[], str] | None = None
+        """Gives the address Twilio is to call when something becomes of a text, or nothing while the hub
+        cannot be reached from outside. Asked with every text that goes out."""
         self._numbers: tuple[float, frozenset[str]] | None = None  # of the Messaging Service, and when asked
         self.heard_fault = ""
         """Why Twilio's list of messages could not be read the last time it was asked; nothing when it was."""
@@ -322,10 +335,11 @@ class TwilioMessenger:
                 log.warning("texts: one could not be written down (%s)", type(err).__name__)
         self._later(0.0, lambda: self._try(outcome, to, message.body, 1))
 
-    def deliver(self, text_id: str, to: str, body: str) -> None:
+    def deliver(self, text_id: str, to: str, body: str, media: tuple[str, ...] = ()) -> None:
         """Puts a text a person typed in the line. It is in its conversation already (`pos.texts`), under
-        `text_id`: what becomes of it is told there. The same words twice are a person's to send; the hour's
-        limit holds for them as for every text."""
+        `text_id`: what becomes of it is told there. `media` are the addresses Twilio fetches its pictures
+        from. The same words twice are a person's to send; the hour's limit holds for them as for every
+        text."""
         outcome = Outcome(int(self._now() * 1000), TYPED, "", text_id=text_id)
         with self._lock:
             self._outcomes.append(outcome)
@@ -337,7 +351,7 @@ class TwilioMessenger:
         if held:
             self._settle(outcome, FAILED, said=held)
             return
-        self._later(0.0, lambda: self._try(outcome, number, body, 1))
+        self._later(0.0, lambda: self._try(outcome, number, body, 1, media))
 
     def _held_back(self, to: str, body: str, *, twice: bool = False) -> str:
         """Why this text is not sent at all: the same went to the same number just now (unless it may go
@@ -417,11 +431,18 @@ class TwilioMessenger:
 
     # --- one text ----------------------------------------------------------------------------------------
 
-    def _post(self, to: str, body: str) -> tuple[str, int | None, bool]:
+    def _post(self, to: str, body: str, media: tuple[str, ...] = ()) -> tuple[str, int | None, bool]:
         """One call to Twilio. Gives the text's own name at Twilio when it took it; else Twilio's error
         number (None when there was no answer to read), and whether another try could help."""
-        data = {"To": to, "Body": body}
+        data: dict[str, Any] = {"To": to}
+        if body or not media:
+            data["Body"] = body
+        if media:
+            data["MediaUrl"] = list(media)  # one for each picture: Twilio fetches them from the hub
         data["MessagingServiceSid" if self.config.by_service else "From"] = self.config.sender
+        called = self._callback()
+        if called:
+            data["StatusCallback"] = called
         try:
             answer = self._client.post(f"/2010-04-01/Accounts/{self.config.account}/Messages.json", data=data)
         except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -440,15 +461,24 @@ class TwilioMessenger:
         again = answer.status_code == 429 or answer.status_code >= 500
         return "", code if isinstance(code, int) else answer.status_code, again
 
-    def _try(self, outcome: Outcome, to: str, body: str, n: int) -> None:
-        sid, code, again = self._post(to, body)
+    def _callback(self) -> str:
+        """Where Twilio is to say what became of a text, where the hub can be reached; nothing otherwise."""
+        if self.callback is None:
+            return ""
+        try:
+            return self.callback() or ""
+        except Exception:  # noqa: BLE001 - a text goes without it: the hub asks what became of it, as before
+            return ""
+
+    def _try(self, outcome: Outcome, to: str, body: str, n: int, media: tuple[str, ...] = ()) -> None:
+        sid, code, again = self._post(to, body, media)
         if sid:
             outcome.sid = sid
             self._settle(outcome, SENT)
             self._later(LOOKS[0], lambda: self._look(outcome, 0))
             return
         if again and n < TRIES:
-            self._later(WAITS[min(n, len(WAITS)) - 1], lambda: self._try(outcome, to, body, n + 1))
+            self._later(WAITS[min(n, len(WAITS)) - 1], lambda: self._try(outcome, to, body, n + 1, media))
             return
         if code != -1:
             self._forget(to, body)  # it did not go: the same text may be tried again by hand at once
@@ -577,6 +607,22 @@ class TwilioMessenger:
             path, params = following, None
         self.heard_fault = ""
         return found
+
+    def one(self, sid: str) -> dict[str, Any] | None:
+        """One text by Twilio's name for it, as Twilio describes it now (a row like those of `heard`): what
+        the hub asks when Twilio called about that text. None where Twilio could not be asked, knows no
+        such text, or the text is not one of this restaurant's number."""
+        if not TEXT_SID.fullmatch(sid):
+            return None
+        try:
+            answer = self._client.get(f"/2010-04-01/Accounts/{self.config.account}/Messages/{sid}.json")
+        except (httpx.HTTPError, RuntimeError):
+            return None
+        told = _json(answer)
+        if answer.status_code != 200 or told.get("sid") != sid:
+            return None
+        numbers = self._service_numbers() if self.config.by_service else frozenset()
+        return told if self._ours(told, numbers) else None
 
     def _ours(self, row: Mapping[str, Any], numbers: frozenset[str]) -> bool:
         """Whether a message of the account's is one of this restaurant's texts: to or from the number the

@@ -9,6 +9,9 @@
 	<!-- Phone calls: ICE and RTP receive UDP on sockets the app opens, which the sandbox counts as incoming. -->
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- Texts: a picture for a customer is a file the person at the screen chooses; the app reads that one. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
 	<key>com.apple.security.device.camera</key>
 	<true/>
 	<key>com.apple.security.device.audio-input</key>

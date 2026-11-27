@@ -193,6 +193,33 @@ class TextListening {
   final String said;
 }
 
+/// What a text of the staff's can carry besides words (`send` of the hub's answers).
+class TextSends {
+  const TextSends({this.known = false, this.pictures = false, this.most = 5, this.bytes = 4500000});
+
+  factory TextSends.fromJson(Object? json) {
+    if (json is! Map) return const TextSends();
+    final most = _i(json['most']), bytes = _i(json['bytes']);
+    return TextSends(
+      known: true,
+      pictures: json['pictures'] == true,
+      most: most > 0 ? most : 5,
+      bytes: bytes > 0 ? bytes : 4500000,
+    );
+  }
+
+  /// The hub knows of pictures in the staff's texts at all. A hub from before them says nothing.
+  final bool known;
+
+  /// A picture can go now: Twilio can fetch it from this hub (docs/text-inbox.md, "Instant delivery and
+  /// pictures"). False until a manager has set that up.
+  final bool pictures;
+
+  /// How many pictures one text carries at the most, and how many bytes they may be together.
+  final int most;
+  final int bytes;
+}
+
 /// The list of conversations (`GET /texts`).
 class TextInbox {
   const TextInbox({
@@ -201,6 +228,7 @@ class TextInbox {
     this.listening = const TextListening(),
     this.unread = 0,
     this.threads = const [],
+    this.sends = const TextSends(),
   });
 
   factory TextInbox.fromJson(Map<String, dynamic> json) => TextInbox(
@@ -209,6 +237,7 @@ class TextInbox {
     listening: TextListening.fromJson(_map(json['listening'])),
     unread: _i(json['unread']),
     threads: [for (final row in _rows(json['threads'])) TextThread.fromJson(row)],
+    sends: TextSends.fromJson(json['send']),
   );
 
   /// The hub has a Twilio account. Without one nothing comes and nothing goes.
@@ -223,6 +252,7 @@ class TextInbox {
 
   /// The one with the newest text first.
   final List<TextThread> threads;
+  final TextSends sends;
 }
 
 /// What a button's badge needs (`GET /texts/unread`).
@@ -251,6 +281,7 @@ class TextPage {
     this.more = false,
     this.before = '',
     this.after = '',
+    this.sends = const TextSends(),
   });
 
   factory TextPage.fromJson(Map<String, dynamic> json) {
@@ -262,6 +293,7 @@ class TextPage {
       more: json['more'] == true,
       before: _s(wrap['before']),
       after: _s(wrap['after']),
+      sends: TextSends.fromJson(json['send']),
     );
   }
 
@@ -279,23 +311,30 @@ class TextPage {
   final String before;
   final String after;
 
+  /// What a text typed here can carry.
+  final TextSends sends;
+
   bool get wraps => before.isNotEmpty || after.isNotEmpty;
+
+  /// This conversation with other [texts], and whether there are [more] before them.
+  TextPage withTexts(List<TextMessage> texts, {bool? more}) => TextPage(
+    on: on,
+    thread: thread,
+    texts: texts,
+    more: more ?? this.more,
+    before: before,
+    after: after,
+    sends: sends,
+  );
 
   /// These texts with [older] ones in front (a page further back), each text once.
   TextPage withOlder(TextPage older) {
     final have = {for (final text in texts) text.id};
-    return TextPage(
-      on: on,
-      thread: thread,
-      texts: [
-        for (final text in older.texts)
-          if (!have.contains(text.id)) text,
-        ...texts,
-      ],
-      more: older.more,
-      before: before,
-      after: after,
-    );
+    return withTexts([
+      for (final text in older.texts)
+        if (!have.contains(text.id)) text,
+      ...texts,
+    ], more: older.more);
   }
 
   /// This page as newly read, keeping the [earlier] texts the screen had fetched from further back.
@@ -308,14 +347,7 @@ class TextPage {
         if (text.atMs <= oldest && !have.contains(text.id)) text,
     ];
     if (kept.isEmpty) return this;
-    return TextPage(
-      on: on,
-      thread: thread,
-      texts: [...kept, ...texts],
-      more: earlier.more,
-      before: before,
-      after: after,
-    );
+    return withTexts([...kept, ...texts], more: earlier.more);
   }
 }
 
@@ -382,8 +414,14 @@ String underWords(TextMessage text, DateTime now) => [
   if (!text.inbound && stateWords(text).isNotEmpty) stateWords(text),
 ].join(' · ');
 
-/// What a first text looks like on the customer's phone, with what the hub puts around it.
-String wrapped(TextPage page, String typed) => '${page.before}${typed.trim()}${page.after}';
+/// What a first text looks like on the customer's phone, with what the hub puts around it. With [pictures]
+/// and no words it still says who it is from: the name without its colon, as the hub sends it.
+String wrapped(TextPage page, String typed, {bool pictures = false}) {
+  final words = typed.trim();
+  if (words.isNotEmpty || !pictures) return '${page.before}$words${page.after}';
+  final from = page.before.trimRight();
+  return '${from.endsWith(':') ? from.substring(0, from.length - 1) : from}${page.after}'.trim();
+}
 
 /// What the Texts tile of the home screen's menu says under its name: how many conversations hold something
 /// nobody has read. Nothing while none does.

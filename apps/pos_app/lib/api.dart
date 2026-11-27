@@ -1899,6 +1899,43 @@ class PosApi {
     ),
   );
 
+  /// Twilio's way in is turned on (docs/text-inbox.md, "Instant delivery and pictures"): the hub makes its
+  /// address for Twilio's calls, unless it has one; with [again] a new one, after which the one Twilio has
+  /// is dead. Answers how the keys stand, the address in [HubKeys.textsWay]. 409 `no_service` on a hub
+  /// without a Twilio account, 404 from one older than this.
+  Future<HubKeys> turnOnTextsWay(String token, {bool again = false}) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(
+        Uri.parse('$base/hub/texts/way'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'again': again}),
+      ),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// Twilio's way in is turned off: its address is forgotten and the hub's door lets no call of Twilio's in.
+  Future<HubKeys> turnOffTextsWay(String token) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.delete(Uri.parse('$base/hub/texts/way'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 15),
+    ),
+  );
+
+  /// The hub tries Twilio's way in: it calls its own address for Twilio at its push door, and, where it has
+  /// a name on the internet, from outside ([HubKeys.textsWayTried]). Nothing is asked of Twilio. The hub
+  /// waits for the outside, so this waits longer than most calls. 409 while it is not turned on.
+  Future<HubKeys> tryTextsWay(String token) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(
+        Uri.parse('$base/hub/texts/way/try'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: '{}',
+      ),
+      timeout: const Duration(seconds: 45),
+    ),
+  );
+
   /// An account is gone, and its key with it: the hub stops asking it. Not the first account.
   Future<HubKeys> removeOnlineAccount(String token, String id) async => HubKeys.fromJson(
     await _withFailover(
@@ -2219,9 +2256,11 @@ class PosApi {
   );
 
   /// Sends a text to a customer. [id] is this screen's own name for it, so a tap sent twice is one text;
-  /// [name] is what the screen knows the customer by. The answer is the text, `waiting`: what becomes of it
-  /// is told on the change feed. 409 `no_service` without a Twilio account, 409 `stopped` for a customer
-  /// who answered STOP, 422 `no_number`, `no_text`, `too_long`.
+  /// [name] is what the screen knows the customer by. [pictures] go with it (JPEG, PNG or GIF, as many and
+  /// as heavy as the hub's `send` says); with a picture the words may be empty. The answer is the text,
+  /// `waiting`: what becomes of it is told on the change feed. 409 `no_service` without a Twilio account,
+  /// 409 `stopped` for a customer who answered STOP, 409 `no_way` for a picture on a hub Twilio cannot
+  /// fetch it from, 422 `no_number`, `no_text`, `too_long`, `too_many`, `too_big`, `bad_picture`.
   Future<TextMessage> sendText(
     String staffId,
     String phone, {
@@ -2229,14 +2268,21 @@ class PosApi {
     required String id,
     String name = '',
     String device = '',
+    List<Uint8List> pictures = const [],
   }) async => TextMessage.fromJson(
-    await _post('/texts/with/${Uri.encodeComponent(phone)}', {
-      'staff_id': staffId,
-      'body': body,
-      'device': device,
-      'id': id,
-      'name': name,
-    }, timeout: const Duration(seconds: 6)),
+    await _post(
+      '/texts/with/${Uri.encodeComponent(phone)}',
+      {
+        'staff_id': staffId,
+        'body': body,
+        'device': device,
+        'id': id,
+        'name': name,
+        if (pictures.isNotEmpty) 'pictures': [for (final picture in pictures) base64Encode(picture)],
+      },
+      // pictures are a few megabytes over the restaurant's own network
+      timeout: Duration(seconds: pictures.isEmpty ? 6 : 30),
+    ),
   );
 
   /// The conversation was opened: what the customer wrote in it is read, for everybody.

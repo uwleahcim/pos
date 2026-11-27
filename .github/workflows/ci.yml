@@ -97,6 +97,10 @@ jobs:
           test "$(push)" = 401
           compose exec -T door sh -c 'grep -q sha256 /door/key.json && ! grep -q ci-only /door/key.json'
           compose exec -T door sh -c '! touch /door/x 2> /dev/null'
+          # Twilio's way in (docs/text-inbox.md) is shut until a manager turns it on: the API told the door
+          # that there is no word yet, and a call with any word in its address is "not found".
+          compose exec -T door sh -c 'grep -q sha256 /door/twilio.json'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST --data 'MessageSid=x' http://127.0.0.1:8090/twilio/ci-only-word-nobody-made-0123456789abcd/text)" = 404
           # The tunnel's keeper has Cloudflare's program, waits for a token, and says so where the API reads it.
           compose exec -T tunnel cloudflared --version
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/online/status | jq -e '.push.tunnel.there' > /dev/null && break; sleep 1; done
