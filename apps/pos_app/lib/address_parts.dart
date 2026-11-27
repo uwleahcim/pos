@@ -67,10 +67,28 @@ const _states = {
 
 final _codes = _states.values.toSet();
 
-/// A state's two letters for what an address says of it: its letters in any case, or with [names] its name
-/// spelled out. Null for what is neither.
+/// One of the fifty states: its two letters and its name.
+typedef UsState = ({String code, String name});
+
+/// The fifty states in the order of their two letters: what the State box of a form lists (Mike,
+/// 2026-11-26: "a list of the 50 states 2 letter abbreviation"). The District of Columbia is read off an
+/// address like a state, and kept, but it is not one of the fifty and the list does not offer it.
+final List<UsState> usStates = List.unmodifiable(
+  [
+    for (final MapEntry(key: name, value: code) in _states.entries)
+      if (code != 'DC')
+        (code: code, name: [for (final word in name.split(' ')) word[0].toUpperCase() + word.substring(1)].join(' ')),
+  ]..sort((a, b) => a.code.compareTo(b.code)),
+);
+
+final _fifty = {for (final state in usStates) state.code};
+
+/// A state's two letters for what an address says of it: its letters in any case ("ma", "US-MA"), or with
+/// [names] its name spelled out. Null for what is neither.
 String? _stateOf(String said, {bool names = false}) {
-  final plain = said.trim().replaceAll('.', '');
+  var plain = said.trim().replaceAll('.', '');
+  final country = RegExp(r'^US[-\s]+(?=[A-Za-z]{2}$)', caseSensitive: false).firstMatch(plain);
+  if (country != null) plain = plain.substring(country.end);
   final code = plain.toUpperCase();
   if (_codes.contains(code)) return code;
   return names ? _states[plain.toLowerCase()] : null;
@@ -110,7 +128,8 @@ class AddressParts {
   static AddressParts? of(Object? json) {
     if (json is! Map) return null;
     String part(String name) => json[name] is String ? oneLine(json[name]) : '';
-    final state = _stateOf(part('state')) ?? '';
+    // a service that spells the state out is read like one that says its letters
+    final state = _stateOf(part('state'), names: true) ?? '';
     final zip = part('zip');
     final parts = AddressParts(
       street: part('street'),
@@ -209,6 +228,24 @@ class AddressParts {
   static String _bare(String unit) {
     final plain = unit.trim();
     return plain.startsWith('#') ? plain.substring(1).trim() : plain;
+  }
+
+  /// One of the fifty states ([usStates]) for what somebody says of it, by its two letters: its letters in
+  /// any case, or its name spelled out, as a keyboard's own suggestion or a paste may say it. Null for
+  /// anything else.
+  static String? listedState(String said) {
+    final code = _stateOf(said, names: true);
+    return _fifty.contains(code) ? code : null;
+  }
+
+  /// The states of the fifty whose two letters begin with [typed], in any case; all of them for nothing
+  /// typed.
+  static List<UsState> statesFrom(String typed) {
+    final letters = typed.trim().toUpperCase();
+    return [
+      for (final state in usStates)
+        if (state.code.startsWith(letters)) state,
+    ];
   }
 
   /// The state an address names, for the state a form starts on (the restaurant's own): as [parse] reads

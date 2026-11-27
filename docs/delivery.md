@@ -62,7 +62,7 @@ fields, and the list of addresses fills all of them):
 | **Deliver to** | The number and the street: "12 Elm St". The [list of addresses](#a-list-of-addresses-while-typing) drops down from this one, over the boxes under it. |
 | **Apt / unit** | The apartment, unit, suite or floor: "3B", "Apt 3B", "Ste 200". Empty for a house. |
 | **City** | The town. |
-| **State** | Two letters. It starts on the restaurant's own state (read off the restaurant's address under Location › **Delivery fee**), since nearly every delivery stays in it. Type over it for another. |
+| **State** | One of the fifty states by its two letters, off a list. It starts on the restaurant's own state (read off the restaurant's address under Location › **Delivery fee**), since nearly every delivery stays in it. Tap the box for the list, or type: [The State box](#the-state-box). |
 | **ZIP** | Five digits, or nine with a dash. |
 
 - **Where they stand.** On a phone the street has a line to itself, the unit and the city share the next,
@@ -91,6 +91,39 @@ fields, and the list of addresses fills all of them):
 - **The state alone is no address.** A form with nothing but the restaurant's state in its box still asks
   for the address.
 - **The restaurant's own address** (Location › Delivery fee) is still one box.
+
+#### The State box
+
+The State box is a list of the fifty states by their two letters (the owner's words, 2026-11-26: a list
+of the 50 states' two-letter abbreviations, typing is allowed and just shows the matching states, and
+the list of addresses must still fill it).
+
+- **A tap opens the list** under the box, over what stands there, moving nothing: each line is a state's
+  two letters with its name beside them. It opens on the state the box holds, which is marked. Six
+  states show and the rest is a scroll away, in the list itself. A tap on a line takes that state and
+  closes the list. A small arrow in the box says it is a list.
+- **Typing shows the states that match.** "M" shows the eight states that begin with M; "MI" is Michigan.
+  The box takes no letter that no state begins with, so what stands in it is always a state or on its
+  way to one. A letter typed where a state already stands starts another: with MA in the box, N shows
+  the states that begin with N. Letters can always be taken away, and an empty box lists all fifty.
+- **One letter is not a state yet.** Enter (Next on a phone's keyboard) takes the first state shown,
+  which is the marked one, and goes on to the ZIP. A box that is left with one letter takes the state if
+  only one begins with it (D is Delaware) and otherwise goes back to what it held. One letter alone is
+  never written on the order.
+- **The list of addresses fills it like every other box.** A tap on a line of the
+  [list of addresses](#a-list-of-addresses-while-typing) puts its state here, whichever way the map
+  service says it: by its letters ("MA"), spelled out ("Massachusetts"), with the country before it
+  ("US-MA"), or only in the line itself. It does so over a state that was picked by hand before. A
+  state's whole name from the keyboard's own suggestion, or a paste, is taken as its two letters too.
+- **With a keyboard**: the arrow down opens the list, then goes to the marked state and on from line to
+  line; Enter takes the line, the arrow up goes back and from the first line into the box, Escape closes
+  the list.
+- **On a phone the keyboard comes with the tap.** The form brings the box up so that five states show
+  over the keyboard, and never so far that the box itself is out of sight.
+- **Only the fifty.** The District of Columbia and the territories are not on the list and cannot be
+  typed in this box. An address that already says one ("DC" off the list of addresses, on an older
+  order, from the website, or typed whole in the first box) keeps it, and it is written on the order as
+  before.
 
 ### A customer who had one before
 
@@ -654,7 +687,8 @@ street's box, on the to-go form and on an order's own dialog (a catering order's
 - **A tap fills every box of the address**: the street, the unit, the city, the state and the ZIP
   ([The address in its parts](#the-address-in-its-parts)). A box the line has nothing for is emptied, so
   nothing of another address is left standing. One of your own earlier deliveries is read into the boxes
-  as it was written. Mapbox and Azure Maps say each part with their line. **Google's list names no ZIP**,
+  as it was written. Mapbox and Azure Maps say each part with their line; the state goes into its box as
+  two letters whichever way a service says it ([The State box](#the-state-box)). **Google's list names no ZIP**,
   so the hub asks Google once more about the one line that was tapped and the ZIP is in its box a moment
   later; if Google does not answer, the boxes keep what the line said and the ZIP is typed by hand.
 
@@ -1074,6 +1108,9 @@ it and when.
 
 - **The map's price is a suggestion.** Nothing stops another price or No fee being tapped, and nothing
   refuses an address for being too far. The history says what the map said and who picked what.
+- **The State box lists the fifty states and nothing else.** No District of Columbia, no territories, no
+  other country. The device's own address fill-in (a phone's saved addresses) is not asked for: the
+  boxes are filled by the list of addresses under the street.
 - **No map on the screen, no route, no delivery area drawn.** The lookup answers with two numbers.
 - **Traffic never moves the fee.** The minutes beside the miles are the usual drive, whatever the hour,
   and they are what a price by minutes goes by. Live traffic is for the time promised alone, and only
@@ -1250,6 +1287,16 @@ saved distances are further down):
   No order, no setting and no table changed: the order's `address` is one line of at most 200 letters.
   Tests: `test/address_parts_test.dart`, `test/address_fields_test.dart`; other tests type an address
   with `enterAddress` and read it with `addressOn` (`test/delivery_test.dart`).
+- The State box, app only: `lib/screens/state_box.dart` (`StateBox`: a `TextField` with the list of
+  `usStates` under it, so every way of filling a text box still fills it, which a fixed dropdown would
+  not; `StateBox.fits` is the formatter that takes only what a state begins with, by what was put into
+  the text and not by where the cursor stands; `stateIn` is what the form's line reads, nothing for one
+  letter; selection is off, so no handle or menu lies over the list). `lib/address_parts.dart`:
+  `usStates` (the fifty, by their letters, with their names), `AddressParts.statesFrom` and
+  `listedState`; `_stateOf` also reads "US-MA", and `AddressParts.of` a name spelled out.
+  `AddressSuggestion.boxes` takes the state from the line where the parts name none. A tap on a line of
+  addresses writes the boxes' controllers, which no formatter stands before, so "DC" is kept. No hub
+  code, no order and no setting changed. Tests: `test/state_box_test.dart`.
 - App: `lib/address_list.dart` (`AddressSuggestion`, `AddressSuggestions` with `share` and `leftWords`,
   `AddressSource`, `AddressService`, `AddressListSetting`, which reads an older hub's answer as Google alone,
   `AddressListTry`); `lib/screens/service_badge.dart` (`ServiceBadge`, at the top of the list and in the
@@ -1263,13 +1310,24 @@ saved distances are further down):
   moved to under the box by the box's paint transform, so it lays out nothing around it and follows the
   box through a scroll frame by frame. `_float` gives it the room down to the keyboard
   (`MediaQueryData.fromView`, since a `Dialog` hides the keyboard's inset from its children) and shows
-  nothing while the box's lower edge is outside the form's `Scrollable`. Its lines scroll in `_rolls`
+  nothing while the box's lower edge is outside the form's `Scrollable`. Its lines scroll in `rolls`
   under the credit row; `_onKey` says which line an arrow goes to (the list overlaps other boxes, so
   where things stand on the screen cannot say it). The list is in a `TextFieldTapRegion`, so a click on
   a line is not a click away from the box, and its `onTapOutside` closes it. It is the box of
   `EventFields` (`addresses:`, handed in by the to-go form and by `WhenDialog`) and of `fee-origin` in
-  `DeliveryFeeDialog`. `_bringUp` scrolls the form by what the list lacks, and no further than the box
+  `DeliveryFeeDialog`. `bringUp` scrolls the form by what the list lacks, and no further than the box
   at the top. `AddressListDialog` and the row `address-list` under Location.
+- A list that drops down from a text box is `DropsList` (`lib/screens/drop_list.dart`), a mixin on the
+  box's `State`: `_float`, `bringUp`, `_onKey`, `rolls` and the lines' focus live there, and `AddressBox`
+  and `StateBox` both use it, each saying what its box and its list are (`buildList` on a `DropCard`,
+  `listLines`, `closeList`) and building its box inside `dropUnder`. It is a mixin and not a widget
+  because `OverlayPortalController.show` may not be called while the screen is built: the state shows
+  and hides its list when something happens (`showList`, `hideList`). A list may be wider than its box
+  (`listMinWidth`, moved left to stay on the screen), no taller than `listMost`, content with
+  `listEnough` showing before the form is scrolled for it, and may take the arrow down wherever the
+  cursor stands and open by it (`arrowDownIsTheLists`, `openListByArrow`). A list that opened before the
+  keyboard came is given its room once the keyboard stands (`didChangeMetrics`, 200 ms after the last
+  change: the text box moves itself into sight at every frame until then).
 - The fee after a chosen address: `AddressFields.onChosen` (a line of the list was tapped and its parts
   are in the boxes) is `EventFields.onAddressChosen`; the to-go form's `_askDistance(chosen: true)` and
   `WhenDialog._lookUp(chosen: true)` forget `_feeByHand` before they ask, the dialog not for a fee the
