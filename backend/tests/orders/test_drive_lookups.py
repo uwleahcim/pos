@@ -590,7 +590,7 @@ def test_mapbox_is_asked_where_the_two_addresses_stand_and_then_the_drive_betwee
     world = MapboxSays()
     with caplog.at_level(logging.INFO):
         trip = world.roads().trip(HOME, ELM)
-    assert trip == Trip(Decimal("3.2"), 9)  # 5,214 meters, 545 seconds
+    assert trip == Trip(Decimal("3.24"), 9)  # 5,214 meters, 545 seconds
     home, there, route = world.seen
     assert all(request.method == "GET" and request.url.host == "api.mapbox.com" for request in world.seen)
     assert home.url.path == there.url.path == "/search/geocode/v6/forward"
@@ -624,7 +624,7 @@ def test_mapbox_that_is_told_where_the_restaurant_stands_searches_once_and_says_
     there, route = world.seen
     assert there.url.params["q"] == ELM
     assert route.url.path == "/directions/v5/mapbox/driving-traffic/-71.137000,42.452300;-71.150000,42.460000"
-    assert roads.trip(HOME, ELM, start=STANDS) == Trip(Decimal("3.2"), 9)
+    assert roads.trip(HOME, ELM, start=STANDS) == Trip(Decimal("3.24"), 9)
     assert "/mapbox/driving/" in world.seen[-1].url.path
     # a semicolon in an address would make two askings of one
     roads.trip(HOME, "12 Elm St; Apt 2", start=STANDS)
@@ -724,7 +724,7 @@ def test_azure_maps_is_asked_where_the_two_addresses_stand_and_then_the_drive_be
     world = AzureSays()
     with caplog.at_level(logging.INFO):
         trip = world.roads().trip(HOME, ELM)
-    assert trip == Trip(Decimal("3.2"), 9)
+    assert trip == Trip(Decimal("3.24"), 9)
     home, there, route = world.seen
     assert all(request.url.host == "atlas.microsoft.com" for request in world.seen)
     assert all(request.headers["subscription-key"] == AZURE_KEY for request in world.seen)  # never in an address
@@ -799,7 +799,7 @@ def test_what_azure_maps_may_answer_instead(world, reason, caplog):
 def test_an_azure_route_is_read_for_what_was_asked_of_it_alone():
     # nothing of the traffic: the usual drive, and no drive right now
     roads = AzureSays(path_of(traffic=None)).roads()
-    assert roads.trip(HOME, ELM, start=STANDS) == Trip(Decimal("3.2"), 9)
+    assert roads.trip(HOME, ELM, start=STANDS) == Trip(Decimal("3.24"), 9)
     with pytest.raises(LookupFailed):
         roads.drive_now(HOME, ELM, start=STANDS)
     # no length: no distance, and still the minutes right now

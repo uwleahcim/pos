@@ -105,6 +105,42 @@ def test_a_manager_lists_the_prices_by_miles_or_by_minutes():
     assert priced(c, {"enabled": False}) == {**DEFAULTS["delivery_fee"], **NO_LOOKUP}
 
 
+def test_miles_may_be_a_fraction_of_a_mile_to_a_hundredth():
+    """The owner's words, 2026-11-27: "Allow fractional miles like 0.25 miles"."""
+    c = client()
+    quarters = {
+        "enabled": True,
+        "bands": [
+            {"up_to": 1, "fee": 4},
+            {"up_to": "0.25", "fee": 0},
+            {"up_to": 0.5, "fee": "2.5"},
+            {"up_to": ".75", "fee": 3},
+        ],
+    }
+    # kept nearest first, each as it is said: "0.25", never "0.250" or ".25"
+    kept = priced(c, quarters)["bands"]
+    assert kept == [
+        {"up_to": "0.25", "fee": "0.00"},
+        {"up_to": "0.5", "fee": "2.50"},
+        {"up_to": "0.75", "fee": "3.00"},
+        {"up_to": "1", "fee": "4.00"},
+    ]
+    assert clean_delivery_fee({"bands": [{"up_to": "0.01", "fee": 1}, {"up_to": "99.99", "fee": 2}]})["bands"] == [
+        {"up_to": "0.01", "fee": "1.00"},
+        {"up_to": "99.99", "fee": "2.00"},
+    ]
+    # a band is picked by it however a screen writes the number, and the order carries it
+    assert band_of(c.get("/settings/delivery_fee").json(), "0.250") == {"up_to": "0.25", "fee": "0.00"}
+    brought(c)
+    assert pick(c, {"up_to": "0.75"})["refused"] == []
+    assert carried(c) == {"by": "miles", "up_to": "0.75", "amount": "3.00", "taxed": False}
+    assert fee_of({"delivery_fee": carried(c)})["up_to"] == "0.75"
+    assert [(row["name"], row["amount"]) for row in check(c)["charges"]] == [("Delivery fee", "3.00")]
+    # one the list does not hold is refused as ever
+    refused = pick(c, {"up_to": "0.7"}, when=60)["refused"]
+    assert [r["error"] for r in refused] == ["invalid_delivery_fee"] and carried(c)["up_to"] == "0.75"
+
+
 def test_what_the_prices_refuse():
     assert clean_delivery_fee({}) == DEFAULTS["delivery_fee"]
     free_close_by = clean_delivery_fee({"enabled": True, "bands": [{"up_to": 1, "fee": 0}]})
@@ -117,12 +153,14 @@ def test_what_the_prices_refuse():
         ({"bands": "2 miles"}, "a list of"),
         ({"bands": [{"up_to": n + 1, "fee": 1} for n in range(9)]}, "at most 8 bands"),
         ({"bands": [{"up_to": 0, "fee": 1}]}, "a number of miles"),
-        ({"bands": [{"up_to": 2.25, "fee": 1}]}, "to a tenth"),
+        ({"bands": [{"up_to": 2.255, "fee": 1}]}, "to a hundredth, from 0.01"),
+        ({"bands": [{"up_to": "0.001", "fee": 1}]}, "to a hundredth"),
         ({"bands": [{"up_to": 101, "fee": 1}]}, "to 100"),
         ({"bands": [{"up_to": True, "fee": 1}]}, "a number of miles"),
         ({"by": "minutes", "bands": [{"up_to": 7.5, "fee": 1}]}, "a whole number of minutes"),
         ({"by": "minutes", "bands": [{"up_to": 241, "fee": 1}]}, "to 240"),
         ({"bands": [{"up_to": 2, "fee": 1}, {"up_to": "2.0", "fee": 2}]}, "up to 2 miles is listed twice"),
+        ({"bands": [{"up_to": 0.25, "fee": 1}, {"up_to": ".250", "fee": 2}]}, "up to 0.25 miles is listed twice"),
         ({"bands": [{"up_to": 2, "fee": -1}]}, "dollars and cents"),
         ({"bands": [{"up_to": 2, "fee": "1.005"}]}, "dollars and cents"),
         ({"bands": [{"up_to": 2, "fee": "1000"}]}, "to 999.99"),
@@ -294,7 +332,8 @@ def test_what_an_order_carries_is_read_with_care():
         {"amount": "-1.00", "by": "miles", "up_to": "2"},
         {"amount": "3.00"},  # an amount with no band: nobody listed that
         {"amount": "3.00", "by": "feet", "up_to": "2"},
-        {"amount": "3.00", "by": "miles", "up_to": "2.25"},
+        {"amount": "3.00", "by": "miles", "up_to": "2.255"},
+        {"amount": "3.00", "by": "minutes", "up_to": "2.5"},
     ):
         assert fee_of({"delivery_fee": unreadable}) is None, unreadable
         assert fee_charged({"order_type": "takeout", "handover": "delivery", "delivery_fee": unreadable}) is None

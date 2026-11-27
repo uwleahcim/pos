@@ -139,8 +139,14 @@ Back office › Location › **Delivery fee**:
 - **Charge for delivery**: on or off.
 - **The fee goes by**: **Miles**, or **Minutes of the drive**.
 - **The prices**: each one is "up to so far, this much". For instance: up to 2 miles $3.00, up to 4.5
-  miles $5.00, up to 8 miles $8.50. Miles go to a tenth of a mile and minutes are whole. There can be up
-  to eight prices, and a price can be 0 for a free delivery close by. The hub keeps them nearest first.
+  miles $5.00, up to 8 miles $8.50. Miles can be a fraction of a mile, as fine as a hundredth: up to 0.25
+  miles, up to 0.5, up to 1.75. Minutes are whole. There can be up to eight prices, and a price can be 0
+  for a free delivery close by.
+- **The list sorts itself, nearest first.** A new price starts at the foot of the list. Once its distance
+  is typed and you move on (to another row, to **Add a price**, or the keyboard is put away), the row goes
+  to its place by distance, and so does a row whose distance you change. Nothing moves while you are still
+  typing in a row. The hub keeps the prices nearest first as well, so the buttons on a delivery are always
+  in that order.
 - **Charge sales tax on the fee**: off to start. Whether a delivery fee is taxed is for your accountant
   to say. (Massachusetts leaves a delivery charge out of the sales tax when it is stated on its own on the
   bill and is a fair price for the trip, DOR Directive 04-5; that directive does not speak of meals, so
@@ -228,8 +234,10 @@ customer was told it and may have paid it, so no address moves it, typed or chos
 the new address is, and a tap picks another price.
 
 The lookup gives both the miles and the minutes whichever the fee goes by, and the price is picked by the
-one the fee goes by. Miles are along the road, to a tenth of a mile. Minutes are the usual drive, to the
-nearest minute: the map service does not know about tonight's traffic.
+one the fee goes by. Miles are along the road, to a hundredth of a mile, as fine as a price can be listed:
+with prices a quarter of a mile apart, an address 0.25 miles away is "up to 0.25" and one 0.26 miles away
+is the next price. A distance with nothing in the hundredths reads the short way, "3.2 mi". Minutes are the
+usual drive, to the nearest minute: the map service does not know about tonight's traffic.
 
 **The map suggests, a person decides.** What the map said is kept beside the pick, and the check's history
 shows it: "Delivery fee $3.00, up to 2 mi. The map said 3.2 mi · 9 min", with who picked it. It never
@@ -1352,7 +1360,7 @@ A second map service:
   `destination.address`, `travelMode: DRIVE`, `routingPreference: TRAFFIC_UNAWARE` (the plain price, and
   the usual drive like the first service's) and `regionCode: us`; the key in `X-Goog-Api-Key`, the mask
   `routes.distanceMeters,routes.duration` in `X-Goog-FieldMask`. `distanceMeters` is turned to miles to a
-  tenth and `duration` ("545s") to minutes; no route is `not_found`. `POS_MAPS_GOOGLE_KEY`,
+  hundredth and `duration` ("545s") to minutes; no route is `not_found`. `POS_MAPS_GOOGLE_KEY`,
   `POS_MAPS_GOOGLE_DAILY` (100 unless set) and `POS_MAPS_GOOGLE_URL` in the environment.
 - `Lookups(maps, fallback=...)` asks the first and then, whatever the first's reason, the second; each
   within its own day's most, and each for `TIMEOUT_SECONDS` in all (`_within`: a thread that is waited for
@@ -1449,7 +1457,8 @@ The delivery fee:
 
 - The setting `delivery_fee` (`pos.settings.clean_delivery_fee`, `GET/PUT /settings/delivery_fee`, a
   manager's token to write): `enabled` (false to start), `by` (`miles` | `minutes`), `bands` (each
-  `{up_to, fee}`, `up_to` a string such as `"2"` or `"2.5"`, kept in order of reach, at most 8) and `taxed`.
+  `{up_to, fee}`, `up_to` a string such as `"2"`, `"2.5"` or `"0.25"`: miles to a hundredth, whole
+  minutes; kept in order of reach, at most 8) and `taxed`.
 - The order field `delivery_fee` (`pos.orders.delivery_fee`). A screen sends the band alone,
   `{"up_to": "4.5"}`, `{"up_to": null}` for no fee on purpose, or null to take the answer back. `fee_ops`
   (in `append_ops`, after `bag_ops`) fills it in from the setting as it arrives:
@@ -1482,7 +1491,8 @@ Looking the distance up:
   A `PUT` that says none keeps the one stored, so an app from before the lookup does not wipe it. The
   answers of `GET` and `PUT` add `maps` (the hub has a service) and `lookup` (a service and an origin):
   worked out, never stored.
-- `POST /delivery/distance` `{"address"}` answers `miles` (a string, to a tenth), `minutes`, `by`, `band`
+- `POST /delivery/distance` `{"address"}` answers `miles` (a string, to a hundredth: "0.25", and "3.2" where the
+  hundredths are nothing), `minutes`, `by`, `band`
   (`{up_to, fee}` or null) and `beyond`. 409 `no_lookup` with no service or no origin; 422 for no address;
   424 `lookup_failed` with `reason` and a `message` for the form. It is not a 5xx on purpose: the hub is
   well, and a terminal reads a 5xx as a hub to turn away from. `GET /maps/status` is what `hubctl maps

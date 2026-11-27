@@ -437,7 +437,7 @@ class BagIn(BaseModel):
 
 
 class FeeBandIn(BaseModel):
-    up_to: float | str = Field(description="how far the band reaches: miles to a tenth, or whole minutes")
+    up_to: float | str = Field(description="how far the band reaches: miles to a hundredth, or whole minutes")
     fee: float | str = Field(description="what a delivery within it costs, in dollars and cents")
 
 
@@ -1932,7 +1932,7 @@ def create_app(
     @app.post("/delivery/distance")
     def delivery_distance(body: DistanceIn) -> dict[str, Any]:
         """How far a delivery's address is from the restaurant, asked of the hub's map service
-        (`pos.maps`), and the band of the fee it falls in: `miles` (along the road, to a tenth), `minutes`
+        (`pos.maps`), and the band of the fee it falls in: `miles` (along the road, to a hundredth), `minutes`
         (the usual drive), `by` (what the fee goes by here), `band` (`{up_to, fee}`, or null) and `beyond`
         (true when the address is further than the last band reaches). The form picks that band, and whoever
         takes the order can still tap another.
