@@ -13,7 +13,7 @@ import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'customers_test.dart' show tagsIn;
-import 'floor_test.dart' show floorJson;
+import 'floor_test.dart' show floorJson, roomy;
 import 'hub.dart';
 import 'table_moves_test.dart' show floorThatMoves, seated;
 import 'table_tags_test.dart' show linda, omar, seatedBooking, seatedParty, seven;
@@ -35,9 +35,9 @@ bool starred(WidgetTester tester, String table) => key('table-guest-tagged:$tabl
 
 /// Whether [part] of a table turned on its corner (a square at 45 degrees, as A7 is) lies inside the table's
 /// own edge, not only inside the square the map keeps for it.
-bool insideItsDiamond(WidgetTester tester, String table, String part) {
+bool insideItsDiamond(WidgetTester tester, String table, Finder part) {
   final square = tester.getRect(key('table-look:$table'));
-  final rect = tester.getRect(key(part));
+  final rect = tester.getRect(part);
   final reach = square.width / math.sqrt2;
   return [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight].every((corner) {
     final from = corner - square.center;
@@ -53,7 +53,7 @@ Future<Hub> pumpMap(
   WidgetTester tester, {
   void Function(Hub hub)? setUp,
   Map<String, List<Map<String, dynamic>>> more = const {},
-  Size size = const Size(1200, 900),
+  Size size = roomy,
   double textScale = 1,
   bool dark = false,
   StaffMember? me,
@@ -263,8 +263,8 @@ void main() {
           ..parties = [seatedParty('p1', 'Omar', omar, 'o1', seatedMs: seven + 60000)],
       );
       expect((named(tester, 'A7'), starred(tester, 'A7')), ('Papadopo… +1', true));
-      expect(insideItsDiamond(tester, 'A7', 'table-guest:A7'), isTrue);
-      expect(insideItsDiamond(tester, 'A7', 'table-guest-tagged:A7'), isTrue);
+      expect(insideItsDiamond(tester, 'A7', key('table-guest:A7')), isTrue);
+      expect(insideItsDiamond(tester, 'A7', key('table-guest-tagged:A7')), isTrue);
       // it stands under the server's name and over the party's size and what the table ran up
       final name = tester.getRect(key('table-guest:A7'));
       expect(tester.getRect(key('table-server:A7')).bottom <= name.top + 0.5, isTrue);
@@ -359,7 +359,8 @@ void main() {
       await stop(tester);
     });
 
-    testWidgets('on a small phone, in the dark and with large type, the name stays inside its table', (tester) async {
+    testWidgets('on a small phone, in the dark and with large type: the table says less, and keeps the star and '
+        'the booking as marks on its edge', (tester) async {
       for (final (dark, scale) in [(false, 1.0), (true, 1.0), (false, 1.5)]) {
         await pumpMap(
           tester,
@@ -379,13 +380,22 @@ void main() {
           },
         );
         expect(tester.takeException(), isNull, reason: 'dark $dark, type $scale');
-        expect((named(tester, 'A7'), starred(tester, 'A7')), ('Papadopo… +1', true));
-        final table = tester.getRect(key('table-look:A7'));
-        for (final part in ['table-guest:A7', 'table-guest-tagged:A7', 'table-hold:A7', 'table-server:A7']) {
+        // The whole floor on a phone this small: a table has the room for its own name, inside its own
+        // edge, and nothing else is squeezed in beside it (test/floor_readable_test.dart has the sizes).
+        final name = tester.getRect(find.text('A7'));
+        expect(insideItsDiamond(tester, 'A7', find.text('A7')), isTrue, reason: 'dark $dark, type $scale');
+        expect(named(tester, 'A7'), isNull);
+        expect(key('table-server:A7'), findsNothing);
+        // Who sits there carries a tag, and the table is wanted at half past seven: both stay on the map, as
+        // marks on the table's edge that leave its name alone.
+        expect(starred(tester, 'A7'), isTrue);
+        expect(key('table-hold:A7'), findsOneWidget);
+        final table = tester.getRect(key('table-look:A7')).inflate(6);
+        for (final part in ['table-guest-tagged:A7', 'table-hold:A7']) {
           final rect = tester.getRect(key(part));
           expect(table.contains(rect.topLeft) && table.contains(rect.bottomRight), isTrue, reason: '$part, $scale');
+          expect(rect.overlaps(name.deflate(1.5)), isFalse, reason: '$part, $scale');
         }
-        expect(insideItsDiamond(tester, 'A7', 'table-guest:A7'), isTrue, reason: 'dark $dark, type $scale');
         await stop(tester);
       }
     });
@@ -408,7 +418,7 @@ void main() {
       final live = LiveHub(hub);
       final api = PosApi(settings, client: live.client);
       tester.view
-        ..physicalSize = const Size(1200, 900)
+        ..physicalSize = roomy
         ..devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       api.live.start();

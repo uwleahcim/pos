@@ -13,7 +13,7 @@ import 'package:pos_app/settings.dart';
 import 'package:pos_app/takeout.dart' show clockTime;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'floor_test.dart' show floorJson;
+import 'floor_test.dart' show floorJson, roomy;
 import 'hub.dart';
 import 'table_moves_test.dart' show byAmy, byHolly, checkAt, floorThatMoves, sentTo;
 import 'table_servers_test.dart' show amy, holly, sentOne;
@@ -39,10 +39,15 @@ Future<void> tapKey(WidgetTester tester, String name) async {
 
 Finder mark(String table) => key('table-hold:$table');
 
-/// What a table's mark reads, "18:30" or "here"; null for a table with none.
-String? markSays(WidgetTester tester, String table) => mark(table).evaluate().isEmpty
-    ? null
-    : tester.widget<Text>(find.descendant(of: mark(table), matching: find.byType(Text)).first).data;
+/// What a table's mark reads, "18:30" or "here"; on a table with the room for the mark alone, what the mark
+/// says in words ("booked for 18:30, Chen, party of 4"); null for a table with none.
+String? markSays(WidgetTester tester, String table) {
+  if (mark(table).evaluate().isEmpty) return null;
+  final words = find.descendant(of: mark(table), matching: find.byType(Text));
+  return words.evaluate().isEmpty
+      ? tester.widget<Icon>(find.descendant(of: mark(table), matching: find.byType(Icon))).semanticLabel
+      : tester.widget<Text>(words.first).data;
+}
 
 /// How the time on a table is drawn: the colour behind it, and whether it is only outlined.
 (Color?, bool) markLook(WidgetTester tester, String table) {
@@ -58,7 +63,7 @@ Future<Hub> pumpMap(
   required List<Map<String, dynamic>> bookings,
   required int Function() now,
   Map<String, dynamic>? floor,
-  Size size = const Size(1200, 900),
+  Size size = roomy,
 }) async {
   final hub = Hub()
     ..floor = floor ?? floorJson()
@@ -459,7 +464,12 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(tester.takeException(), isNull);
-      expect([markSays(tester, 'A8'), markSays(tester, 'A7'), markSays(tester, 'K1')], ['18:30', '17:10', 'here']);
+      // a table this small has no room for the time: it wears the mark of its booking, in the colour the
+      // time would have, and the mark says the rest to whoever has the screen read out
+      expect(markSays(tester, 'A8'), 'booked for 18:30, Featherstonehaugh, party of 12');
+      expect(markSays(tester, 'A7'), 'booked for 17:10, Garcia, party of 2, nearly its time');
+      expect(markSays(tester, 'K1'), 'booked for 16:00, Okafor, party of 6, the party is here');
+      expect(markLook(tester, 'A7').$1, PosColors.dark.timerWarn);
       expect(key('legend-booked'), findsNothing); // the row under the map is full on a phone
       await stop(tester);
     });

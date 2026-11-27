@@ -11,7 +11,7 @@ import 'package:pos_app/to_go_stages.dart';
 
 import 'hub.dart';
 import 'table_moves_test.dart' show byAmy, byHolly, byMike, checkAt, floorThatMoves, sentTo;
-import 'table_servers_test.dart' show amy, holly, mike, sentOne, serverTag;
+import 'table_servers_test.dart' show amy, holly, mike, sentOne, serverTag, showRoom;
 
 /// Bar tabs (the Toast comparison's row 13): a check opened with a name and no table. It is rung in and sent
 /// like a table's check, found again in the list of checks by its name, on no floor map, and given a table
@@ -306,6 +306,7 @@ void main() {
     // the floor map is up, and says what the next tap does
     expect(seatingBar(), findsOneWidget);
     expect(find.text("Seating Linda's tab. Tap their table."), findsOneWidget);
+    await showRoom(tester, 'Main dining'); // where a table has the room to say whose it is
     expect(serverTag('A8'), findsNothing);
 
     await tester.tap(find.text('A8'));

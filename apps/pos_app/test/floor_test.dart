@@ -14,6 +14,11 @@ import 'package:pos_app/settings.dart';
 Map<String, dynamic> floorJson() =>
     jsonDecode(File('test/fixtures/floor.json').readAsStringSync()) as Map<String, dynamic>;
 
+/// A screen with the room for the whole floor at the largest the map draws a table: every table says all
+/// it has to say. On a smaller screen a table says less, not the same in smaller letters
+/// (floor_readable_test.dart), so a test of what a table says is run here.
+const roomy = Size(3400, 2200);
+
 void main() {
   test('the plan parses with rooms, tables and the open check on A7', () {
     final plan = FloorPlan.fromJson(floorJson());
@@ -31,7 +36,10 @@ void main() {
       client: MockClient((request) async => http.Response.bytes(utf8.encode(jsonEncode(floorJson())), 200)),
     );
     final tapped = <String>[];
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    tester.view
+      ..physicalSize = roomy
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -53,6 +61,8 @@ void main() {
 
     await tester.tap(find.widgetWithText(ChoiceChip, 'Bar and lounge'));
     await tester.pump();
+    // the tables glide to their places in the room, and the other rooms' are gone when they have arrived
+    await tester.pump(FloorViewState.glideTime + const Duration(milliseconds: 20));
     expect(find.text('B5'), findsNothing);
     expect(find.text('K1'), findsOneWidget);
     await tester.pumpWidget(const SizedBox()); // stops the refresh timer

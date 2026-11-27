@@ -51,6 +51,13 @@ const holly = Staff(staffId: 's4', name: 'Holly', role: 'host', method: 'pin');
 
 Finder serverTag(String table) => find.byKey(ValueKey('table-server:$table'));
 
+/// One room of the floor by itself, as a tap on its name above the map shows it. Its tables are drawn large
+/// there and say whose each one is, which a small table has no room for on the map of the whole floor.
+Future<void> showRoom(WidgetTester tester, String name) async {
+  await tester.tap(find.widgetWithText(ChoiceChip, name));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test('a server is named on a table by a first name, with an initial when there is more to the name', () {
     expect(shortName('Amy'), 'Amy');
@@ -104,6 +111,7 @@ void main() {
 
   testWidgets('a server takes a table by opening it: no question of whose it is', (tester) async {
     final t = await pumpFloor(tester, amy);
+    await showRoom(tester, 'Main dining');
     expect(find.descendant(of: serverTag('A7'), matching: find.text('Amy')), findsOneWidget);
     expect(serverTag('A8'), findsNothing);
 
