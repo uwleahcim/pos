@@ -21,6 +21,7 @@ class LiveChange {
     this.prints = false,
     this.calls = false,
     this.texts = false,
+    this.shipday = false,
   });
 
   /// The orders that changed, by id.
@@ -62,6 +63,10 @@ class LiveChange {
   /// (docs/text-inbox.md).
   final bool texts;
 
+  /// Shipday's deliveries or drivers read differently than last time, or the hub's key for it changed
+  /// (docs/shipday.md).
+  final bool shipday;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -70,7 +75,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', if (texts) 'texts', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', if (texts) 'texts', if (shipday) 'shipday', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -279,6 +284,7 @@ class LiveFeed extends ChangeNotifier {
             prints: topics.contains('prints'),
             calls: topics.contains('calls'),
             texts: topics.contains('texts'),
+            shipday: topics.contains('shipday'),
           ),
         );
     }

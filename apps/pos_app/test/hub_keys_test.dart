@@ -510,12 +510,13 @@ void main() {
           'online_tunnel',
           'push_apple',
           'texts',
+          'shipday',
         ],
       );
       expect(
         keys.summary,
         'Set: GloriaFood (2 accounts) · Not set: map service, Google Maps, Mapbox, Azure Maps, GloriaFood (Testing), '
-        'GloriaFood push, Cloudflare tunnel, Apple push, Twilio texts',
+        'GloriaFood push, Cloudflare tunnel, Apple push, Twilio texts, Shipday',
       );
     });
 
@@ -524,6 +525,7 @@ void main() {
         ..onlineAccounts = null
         ..wayIn = null
         ..texts = null
+        ..shipday = null
         ..hubKeys!['online'] = Hub.hubKey('online', ending: 'wxyz');
       final keys = HubKeys.fromJson(hub.hubKeysSaid());
       expect(keys.onlineAccounts, isNull);
@@ -841,7 +843,8 @@ void main() {
       expect(HubKeys.fromJson(hub.hubKeysSaid()).wayIn!.endpoint, 'https://orders.example.com/online/push');
       hub
         ..wayIn = null
-        ..texts = null;
+        ..texts = null
+        ..shipday = null;
       final older = HubKeys.fromJson(hub.hubKeysSaid());
       expect(older.wayIn, isNull);
       expect(
@@ -1524,7 +1527,7 @@ void main() {
       expect(
         row(tester),
         'Set: map service · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood, GloriaFood push, Cloudflare tunnel, '
-        'Apple push, Twilio texts',
+        'Apple push, Twilio texts, Shipday',
       );
       await tapKey(tester, 'hub-keys');
       expect(find.byType(HubKeysScreen), findsOneWidget);
@@ -1537,7 +1540,7 @@ void main() {
       expect(
         row(tester),
         'Set: map service, GloriaFood · Not set: Google Maps, Mapbox, Azure Maps, GloriaFood push, Cloudflare tunnel, '
-        'Apple push, Twilio texts',
+        'Apple push, Twilio texts, Shipday',
       );
     });
 
