@@ -622,6 +622,29 @@ class PosApi {
     }
   }
 
+  /// What every guest display of the location shows besides the order (docs/guest-display.md): the tips
+  /// it suggests. Null from a hub older than that.
+  Future<GuestDisplayRules?> guestDisplayRules() async {
+    try {
+      return GuestDisplayRules.fromJson(await _get('/settings/guest_display'));
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) sets it for every guest display.
+  Future<GuestDisplayRules> saveGuestDisplayRules(String token, GuestDisplayRules rules) async =>
+      GuestDisplayRules.fromJson(
+        await _withFailover(
+          (base) => _client.put(
+            Uri.parse('$base/settings/guest_display'),
+            headers: {'content-type': 'application/json', ..._bearer(token)},
+            body: jsonEncode(rules.toJson()),
+          ),
+        ),
+      );
+
   /// After how many minutes in the kitchen a ticket on a station's screen turns amber and red. Null from a
   /// hub older than the screens.
   Future<KitchenMinutes?> kitchenMinutes() async {

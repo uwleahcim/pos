@@ -3057,14 +3057,26 @@ class Hub {
   /// view there has nothing to show yet), under the restaurant's own lines ([guestHead]); a screen named
   /// in [screensOff] is one the hub does not hear from. It also answers the order that screen had open
   /// before ([guestLeft], kept by [screenShows]) and whether that one is paid in full now. [guestDisplays]
-  /// off is a hub older than all of it (404 for both calls).
+  /// off is a hub older than all of it (404 for both calls). [guestHosts] is how to greet the guest of an
+  /// order (`{'name': 'Linda', 'back': true}`); an order with none there names nobody.
+  /// [guestDisplayRules] is the setting (`GET/PUT /settings/guest_display`: whether a tip is suggested,
+  /// the percentages and what they are of), with the token the last save carried and a reason to refuse
+  /// the next save with; null is a hub older than the setting (404).
   bool guestDisplays = true;
   final showing = <String, String>{};
   final showingSaid = <(String, String?)>[];
   final guestViews = <String, Map<String, dynamic>>{};
+  final guestHosts = <String, Map<String, dynamic>>{};
   final guestLeft = <String, String>{};
   List<String> guestHead = const ['China Sky'];
   final screensOff = <String>{};
+  Map<String, dynamic>? guestDisplayRules = {
+    'tips': false,
+    'tip_percents': [18, 20, 25],
+    'tip_base': 'before_tax',
+  };
+  String? guestDisplayRulesAuth;
+  String? refuseGuestDisplayRules;
 
   /// The screen [screen] has [order] open now (none: null), as the hub keeps it: the order it had open
   /// before is the one it left.
@@ -4621,7 +4633,14 @@ class Hub {
         'head': guestHead,
         'showing': open,
         'order': guestViews[open],
-        'left': left == null ? null : {'order_id': left, 'paid_in_full': guestViews[left]?['paid_in_full'] == true},
+        'guest': guestHosts[open],
+        'left': left == null
+            ? null
+            : {
+                'order_id': left,
+                'paid_in_full': guestViews[left]?['paid_in_full'] == true,
+                'name': guestHosts[left]?['name'] ?? '',
+              },
       });
     }
     if (path == '/kitchen/screen') {
@@ -5073,6 +5092,18 @@ class Hub {
           kitchenMinutes = {...kitchenMinutes, ...jsonDecode(request.body) as Map<String, dynamic>};
         }
         return json(kitchenMinutes);
+      case '/settings/guest_display':
+        if (guestDisplayRules == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          guestDisplayRulesAuth = request.headers['authorization'];
+          if (refuseGuestDisplayRules != null) {
+            return json({
+              'detail': {'error': 'bad_value', 'message': refuseGuestDisplayRules},
+            }, 422);
+          }
+          guestDisplayRules = {...guestDisplayRules!, ...jsonDecode(request.body) as Map<String, dynamic>};
+        }
+        return json(guestDisplayRules!);
       case '/settings/floor_plan':
         if (!floorEditor) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'GET') return json(floorPlanNow);

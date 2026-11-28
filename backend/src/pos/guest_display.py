@@ -13,6 +13,11 @@ a screen does when it finds the hub again.
 A display the room can read says less than the paper: no server, no address, no phone number, and of the name
 on a to-go order or a bar tab only the first word, as the pickup board does. Whoever stands at the register
 may not be whose order is open on it.
+
+It also says two things the paper does not. It greets the guest by name (`greeting_name`, `host_view`): the
+name tells them it is their order, and "welcome back" that they are known here. And, where the location
+turned it on, it suggests a tip under the total (`tips_of`): amounts to read, worked out here like every
+other figure, and nothing to tap.
 """
 
 from __future__ import annotations
@@ -20,11 +25,23 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Mapping
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from .printing.bill import Bill
 from .sync.oplog import is_tab
+
+_CENT = Decimal("0.01")
+_TITLES = frozenset({"mr", "mrs", "ms", "miss", "mx", "dr", "prof", "sir", "madam"})
+"""What stands before a name and is no name: "Mr. Wong" is greeted as Mr. Wong, not as Mr."""
+_NO_NAMES = frozenset(
+    {
+        "walk", "walkin", "walk-in", "guest", "customer", "cash", "counter", "phone", "online", "web",
+        "unknown", "none", "no", "na", "test", "to", "togo", "to-go", "pickup", "takeout", "take", "delivery",
+        "order", "table", "bar", "tab", "doordash", "uber", "ubereats", "grubhub",
+    }
+)  # fmt: skip
+"""What gets typed where a name goes when nobody gave one: nobody is greeted as "Walk" or "Guest"."""
 
 QUIET_MS = 60_000
 """A screen the hub has not heard from for this long has nothing open as far as a guest display goes: its app
@@ -94,10 +111,79 @@ class Showing:
         return int(self._clock() * 1000) - at_ms <= self._quiet_ms
 
 
-def first_name(name: Any) -> str:
-    """The first word of a name: "Linda" of "Linda Chen". What a screen the room can read says of a customer."""
+def _a_name(word: str) -> bool:
+    """Whether a word can be somebody's name: letters, in any script, with a hyphen, an apostrophe or a dot
+    inside at most. "#12" and "T5" are not."""
+    bare = word.replace("-", "").replace("'", "").replace("\u2019", "").replace(".", "")
+    return bool(bare) and bare.isalpha() and bare.casefold() not in _NO_NAMES
+
+
+def _as_written(word: str) -> str:
+    """A name typed all in small letters or all in capitals, with its first letter large: "linda" and
+    "LINDA" are Linda. One typed with care ("McKay", "DeShawn") stays as it is."""
+    return word[:1].upper() + word[1:].lower() if word.islower() or (word.isupper() and len(word) > 1) else word
+
+
+def greeting_name(name: Any) -> str:
+    """What to call a guest on a screen the room can read: the first name ("Linda" of "Linda Chen"), or the
+    title with the last name where they gave one ("Mr. Wong"). Empty where what was typed is no name
+    ("Walk in", "Table 5", "#12"): better no name than a wrong one."""
     words = str(name or "").split()
-    return words[0] if words else ""
+    if not words:
+        return ""
+    if words[0].rstrip(".").casefold() in _TITLES:
+        if len(words) < 2 or not _a_name(words[-1]):
+            return ""
+        title = words[0].rstrip(".")
+        dot = "." if words[0].endswith(".") or title.casefold() in {"mr", "mrs", "ms", "mx", "dr", "prof"} else ""
+        return f"{_as_written(title)}{dot} {_as_written(words[-1])}"
+    return _as_written(words[0]) if _a_name(words[0]) else ""
+
+
+def host_view(name: Any, *, back: bool = False) -> dict[str, Any] | None:
+    """How a display greets the guest of an order: `name`, what to call them (may be empty), and `back`,
+    whether they have been here before. None when there is neither: the display greets as it greets anyone."""
+    called = greeting_name(name)
+    return {"name": called, "back": bool(back)} if called or back else None
+
+
+def _money(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value or "0"))
+    except InvalidOperation:
+        return Decimal(0)
+
+
+def tips_of(check: Mapping[str, Any], setting: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The tips a display suggests for a check, as the location set them (`guest_display` in `pos.settings`),
+    or None: the location suggests none, the check already carries a gratuity (a large party's, an online
+    order's tip: nobody is asked twice), or there is nothing to tip on.
+
+    `base` is what the percentages are of: `before_tax`, the food and drink less comps and discounts, or
+    `after_tax`, the check's total. `of` is that amount, and each of `rows` a percentage with what it comes
+    to, to the cent."""
+    if not setting.get("tips"):
+        return None
+    if any(charge.get("gratuity") and _money(charge.get("amount")) > 0 for charge in check.get("charges") or ()):
+        return None
+    base = str(setting.get("tip_base") or "before_tax")
+    if base == "after_tax":
+        of = _money(check.get("total"))
+    else:
+        base, of = "before_tax", _money(check.get("subtotal")) - _money(check.get("discount_total"))
+    if of <= 0:
+        return None
+    return {
+        "base": base,
+        "of": f"{of.quantize(_CENT, rounding=ROUND_HALF_UP):,.2f}",
+        "rows": [
+            {
+                "percent": int(percent),
+                "amount": f"{(of * int(percent) / 100).quantize(_CENT, rounding=ROUND_HALF_UP):,.2f}",
+            }
+            for percent in setting.get("tip_percents") or ()
+        ],
+    }
 
 
 def _paid_in_full(bill: Bill) -> bool:
@@ -109,21 +195,26 @@ def _paid_in_full(bill: Bill) -> bool:
         return False
 
 
-def guest_view(bill: Bill, fields: Mapping[str, Any], status: str) -> dict[str, Any] | None:
+def guest_view(
+    bill: Bill, fields: Mapping[str, Any], status: str, *, tips: Mapping[str, Any] | None = None
+) -> dict[str, Any] | None:
     """What a guest reads of an order, from its bill: the dishes with their choices and what each comes to,
     the sums under them (subtotal, each discount and charge, sales tax as one line), the total, what was
     paid and what is still due. None for an order with no dish on it yet, and for one that was voided: there
     is nothing to show a guest.
 
-    `where` is the table, or the order's number; `detail` the first name on a to-go order or a tab. A row of
-    words only (who a tax exemption is for, its certificate) is the paper's, not the room's."""
+    `where` is the table, or the order's number; `detail` what to call whoever a to-go order or a tab is
+    for (`greeting_name`: the first name, never "Walk" of "Walk in"). A row of
+    words only (who a tax exemption is for, its certificate) is the paper's, not the room's. `tips` are the
+    tips to suggest (`tips_of`), shown until the check is paid in full."""
     if status == "void" or not bill.lines:
         return None
     named = is_tab(fields) or not fields.get("table")
+    paid_in_full = _paid_in_full(bill)
     return {
         "order_id": bill.order_id,
         "where": bill.where,
-        "detail": first_name(fields.get("customer_name")) if named else "",
+        "detail": greeting_name(fields.get("customer_name")) if named else "",
         "lines": [
             {
                 "qty": line.qty,
@@ -137,5 +228,6 @@ def guest_view(bill: Bill, fields: Mapping[str, Any], status: str) -> dict[str, 
         "total": bill.total,
         "paid": [{"label": label.strip(), "amount": amount} for label, amount in bill.paid],
         "due": bill.due,
-        "paid_in_full": _paid_in_full(bill),
+        "paid_in_full": paid_in_full,
+        "tips": dict(tips) if tips is not None and not paid_in_full else None,
     }
