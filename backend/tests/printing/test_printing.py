@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import threading
 import time
 from dataclasses import replace
 
@@ -117,6 +118,81 @@ def test_hub_path_falls_back_when_the_printer_is_unreachable():
     assert store.deliver_direct(job) is False
     assert job.status == "queued" and job.last_error
     assert store.pending() == [job]
+
+
+class Busy:
+    """A printer that is slow to take a ticket: it is still printing the one before. `send` keeps what it was
+    handed and does not come back until `free` is set; `taking` is set once a write has begun."""
+
+    def __init__(self, fail: str = "") -> None:
+        self.sent: list[bytes] = []
+        self.taking, self.free = threading.Event(), threading.Event()
+        self.fail = fail
+
+    def send(self, printer: str, data: bytes) -> None:
+        self.sent.append(data)
+        self.taking.set()
+        assert self.free.wait(5)
+        if self.fail:
+            raise OSError(self.fail)
+
+
+def test_a_job_the_hub_is_writing_is_not_sent_again_meanwhile():
+    """The restaurant's doubles (2026-11-27): a ticket whose printer was busy took seconds to hand over, the
+    hub's own second chance came round in the meantime and wrote the same job again. While the hub writes a
+    job it is nobody else's: not pending, not a relay's to claim, and not written by a second call."""
+    store = JobStore()
+    job = store.create("p", b"ticket")
+    busy = Busy()
+    first = threading.Thread(target=store.deliver_direct, args=(job,), kwargs={"send": busy.send})
+    first.start()
+    assert busy.taking.wait(5)
+    assert store.pending() == []
+    assert store.claim(["p"], relay="ipad1") is None
+    assert store.deliver_direct(job, send=busy.send) is False  # the retry, while the first write is on its way
+    busy.free.set()
+    first.join(5)
+    assert busy.sent == [b"ticket"]
+    assert job.status == "done" and job.done_by == "hub" and job.attempts == 1
+
+
+def test_a_write_that_fails_gives_the_job_back():
+    store = JobStore()
+    job = store.create("p", b"ticket")
+    busy = Busy(fail="timed out")
+    first = threading.Thread(target=store.deliver_direct, args=(job,), kwargs={"send": busy.send})
+    first.start()
+    assert busy.taking.wait(5) and store.pending() == []
+    busy.free.set()
+    first.join(5)
+    assert job.status == "queued" and job.last_error == "timed out" and store.pending() == [job]
+    assert store.claim(["p"], relay="ipad1") is job  # a relay may have it now
+
+
+def test_a_write_that_breaks_gives_the_job_back_too():
+    """Whatever stops a write, the job is not left as the hub's for good: it would never print."""
+    store = JobStore()
+    job = store.create("p", b"ticket")
+
+    def broken(printer: str, data: bytes) -> None:
+        raise ValueError("no such port")
+
+    with pytest.raises(ValueError):
+        store.deliver_direct(job, send=broken)
+    assert job.status == "queued" and store.pending() == [job]
+
+
+def test_the_hub_leaves_a_job_a_relay_is_printing():
+    now = [100.0]
+    store = JobStore(clock=lambda: now[0], lease=8.0)
+    job = store.create("p", b"ticket")
+    sent: list[bytes] = []
+    assert store.claim(["p"], relay="ipad1") is job
+    assert store.deliver_direct(job, send=lambda printer, data: sent.append(data)) is False
+    assert sent == [] and job.leased_to == "ipad1" and job.attempts == 1
+    now[0] += 9  # the relay went quiet: the job is anybody's again
+    assert store.deliver_direct(job, send=lambda printer, data: sent.append(data)) is True
+    assert sent == [b"ticket"] and job.done_by == "hub"
 
 
 def test_same_job_id_twice_is_one_job():

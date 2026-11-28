@@ -5,6 +5,11 @@ the hubs are down, a terminal on the LAN asks the cloud for jobs it can reach (`
 the printer, and reports `done`. A claim is a short lease: a relay that goes quiet loses the job to the next
 one; a relay that reports twice changes nothing. So a job prints once, by whichever path works.
 
+Whoever writes a job has it to itself for as long as that takes. The hub's own write is such a lease too
+(`deliver_direct`), one no clock ends: handing a ticket over takes seconds when the printer is busy with the
+one before, and a job that is on its way is not one that still has to go. The hub's second chance
+(`pending`) and a relay's `claim` both pass it over until the write has ended, one way or the other.
+
 A job may carry fallbacks: the same ticket rendered for other printers, in the order the manager listed
 them. After `FALLBACK_AFTER` failed attempts at the printer it is on, the job moves to the next one (and
 round again when every one has failed), so a dead printer costs seconds, not the ticket.
@@ -177,10 +182,7 @@ class JobStore:
         fallback when this printer has failed it enough."""
         with self._lock:
             job = self._jobs[job_id]
-            if job.status == "leased" and job.leased_to == by:
-                job.status = "queued"
-                job.leased_to = None
-                job.lease_until = 0.0
+            self._back_unlocked(job, by)
             happened = self._failed_unlocked(job, error)
         self._tell(job, happened)
         return job
@@ -200,17 +202,38 @@ class JobStore:
         return happened
 
     def deliver_direct(self, job: PrintJob, *, send: Callable[[str, bytes], None] = send_raw, by: str = "hub") -> bool:
-        """The hub path: write to the printer now. On failure the job stays queued for a retry or a relay."""
+        """The hub path: write to the printer now. The job is leased to the hub for as long as the write
+        takes, so nobody writes it a second time meanwhile: a job somebody is writing already (this hub on
+        another thread, or a relay whose lease still runs) is left to them, and False says it did not print
+        here. On failure the job goes back to the queue for a retry or a relay."""
         with self._lock:
             if job.status == "done":
                 return True
+            if job.status == "leased" and job.lease_until > self._clock():
+                return False
+            job.status = "leased"
+            job.leased_to = by
+            job.lease_until = float("inf")  # the write ends it, not the clock: see `_back_unlocked`
             job.attempts += 1
         try:
             send(job.printer, job.data)
         except OSError as err:
             with self._lock:
+                self._back_unlocked(job, by)
                 happened = self._failed_unlocked(job, str(err))
             self._tell(job, happened)
             return False
+        except BaseException:
+            with self._lock:
+                self._back_unlocked(job, by)  # whatever stopped the write: a job left leased would never print
+            raise
         self.done(job.job_id, by)
         return True
+
+    @staticmethod
+    def _back_unlocked(job: PrintJob, by: str) -> None:
+        """The job goes back to the queue from whoever had it, unless it was done or taken on meanwhile."""
+        if job.status == "leased" and job.leased_to == by:
+            job.status = "queued"
+            job.leased_to = None
+            job.lease_until = 0.0

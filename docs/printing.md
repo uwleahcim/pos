@@ -237,6 +237,17 @@ What separate tickets change, and what they do not:
 - Bills, the day's report, pack sheets, prep lists and bag labels are not kitchen tickets and print as
   before.
 
+**Every paper comes out once.** The hub writes each job to its printer as soon as it is queued, and every
+few seconds gives the jobs that are not done another go. A printer takes one paper at a time, so when an
+order sends it several tickets at once the later ones take seconds to hand over, waiting for the ones
+before. For as long as the hub is writing a job, the job is the hub's (`leased`, to `hub`, in
+`GET /print/jobs`): the second chance passes it over, and so does a terminal printing in relay mode. A job
+with more than one of `attempts` says in `last_error` what kept the earlier ones from going out (the
+printer took no more connections, or is off); it was tried again, which is no second copy. (Until
+2026-11-27 a job being written still counted as not gone out, so a ticket that was slow to hand over was
+written again and printed twice; in the list such a job had two `attempts` and no `last_error`. The tests
+are in `tests/printing/test_printing.py`.)
+
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
 printers already set, and lists what answers: receipt printers first, each with its name and language and
 an **Add** that makes a new card with its address (or the stations it prints for, when it has a card);
