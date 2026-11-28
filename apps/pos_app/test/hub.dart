@@ -3042,6 +3042,31 @@ class Hub {
   Map<String, Map<String, dynamic>>? runs = {};
   String runsToday = '2026-11-16';
 
+  /// Guest displays (docs/guest-display.md). [showing] is the order each screen said it has open
+  /// (`POST /guest-display/showing`), by the screen's name in small letters, and [showingSaid] every such
+  /// word as it came, (screen, order). `GET /guest-display?of=` answers the display linked to a screen:
+  /// the order that screen has open and, from [guestViews], what a guest reads of it (an order with no
+  /// view there has nothing to show yet), under the restaurant's own lines ([guestHead]); a screen named
+  /// in [screensOff] is one the hub does not hear from. It also answers the order that screen had open
+  /// before ([guestLeft], kept by [screenShows]) and whether that one is paid in full now. [guestDisplays]
+  /// off is a hub older than all of it (404 for both calls).
+  bool guestDisplays = true;
+  final showing = <String, String>{};
+  final showingSaid = <(String, String?)>[];
+  final guestViews = <String, Map<String, dynamic>>{};
+  final guestLeft = <String, String>{};
+  List<String> guestHead = const ['China Sky'];
+  final screensOff = <String>{};
+
+  /// The screen [screen] has [order] open now (none: null), as the hub keeps it: the order it had open
+  /// before is the one it left.
+  void screenShows(String screen, String? order) {
+    final name = screen.toLowerCase();
+    final before = showing[name];
+    if (before != null && before != order) guestLeft[name] = before;
+    order == null ? showing.remove(name) : showing[name] = order;
+  }
+
   /// The stations' screens (`GET /kitchen/screen?stations=`, docs/kitchen-screens.md): every ticket in the
   /// kitchen, as the hub words it, each line with the `stations` that make it and the ones that `made` it. A
   /// screen is answered with the tickets that have a dish of its stations, the finished ones under `recent`.
@@ -4569,6 +4594,27 @@ class Hub {
     }
     if (path == '/orders/ahead') {
       return ahead == null ? json({'detail': 'no such order'}, 404) : json(ahead!);
+    }
+    if (path == '/guest-display/showing') {
+      if (!guestDisplays) return json({'detail': 'Not Found'}, 404);
+      final said = jsonDecode(request.body) as Map<String, dynamic>;
+      final screen = said['device'] as String, order = said['order_id'] as String?;
+      showingSaid.add((screen, order));
+      screenShows(screen, order);
+      return json({'device': screen, 'order_id': order});
+    }
+    if (path == '/guest-display') {
+      if (!guestDisplays) return json({'detail': 'Not Found'}, 404);
+      final of = request.url.queryParameters['of'] ?? '';
+      final open = showing[of.toLowerCase()], left = guestLeft[of.toLowerCase()];
+      return json({
+        'of': of,
+        'known': !screensOff.contains(of),
+        'head': guestHead,
+        'showing': open,
+        'order': guestViews[open],
+        'left': left == null ? null : {'order_id': left, 'paid_in_full': guestViews[left]?['paid_in_full'] == true},
+      });
     }
     if (path == '/kitchen/screen') {
       if (kitchen == null) return json({'detail': 'Not Found'}, 404);

@@ -192,6 +192,8 @@ class _OrderScreenState extends State<OrderScreen> {
       if (order != null && (change.texts || change.everything)) unawaited(_readTexts(order, again: true));
     });
     widget.outbox.addListener(_onOutbox);
+    // a guest display linked to this screen shows this order from now on (docs/guest-display.md)
+    widget.api.showing.open(widget.orderId);
     _refresh();
     unawaited(_readAllergens());
     final fresh = _order; // a to-go order opened here a moment ago: no hub has it yet
@@ -314,6 +316,7 @@ class _OrderScreenState extends State<OrderScreen> {
     unawaited(_live?.cancel());
     _reader.cancel();
     widget.outbox.removeListener(_onOutbox);
+    widget.api.showing.close(widget.orderId);
     _changes.dispose();
     super.dispose();
   }

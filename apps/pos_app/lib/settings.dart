@@ -20,9 +20,11 @@ class Settings extends ChangeNotifier {
     List<String> kitchenStations = const [],
     this.kitchenPass = false,
     this.kitchenSound = true,
+    String guestDisplayOf = '',
     this._phone = const PhoneSettings(),
     this._prefs,
   }) : _endpoints = List.of(endpoints),
+       guestDisplayOf = cleanScreen(guestDisplayOf),
        lockMinutes = cleanLockMinutes(lockMinutes),
        opensOn = cleanOpensOn(opensOn),
        _kitchenStations = cleanStations(kitchenStations, pass: kitchenPass);
@@ -51,6 +53,7 @@ class Settings extends ChangeNotifier {
       kitchenStations: prefs.getStringList('kitchen_stations') ?? const [],
       kitchenPass: prefs.getBool('kitchen_pass') ?? false,
       kitchenSound: prefs.getBool('kitchen_sound') ?? true,
+      guestDisplayOf: prefs.getString('guest_display_of') ?? '',
       phone: phone,
       prefs: prefs,
     );
@@ -107,7 +110,7 @@ class Settings extends ChangeNotifier {
 
   /// A kitchen screen (docs/kitchen-screens.md): while nobody is signed in, this screen lists what these
   /// stations have to make, by their codes, and a cook marks each dish made. Empty is how a device starts:
-  /// it is no kitchen screen. A screen is one or the other, never this and a pickup board.
+  /// it is no kitchen screen. A screen is one thing only, never this and a pickup board or a guest display.
   List<String> get kitchenStations => List.unmodifiable(_kitchenStations);
   List<String> _kitchenStations;
 
@@ -135,8 +138,21 @@ class Settings extends ChangeNotifier {
   /// Whether this screen is a kitchen screen: a station's, or the pass.
   bool get kitchen => _kitchenStations.isNotEmpty || kitchenPass;
 
-  /// Whether this screen stands as something while nobody is signed in: a kitchen screen or the pickup board.
-  bool get stands => kitchen || pickupBoard;
+  /// A guest display (docs/guest-display.md): while nobody is signed in, this screen faces the customer and
+  /// shows the order being rung up on the screen named here, by its device name, with its total. Empty is
+  /// how a device starts: it is no guest display. A screen is one thing only: this, a pickup board or a
+  /// kitchen screen.
+  String guestDisplayOf;
+
+  /// Whether this screen is a guest display.
+  bool get guestDisplay => guestDisplayOf.isNotEmpty;
+
+  /// The name of a screen as the device keeps it: as device names are, letters and digits only.
+  static String cleanScreen(String? name) => (name ?? '').replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+
+  /// Whether this screen stands as something while nobody is signed in: a kitchen screen, the pickup board
+  /// or a guest display.
+  bool get stands => kitchen || pickupBoard || guestDisplay;
 
   PhoneSettings _phone;
 
@@ -202,11 +218,13 @@ class Settings extends ChangeNotifier {
     pickupBoard = on;
     if (on) {
       await _prefs?.setBool('pickup_board', true);
-      // (one or the other: a board for the customers shows no kitchen tickets)
+      // (one thing only: a board for the customers shows no kitchen tickets, and no guest's order)
       _kitchenStations = [];
       kitchenPass = false;
+      guestDisplayOf = '';
       await _prefs?.remove('kitchen_stations');
       await _prefs?.remove('kitchen_pass');
+      await _prefs?.remove('guest_display_of');
     } else {
       await _prefs?.remove('pickup_board');
     }
@@ -240,7 +258,29 @@ class Settings extends ChangeNotifier {
     }
     if (kitchen) {
       pickupBoard = false;
+      guestDisplayOf = '';
       await _prefs?.remove('pickup_board');
+      await _prefs?.remove('guest_display_of');
+    }
+    notifyListeners();
+  }
+
+  /// Makes this screen the guest display of the screen named [screen]; of none, it is a guest display no
+  /// longer. A screen cannot face its own guest: its own name is no screen to link to.
+  Future<void> saveGuestDisplayOf(String screen) async {
+    final cleaned = cleanScreen(screen);
+    guestDisplayOf = cleaned.toLowerCase() == device.toLowerCase() ? '' : cleaned;
+    if (guestDisplayOf.isEmpty) {
+      await _prefs?.remove('guest_display_of');
+    } else {
+      await _prefs?.setString('guest_display_of', guestDisplayOf);
+      // (one thing only: a screen facing the guest is no pickup board and no kitchen screen)
+      pickupBoard = false;
+      _kitchenStations = [];
+      kitchenPass = false;
+      await _prefs?.remove('pickup_board');
+      await _prefs?.remove('kitchen_stations');
+      await _prefs?.remove('kitchen_pass');
     }
     notifyListeners();
   }

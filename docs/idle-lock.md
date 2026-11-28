@@ -25,9 +25,10 @@ in. Nothing was closed." It unlocks the way the sign-in screen signs in: a PIN, 
 signs in by face, a tag held to the reader. The call banner still shows over it, as it does over the
 sign-in screen.
 
-On a device that is a kitchen screen or the pickup board, the tickets or the board stand over the lock
-in the pad's place, and the camera unlocks nothing while they show: **Staff** brings the pad, and there a
-face unlocks as a PIN does (`face-signin.md`, A kitchen screen or the pickup board).
+On a device that is a kitchen screen, the pickup board or a guest display (`guest-display.md`), the
+tickets, the board or the display stand over the lock in the pad's place, and the camera unlocks nothing
+while they show: **Staff** brings the pad, and there a face unlocks as a PIN does (`face-signin.md`, A
+kitchen screen or the pickup board).
 
 ## What happens to what was open
 

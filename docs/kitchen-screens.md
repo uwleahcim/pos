@@ -176,7 +176,8 @@ Each device keeps its own.
   dish then says which station makes it, and a dish is made when each of its stations on that screen has
   said so; a tap says it for all of them.
 - **A device is a kitchen screen or the pickup board (`pickup-board.md`), never both**: picking a station
-  (or the pass) turns the board off, and turning the board on takes the stations and the pass away.
+  (or the pass) turns the board off, and turning the board on takes the stations and the pass away. The
+  same goes for a guest display (`guest-display.md`): a device is one of the three.
 - To make the device a plain screen again: **Staff**, the gear, tap the station off, **Save**.
 
 Set the device itself never to sleep and keep it on its charger: the app does not hold the screen awake.
@@ -311,8 +312,9 @@ The device is still a POS screen.
   `lib/screens/kitchen_screen.dart` (`KitchenScreen`: reads on the hub's change feed and every few seconds
   without it; opens nothing over itself, since it also stands over a locked screen),
   `lib/screens/standing_gate.dart` (`StandingGate`, which stands where the sign-in pad stands and shows the
-  kitchen screen, the pickup board or the pad), `Settings.kitchenStations` and `Settings.kitchenPass` (the
-  preferences `kitchen_stations` and `kitchen_pass`), `lib/screens/kitchen_minutes_dialog.dart`.
+  kitchen screen, the guest display, the pickup board or the pad), `Settings.kitchenStations` and
+  `Settings.kitchenPass` (the preferences `kitchen_stations` and `kitchen_pass`),
+  `lib/screens/kitchen_minutes_dialog.dart`.
 - **The camera.** The face sign-in runs for the whole app (`FaceSignIn`, `face-signin.md`), not for the
   pad, so it has to be told that a standing screen is up: `FaceSignIn.standing` is true on a device that
   stands as something (`Settings.stands`) with nobody signed in and no pad on the screen, and no frame goes

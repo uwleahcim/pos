@@ -55,6 +55,7 @@ from ..floor import (
     say,
     table_status,
 )
+from ..guest_display import Showing
 from ..guest_tags import GuestTags, default_guest_tags
 from ..identity.faces import FaceEngine, FaceSignIn, default_face_store
 from ..identity.photos import EventPhoto, PhotoStore
@@ -154,6 +155,7 @@ from .contests import add_contests
 from .day import add_day_report
 from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
+from .guest_display import add_guest_display
 from .guests import add_guest_list, follow_merges, names_by_check, seated_by_check
 from .history import add_history
 from .keys import add_hub_keys, hand_way_in, keys_mark, online_setup, sender_for, texts_for, watch_keys
@@ -967,6 +969,7 @@ def create_app(
     answered: AnsweredCalls | None = None,
     watcher: AmiWatcher | None = None,
     devices: DevicesSeen | None = None,
+    showing: Showing | None = None,
     faces: FaceSignIn | None = None,
     tags: TagStore | None = None,
     push_devices: PushDevices | None = None,
@@ -1200,6 +1203,8 @@ def create_app(
         app.state.watcher.on_call_end = app.state.recordings.call_ended
     app.state.recordings.on_change = lambda: app.state.feed.changed("calls")  # an open order shows its new call
     app.state.devices = devices if devices is not None else DevicesSeen()  # the screens the hub hears from
+    # The order each screen has open, for a guest display linked to it (docs/guest-display.md): in memory too.
+    app.state.showing = showing if showing is not None else Showing(app.state.devices.last_heard)
     # Face sign-in: templates in the database, the location's switch in its settings, the models from the image.
     app.state.faces = (
         faces
@@ -2897,6 +2902,7 @@ def create_app(
     add_hub_keys(app)
     add_address_list(app)
     add_staff_list(app)
+    add_guest_display(app, lambda: bill_head(app.state.settings.get("bill")))
     return app
 
 

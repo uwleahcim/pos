@@ -30,6 +30,12 @@ class DevicesSeen:
         with self._lock:
             self._seen[name.casefold()] = (name, int(self._clock() * 1000))
 
+    def last_heard(self, device: str) -> int | None:
+        """When the hub last heard from this screen (ms), or None for one it never heard from."""
+        with self._lock:
+            found = self._seen.get(device.strip().casefold())
+        return None if found is None else found[1]
+
     def listed(self) -> list[dict[str, Any]]:
         """Every screen heard from, by name."""
         with self._lock:

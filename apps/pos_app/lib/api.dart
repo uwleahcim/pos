@@ -22,6 +22,7 @@ import 'desk_phone.dart';
 import 'dish_names.dart';
 import 'faces.dart';
 import 'floor.dart';
+import 'guest_display.dart';
 import 'guests_report.dart';
 import 'hub_keys.dart';
 import 'kitchen_notes.dart';
@@ -1171,6 +1172,30 @@ class PosApi {
       for (final ext in json['extensions'] as List? ?? const [])
         if (PbxExtension.fromJson(ext as Map<String, dynamic>) case final found when found.extension.isNotEmpty) found,
     ];
+  }
+
+  /// What this screen has open, told to the hub for a guest display linked to it (docs/guest-display.md).
+  /// Nothing is said until it is started: the app does, a test need not.
+  Showing get showing => _showing ??= Showing(this);
+  Showing? _showing;
+
+  /// Tells the hub which order this screen has open, or with null that it has none (`POST
+  /// /guest-display/showing`). Whether the hub took it: false when nothing answered or the hub is older
+  /// than guest displays, which is never a reason to say the hub is away.
+  Future<bool> sayShowing(String? orderId) async {
+    final (status, _) = await _aside('/guest-display/showing', {'device': settings.device, 'order_id': orderId});
+    return status == 200;
+  }
+
+  /// What the guest display linked to the screen [of] shows now (docs/guest-display.md): the order that
+  /// screen has open, as a guest reads it. Null from a hub older than guest displays.
+  Future<GuestDisplay?> guestDisplay(String of) async {
+    try {
+      return await _repeated('/guest-display', GuestDisplay.fromJson, query: {'of': of});
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
   }
 
   /// The device names of the screens the hub has heard from, by name. A manager picks a desk phone's screen
@@ -3076,6 +3101,7 @@ class PosApi {
   }
 
   void dispose() {
+    _showing?.dispose();
     _live?.dispose();
     _client.close();
     connection.dispose();
