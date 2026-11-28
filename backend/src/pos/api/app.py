@@ -138,6 +138,7 @@ from ..settings import (
     skipped_stations,
 )
 from ..shipday.board import ShipdayBoard
+from ..shipday.follow import own_word as shipday_word
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
@@ -1341,8 +1342,9 @@ def create_app(
                 raise HTTPException(422, {"error": "bad_stamp", "op_id": op.op_id})
         app.state.menu.refresh()
         # a dish changing checks first: it is filled in from the check it comes from, and keeps its price
-        # where an order came from online is the hub's to say (pos.online.place): a screen's word is dropped
-        fresh = [own_word(op.to_op()) for op in ops if op.op_id not in store]
+        # where an order came from online is the hub's to say (pos.online.place), and so is what Shipday
+        # said of it (pos.shipday.follow): a screen's word for either is dropped
+        fresh = [shipday_word(own_word(op.to_op())) for op in ops if op.op_id not in store]
         fresh, refused_moves = carry_ops(store, fresh)
         fresh, refused = price_lines(app.state.menu, fresh)
         refused = refused_moves + refused

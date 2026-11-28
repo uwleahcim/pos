@@ -188,8 +188,13 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
           key: const ValueKey('shipday-end'),
           title: Text('Mark it $as?'),
           content: Text(
-            "${order.title}'s delivery leaves Shipday's active deliveries as ${shipdayStateWords(step)}. "
-            'That cannot be taken back from the POS.',
+            [
+              "${order.title}'s delivery leaves Shipday's active deliveries as ${shipdayStateWords(step)}. "
+                  'That cannot be taken back from the POS.',
+              // where Shipday moves the checks, its check follows a delivery that was made
+              if (step == 'ALREADY_DELIVERED' && (_board?.movesChecks ?? false) && order.check?.status == 'open')
+                '${order.check!.named} follows: it is closed as delivered, unless money is still due on it.',
+            ].join(' '),
             key: const ValueKey('shipday-end-words'),
           ),
           actions: [
@@ -459,6 +464,9 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
             else
               "This screen only reads Shipday. A delivery is given to a driver, and marked as it goes, in Shipday's "
                   'own app for now.',
+            if (board.movesChecks)
+              'What Shipday says moves the check: picked up takes it Out, and delivered closes it unless money '
+                  'is still due.',
             if (board.eta == 'plan')
               "Shipday does not tell this account how far away a delivery is: that is part of Shipday's higher plans.",
           ].join(' '),

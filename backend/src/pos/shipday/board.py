@@ -43,6 +43,11 @@ What a delivery can be marked as depends on where it stands (`steps_of`), and th
 delivery (`steps`), so a screen offers what this hub would send and nothing else. Only forward: a mark made
 by mistake is put right in Shipday's own app.
 
+**What Shipday says moves a check.** After every round Shipday answered, the board calls `on_round`, where
+the API moves the POS's checks by what Shipday now says of their deliveries (`pos.shipday.follow`,
+`pos.api.shipday`): picked up there is Out here, delivered there is Delivered here. The board itself writes
+nothing on the POS.
+
 Nothing here names a customer in a log: an order is told of by Shipday's own id.
 """
 
@@ -176,9 +181,11 @@ class ShipdayBoard:
     ) -> None:
         self.source = source
         # Set by the API: `pos` gives the POS's own deliveries of the running day, for the matching;
-        # `on_change` tells the screens that the picture is another one.
+        # `on_change` tells the screens that the picture is another one; `on_round` is called after every
+        # round Shipday answered, for what the hub does on the POS with what Shipday says (`pos.shipday.follow`).
         self.pos: Callable[[], Sequence[OnPos]] | None = None
         self.on_change: Callable[[], None] | None = None
+        self.on_round: Callable[[], None] | None = None
         self._now = now
         self._asking = threading.Lock()  # one round at a time: the loop's own and one a person asked for
         self._lock = threading.Lock()  # the picture, which a round swaps and a screen's call reads
@@ -270,7 +277,18 @@ class ShipdayBoard:
                 self._drivers = [driver for raw in raw_drivers if (driver := driver_of(raw)) is not None]
                 self._drivers_ms = now
         self._told()
+        self._heard()
         return {"asked": True, "answered": True, "reason": None, "said": ""}
+
+    def _heard(self) -> None:
+        """Shipday answered: whoever acts on what it says does so now (`on_round`). What goes wrong there is
+        logged and never stops the reading."""
+        if self.on_round is None:
+            return
+        try:
+            self.on_round()
+        except Exception:  # noqa: BLE001 - the picture is read and shown whatever becomes of the checks
+            log.error("shipday: following it on the POS went wrong\n%s", traceback.format_exc(limit=3, chain=False))
 
     # --- what a person changes ------------------------------------------------------------------------------
 

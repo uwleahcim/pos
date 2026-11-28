@@ -94,6 +94,12 @@ class Hub {
   bool? seats = true;
   String? seatsAuth;
 
+  /// Whether what Shipday says of a delivery moves its check (`GET/PUT /settings/shipday`, docs/shipday.md);
+  /// null is a hub older than that, which answers 404. [shipdayMovesAuth] is who last set it. The picture
+  /// `GET /shipday` gives says the same once it is set here.
+  bool? shipdayMoves = true;
+  String? shipdayMovesAuth;
+
   /// What it knows of a customer, by the number's digits (`GET /customers/lookup`): a number it does not
   /// list is answered as everything is that this hub has no word for.
   final customers = <String, Map<String, dynamic>>{};
@@ -1304,6 +1310,7 @@ class Hub {
     Map<String, dynamic>? trouble,
     String eta = 'off',
     List<String>? can = const ['driver', 'status'],
+    bool? moves = true,
     List<Map<String, dynamic>> orders = const [],
     List<Map<String, dynamic>> done = const [],
     List<Map<String, dynamic>> drivers = const [],
@@ -1313,6 +1320,7 @@ class Hub {
     'trouble': trouble,
     'eta': eta,
     'can': ?can, // null: a hub that only reads Shipday says nothing of what it changes
+    'moves_checks': ?moves, // null: a hub from before Shipday moved a check says nothing of it
     'orders': orders,
     'done': done,
     'drivers': drivers,
@@ -4985,6 +4993,14 @@ class Hub {
           seats = (jsonDecode(request.body) as Map<String, dynamic>)['enabled'] as bool;
         }
         return json({'enabled': seats});
+      case '/settings/shipday':
+        if (shipdayMoves == null) return json({'detail': 'Not Found'}, 404);
+        if (request.method == 'PUT') {
+          shipdayMovesAuth = request.headers['authorization'];
+          shipdayMoves = (jsonDecode(request.body) as Map<String, dynamic>)['moves_checks'] as bool;
+          if (shipday case final picture?) shipday = {...picture, 'moves_checks': shipdayMoves};
+        }
+        return json({'moves_checks': shipdayMoves});
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotesOut);

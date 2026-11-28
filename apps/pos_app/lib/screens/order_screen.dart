@@ -29,6 +29,7 @@ import '../pricing.dart';
 import '../printers.dart';
 import '../seated.dart';
 import '../session.dart';
+import '../shipday.dart';
 import '../floor.dart';
 import '../moves.dart';
 import '../online_orders.dart';
@@ -3561,6 +3562,9 @@ class _WhenStrip extends StatelessWidget {
     final delivery = order.isDelivery;
     final later = order.forLater && order.promisedAt != null;
     final words = [
+      // what Shipday said of it that the check does not say itself (delivered while money is due, failed):
+      // first, where the two lines of the strip never cut it off
+      ?order.shipdaySays,
       if (later) 'For ${whenFor(order.promisedAt!, DateTime.now())}',
       if (order.isCatering || delivery) order.event.words,
       if (delivery && order.event.address.isEmpty) 'no address yet',
@@ -3568,7 +3572,7 @@ class _WhenStrip extends StatelessWidget {
       if (order.isOut)
         [
           'out',
-          if (order.driver.isNotEmpty) 'with ${order.driver}',
+          if (order.driver.isNotEmpty) 'with ${driverCalled(order.driver, order.driverId)}',
           if (order.outAt != null) 'since ${clockTime(order.outAt!)}',
         ].join(' '),
     ].join(' · ');

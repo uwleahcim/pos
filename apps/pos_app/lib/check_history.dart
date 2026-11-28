@@ -410,6 +410,20 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
           ].join(', '),
         ].where((line) => line.isNotEmpty).toList(),
       );
+    case 'shipday':
+      // what Shipday said of the delivery where the check did not move with it (docs/shipday.md)
+      final when = _n(said['said_ms']);
+      return (
+        title: switch (_text(said['state'])) {
+          'ALREADY_DELIVERED' => 'Shipday says it was delivered',
+          'PICKED_UP' => 'Shipday says it was picked up',
+          'FAILED_DELIVERY' => 'Shipday says the delivery failed',
+          'INCOMPLETE' => 'Shipday says the delivery was not completed',
+          final word => 'Shipday says: $word',
+        },
+        // Shipday's own moment for it, where that is not the minute the hub heard
+        under: [if (when != null && (step.atMs - when).abs() >= 60000) 'at ${time(when)}, as Shipday has it'],
+      );
     case 'closed':
       return (title: 'Closed the check', under: const []);
     case 'reopened':
@@ -522,10 +536,12 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
   }
 }
 
-/// Who did a step and where, in one line: "Amy · mac1 · approved by Mike".
+/// Who did a step and where, in one line: "Amy · mac1 · approved by Mike". What the hub did by itself for a
+/// service is the service's, said once: "Shipday", not "Shipday · shipday".
 String whoLine(HistoryStep step) => [
   if (step.by.isNotEmpty) step.by,
-  if (step.device.isNotEmpty) step.by.isEmpty ? 'at ${step.device}, nobody named' : step.device,
+  if (step.device.isNotEmpty && step.device.toLowerCase() != step.by.toLowerCase())
+    step.by.isEmpty ? 'at ${step.device}, nobody named' : step.device,
   if (step.approvedBy.isNotEmpty) 'approved by ${step.approvedBy}',
   if (step.offline) 'taken while the hub was not answering',
 ].join(' · ');

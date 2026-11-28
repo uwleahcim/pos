@@ -65,6 +65,11 @@ always had one. A send to the kitchen, a close, a reopening and a change of gues
 history takes the name from the picture taken with the step when there is one, and otherwise says "nobody
 named" and the screen it was done at.
 
+What the hub did by itself because a service said so is that service's: a delivery that Shipday's driver
+picked up says "Left with Tom Reyes" by **Shipday**, and one delivered there "Marked delivered" and "Closed
+the check" by Shipday. Where Shipday said something and the check stayed as it was (delivered while money
+is still due, failed), a step of its own says so: "Shipday says it was delivered" (`shipday.md`).
+
 ## The pictures
 
 The screens take a picture at the moments that matter (a send, a void, a comp, a payment, a close, a

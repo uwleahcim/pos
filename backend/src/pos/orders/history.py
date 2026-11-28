@@ -48,7 +48,11 @@ Each step is a dict:
 - `delivery_fee` (what a delivery costs the customer was picked, changed or taken back): `now` and `was`,
   each `{by, up_to, amount, taxed}` as the order carried it (pos.orders.delivery_fee; an `amount` of "0.00"
   with no band is no fee on purpose, and `by` is `custom` for an amount that was typed for a delivery further
-  than the bands reach) or None while nobody had said.
+  than the bands reach) or None while nobody had said;
+- `shipday` (what Shipday said of the delivery, written on the check by the hub where the check did not
+  move with it, pos.shipday.follow: delivered while money is still due, failed, incomplete, or picked up
+  while the kitchen never had it): `state` (Shipday's own word) and `said_ms` (the moment the check keeps
+  for it). Where Shipday moved the check, the `stage` and `closed` steps say so, by "Shipday".
 """
 
 from __future__ import annotations
@@ -56,6 +60,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+from ..shipday.follow import FIELD as SHIPDAY
 from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply, is_delivery
 from .adjustments import PricingRules
 from .bag import FIELD as BAG
@@ -251,6 +256,12 @@ def history(
                     picked, stood = fee_of({FEE: now}), fee_of({FEE: was})
                     if picked != stood:
                         step("delivery_fee", now=picked, was=stood)
+                elif name == SHIPDAY:
+                    # what Shipday said, where the check stayed as it was: one it moved says so in its stage
+                    moved = before_fields.get("stage") != state.fields.get("stage")
+                    word = now.get("state") if isinstance(now, Mapping) else None
+                    if word and not moved and (not isinstance(was, Mapping) or was.get("state") != word):
+                        step("shipday", state=str(word), said_ms=now.get("at_ms"))
 
         elif kind == "add_line":
             added = state.lines.get(data.get("line_id"))

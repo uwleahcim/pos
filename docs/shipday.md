@@ -16,8 +16,9 @@ its deliveries and its drivers, and the app shows them on a screen of their own,
 check it is on the POS. **The second gives a delivery to a driver, and takes it back**
 ("Giving a delivery to a driver"). **The third marks a delivery as it goes**: started, picked up, delivered,
 or failed ("Marking a delivery as it goes"). Those three are all the POS ever changes in Shipday, each by a
-tap that says so and never by itself. Nothing Shipday says changes a check yet: that is the next piece
-("What comes next").
+tap that says so and never by itself. **The fourth lets Shipday move the check**: a delivery picked up in
+Shipday takes its check Out on the POS, and one delivered there closes it, by itself ("Shipday moves the
+check").
 
 Nothing here was ever tried against Shipday itself: see "Never tried for real" before relying on it.
 
@@ -51,8 +52,9 @@ Each delivery is a card:
   ("Giving a delivery to a driver").
 - **Mark…** on one that is not finished: says in Shipday how far along it is ("Marking a delivery as it
   goes").
-- **The check it is on the POS** ("Check #12"): a tap opens it, and Back returns here. A check that was
-  closed or voided says so. A delivery the hub finds no check for says **Not on the POS**.
+- **The check it is on the POS** ("Check #12"): a tap opens it, and Back returns here. A check that is out
+  with a driver, or was closed or voided, says so ("Check #12 · out"). A delivery the hub finds no check
+  for says **Not on the POS**.
 - The number Shipday's own apps show it by, to find it there.
 
 The circle arrow at the top asks Shipday now instead of waiting for the hub's next turn.
@@ -141,10 +143,91 @@ What Shipday refuses, an answer that never comes and a hub that does not answer 
 Anybody who is signed in can mark a delivery, and the hub's log has who did, with Shipday's number and the
 word and nothing of the customer.
 
-**A mark on the POS does not move the check on the POS.** A delivery marked Delivered here leaves its check
-as it was; the check is taken Out and Delivered on the Deliveries screen as before (`delivery.md`). Whether
-Shipday sends the customer its own text when a delivery is marked from here, as it may when the driver
-marks it, is not written on Shipday's pages.
+**A mark made here moves the check like the driver's own.** The hub follows what Shipday says, whoever said
+it: a delivery marked Picked up from the POS takes its check Out, and one marked Delivered closes it unless
+money is still due ("Shipday moves the check"). Where that is so, the asking before Delivered says it:
+"Check #9 follows: it is closed as delivered, unless money is still due on it." Whether Shipday sends the
+customer its own text when a delivery is marked from here, as it may when the driver marks it, is not
+written on Shipday's pages.
+
+## Shipday moves the check
+
+The owner chose this on 2026-11-28, from three ways the two could go together: "Shipday moves the check.
+When a driver marks picked up or delivered in Shipday, the check goes Out or Delivered by itself. The POS
+sends no second text, and a check with money due stays open."
+
+So nobody taps Out and Delivered on the POS for a delivery that Shipday's driver carries. Each time the hub
+has asked Shipday ("How often Shipday is asked"), it looks at every delivery it found a check for ("Which
+check a delivery is") and makes the check say the same:
+
+| Shipday says | The check on the POS |
+| --- | --- |
+| *Picked up*, *Ready to deliver* | goes **Out**, with Shipday's driver and the time Shipday says it was picked up |
+| *Delivered*, nothing left to pay | is marked **delivered** and **closed** |
+| *Delivered*, money still due | **stays open**, out with its driver, and says "Shipday: delivered 18:55" |
+| *Failed*, *Incomplete* | stays where it is, and says "Shipday: failed 19:02" |
+| anything before picked up | nothing |
+
+**Out.** The check stands under Out on the Deliveries screen and in the list of checks like one somebody
+sent out, under the driver's name as Shipday has it with "(Shipday)" behind it ("Tom Reyes (Shipday)"), so
+nobody takes them for a Tom on the POS's own staff. Shipday's drivers are not added to the POS's staff: they
+have no PIN and cannot be picked on the POS. The day's **Runs** count them like any driver (`delivery.md`).
+
+**No second text.** A check somebody sends out on the POS texts its customer that the order is on its way.
+One that Shipday takes out texts nobody: Shipday tells the customer itself. That is the only difference.
+
+**Delivered.** A check with nothing left to pay (paid online, or paid at the counter before it left) is
+marked delivered and closed, as when somebody taps Delivered. One the hub never saw leave goes Out first in
+the same moment, so its history and the day's runs say who took it.
+
+**Money still due.** The check is not closed behind the money. It stays open and out with its driver, and
+every place that shows it says what Shipday said: the card on the Deliveries screen ("$21.40 due" and under
+it "Shipday: delivered 18:55"), its line in the list of checks, and the strip at the top of the order.
+Whoever takes the money taps **Delivered** as ever, which asks for the payment first. If the payment is
+taken on the order itself and the check left open, the hub closes it the next time it asks Shipday.
+
+**Failed, Incomplete.** A person decides what becomes of the bag and of the check: **Came back** on the
+Deliveries screen puts it with the waiting ones again, or the check is voided. The check says "Shipday:
+failed 19:02" until then.
+
+What keeps it from doing harm:
+
+- **Only forward, and only an open delivery.** A check that is closed or voided, one that is no delivery any
+  more (the customer comes for it after all), and one somebody marked delivered already stay as they are. A
+  check that is out already, with whoever, is not sent out again.
+- **Only what a person could have tapped.** A check the kitchen never had (nothing sent, not marked ready)
+  is not moved, as the POS's own Out refuses it. It says "Shipday: picked up 18:40" so somebody sees that
+  the bag is gone and the check never went to the kitchen.
+- **Once.** The hub writes each step of a delivery one time, however often it asks. What a person does
+  afterwards stands: a bag that came back is not sent out again because Shipday still says picked up
+  (another driver picking it up is a new step), and a check a manager opened again is not closed again.
+- **One way.** Out or Delivered tapped on the POS tells Shipday nothing. Mark… on the Shipday screen is how
+  the POS says something there.
+- **Only a check the hub is sure of.** A delivery it found no check for moves nothing.
+
+**How soon.** At the hub's next asking: within twenty seconds while the Shipday screen is open somewhere,
+within about a minute while any terminal is on, and up to five minutes when none is.
+
+**The time on it.** The check keeps the moment Shipday names, where that is within the last 45 minutes;
+otherwise the moment the hub heard. Shipday's times come without a zone ("Never tried for real"), and a
+time read in the wrong zone would be off by hours, which this catches.
+
+**A check's history** (`check-history.md`) says what the hub did for Shipday as Shipday's: "Left with Tom
+Reyes", "Marked delivered", "Closed the check", each by **Shipday**. Where the check stayed as it was, a
+step of its own says what Shipday said: "Shipday says it was delivered", "Shipday says the delivery failed".
+
+**Turning it off.** **Location**, a manager's PIN, and in the card with the delivery fee: **Shipday moves the
+check**. It is on to start, and saved with the Save bar like the rest of that screen. Off, a check stays
+where it is whatever Shipday says, Out and Delivered are tapped on the POS as before, and the Shipday screen
+goes on showing and changing Shipday. Without a key for Shipday the switch does nothing either way.
+
+What it cannot do:
+
+- **A hub that restarts** knows nothing of what finished in Shipday before the restart. A delivery that was
+  delivered while the hub was down stays Out on the POS until somebody taps Delivered.
+- **A delivery of yesterday.** Only today's checks are matched.
+- **The POS's own deliveries** (phone and counter orders) are not in Shipday yet, so nothing moves them
+  ("What comes next").
 
 ## Setting it up
 
@@ -159,7 +242,9 @@ card stops the asking, and the Shipday button goes away. Never send the key to a
 its holder change the restaurant's deliveries.
 
 With the key on the hub, whoever is signed in at a terminal can give a delivery to a driver, take it back,
-and mark it as it goes. There is no switch that leaves the reading on and turns those off.
+and mark it as it goes. There is no switch that leaves the reading on and turns those off. From then on the
+hub also moves the checks as Shipday says, unless that is turned off under Location ("Shipday moves the
+check").
 
 ## Which check a delivery is
 
@@ -201,7 +286,8 @@ screen shows whatever arrival time Shipday put on the order itself, which may be
 Shipday is never hurried: told that it is asked too often, the hub waits a minute, then two, up to ten.
 
 All of it is kept in the hub's memory only. A hub that restarts asks again and knows nothing of what finished
-before the restart. Nothing of a customer is written to the hub's log.
+before the restart. Nothing of a customer is written to the hub's log. What the hub writes onto a check for
+Shipday is the exception to "memory only": it is in the order's own log like any tap, and stays.
 
 ## What Shipday's API cannot do
 
@@ -225,10 +311,6 @@ seconds while the screen is open.
 
 In this order, each its own piece:
 
-- **Shipday moves the check.** The owner chose this on 2026-11-28: when a driver marks a delivery picked up
-  or delivered in Shipday, its check on the POS goes Out or Delivered by itself. The POS sends no second
-  "on its way" text, and a check with money due stays open. One way only: Out or Delivered tapped on the
-  POS does not mark Shipday. Not built yet: until it is, nothing Shipday says changes a check.
 - **Say that it is ready** for its driver to pick up.
 - **Send the POS's own deliveries to Shipday** (the phone and counter ones, which Shipday does not know).
 
@@ -259,6 +341,14 @@ real one. What may turn out otherwise:
   and only then try Delivered on one that really was.
 - **The form of the arrival time on the order itself.** One that is not a time is shown as Shipday wrote it
   ("Shipday says 12 min").
+- **Shipday moving the check.** It stands on everything above: that the hub finds the right check for a
+  delivery, that Shipday's words for picked up and delivered are the ones on its pages, and that a finished
+  delivery can be asked after by its number. If the matching does not work with the restaurant's account,
+  no check moves, and Out and Delivered are tapped as before. If a check ever moves that should not have,
+  turn **Shipday moves the check** off under Location and say what happened: a manager can open a closed
+  check again, and Came back takes one back from its driver. The first evening, watch one delivery: its
+  check should go Out within a minute or so of the driver's Picked up, and the customer should get no text
+  from the POS.
 
 ## An older hub, an older app
 
@@ -270,15 +360,22 @@ hub that reads and does no more there is no button, and the line under the lists
 Shipday's own app; on a hub that gives deliveries to drivers and does not yet mark them there is no
 **Mark…**. An app from before a button on a newer hub goes on as it did.
 
+A hub that moves the checks does so whatever app the terminals have: an app from before it shows the check
+out with Shipday's driver and closes it like any other, and only lacks the words "Shipday: delivered …", the
+"(Shipday)" behind a driver's name and the switch under Location. A hub from before it follows nothing, and
+a newer app then shows no switch and says nothing of it.
+
 ## The calls
 
 | Call | What it does |
 | --- | --- |
-| `GET /shipday` | The picture: `on`, `read`, `trouble` (null, or `since_ms`, `reason`, `said`), `eta` (`off`, `on`, `plan`), `can` (what this hub changes in Shipday when asked: `driver`, `status`), `orders`, `done`, `drivers`. Every delivery has Shipday's `id`, `number` and `state`, its `steps` (what it can be marked as from there, in Shipday's words; none on a finished one), the customer's `name`, `address` and `phone`, its `driver` or null, its times in ms, `eta_ms` or `eta_said`, `total`, `fee`, `tip`, `payment`, `items`, `note`, `tracking`, `scheduled`, and `pos`: the check (`order_id`, `order_no`, `status`, `stage`, `by`) or null. `?looking=true` says a screen shows it. Anyone at a terminal reads it, like the list of orders |
+| `GET /shipday` | The picture: `on`, `read`, `trouble` (null, or `since_ms`, `reason`, `said`), `eta` (`off`, `on`, `plan`), `can` (what this hub changes in Shipday when asked: `driver`, `status`), `moves_checks` (whether what Shipday says moves the checks), `orders`, `done`, `drivers`. Every delivery has Shipday's `id`, `number` and `state`, its `steps` (what it can be marked as from there, in Shipday's words; none on a finished one), the customer's `name`, `address` and `phone`, its `driver` or null, its times in ms, `eta_ms` or `eta_said`, `total`, `fee`, `tip`, `payment`, `items`, `note`, `tracking`, `scheduled`, and `pos`: the check (`order_id`, `order_no`, `status`, `stage`, `by`) or null. `?looking=true` says a screen shows it. Anyone at a terminal reads it, like the list of orders |
 | `POST /shipday/ask` | Asks Shipday now. Not passed on within ten seconds of the last asking (`soon`). 409 `no_key` |
 | `POST /shipday/orders/{id}/driver` | `{staff_id, driver_id}`: gives the delivery with Shipday's id `{id}` to that driver. Answers `done`, `sent` (Shipday was asked to), `shown` (its list shows it), why not (`reason`, `said`, and `told`: Shipday's own words) and the picture after it (`shipday`). `reason` when nothing was sent: `not_listed`, `has_driver`, `unsure`, `unknown_driver`, or why Shipday could not be asked first; when it was: `rejected`, `not_found`, or why no answer came. 409 `no_key`, 404 `unknown_staff` |
 | `POST /shipday/orders/{id}/driver/back` | `{staff_id, driver_id}`: takes it back from the driver the screen showed it with. The same answer; `reason` when nothing was sent: `not_listed`, `no_driver`, `other_driver`, `on_its_way`, `unsure` |
 | `POST /shipday/orders/{id}/status` | `{staff_id, status, was}`: marks it `status` (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`, `INCOMPLETE`), where `was` is the `state` the screen showed. The same answer; `reason` when nothing was sent: `not_listed`, `moved` (it stands elsewhere by now), `not_a_step` (not one of its `steps`). 422 for a word that is none of the six |
+| `GET /settings/shipday` | `{"moves_checks": true}`: whether what Shipday says moves the checks. On until a manager says otherwise |
+| `PUT /settings/shipday` | The same body, a manager's (the Bearer token of Location). 422 unless `moves_checks` is true or false, 503 on a hub that cannot write |
 | `PUT` / `DELETE /hub/keys/shipday` | The key, a manager's (`hub-keys.md`) |
 | `POST /hub/shipday/try` | A manager's try: asks once, answers like `GET /hub/keys` with `shipday_tried` (`ok`, `reason`, `said`, `orders`, `drivers`, `on_shift`). 409 `no_key` |
 
@@ -287,13 +384,33 @@ Shipday's own app; on a hub that gives deliveries to drivers and does not yet ma
 customer is in it.
 
 The change feed (`GET /live`) says `shipday` when the picture reads differently or the key changed, which
-it does after a delivery was given to a driver, taken back or marked.
+it does after a delivery was given to a driver, taken back or marked, and when `moves_checks` is set. A
+check the hub moved is in the feed like any check that changed.
+
+**What the hub writes onto a check** (`pos.shipday.follow`), as operations of the order's own log by the
+device `shipday`, each with a fixed id so that it is written once:
+
+| Operation | Id, after the order's | What it sets |
+| --- | --- | --- |
+| Out | `shipday-out-{delivery}-{driver}` | `stage: out`, `driver` (Shipday's name for them, or "Shipday driver"), `driver_id` (`shipday:{driver}`), `out_at`, `by: Shipday`, `shipday` |
+| Delivered | `shipday-delivered-{delivery}`, then `shipday-closed-{delivery}` (a `close`) | `stage: picked_up`, `by: Shipday`, `shipday` |
+| What Shipday said, the check left as it is | `shipday-said-{delivery}-{word}` | `shipday`, `by: Shipday` |
+
+`shipday` is an order field of its own: `{id, number, state, at_ms}`, Shipday's id and number for the
+delivery, its word (`PICKED_UP`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`, `INCOMPLETE`) and the moment the
+check keeps for it. Only the hub writes it: one a screen sends is dropped at the door. The hub's own
+`Notifier` is not told of these operations, which is why no text goes out. A check's history
+(`GET /orders/{id}/history`) has a step `shipday` (`state`, `said_ms`) where the field changed and the
+stage did not.
 
 What the hub asks of Shipday for the three changes: `PUT /orders/assign/{orderId}/{carrierId}` and
 `PUT /orders/unassign/{orderId}`, with nothing in them, and `PUT /orders/{orderId}/status` with
 `{"status": "PICKED_UP"}`.
 
 The code: `backend/src/pos/shipday/` (`client.py` asks, `read.py` reads what comes back, `match.py` finds the
-check, `board.py` keeps the picture and paces the asking) and `backend/src/pos/api/shipday.py` (the calls);
-in the app `lib/shipday.dart`, `lib/screens/shipday_screen.dart`, and the card in
-`lib/screens/hub_keys_screen.dart`. The tests ask a pretend Shipday (`backend/tests/shipday/fake.py`).
+check, `board.py` keeps the picture and paces the asking, `follow.py` says what a check is to be made to
+say) and `backend/src/pos/api/shipday.py` (the calls, and `follow`, which writes it after every asking that
+was answered); in the app `lib/shipday.dart`, `lib/screens/shipday_screen.dart`, the card in
+`lib/screens/hub_keys_screen.dart`, the switch in `lib/screens/location_settings_screen.dart`, and
+`Order.shipdaySays` wherever a delivery's check is shown. The tests ask a pretend Shipday
+(`backend/tests/shipday/fake.py`).

@@ -409,6 +409,11 @@ class Order {
   String get driver => fields['driver']?.toString() ?? '';
   String get driverId => fields['driver_id']?.toString() ?? '';
   int? get outAt => (fields['out_at'] as num?)?.toInt();
+
+  /// What Shipday last said of this delivery, where the hub wrote it on the check (docs/shipday.md), and
+  /// what a screen says of it beside the check: null where that adds nothing to what the check says.
+  ShipdaySaid? get shipdaySaid => ShipdaySaid.of(fields['shipday']);
+  String? get shipdaySays => isDelivery ? shipdaySaysBeside(shipdaySaid, open: isOpen, stage: stage) : null;
   bool get isOpen => status == 'open';
   bool get isFired => fired.isNotEmpty;
   List<Line> get activeLines => lines.where((l) => l.isActive).toList();
@@ -1855,6 +1860,30 @@ class PosApi {
       'was': was,
     }, timeout: const Duration(seconds: 60)),
   );
+
+  /// Whether what Shipday says of a delivery moves its check on the POS (`GET /settings/shipday`,
+  /// docs/shipday.md, "Shipday moves the check"), for the screen that sets it: null from a hub older than
+  /// that, which follows nothing.
+  Future<bool?> shipdayMovesChecks() async {
+    try {
+      return await _repeated('/settings/shipday', (json) => json['moves_checks'] as bool? ?? true);
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// A manager (token from [adminSession]) says whether Shipday moves the checks, for the whole location.
+  Future<bool> saveShipdayMovesChecks(String token, {required bool moves}) async {
+    final kept = await _withFailover(
+      (base) => _client.put(
+        Uri.parse('$base/settings/shipday'),
+        headers: {'content-type': 'application/json', ..._bearer(token)},
+        body: jsonEncode({'moves_checks': moves}),
+      ),
+    );
+    return kept['moves_checks'] as bool? ?? moves;
+  }
 
   /// A manager's try of the hub's key for Shipday: Shipday is asked once, for its deliveries and its
   /// drivers, and nothing is changed there. Answers how the keys stand, with what the try came to in

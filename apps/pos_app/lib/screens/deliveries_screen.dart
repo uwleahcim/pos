@@ -9,6 +9,7 @@ import '../local_order.dart';
 import '../outbox.dart';
 import '../roster.dart';
 import '../session.dart';
+import '../shipday.dart';
 import '../takeout.dart';
 import '../to_go_stages.dart';
 import 'driver_picker.dart';
@@ -132,10 +133,29 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
       _away,
       _leaving.join(','),
       for (final o in deliveries.waiting)
-        [o.orderId, o.orderNo, o.customerName, o.event.words, waitingWords(o, now), o.promisedAt, moneyWords(o)],
+        [
+          o.orderId,
+          o.orderNo,
+          o.customerName,
+          o.event.words,
+          waitingWords(o, now),
+          o.promisedAt,
+          moneyWords(o),
+          o.shipdaySays,
+        ],
       for (final load in deliveries.out)
         for (final o in load.orders)
-          [o.orderId, load.driverId, load.name, o.orderNo, o.customerName, o.event.words, o.outAt, moneyWords(o)],
+          [
+            o.orderId,
+            load.driverId,
+            load.name,
+            o.orderNo,
+            o.customerName,
+            o.event.words,
+            o.outAt,
+            moneyWords(o),
+            o.shipdaySays,
+          ],
     ].join('\x1e');
     if (says == _drawn) return;
     setState(() {
@@ -262,7 +282,7 @@ class _DeliveriesScreenState extends State<DeliveriesScreen> {
                   ? 'You'
                   : load.name.isEmpty
                   ? 'No driver named'
-                  : load.name,
+                  : driverCalled(load.name, load.driverId),
               '${load.orders.length} out',
               if (load.since != null) 'since ${clockTime(load.since!)}',
             ].join(' · '),
@@ -393,6 +413,18 @@ List<Widget> _whereTo(ThemeData theme, Order order) {
 String _title(Order order) =>
     ['#${order.orderNo ?? '…'}', if (order.customerName.trim().isNotEmpty) order.customerName.trim()].join(' ');
 
+/// What Shipday said of a delivery that its check does not say itself (docs/shipday.md, "Shipday moves the
+/// check"): delivered while the check stays open for its money, failed, or picked up while the POS never sent
+/// it out. Somebody has to do something about each, so it stands out from the grey of the line above.
+List<Widget> _shipdaySays(ThemeData theme, Order order) => [
+  if (order.shipdaySays case final said?)
+    Text(
+      said,
+      key: ValueKey('shipday-says-${order.orderId}'),
+      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600),
+    ),
+];
+
 /// A delivery that has not left: a tap picks it to leave (or lets it go again); the arrow opens the order.
 class _WaitingCard extends StatelessWidget {
   const _WaitingCard({
@@ -469,6 +501,7 @@ class _WaitingCard extends StatelessWidget {
                       ].join(' · '),
                       style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                     ),
+                    ..._shipdaySays(theme, order),
                   ],
                 ),
               ),
@@ -537,6 +570,7 @@ class _OutCard extends StatelessWidget {
                         ].join(' · '),
                         style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                       ),
+                      ..._shipdaySays(theme, order),
                     ],
                   ),
                 ),
