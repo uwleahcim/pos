@@ -1,6 +1,6 @@
 """Shipday on the hub's own wire (`pos.api.shipday`, and the key in `pos.api.keys`): off until a manager
-types the key, in force the moment it is typed, tried from the page of keys, and each delivery told with
-the check it is on the POS."""
+types the key, in force the moment it is typed, tried from the page of keys, each delivery told with the
+check it is on the POS, and a delivery given to a driver or taken back when a person asks for exactly that."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import itertools
 import json
 import logging
 
+import httpx
 from fastapi.testclient import TestClient
 
 from pos.api.app import create_app
@@ -116,6 +117,7 @@ def test_a_hub_without_the_key_reads_nothing_and_says_it_is_off():
         "read": False,
         "trouble": None,
         "eta": "off",
+        "can": ["driver"],
         "orders": [],
         "done": [],
         "drivers": [],
@@ -160,6 +162,7 @@ def test_a_manager_types_the_key_and_the_hub_reads_shipday_with_it_at_once():
         "read": False,
         "trouble": None,
         "eta": "off",
+        "can": ["driver"],
         "orders": [],
         "done": [],
         "drivers": [],
@@ -305,3 +308,212 @@ def test_nothing_of_the_key_or_a_customer_is_written_to_the_log(caplog):
     assert "shipday" in caplog.text
     for word in (KEY, KEY[-8:], "Linda", "Elm St", "5550101"):
         assert word not in caplog.text
+
+
+# --- a delivery is given to a driver, and taken back -------------------------------------------------------
+
+
+def waiting(h: Hub) -> None:
+    """One delivery nobody has, Tom on shift and Wei off, and the hub has read both."""
+    h.shipday.orders = [order(7001, "A-1")]
+    h.shipday.carriers = [carrier(TOM), carrier(WEI, on_shift=False)]
+    h.board.round()
+    h.now += 5_000
+
+
+def give(h: Hub, driver: int = TOM["id"], *, order_id: int = 7001, staff: str = "s1") -> dict:
+    answer = h.c.post(f"/shipday/orders/{order_id}/driver", json={"staff_id": staff, "driver_id": driver})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def take_back(h: Hub, driver: int = TOM["id"], *, order_id: int = 7001, staff: str = "s1") -> dict:
+    answer = h.c.post(f"/shipday/orders/{order_id}/driver/back", json={"staff_id": staff, "driver_id": driver})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def outcome(answer: dict) -> tuple:
+    return (answer["done"], answer["sent"], answer["shown"], answer["reason"])
+
+
+def test_a_delivery_is_given_to_a_driver_and_taken_back_with_the_list_read_before_and_after():
+    h = Hub(key=True)
+    waiting(h)
+    assert h.shown()["can"] == ["driver"]
+    h.shipday.now = h.now
+    given = give(h)
+    assert outcome(given) == (True, True, True, None) and (given["said"], given["told"]) == ("", "")
+    assert h.shipday.calls[-3:] == ["GET /orders", "PUT /orders/assign/7001/501", "GET /orders"]
+    put = next(sent for sent in h.shipday.sent if sent.method == "PUT")
+    assert put.content == b"", "nothing of the POS goes with it"
+    assert (put.headers["authorization"], put.headers["x-api-key"]) == (f"Basic {KEY}", KEY)
+    now = given["shipday"]["orders"][0]
+    assert (now["driver"], now["state"]) == ({"id": 501, "name": "Tom Reyes", "phone": "+17815550150"}, "NOT_ACCEPTED")
+    assert now["assigned_ms"] == h.now
+    assert [(d["name"], d["orders"]) for d in given["shipday"]["drivers"]] == [("Tom Reyes", 1), ("Wei Zhang", 0)]
+    assert h.shown() == given["shipday"], "every screen reads what the one that asked was answered"
+    # and back: nobody has it again
+    back = take_back(h, staff="s3")
+    assert outcome(back) == (True, True, True, None)
+    assert h.shipday.changes() == ["PUT /orders/assign/7001/501", "PUT /orders/unassign/7001"]
+    assert (back["shipday"]["orders"][0]["driver"], back["shipday"]["orders"][0]["state"]) == (None, "NOT_ASSIGNED")
+    assert h.shipday.asked("/carriers") == 1, "the drivers are not asked for again for a change"
+
+
+def test_a_hub_that_just_started_reads_the_drivers_before_it_says_who_can_be_given_one():
+    h = Hub(key=True)
+    h.shipday.orders = [order(7001, "A-1")]
+    h.shipday.carriers = [carrier(TOM)]
+    assert h.shipday.calls == [], "this hub has asked Shipday for nothing yet: the screen is from before it restarted"
+    assert outcome(give(h)) == (True, True, True, None)
+    assert h.shipday.calls == ["GET /orders", "GET /carriers", "PUT /orders/assign/7001/501", "GET /orders"]
+    # and a driver Shipday does not list is still given nothing
+    h.shipday.orders = [order(7002, "A-2")]
+    assert outcome(give(h, 999, order_id=7002)) == (False, False, False, "unknown_driver")
+    assert h.shipday.changes() == ["PUT /orders/assign/7001/501"]
+
+
+def test_the_screens_are_told_when_a_delivery_was_given_to_a_driver():
+    h = Hub(key=True)
+    waiting(h)
+    told: list[str] = []
+    h.c.app.state.feed.changed = told.append
+    give(h)
+    assert told == ["shipday"]
+
+
+def test_nothing_is_sent_for_a_delivery_that_no_longer_stands_as_the_screen_showed_it():
+    h = Hub(key=True)
+    waiting(h)
+    h.shipday.carriers.append(carrier({"id": 503, "name": "Old Account", "phone": ""}, active=False))
+    h.c.post("/shipday/ask")
+    h.now += 20_000
+    assert outcome(give(h, 999)) == (False, False, False, "unknown_driver")
+    assert outcome(give(h, 503)) == (False, False, False, "unknown_driver"), "one Shipday does not let take orders"
+    assert outcome(take_back(h)) == (False, False, False, "no_driver")
+    # meanwhile somebody gave it to Wei in Shipday's own app: the hub has not heard, and asks before it sends
+    h.shipday.orders = [order(7001, "A-1", state="NOT_ACCEPTED", driver=WEI)]
+    assert outcome(give(h)) == (False, False, False, "has_driver")
+    assert h.shown()["orders"][0]["driver"]["name"] == "Wei Zhang", "and the screens show who has it"
+    assert outcome(take_back(h)) == (False, False, False, "other_driver"), "the screen said Tom had it"
+    # Wei picked it up: what is on its way is not taken from the driver who carries it
+    h.shipday.orders = [order(7001, "A-1", state="PICKED_UP", driver=WEI)]
+    assert outcome(take_back(h, WEI["id"])) == (False, False, False, "on_its_way")
+    # a word for where it stands that this hub does not know: nothing is guessed
+    h.shipday.orders = [order(7001, "A-1", state="SOMETHING_NEW")]
+    assert outcome(give(h)) == (False, False, False, "unsure")
+    h.shipday.orders = [order(7001, "A-1", state="SOMETHING_NEW", driver=TOM)]
+    assert outcome(take_back(h)) == (False, False, False, "unsure")
+    # it left the list (delivered, or deleted there)
+    h.shipday.orders = []
+    assert outcome(give(h)) == (False, False, False, "not_listed")
+    assert outcome(take_back(h)) == (False, False, False, "not_listed")
+    assert outcome(give(h, order_id=4242)) == (False, False, False, "not_listed"), "an id Shipday never listed"
+    assert h.shipday.changes() == [], "not one change was asked of Shipday"
+
+
+def test_a_delivery_a_driver_accepted_or_started_can_still_be_taken_back():
+    h = Hub(key=True)
+    waiting(h)
+    for state in ("NOT_ACCEPTED", "NOT_STARTED_YET", "STARTED"):
+        h.shipday.orders = [order(7001, "A-1", state=state, driver=TOM)]
+        assert outcome(take_back(h)) == (True, True, True, None), state
+    assert h.shipday.changes() == ["PUT /orders/unassign/7001"] * 3
+
+
+def test_what_shipday_will_not_do_is_said_with_its_own_words_which_no_log_keeps(caplog):
+    h = Hub(key=True)
+    waiting(h)
+    h.shipday.refuses = (400, {"message": "Carrier is\noff shift. " + "x" * 300})
+    with caplog.at_level(logging.DEBUG):
+        refused = give(h)
+    assert outcome(refused) == (False, True, False, "rejected")
+    assert refused["said"] == "Shipday would not do it (400)"
+    assert refused["told"].startswith("Carrier is off shift. xxx") and len(refused["told"]) == 160
+    assert refused["shipday"]["orders"][0]["driver"] is None
+    assert "order 7001 not given to driver 501 (rejected), asked by Amy" in caplog.text
+    assert "off shift" not in caplog.text
+    # an answer that says in itself that it was not done
+    h.shipday.refuses = True
+    said_no = give(h)
+    assert outcome(said_no) == (False, True, False, "rejected")
+    assert (said_no["said"], said_no["told"]) == ("Shipday would not do it", "Carrier is not available.")
+    # an order or a driver Shipday knows nothing of
+    h.shipday.refuses = (404, {})
+    assert outcome(give(h)) == (False, True, False, "not_found")
+    h.shipday.refuses = (500, {})
+    assert outcome(give(h)) == (False, True, False, "error")
+
+
+def test_when_shipday_cannot_be_asked_first_nothing_is_sent():
+    h = Hub(key=True)
+    waiting(h)
+    h.shipday.fail = 401
+    refused = give(h)
+    assert outcome(refused) == (False, False, False, "refused") and refused["said"] == "Shipday refused the key"
+    h.shipday.fail = httpx.ConnectError("no way out")
+    assert outcome(give(h)) == (False, False, False, "unreachable")
+    h.shipday.fail = 429
+    assert outcome(take_back(h)) == (False, False, False, "limit")
+    assert h.shipday.changes() == []
+    assert h.shown()["trouble"]["reason"] == "limit", "and the screens say that Shipday is not answering"
+
+
+def test_an_answer_that_never_came_is_settled_by_what_the_list_shows():
+    h = Hub(key=True)
+    waiting(h)
+    # Shipday made the change and its answer was lost on the way back: the list read after it shows the driver
+    h.shipday.lost = True
+    assert outcome(give(h)) == (True, True, True, None)
+    # it made none and the answer was lost: not done, and said so
+    h.shipday.orders = [order(7001, "A-1")]
+    h.shipday.deaf = True
+    lost = give(h)
+    assert outcome(lost) == (False, True, False, "slow") and lost["said"] == "Shipday did not answer in time"
+    # it says it is done and its list does not show it (yet): done, as Shipday said, and not shown
+    h.shipday.lost = False
+    assert outcome(give(h)) == (True, True, False, None)
+
+
+def test_who_asks_is_somebody_the_hub_knows_and_a_hub_without_the_key_changes_nothing():
+    h = Hub(key=True)
+    waiting(h)
+    stranger = h.c.post("/shipday/orders/7001/driver", json={"staff_id": "nobody", "driver_id": 501})
+    assert stranger.status_code == 404 and stranger.json()["detail"]["error"] == "unknown_staff"
+    assert h.c.post("/shipday/orders/7001/driver", json={"staff_id": "s1"}).status_code == 422
+    assert h.c.post("/shipday/orders/7001/driver", json={"driver_id": 501}).status_code == 422
+    assert h.c.post("/shipday/orders/7001/driver/back", json={"staff_id": "s1", "driver_id": -1}).status_code == 422
+    assert h.c.post("/shipday/orders/a-1/driver", json={"staff_id": "s1", "driver_id": 501}).status_code == 422
+    assert h.shipday.changes() == []
+    assert outcome(give(h, staff="s1")) == (True, True, True, None), "a server may, as anybody hands a bag out"
+    bare = Hub()
+    for path in ("/shipday/orders/7001/driver", "/shipday/orders/7001/driver/back"):
+        answer = bare.c.post(path, json={"staff_id": "s1", "driver_id": 501})
+        assert answer.status_code == 409 and answer.json()["detail"]["error"] == "no_key"
+    assert bare.shipday.calls == []
+
+
+def test_a_change_is_written_down_with_who_asked_and_nothing_of_the_customer(caplog):
+    h = Hub(key=True)
+    waiting(h)
+    with caplog.at_level(logging.DEBUG):
+        give(h)
+        take_back(h, staff="s3")
+    assert "shipday: order 7001 given to driver 501 by Amy" in caplog.text
+    assert "shipday: order 7001 taken back from driver 501 by Mike" in caplog.text
+    for word in (KEY, "Linda", "Elm St", "5550101", "Tom", "A-1"):
+        assert word not in caplog.text
+
+
+def test_a_change_looks_at_shipday_as_a_screen_does_and_does_not_wait_out_a_rest():
+    h = Hub(key=True)
+    waiting(h)
+    h.shipday.fail = 429
+    h.now += 60_000
+    h.board.round()  # told it asks too often: the hub's own rounds rest for a minute
+    h.shipday.fail = None
+    h.now += 5_000
+    assert h.board.round()["asked"] is False
+    assert outcome(give(h)) == (True, True, True, None), "a person's change is not held back by the rest"
+    assert h.board.pause() == 20.0, "and the hub asks often for a while after it"

@@ -22,6 +22,14 @@ const p8 =
 
 Future<void> tapKey(WidgetTester tester, String key) async {
   final target = find.byKey(ValueKey(key));
+  if (target.evaluate().isEmpty) {
+    // the page is a list that builds only what is near the window, and it is longer than the window:
+    // from the top, down to it
+    final page = find.byType(Scrollable).first;
+    tester.state<ScrollableState>(page).position.jumpTo(0);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(target, 200, scrollable: page);
+  }
   await tester.ensureVisible(target);
   await tester.pumpAndSettle();
   await tester.tap(target);

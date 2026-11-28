@@ -669,7 +669,8 @@ const hubKeyInfo = <String, HubKeyInfo>{
     short: 'Shipday',
     about:
         'The hub reads your deliveries and your drivers in Shipday with it, and the Shipday screen shows them '
-        'beside the checks they are on the POS. It only reads: nothing is changed in Shipday.',
+        'beside the checks they are on the POS. From that screen whoever is signed in gives a delivery to a '
+        'driver or takes it back, each with a tap that says so. Nothing else is changed in Shipday.',
     without: 'Without it the hub asks Shipday for nothing, and there is no Shipday screen.',
     where:
         "In Shipday's Dispatch Dashboard (dispatch.shipday.com), under My Account: the API key. Copy it "

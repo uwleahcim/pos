@@ -3,7 +3,8 @@
 /// how far along it is. The hub asks Shipday for them with the restaurant's own key and says beside each
 /// which check on the POS it is.
 ///
-/// This is reading only. Nothing here changes anything in Shipday, and nothing Shipday says changes a check.
+/// Two things can be changed there from here, each by a person's tap and never by itself: a delivery is
+/// given to a driver, and taken back from one ([ShipdayChanged]). Nothing Shipday says changes a check.
 library;
 
 import 'phone.dart' show formatPhoneNumber;
@@ -255,6 +256,12 @@ class ShipdayOrder {
   bool get onItsWay => state == 'PICKED_UP' || state == 'READY_TO_DELIVER';
   bool get withDriver => state == 'NOT_ACCEPTED' || state == 'NOT_STARTED_YET' || state == 'STARTED';
 
+  /// Nobody has it, so it can be given to a driver.
+  bool get canBeGiven => !finished && needsDriver && driver == null;
+
+  /// A driver has it and has not picked it up, so it can still be taken back.
+  bool get canBeTakenBack => !finished && withDriver && driver != null;
+
   /// The customer's name, or the number Shipday shows it by where it has no name.
   String get title {
     final who = name.trim();
@@ -329,6 +336,7 @@ class ShipdayBoard {
     this.read = false,
     this.trouble,
     this.eta = 'off',
+    this.can = const {},
     this.orders = const [],
     this.done = const [],
     this.drivers = const [],
@@ -339,6 +347,7 @@ class ShipdayBoard {
     read: json['read'] == true,
     trouble: ShipdayTrouble.fromJson(json['trouble']),
     eta: json['eta'] is String ? json['eta'] as String : 'off',
+    can: {...(json['can'] is List ? json['can'] as List : const []).whereType<String>()},
     orders: [for (final row in json['orders'] is List ? json['orders'] as List : const []) ?ShipdayOrder.fromJson(row)],
     done: [for (final row in json['done'] is List ? json['done'] as List : const []) ?ShipdayOrder.fromJson(row)],
     drivers: [
@@ -358,6 +367,12 @@ class ShipdayBoard {
   /// Whether Shipday says how far away a delivery is: `off` (not asked yet), `on`, or `plan` (the account's
   /// plan with Shipday does not include it).
   final String eta;
+
+  /// What this hub changes in Shipday when a person asks. Empty from a hub that only reads.
+  final Set<String> can;
+
+  /// The hub gives a delivery to a driver and takes it back.
+  bool get givesToDrivers => can.contains('driver');
 
   /// The deliveries that are not finished, as Shipday lists them.
   final List<ShipdayOrder> orders;
@@ -450,6 +465,76 @@ class ShipdayAsked {
     if (soon) return 'Shipday was asked a moment ago. This is what it said.';
     if (answered) return 'Shipday answered. This is how it stands now.';
     return shipdayTroubleWords(reason, said);
+  }
+}
+
+/// What came of a change a person asked for in Shipday (a delivery given to a driver, or taken back), with
+/// the picture after it. The hub reads Shipday's list before it sends anything and again after.
+class ShipdayChanged {
+  const ShipdayChanged({
+    this.done = false,
+    this.sent = false,
+    this.shown = false,
+    this.reason = '',
+    this.said = '',
+    this.told = '',
+    this.board,
+  });
+
+  factory ShipdayChanged.fromJson(Map<String, dynamic> json) => ShipdayChanged(
+    done: json['done'] == true,
+    sent: json['sent'] == true,
+    shown: json['shown'] == true,
+    reason: _text(json['reason']),
+    said: _text(json['said']),
+    told: _text(json['told']),
+    board: json['shipday'] is Map ? ShipdayBoard.fromJson((json['shipday'] as Map).cast<String, dynamic>()) : null,
+  );
+
+  /// Shipday made the change, as far as it said or its list shows.
+  final bool done;
+
+  /// Shipday was asked to make it. False where the hub sent nothing: the delivery no longer stood as this
+  /// screen showed it, or Shipday could not be asked first.
+  final bool sent;
+
+  /// Shipday's list, read after the change, shows it.
+  final bool shown;
+
+  /// Why not: the hub's word for it.
+  final String reason;
+  final String said;
+
+  /// What Shipday itself said of a change it would not make.
+  final String told;
+  final ShipdayBoard? board;
+
+  bool get bad => !done;
+
+  /// What to tell the person who asked. [did] says the change as done ("Given to Tom Reyes."); [order] is
+  /// the delivery as the picture after it has it, for who has it now.
+  String words(String did, {ShipdayOrder? order}) {
+    if (done) return shown ? did : 'Shipday took it. Its list does not show it yet.';
+    final has = order?.driver?.called;
+    final why = switch (reason) {
+      'not_listed' => "It is no longer on Shipday's list.",
+      'has_driver' => has == null ? 'It has a driver already.' : '$has has it already.',
+      'no_driver' => 'Nobody has it any more.',
+      'other_driver' => has == null ? 'Another driver has it now.' : '$has has it now.',
+      'on_its_way' => 'It was picked up already.',
+      'unsure' => 'Shipday says something of it this app does not know.',
+      'unknown_driver' => 'Shipday no longer lists that driver.',
+      'no_key' => 'This hub has no key for Shipday.',
+      'rejected' ||
+      'not_found' => told.trim().isEmpty ? 'Shipday would not do it.' : 'Shipday would not do it: "${told.trim()}"',
+      _ => shipdayTroubleWords(reason, said),
+    };
+    if (!sent) return '$why Nothing was changed.';
+    // asked, and no word that it was done: the list read after it does not show it either
+    return switch (reason) {
+      'rejected' || 'not_found' => why,
+      _ => "$why Shipday's list does not show the change.",
+    };
   }
 }
 

@@ -1264,7 +1264,19 @@ class Hub {
   /// a screen is looking. `POST /shipday/ask` answers [shipdayAsked] with the picture ([shipdayAskCount]
   /// counts them; [shipdayOnAsk] runs first, to change the picture as Shipday's answer would), or 409 while
   /// the picture says the hub has no key. [shipdayDown] makes every one of these calls fail.
+  ///
+  /// A delivery is given to a driver (`POST /shipday/orders/{id}/driver`) and taken back (`.../driver/back`)
+  /// in the picture itself, as Shipday's own list would read after it, and answered with the picture; each
+  /// is written down in [shipdayChanges] ("give 7001 501 s1"). [shipdayOnChange] runs first: what somebody
+  /// else did in Shipday meanwhile. [shipdayChangeSays] is answered instead, with nothing done: what the
+  /// hub or Shipday would not do. [shipdayChangeStatus] makes the call fail with that status, and while
+  /// [shipdayChangeHeld] is not done no answer comes. A hub whose picture lists no `can` only reads: 405.
   Map<String, dynamic>? shipday = shipdayStands(on: false);
+  final shipdayChanges = <String>[];
+  void Function()? shipdayOnChange;
+  Map<String, dynamic>? shipdayChangeSays;
+  int? shipdayChangeStatus;
+  Completer<void>? shipdayChangeHeld;
   int shipdayAsks = 0;
   int shipdayLooks = 0;
   int shipdayAskCount = 0;
@@ -1287,6 +1299,7 @@ class Hub {
     bool read = true,
     Map<String, dynamic>? trouble,
     String eta = 'off',
+    List<String>? can = const ['driver'],
     List<Map<String, dynamic>> orders = const [],
     List<Map<String, dynamic>> done = const [],
     List<Map<String, dynamic>> drivers = const [],
@@ -1295,6 +1308,7 @@ class Hub {
     'read': on && read,
     'trouble': trouble,
     'eta': eta,
+    'can': ?can, // null: a hub that only reads Shipday says nothing of what it changes
     'orders': orders,
     'done': done,
     'drivers': drivers,
@@ -1401,7 +1415,7 @@ class Hub {
   /// When Shipday last answered the hub, for the page of the keys.
   int shipdayAnsweredMs = DateTime(2026, 11, 16, 18, 30).millisecondsSinceEpoch;
 
-  http.Response _shipday(http.Request request) {
+  Future<http.Response> _shipday(http.Request request) async {
     final picture = shipday;
     if (picture == null) return json({'detail': 'Not Found'}, 404);
     if (shipdayDown) throw const SocketException('down');
@@ -1419,6 +1433,61 @@ class Hub {
       shipdayAskCount += 1;
       shipdayOnAsk?.call();
       return json({...shipdayAsked, 'shipday': shipday});
+    }
+    final change = RegExp(r'^/shipday/orders/(\d+)/driver(/back)?$').firstMatch(request.url.path);
+    if (change != null && request.method == 'POST' && picture['can'] is List) {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final staff = body['staff_id'];
+      final orderId = int.parse(change.group(1)!);
+      final driverId = body['driver_id'];
+      final back = change.group(2) != null;
+      if (staff is! String || driverId is! int) return json({'detail': 'Unprocessable'}, 422);
+      if (!(roster ?? const <Map<String, dynamic>>[]).any((person) => person['staff_id'] == staff)) {
+        return json({
+          'detail': {'error': 'unknown_staff', 'message': 'Nobody here has this id.'},
+        }, 404);
+      }
+      if (picture['on'] != true) {
+        return json({
+          'detail': {'error': 'no_key', 'message': 'this hub has no key for Shipday yet'},
+        }, 409);
+      }
+      shipdayChanges.add('${back ? 'back' : 'give'} $orderId $driverId $staff');
+      if (shipdayChangeHeld != null) await shipdayChangeHeld!.future;
+      if (shipdayChangeStatus != null) return json({'detail': 'Something went wrong'}, shipdayChangeStatus!);
+      shipdayOnChange?.call();
+      final said = shipdayChangeSays;
+      if (said != null) {
+        return json({
+          'done': false,
+          'sent': false,
+          'shown': false,
+          'said': '',
+          'told': '',
+          ...said,
+          'shipday': shipday,
+        });
+      }
+      final now = shipday!;
+      final drivers = [
+        for (final each in now['drivers'] as List) Map<String, dynamic>.of(each as Map<String, dynamic>),
+      ];
+      final orders = [for (final each in now['orders'] as List) Map<String, dynamic>.of(each as Map<String, dynamic>)];
+      final order = orders.firstWhere((each) => each['id'] == orderId);
+      final driver = drivers.firstWhere((each) => each['id'] == driverId);
+      order['driver'] = back ? null : {'id': driver['id'], 'name': driver['name'], 'phone': driver['phone']};
+      order['state'] = back ? 'NOT_ASSIGNED' : 'NOT_ACCEPTED';
+      driver['orders'] = (driver['orders'] as int) + (back ? -1 : 1);
+      shipday = {...now, 'orders': orders, 'drivers': drivers};
+      return json({
+        'done': true,
+        'sent': true,
+        'shown': true,
+        'reason': null,
+        'said': '',
+        'told': '',
+        'shipday': shipday,
+      });
     }
     return json({'detail': 'Method Not Allowed'}, 405);
   }

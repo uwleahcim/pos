@@ -30,6 +30,14 @@ Which order on the POS each delivery is (`pos.shipday.match`) is worked out when
 POS's deliveries as they stand at that moment (`pos`, which the API sets): a check rung up a second ago is
 matched at once.
 
+**Changes.** Two things are changed in Shipday, each only when a person at a terminal asked for exactly that:
+a delivery is given to a driver (`give`), and taken back from one (`take_back`). Neither is ever done by the
+hub itself. Before one is sent the hub asks Shipday for its list again and sends nothing where the delivery
+no longer stands as the person's screen showed it (it left the list, somebody else gave it to a driver, the
+driver picked it up); after it the list is asked for once more, so the screens show what Shipday now says
+and the answer can tell whether the change shows there (`shown`). A change whose answer did not come is not
+taken for made or for not made: the list read after it says which.
+
 Nothing here names a customer in a log: an order is told of by Shipday's own id.
 """
 
@@ -47,7 +55,20 @@ from typing import Any
 from .. import localtime
 from .client import LIMIT, REFUSED, Shipday, ShipdayFailed
 from .match import OnPos, matched
-from .read import ACTIVE, FINISHED, GONE, PICKED_UP, READY_TO_DELIVER, STARTED, driver_of, minutes_of, order_of
+from .read import (
+    ACTIVE,
+    FINISHED,
+    GONE,
+    NOT_ACCEPTED,
+    NOT_ASSIGNED,
+    NOT_STARTED_YET,
+    PICKED_UP,
+    READY_TO_DELIVER,
+    STARTED,
+    driver_of,
+    minutes_of,
+    order_of,
+)
 from .read import tracking_id as tracking_id_of
 
 log = logging.getLogger("pos.shipday")
@@ -90,6 +111,26 @@ DONE_SAID = 60
 ETA_OFF, ETA_ON, ETA_PLAN = "off", "on", "plan"
 """Whether Shipday says how far away a delivery is: not asked yet; it answers; the account's plan has no
 such call."""
+
+CAN = ("driver",)
+"""What this hub changes in Shipday when a person asks: a delivery's driver. A screen offers no more than
+is listed here, so one that knows of more offers nothing this hub would not do."""
+HELD = (NOT_ACCEPTED, NOT_STARTED_YET, STARTED)
+"""Where a delivery stands while a driver has it and has not picked it up: it can still be taken back."""
+NO_KEY, NOT_LISTED, HAS_DRIVER, NO_DRIVER, OTHER_DRIVER, ON_ITS_WAY, UNSURE, UNKNOWN_DRIVER = (
+    "no_key",
+    "not_listed",
+    "has_driver",
+    "no_driver",
+    "other_driver",
+    "on_its_way",
+    "unsure",
+    "unknown_driver",
+)
+"""Why the hub sent Shipday no change: it has no key; the delivery is no longer on Shipday's list; it has a
+driver already; it has none to take it back from; another driver has it than the screen showed; it was
+picked up; Shipday says of it something this hub does not know what to make of; Shipday lists no such
+driver, or one it does not let take orders."""
 
 
 class ShipdayBoard:
@@ -161,36 +202,142 @@ class ShipdayBoard:
         too and a holding back is not waited out. Answers what came of it: `asked`, `answered`, and why not
         (`reason`, `said`)."""
         with self._asking:
+            return self._round(forced=forced)
+
+    def _round(self, *, forced: bool, drivers: bool | None = None) -> dict[str, Any]:
+        """A round, for whoever holds `_asking`. `drivers`: whether the drivers are asked for too; unless
+        said, when a person asked or it is their turn."""
+        source = self.source
+        if source is None:
+            return {"asked": False, "answered": False, "reason": NO_KEY, "said": "no key for Shipday"}
+        now = self._now()
+        if not forced and now < self._hold_until_ms:
+            return {"asked": False, "answered": False, "reason": LIMIT, "said": "Shipday is given a rest"}
+        self._asked_ms = now
+        if drivers is None:
+            drivers = forced or self._drivers_ms is None or now - self._drivers_ms >= DRIVERS_EVERY_MS
+        try:
+            raw_orders = source.active_orders()
+            raw_drivers = source.carriers() if drivers else None
+        except ShipdayFailed as err:
+            self._failed(now, err)
+            self._told()
+            return {"asked": True, "answered": False, "reason": err.reason, "said": err.said}
+        if self._failure is not None:
+            log.warning("shipday: it answers again")
+        self._failure, self._held_ms, self._hold_until_ms = None, 0, 0
+        self._answered_ms = now
+        orders = {order["id"]: order for raw in raw_orders if (order := order_of(raw)) is not None}
+        self._left(source, orders, now)
+        self._etas(source, orders, now)
+        with self._lock:
+            self._orders = orders
+            if raw_drivers is not None:
+                self._drivers = [driver for raw in raw_drivers if (driver := driver_of(raw)) is not None]
+                self._drivers_ms = now
+        self._told()
+        return {"asked": True, "answered": True, "reason": None, "said": ""}
+
+    # --- what a person changes ------------------------------------------------------------------------------
+
+    def give(self, order_id: int, driver_id: int, *, by: str) -> dict[str, Any]:
+        """Gives a delivery nobody has to a driver, because `by` asked at a terminal. Shipday tells the
+        driver. Nothing is sent for a delivery that is not on Shipday's list as it reads this moment, for
+        one that has a driver already, or to a driver Shipday does not list or does not let take orders."""
+
+        def check(order: dict[str, Any] | None) -> str | None:
+            if order is None:
+                return NOT_LISTED
+            if order["driver"] is not None:
+                return HAS_DRIVER
+            if order["state"] != NOT_ASSIGNED:
+                return UNSURE  # no driver, and not what Shipday calls waiting for one: nothing is guessed
+            with self._lock:
+                known = any(driver["id"] == driver_id and driver["active"] for driver in self._drivers)
+            return None if known else UNKNOWN_DRIVER
+
+        def shown(order: dict[str, Any] | None) -> bool:
+            return order is not None and order["driver"] is not None and order["driver"]["id"] == driver_id
+
+        return self._changed(
+            order_id,
+            check,
+            lambda source: source.assign(order_id, driver_id),
+            shown,
+            by,
+            f"given to driver {driver_id}",
+        )
+
+    def take_back(self, order_id: int, driver_id: int, *, by: str) -> dict[str, Any]:
+        """Takes a delivery back from the driver the person's screen showed it with (`driver_id`), so that
+        nobody has it. Nothing is sent where another driver has it by now, where nobody has, or once it
+        was picked up: what is on its way is not taken from the driver who carries it."""
+
+        def check(order: dict[str, Any] | None) -> str | None:
+            if order is None:
+                return NOT_LISTED
+            if order["driver"] is None:
+                return NO_DRIVER
+            if order["driver"]["id"] != driver_id:
+                return OTHER_DRIVER
+            if order["state"] in HELD:
+                return None
+            return ON_ITS_WAY if order["state"] in (PICKED_UP, READY_TO_DELIVER) else UNSURE
+
+        def shown(order: dict[str, Any] | None) -> bool:
+            return order is not None and order["driver"] is None
+
+        return self._changed(
+            order_id, check, lambda source: source.unassign(order_id), shown, by, f"taken back from driver {driver_id}"
+        )
+
+    def _changed(
+        self,
+        order_id: int,
+        check: Callable[[dict[str, Any] | None], str | None],
+        send: Callable[[Shipday], None],
+        shown: Callable[[dict[str, Any] | None], bool],
+        by: str,
+        what: str,
+    ) -> dict[str, Any]:
+        """One change a person asked for: the list is read, the change is sent where the delivery stands as
+        `check` wants it, and the list is read again. Answers `done` (Shipday made it, as far as it said or
+        its list shows), `sent` (it was asked to), `shown` (its list shows it), and why not (`reason`,
+        `said`, and `told`: Shipday's own words for refusing, for the person and for no log)."""
+        answer: dict[str, Any] = {"done": False, "sent": False, "shown": False, "reason": None, "said": "", "told": ""}
+        with self._asking:
             source = self.source
             if source is None:
-                return {"asked": False, "answered": False, "reason": "no_key", "said": "no key for Shipday"}
-            now = self._now()
-            if not forced and now < self._hold_until_ms:
-                return {"asked": False, "answered": False, "reason": LIMIT, "said": "Shipday is given a rest"}
-            self._asked_ms = now
-            try:
-                raw_orders = source.active_orders()
-                raw_drivers = None
-                if forced or self._drivers_ms is None or now - self._drivers_ms >= DRIVERS_EVERY_MS:
-                    raw_drivers = source.carriers()
-            except ShipdayFailed as err:
-                self._failed(now, err)
-                self._told()
-                return {"asked": True, "answered": False, "reason": err.reason, "said": err.said}
-            if self._failure is not None:
-                log.warning("shipday: it answers again")
-            self._failure, self._held_ms, self._hold_until_ms = None, 0, 0
-            self._answered_ms = now
-            orders = {order["id"]: order for raw in raw_orders if (order := order_of(raw)) is not None}
-            self._left(source, orders, now)
-            self._etas(source, orders, now)
+                return {**answer, "reason": NO_KEY, "said": "no key for Shipday"}
+            # as it stands now, not as it stood when the hub last asked: a change is never sent on old news.
+            # The drivers are asked for only by a hub that has not read them yet (one just started)
+            before = self._round(forced=True, drivers=self._drivers_ms is None)
+            if not before["answered"]:
+                return {**answer, "reason": before["reason"], "said": before["said"]}
             with self._lock:
-                self._orders = orders
-                if raw_drivers is not None:
-                    self._drivers = [driver for raw in raw_drivers if (driver := driver_of(raw)) is not None]
-                    self._drivers_ms = now
-            self._told()
-            return {"asked": True, "answered": True, "reason": None, "said": ""}
+                order = self._orders.get(order_id)
+            refusal = check(order)
+            if refusal is not None:
+                return {**answer, "reason": refusal}
+            failed: ShipdayFailed | None = None
+            try:
+                send(source)
+            except ShipdayFailed as err:
+                failed = err
+            after = self._round(forced=True, drivers=False)
+            with self._lock:
+                order = self._orders.get(order_id)
+            answer["sent"] = True
+            answer["shown"] = after["answered"] and shown(order)
+            answer["done"] = failed is None or answer["shown"]
+            if not answer["done"] and failed is not None:
+                answer.update(reason=failed.reason, said=failed.said, told=failed.told)
+            # who did what, by Shipday's own ids: no customer and nothing Shipday said
+            if answer["done"]:
+                log.warning("shipday: order %s %s by %s", order_id, what, by)
+            else:
+                log.warning("shipday: order %s not %s (%s), asked by %s", order_id, what, answer["reason"], by)
+            return answer
 
     def _failed(self, now: int, err: ShipdayFailed) -> None:
         since = self._failure["since_ms"] if self._failure is not None else now
@@ -347,6 +494,7 @@ class ShipdayBoard:
             "read": read,
             "trouble": trouble,
             "eta": eta,
+            "can": list(CAN),
             "orders": orders,
             "done": done,
             "drivers": drivers,
@@ -403,4 +551,18 @@ class ShipdayBoard:
         self._thread.start()
 
 
-__all__ = ["ETA_OFF", "ETA_ON", "ETA_PLAN", "ShipdayBoard"]
+__all__ = [
+    "CAN",
+    "ETA_OFF",
+    "ETA_ON",
+    "ETA_PLAN",
+    "HAS_DRIVER",
+    "NOT_LISTED",
+    "NO_DRIVER",
+    "NO_KEY",
+    "ON_ITS_WAY",
+    "OTHER_DRIVER",
+    "UNKNOWN_DRIVER",
+    "UNSURE",
+    "ShipdayBoard",
+]
