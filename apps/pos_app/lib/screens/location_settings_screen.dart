@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/services.dart';
 
 import '../address_list.dart';
 import '../api.dart';
@@ -19,6 +22,7 @@ import '../points.dart';
 import '../hub_keys.dart';
 import '../powers.dart';
 import '../printers.dart';
+import '../setting_search.dart';
 import '../staff_list.dart';
 import '../kitchen_screen.dart';
 import '../table_timers.dart';
@@ -43,6 +47,7 @@ import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
 import 'kitchen_times_screen.dart';
 import 'live_drive_dialog.dart';
+import 'location_search.dart';
 import 'logbook_screen.dart';
 import 'online_orders_screen.dart';
 import 'points_dialog.dart';
@@ -53,6 +58,7 @@ import 'quotes_dialog.dart';
 import 'sales_screen.dart';
 import 'save_bar.dart';
 import 'shift_notes_screen.dart';
+import 'spotlight.dart';
 import 'staff_screen.dart';
 import 'suggestions_screen.dart';
 import 'table_timers_dialog.dart';
@@ -80,6 +86,11 @@ import 'waste_screen.dart';
 /// a bar with Save comes up at the bottom of the screen ([SaveBarScaffold]), says which of them wait, and one
 /// Save keeps them all. A row with an arrow opens a dialog or a screen that saves the same way, with its
 /// own Save.
+///
+/// The magnifier at the top searches all of it (docs/location-settings.md, "Finding a setting"): the rows
+/// of this screen and the settings inside the pages and dialogs they open, by name ([locationSettings]).
+/// A result is tapped to go to the setting: the screen scrolls to a row of its own, a page or a dialog
+/// opens at the setting, and either way the setting is lit for a moment ([Spotlight]).
 class LocationSettingsScreen extends StatefulWidget {
   const LocationSettingsScreen({
     super.key,
@@ -208,6 +219,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   StaffList? _staffList; // the staff as a manager may change them; null until the hub answers, and from an older hub
   bool _staffOlder = false; // the hub answered that it keeps no staff a manager can change in the app
 
+  // The search of the settings (the magnifier at the top).
+  bool _searching = false; // the search box stands in the place of the title
+  final TextEditingController _find = TextEditingController();
+  final FocusNode _findFocus = FocusNode();
+  final GlobalKey _list = GlobalKey(); // the list of this screen's rows: the search reads what it shows
+  final GlobalKey<SpotlightState> _page = GlobalKey(); // scrolls this screen to a row and lights it
+  Map<String, RowSeen> _there = const {}; // the rows the screen shows now, by their key
+  Spot? _lookFor; // what the search is headed for on the page a row is just opening
+
   /// Whether the PIN that opened this screen may do [power]: its rows show, the others do not.
   bool _may(String power) => widget.holds?.contains(power) ?? true;
 
@@ -219,11 +239,15 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_searchKey);
     _load();
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_searchKey);
+    _find.dispose();
+    _findFocus.dispose();
     for (final row in _rows) {
       row.controller.dispose();
     }
@@ -231,6 +255,104 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       phone.dispose();
     }
     super.dispose();
+  }
+
+  // The search. It reads the screen as it is built: a row counts when it is on the screen for whoever
+  // opened it (their powers, what this hub has answered), and a result opens a page the way a tap on its
+  // row does, so nothing about the rows is written down a second time for the search.
+
+  /// What stands on the screen now: every row by its key, with its icon and whether a tap opens something.
+  /// The list builds all of its rows, so a row that is not found here is not on the screen at all.
+  Map<String, RowSeen> _readRows() {
+    final there = <String, RowSeen>{};
+    void visit(Element element) {
+      final widget = element.widget;
+      if (widget.key case ValueKey<String>(value: final key)) {
+        final leading = switch (widget) {
+          ListTile(:final leading) => leading,
+          SwitchListTile(:final secondary) => secondary,
+          _ => null,
+        };
+        there[key] = (
+          icon: leading is Icon ? leading.icon : null,
+          opens: widget is ListTile && widget.enabled && widget.onTap != null,
+        );
+      }
+      element.visitChildren(visit);
+    }
+
+    _list.currentContext?.visitChildElements(visit);
+    return there;
+  }
+
+  /// Takes the rows as they stand after a frame: the hub answers one row at a time, and the results follow.
+  void _followRows() {
+    if (!mounted || !_searching) return;
+    final there = _readRows();
+    if (!mapEquals(there, _there)) setState(() => _there = there);
+  }
+
+  /// Command-F on a Mac, Control-F elsewhere: the search, wherever on this screen the keyboard is. Not
+  /// while a page or a dialog is open over the screen.
+  bool _searchKey(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyF) return false;
+    final keyboard = HardwareKeyboard.instance;
+    if (!(keyboard.isMetaPressed || keyboard.isControlPressed) || keyboard.isAltPressed) return false;
+    if (!mounted || _loadError != null || _coursing == null) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    _openSearch();
+    return true;
+  }
+
+  void _openSearch() {
+    if (_searching) return _findFocus.requestFocus();
+    setState(() {
+      _searching = true;
+      _there = _readRows();
+    });
+  }
+
+  void _closeSearch() {
+    if (!_searching) return;
+    setState(() {
+      _searching = false;
+      _find.clear();
+    });
+  }
+
+  /// What the search finds for what is typed, among the settings whose row is on the screen.
+  List<SettingEntry> get _found => findSettings(_find.text, [
+    for (final entry in locationSettings)
+      if (_there.containsKey(entry.row) || (entry.under != null && _there.containsKey(entry.under))) entry,
+  ]);
+
+  /// Goes to a setting the search found. One that is set on this screen: the search closes, the screen
+  /// scrolls to its row and the row is lit. One on a page or in a dialog: that opens over the results, at
+  /// the setting, which is lit there; closed again, the results are still here. A row that cannot open
+  /// yet (the hub has not answered for it) is shown where it stands, where it says why.
+  Future<void> _goTo(SettingEntry entry) async {
+    final there = _readRows();
+    final key = there.containsKey(entry.row) ? entry.row : entry.under;
+    if (key == null || !there.containsKey(key)) return;
+    final row = Spotlight.find(_list.currentContext! as Element, Spot.key(key))?.widget;
+    if (key == entry.row && row is ListTile && row.enabled && row.onTap != null) {
+      _lookFor = entry.spot;
+      try {
+        row.onTap!();
+      } finally {
+        _lookFor = null;
+      }
+      return;
+    }
+    _closeSearch();
+    await _page.currentState?.show(Spot.key(key), focus: true);
+  }
+
+  /// Wraps a page a row opens so that what the search is headed for on it is lit. Taken at the top of
+  /// whatever opens the page (the row's own tap opens it with nothing to look for).
+  Widget Function(Widget page) get _lit {
+    final spot = _lookFor;
+    return (page) => spot == null ? page : Spotlight(spot: spot, child: page);
   }
 
   Future<void> _load() async {
@@ -415,9 +537,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _openBill() async {
+    final lit = _lit;
     final saved = await showDialog<BillSettings>(
       context: context,
-      builder: (_) => BillDialog(api: widget.api, token: widget.token, bill: _bill!),
+      builder: (_) => lit(BillDialog(api: widget.api, token: widget.token, bill: _bill!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _bill = saved);
@@ -425,15 +548,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _openTicketSkips() async {
+    final lit = _lit;
     final saved = await showDialog<TicketSkips>(
       context: context,
-      builder: (_) => TicketSkipsDialog(
-        api: widget.api,
-        token: widget.token,
-        skips: _ticketSkips!,
-        stations: _stations?.stations ?? const [],
-        devices: _devices,
-        device: widget.device,
+      builder: (_) => lit(
+        TicketSkipsDialog(
+          api: widget.api,
+          token: widget.token,
+          skips: _ticketSkips!,
+          stations: _stations?.stations ?? const [],
+          devices: _devices,
+          device: widget.device,
+        ),
       ),
     );
     if (saved == null || !mounted) return;
@@ -442,9 +568,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _openPrinters() async {
+    final lit = _lit;
     await Navigator.of(context).push(
       PosPageRoute(
-        builder: (_) => PrintersScreen(api: widget.api, token: widget.token),
+        builder: (_) => lit(PrintersScreen(api: widget.api, token: widget.token)),
       ),
     );
     if (mounted) await _loadPrinters();
@@ -796,9 +923,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _quoteTimes() async {
+    final lit = _lit;
     final saved = await showDialog<Quotes>(
       context: context,
-      builder: (_) => QuotesDialog(api: widget.api, token: widget.token, quotes: _quotes ?? const Quotes()),
+      builder: (_) => lit(QuotesDialog(api: widget.api, token: widget.token, quotes: _quotes ?? const Quotes())),
     );
     if (saved == null || !mounted) return;
     setState(() => _quotes = saved);
@@ -806,9 +934,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _bagQuestion() async {
+    final lit = _lit;
     final saved = await showDialog<BagQuestion>(
       context: context,
-      builder: (_) => BagQuestionDialog(api: widget.api, token: widget.token, question: _bag!),
+      builder: (_) => lit(BagQuestionDialog(api: widget.api, token: widget.token, question: _bag!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _bag = saved);
@@ -816,10 +945,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _deliveryFee() async {
+    final lit = _lit;
     final saved = await showDialog<DeliveryFees>(
       context: context,
       builder: (_) =>
-          DeliveryFeeDialog(api: widget.api, token: widget.token, fees: _fees!, lookups: _lookups?.distance),
+          lit(DeliveryFeeDialog(api: widget.api, token: widget.token, fees: _fees!, lookups: _lookups?.distance)),
     );
     // the order of the map services was saved before the prices: read as it stands whatever came of those
     unawaited(_readLookups());
@@ -850,15 +980,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _liveTraffic() async {
+    final lit = _lit;
     final saved = await showDialog<LiveDrive>(
       context: context,
-      builder: (_) => LiveDriveDialog(
-        api: widget.api,
-        token: widget.token,
-        setting: _live!,
-        priced: _fees?.asks ?? false,
-        delivery: (_quotes ?? const Quotes()).baseFor('delivery'),
-        lookups: _lookups?.traffic,
+      builder: (_) => lit(
+        LiveDriveDialog(
+          api: widget.api,
+          token: widget.token,
+          setting: _live!,
+          priced: _fees?.asks ?? false,
+          delivery: (_quotes ?? const Quotes()).baseFor('delivery'),
+          lookups: _lookups?.traffic,
+        ),
       ),
     );
     unawaited(_readLookups());
@@ -878,9 +1011,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _addressListSetting() async {
+    final lit = _lit;
     final saved = await showDialog<AddressListSetting>(
       context: context,
-      builder: (_) => AddressListDialog(api: widget.api, token: widget.token, setting: _addressList!),
+      builder: (_) => lit(AddressListDialog(api: widget.api, token: widget.token, setting: _addressList!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _addressList = saved);
@@ -889,9 +1023,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   /// The rules of the points: how many a dollar earns, what earns, and how long they last.
   Future<void> _pointsRules() async {
+    final lit = _lit;
     final saved = await showDialog<PointsRules>(
       context: context,
-      builder: (_) => PointsDialog(api: widget.api, token: widget.token, rules: _points!),
+      builder: (_) => lit(PointsDialog(api: widget.api, token: widget.token, rules: _points!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _points = saved);
@@ -904,9 +1039,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _kitchenNotesList() async {
+    final lit = _lit;
     final saved = await showDialog<KitchenNotes>(
       context: context,
-      builder: (_) => KitchenNotesDialog(api: widget.api, token: widget.token, notes: _kitchenNotes!),
+      builder: (_) => lit(KitchenNotesDialog(api: widget.api, token: widget.token, notes: _kitchenNotes!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _kitchenNotes = saved);
@@ -914,9 +1050,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _wasteReasonsList() async {
+    final lit = _lit;
     final saved = await showDialog<WasteReasons>(
       context: context,
-      builder: (_) => WasteReasonsDialog(api: widget.api, token: widget.token, reasons: _wasteReasons!),
+      builder: (_) => lit(WasteReasonsDialog(api: widget.api, token: widget.token, reasons: _wasteReasons!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _wasteReasons = saved);
@@ -968,9 +1105,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _tableTimers() async {
+    final lit = _lit;
     final saved = await showDialog<TableTimers>(
       context: context,
-      builder: (_) => TableTimersDialog(api: widget.api, token: widget.token, timers: _timers!),
+      builder: (_) => lit(TableTimersDialog(api: widget.api, token: widget.token, timers: _timers!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _timers = saved);
@@ -978,9 +1116,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _kitchenScreens() async {
+    final lit = _lit;
     final saved = await showDialog<KitchenMinutes>(
       context: context,
-      builder: (_) => KitchenMinutesDialog(api: widget.api, token: widget.token, minutes: _kitchenMinutes!),
+      builder: (_) => lit(KitchenMinutesDialog(api: widget.api, token: widget.token, minutes: _kitchenMinutes!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _kitchenMinutes = saved);
@@ -988,9 +1127,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   Future<void> _voidRules() async {
+    final lit = _lit;
     final saved = await showDialog<VoidRules>(
       context: context,
-      builder: (_) => VoidRulesDialog(api: widget.api, token: widget.token, rules: _voids!),
+      builder: (_) => lit(VoidRulesDialog(api: widget.api, token: widget.token, rules: _voids!)),
     );
     if (saved == null || !mounted) return;
     setState(() => _voids = saved);
@@ -1003,9 +1143,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   /// The table of who may do what, on its own screen; back here the row says what it hands out now.
   Future<void> _whoMayDoWhat() async {
+    final lit = _lit;
     final saved = await Navigator.of(context).push(
       MaterialPageRoute<Powers>(
-        builder: (_) => PowersScreen(api: widget.api, token: widget.token, powers: _powers!),
+        builder: (_) => lit(PowersScreen(api: widget.api, token: widget.token, powers: _powers!)),
       ),
     );
     if (saved == null || !mounted) return;
@@ -1022,15 +1163,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   /// The hub's keys on their own page; the row here follows every change made there.
   Future<void> _keysAndConnections() async {
+    final lit = _lit;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HubKeysScreen(
-          api: widget.api,
-          token: widget.token,
-          keys: _hubKeys!,
-          onChanged: (keys) {
-            if (mounted) setState(() => _hubKeys = keys);
-          },
+        builder: (_) => lit(
+          HubKeysScreen(
+            api: widget.api,
+            token: widget.token,
+            keys: _hubKeys!,
+            onChanged: (keys) {
+              if (mounted) setState(() => _hubKeys = keys);
+            },
+          ),
         ),
       ),
     );
@@ -1051,15 +1195,18 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   /// The staff and their PINs on their own page; the row here follows every change made there, and so does
   /// the list of faces and tags below.
   Future<void> _staffAndPins() async {
+    final lit = _lit;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => StaffScreen(
-          api: widget.api,
-          token: widget.token,
-          staff: _staffList!,
-          onChanged: (staff) {
-            if (mounted) setState(() => _staffList = staff);
-          },
+        builder: (_) => lit(
+          StaffScreen(
+            api: widget.api,
+            token: widget.token,
+            staff: _staffList!,
+            onChanged: (staff) {
+              if (mounted) setState(() => _staffList = staff);
+            },
+          ),
         ),
       ),
     );
@@ -1192,7 +1339,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       body = const Center(child: CircularProgressIndicator());
     } else {
       body = ListView(
+        key: _list,
         padding: const EdgeInsets.all(16),
+        // every row is built, not only the ones near the screen: the search reads which rows are here and
+        // scrolls to any of them
+        scrollCacheExtent: _wholeList,
         children: [
           // first, above the settings: it is what a manager comes to look at in the middle of service
           Card(
@@ -1634,6 +1785,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
+                      key: const ValueKey('desk-phones'),
                       leading: const Icon(Icons.phone_in_talk_outlined),
                       title: const Text('Desk phones'),
                       subtitle: Text(_pbxLine),
@@ -1676,10 +1828,48 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         ],
       );
     }
+    final ready = _loadError == null && _coursing != null;
+    // what was typed is looked for: the results stand where the list was, and the list waits behind them
+    final finding = _searching && ready && _find.text.trim().isNotEmpty;
+    if (_searching) WidgetsBinding.instance.addPostFrameCallback((_) => _followRows());
     return SaveBarScaffold(
-      appBar: AppBar(title: Text(_may(settingsPower) ? 'Location settings' : 'Location')),
+      appBar: AppBar(
+        titleSpacing: _searching ? 0 : null,
+        title: _searching
+            ? SettingSearchBox(
+                controller: _find,
+                focusNode: _findFocus,
+                hint: _may(settingsPower) ? 'Search the settings' : 'Search',
+                onChanged: (_) => setState(() {}),
+                onSubmitted: () {
+                  final found = _found;
+                  if (found.isNotEmpty) unawaited(_goTo(found.first));
+                },
+                onClose: _closeSearch,
+              )
+            : Text(_may(settingsPower) ? 'Location settings' : 'Location'),
+        actions: [
+          if (_searching)
+            IconButton(
+              key: const ValueKey('location-search-close'),
+              tooltip: 'Close search',
+              icon: const Icon(Icons.close),
+              onPressed: _closeSearch,
+            )
+          else if (ready)
+            IconButton(
+              key: const ValueKey('location-search'),
+              tooltip: _may(settingsPower) ? 'Search the settings' : 'Search',
+              icon: const Icon(Icons.search),
+              onPressed: _openSearch,
+            ),
+          const SizedBox(width: 4),
+        ],
+      ),
       changed: waiting.isNotEmpty,
       onSave: _saving ? null : _save,
+      // Back closes the search before it leaves the screen
+      onBack: _searching ? _closeSearch : null,
       saveKey: const ValueKey('location-save'),
       waiting: 'Not saved: ${waiting.join(', ').toLowerCase()}',
       // (a part put back as it was waits no longer, and what was said about it goes with it)
@@ -1689,10 +1879,42 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       ],
       unsaved: 'Not saved yet: ${_named(waiting).toLowerCase()}.',
       child: Center(
-        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 640), child: body),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: Stack(
+            children: [
+              // the list stays as it is behind the results: where it was scrolled to, what waits on it
+              Offstage(
+                offstage: finding,
+                child: ExcludeFocus(
+                  excluding: finding,
+                  child: Spotlight(key: _page, child: body),
+                ),
+              ),
+              if (finding)
+                // the results' own scrolling is not the page's: the Save bar goes on following the list
+                NotificationListener<ScrollMetricsNotification>(
+                  onNotification: (_) => true,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (_) => true,
+                    child: SettingResults(
+                      typed: _find.text,
+                      found: _found,
+                      rows: _there,
+                      onPick: (entry) => unawaited(_goTo(entry)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
+
+  /// A length no list of settings reaches: with it as what the list keeps built beyond the screen, every
+  /// row of the list is built.
+  static const _wholeList = ScrollCacheExtent.pixels(1000000);
 
   /// What came off the checks, with the reports: in the voids' card for a manager, and with the other
   /// reports for someone who reads the reports and does not see the settings.
@@ -1786,17 +2008,32 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 clock.breaksPaid ? 'A break stays in the hours' : 'Off: a break is taken out of the hours',
               ),
             ),
-            ListTile(
-              title: const Text('The pay week starts on'),
-              trailing: SegmentedButton<String>(
-                key: const ValueKey('time-clock-week'),
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: 'mon', label: Text('Monday')),
-                  ButtonSegment(value: 'sun', label: Text('Sunday')),
-                ],
-                selected: {clock.weekStarts},
-                onSelectionChanged: _saving ? null : (picked) => set(clock.copyWith(weekStarts: picked.first)),
+            // the words and the two days side by side where they fit, the days under the words where they
+            // do not (a narrow phone, large type)
+            Padding(
+              key: const ValueKey('time-clock-week-row'),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    Text('The pay week starts on', style: Theme.of(context).textTheme.bodyLarge),
+                    SegmentedButton<String>(
+                      key: const ValueKey('time-clock-week'),
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(value: 'mon', label: Text('Monday')),
+                        ButtonSegment(value: 'sun', label: Text('Sunday')),
+                      ],
+                      selected: {clock.weekStarts},
+                      onSelectionChanged: _saving ? null : (picked) => set(clock.copyWith(weekStarts: picked.first)),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -2022,6 +2259,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
               ),
             ),
             ListTile(
+              key: const ValueKey('hands-free-away-row'),
               leading: const Icon(Icons.timer_outlined),
               title: const Text('Sign out when the camera has not seen the person for'),
               subtitle: const Text(
