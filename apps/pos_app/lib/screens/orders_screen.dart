@@ -2326,9 +2326,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                       // who has it, and since when
                                       if (order.isOut && order.driver.isNotEmpty)
                                         [
-                                          order.driver,
+                                          driverCalled(order.driver, order.driverId),
                                           if (order.outAt != null) 'since ${clockTime(order.outAt!)}',
                                         ].join(' '),
+                                      // what Shipday said of it that the check does not say itself
+                                      ?order.shipdaySays,
                                       if (address.isNotEmpty) address,
                                       if (finding && (order.fields['server']?.toString() ?? '').isNotEmpty)
                                         order.fields['server'].toString(),

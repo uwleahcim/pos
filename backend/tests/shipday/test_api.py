@@ -1,6 +1,7 @@
 """Shipday on the hub's own wire (`pos.api.shipday`, and the key in `pos.api.keys`): off until a manager
 types the key, in force the moment it is typed, tried from the page of keys, each delivery told with the
-check it is on the POS, and a delivery given to a driver or taken back when a person asks for exactly that."""
+check it is on the POS, a delivery given to a driver, taken back or marked when a person asks for exactly
+that, and a check moved by what Shipday says of its delivery."""
 
 from __future__ import annotations
 
@@ -121,6 +122,7 @@ def test_a_hub_without_the_key_reads_nothing_and_says_it_is_off():
         "orders": [],
         "done": [],
         "drivers": [],
+        "moves_checks": True,
     }
     refused = h.c.post("/shipday/ask")
     assert refused.status_code == 409 and refused.json()["detail"]["error"] == "no_key"
@@ -166,6 +168,7 @@ def test_a_manager_types_the_key_and_the_hub_reads_shipday_with_it_at_once():
         "orders": [],
         "done": [],
         "drivers": [],
+        "moves_checks": True,
     }
 
 
@@ -701,3 +704,314 @@ def test_who_marks_is_somebody_the_hub_knows_and_the_mark_one_of_shipday_s_words
     answer = bare.c.post(path, json={"staff_id": "s1", "status": "PICKED_UP", "was": "NOT_STARTED_YET"})
     assert answer.status_code == 409 and answer.json()["detail"]["error"] == "no_key"
     assert bare.shipday.calls == []
+
+
+# --- Shipday moves the check ----------------------------------------------------------------------------------
+
+TEA = {"unit_price": "10.00", "tax_class": "prepared_food", "name": "Tea"}
+
+
+def cooking(h: Hub, order_id: str = "o-7", *, paid: bool = False) -> int:
+    """Raj Patel's delivery on the POS, one dish of it with the kitchen, and the number the hub gave it.
+    Paid in full where said, as an order paid on the website is."""
+    number = h.delivery(order_id, "Raj Patel", "781 555 0102", OAK)
+    h.op(order_id, "add_line", line_id="L1", item="Tea", qty=1, priced=TEA)
+    h.op(order_id, "fire", course="*")
+    if paid:
+        h.op(order_id, "pay", payment_id=f"{order_id}-P1", method="cash", amount=due_on(h, order_id))
+    return number
+
+
+def due_on(h: Hub, order_id: str = "o-7") -> str:
+    return h.c.get(f"/orders/{order_id}/check").json()["due"]
+
+
+def raj(state: str, driver: dict = TOM, **more) -> dict:
+    """The same delivery as Shipday has it: matched to the check by the phone number."""
+    return order(
+        7001, "S-77", name="Raj P.", address="4 Oak Road", phone="+17815550102", state=state, driver=driver, **more
+    )
+
+
+def heard(h: Hub, *active: dict, ended: dict | None = None) -> None:
+    """Half a minute later Shipday lists these (and says this of the one that ended), and the hub reads it."""
+    h.shipday.orders = list(active)
+    if ended is not None:
+        h.shipday.finished[ended["orderNumber"]] = ended
+    h.shipday.carriers = [carrier(TOM), carrier(WEI)]
+    h.now += 30_000
+    h.board.round()
+
+
+def check_of(h: Hub, order_id: str = "o-7") -> dict:
+    return h.c.get(f"/orders/{order_id}").json()
+
+
+def stands(h: Hub, order_id: str = "o-7") -> tuple:
+    found = check_of(h, order_id)
+    return (found["status"], found["fields"].get("stage"), found["fields"].get("driver"))
+
+
+def texts(h: Hub) -> list[str]:
+    return [text["kind"] for text in h.c.get("/messages").json()["messages"]]
+
+
+def test_picked_up_in_shipday_takes_the_check_out_with_shipday_s_driver_and_texts_nobody():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("STARTED"))
+    assert stands(h) == ("open", "new", None), "a driver on the way to the restaurant moves nothing"
+    left = h.now + 10_000
+    heard(h, raj("PICKED_UP", picked_up=left))
+    fields = check_of(h)["fields"]
+    assert (fields["stage"], fields["driver"], fields["driver_id"], fields["out_at"]) == (
+        "out",
+        "Tom Reyes",
+        "shipday:501",
+        left,
+    )
+    assert fields["shipday"] == {"id": 7001, "number": "S-77", "state": "PICKED_UP", "at_ms": left}
+    assert texts(h) == [], "Shipday tells the customer itself: the POS sends no second text"
+    assert h.shown()["orders"][0]["pos"]["stage"] == "out"
+    assert h.shipday.changes() == [], "one way: nothing is told to Shipday"
+    # the check's history says who did it, and the day's runs who took it
+    steps = h.c.get("/orders/o-7/history", headers=h.manager()).json()["steps"]
+    assert [(step["now"], step["by"], step.get("driver")) for step in steps if step["what"] == "stage"] == [
+        ("out", "Shipday", "Tom Reyes")
+    ]
+    runs = h.c.get("/deliveries/runs").json()
+    assert [(d["driver"], d["driver_id"], d["out"]) for d in runs["drivers"]] == [("Tom Reyes", "shipday:501", 1)]
+
+
+def test_a_check_somebody_sends_out_on_the_pos_still_texts_its_customer():
+    """The other way round, so that the test above would notice a text."""
+    h = Hub(key=True)
+    cooking(h)
+    h.op("o-7", "set_field", stage="out", driver="Amy", driver_id="s1", out_at=h.now, by="Amy", by_id="s1")
+    assert texts(h) == ["out"]
+    heard(h, raj("PICKED_UP", picked_up=h.now))
+    assert stands(h) == ("open", "out", "Amy"), "out already, with whoever: not sent out again"
+    assert "shipday" not in check_of(h)["fields"] and texts(h) == ["out"]
+
+
+def test_delivered_in_shipday_closes_a_check_with_nothing_left_to_pay():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert stands(h) == ("open", "out", "Tom Reyes")
+    arrived = h.now + 600_000
+    h.now += 600_000
+    heard(h, ended=raj("ALREADY_DELIVERED", picked_up=arrived - 620_000, delivered=arrived))
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes")
+    assert check_of(h)["fields"]["shipday"] == {
+        "id": 7001,
+        "number": "S-77",
+        "state": "ALREADY_DELIVERED",
+        "at_ms": arrived,
+    }
+    assert texts(h) == []
+    done = h.shown()["done"][0]
+    assert (done["state"], done["pos"]["status"], done["pos"]["stage"]) == ("ALREADY_DELIVERED", "closed", "picked_up")
+    steps = h.c.get("/orders/o-7/history", headers=h.manager()).json()["steps"]
+    assert [(step["what"], step["by"]) for step in steps if step["what"] in ("stage", "closed")] == [
+        ("stage", "Shipday"),
+        ("stage", "Shipday"),
+        ("closed", "Shipday"),
+    ]
+    runs = h.c.get("/deliveries/runs").json()
+    assert [(d["driver"], d["delivered"], d["out"]) for d in runs["drivers"]] == [("Tom Reyes", 1, 0)]
+
+
+def test_delivered_before_the_hub_saw_it_leave_is_out_and_delivered_in_one_go():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    heard(h, raj("STARTED"))
+    h.now += 900_000
+    left = h.now - 600_000
+    heard(h, ended=raj("ALREADY_DELIVERED", picked_up=left, delivered=h.now - 30_000))
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes")
+    assert check_of(h)["fields"]["out_at"] == left, "when Shipday says it was picked up"
+    runs = h.c.get("/deliveries/runs").json()
+    assert [(d["driver"], d["delivered"]) for d in runs["drivers"]] == [("Tom Reyes", 1)] and runs["no_driver"] == 0
+
+
+def test_a_delivered_check_with_money_due_stays_open_until_somebody_takes_the_money():
+    h = Hub(key=True)
+    cooking(h)  # cash at the door
+    assert due_on(h) == "10.71"
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    arrived = h.now + 300_000
+    h.now += 300_000
+    heard(h, ended=raj("ALREADY_DELIVERED", delivered=arrived))
+    assert stands(h) == ("open", "out", "Tom Reyes"), "open, out with its driver, who has the money"
+    assert check_of(h)["fields"]["shipday"]["state"] == "ALREADY_DELIVERED"
+    assert check_of(h)["fields"]["shipday"]["at_ms"] == arrived
+    heard(h)
+    heard(h)
+    assert stands(h) == ("open", "out", "Tom Reyes") and due_on(h) == "10.71", "however often Shipday is read"
+    # its history says it left with Shipday's driver, and what Shipday said after: once each
+    steps = h.c.get("/orders/o-7/history", headers=h.manager()).json()["steps"]
+    assert [
+        (step["what"], step.get("now") or step.get("state"), step.get("said_ms"), step["by"])
+        for step in steps
+        if step["what"] in ("stage", "shipday")
+    ] == [("stage", "out", None, "Shipday"), ("shipday", "ALREADY_DELIVERED", arrived, "Shipday")]
+    # the driver is back with the cash: Delivered on the POS, as ever
+    h.op("o-7", "pay", payment_id="P9", method="cash", amount="10.71", by="Amy")
+    h.op("o-7", "set_field", stage="picked_up")
+    h.op("o-7", "close")
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes")
+    heard(h)
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes")
+
+
+def test_a_delivered_check_whose_money_was_taken_without_closing_it_is_closed_at_the_next_reading():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    heard(h, ended=raj("ALREADY_DELIVERED", delivered=h.now + 20_000))
+    assert stands(h) == ("open", "out", "Tom Reyes")
+    h.op("o-7", "pay", payment_id="P9", method="cash", amount="10.71", by="Amy")
+    heard(h)
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes")
+
+
+def test_failed_or_incomplete_in_shipday_moves_nothing_and_is_written_on_the_check():
+    for word in ("FAILED_DELIVERY", "INCOMPLETE"):
+        h = Hub(key=True)
+        cooking(h, paid=True)
+        heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+        heard(h, ended=raj(word))
+        assert stands(h) == ("open", "out", "Tom Reyes"), "a person decides what becomes of the bag"
+        assert check_of(h)["fields"]["shipday"]["state"] == word
+        assert h.shown()["done"][0]["pos"]["stage"] == "out"
+
+
+def test_each_step_is_written_once_and_what_a_person_does_afterwards_stands():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    wrote = len(h.store.for_order("o-7"))
+    heard(h, raj("PICKED_UP", picked_up=h.now - 10_000))
+    heard(h, raj("READY_TO_DELIVER", picked_up=h.now - 40_000))
+    assert len(h.store.for_order("o-7")) == wrote, "read three times, written once"
+    # the bag came back: Shipday still says picked up, and the check stays where the person put it
+    h.op("o-7", "set_field", stage="ready", driver=None, driver_id=None, by="Amy", by_id="s1")
+    heard(h, raj("PICKED_UP", picked_up=h.now - 70_000))
+    assert stands(h) == ("open", "ready", None)
+    # another driver picks it up: that is another step
+    left = h.now + 20_000
+    heard(h, raj("PICKED_UP", WEI, picked_up=left))
+    assert stands(h) == ("open", "out", "Wei Zhang") and check_of(h)["fields"]["out_at"] == left
+    assert texts(h) == []
+    # closed by Shipday, opened again by a manager: it is not closed behind their back a second time
+    heard(h, ended=raj("ALREADY_DELIVERED", WEI, delivered=h.now + 20_000))
+    assert stands(h)[0] == "closed"
+    h.op("o-7", "reopen", by="Mike", by_id="s3")
+    heard(h)
+    heard(h)
+    assert stands(h)[0] == "open"
+
+
+def test_a_check_the_kitchen_never_had_or_that_is_voided_is_not_moved():
+    h = Hub(key=True)
+    h.delivery("o-7", "Raj Patel", "781 555 0102", OAK)  # rung up, and never sent
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert stands(h) == ("open", "new", None)
+    assert check_of(h)["fields"]["shipday"]["state"] == "PICKED_UP", "what Shipday said is on it all the same"
+    h.op("o-7", "void_order", by="Mike", by_id="s3", reason="rung twice")
+    heard(h, ended=raj("ALREADY_DELIVERED", delivered=h.now + 20_000))
+    assert stands(h)[0] == "void" and check_of(h)["fields"]["shipday"]["state"] == "PICKED_UP"
+
+
+def test_a_delivery_that_is_on_no_check_moves_none():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    heard(h, order(7002, "S-90", name="Zoe", phone="+17815550104", state="PICKED_UP", driver=TOM, picked_up=at(18)))
+    assert stands(h) == ("open", "new", None)
+    assert len(h.store.for_order("o-7")) == 4
+
+
+def test_a_manager_turns_it_off_and_on_again_under_location():
+    h = Hub(key=True)
+    assert h.c.get("/settings/shipday").json() == {"moves_checks": True}, "on to start: the restaurant chose it"
+    assert h.shown()["moves_checks"] is True
+    assert h.c.put("/settings/shipday", json={"moves_checks": False}).status_code == 401
+    assert h.c.put("/settings/shipday", json={"moves_checks": "no"}, headers=h.manager()).status_code == 422
+    told: list = []
+    h.c.app.state.feed.changed = told.append
+    off = h.c.put("/settings/shipday", json={"moves_checks": False}, headers=h.manager())
+    assert off.status_code == 200 and off.json() == {"moves_checks": False}
+    assert told == ["settings", "shipday"], "the screens that say so read it again"
+    cooking(h, paid=True)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert h.shown()["moves_checks"] is False and h.shown()["orders"][0]["pos"]["stage"] == "new"
+    assert stands(h) == ("open", "new", None) and "shipday" not in check_of(h)["fields"]
+    # on again: the hub acts at its next reading on what Shipday says by then
+    h.c.put("/settings/shipday", json={"moves_checks": True}, headers=h.manager())
+    assert stands(h) == ("open", "new", None), "not before Shipday was read again"
+    heard(h, raj("PICKED_UP", picked_up=h.now - 10_000))
+    assert stands(h) == ("open", "out", "Tom Reyes")
+
+
+def test_marking_a_delivery_delivered_from_the_pos_closes_its_check_once_shipday_says_so():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    h.now += 5_000
+    h.shipday.now = h.now
+    answer = mark(h, "ALREADY_DELIVERED", "PICKED_UP")
+    assert outcome(answer) == (True, True, True, None)
+    assert stands(h) == ("closed", "picked_up", "Tom Reyes"), "the check follows Shipday, whoever marked it there"
+    assert answer["shipday"]["done"][0]["pos"]["status"] == "closed"
+    assert answer["shipday"]["moves_checks"] is True
+
+
+def test_only_the_hub_writes_what_shipday_said_onto_a_check():
+    h = Hub(key=True)
+    cooking(h)
+    h.op("o-7", "set_field", note="ring twice", shipday={"id": 1, "number": "x", "state": "ALREADY_DELIVERED"})
+    fields = check_of(h)["fields"]
+    assert fields["note"] == "ring twice" and "shipday" not in fields
+
+
+def test_the_screens_are_told_when_shipday_moved_a_check():
+    h = Hub(key=True)
+    cooking(h, paid=True)
+    poked: list = []
+    h.c.app.state.feed.poke = lambda: poked.append(1)
+    heard(h, raj("STARTED"))
+    assert poked == []
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert poked == [1]
+    heard(h, raj("PICKED_UP", picked_up=h.now - 10_000))
+    assert poked == [1], "and not when nothing was written"
+
+
+def test_a_moved_check_is_logged_by_its_number_and_shipday_s_id_and_no_customer(caplog):
+    h = Hub(key=True)
+    number = cooking(h, paid=True)
+    with caplog.at_level(logging.DEBUG):
+        heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+        heard(h, ended=raj("ALREADY_DELIVERED", delivered=h.now + 20_000))
+    assert f"shipday: check #{number} is out, as Shipday says it was picked up (its order 7001)" in caplog.text
+    assert f"shipday: check #{number} is delivered and closed, as Shipday says it was delivered" in caplog.text
+    ours = "\n".join(r.getMessage() for r in caplog.records if r.name.startswith("pos"))
+    assert "is delivered and closed" in ours
+    for word in (KEY, "Raj", "Oak R", "5550102", "Tom", "S-77"):
+        assert word not in ours, word
+
+
+def test_a_hub_whose_following_goes_wrong_still_reads_and_shows_shipday(caplog):
+    h = Hub(key=True)
+    cooking(h, paid=True)
+
+    def broken() -> None:
+        raise RuntimeError("the books are shut")
+
+    h.board.on_round = broken
+    with caplog.at_level(logging.ERROR):
+        heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert "following it on the POS went wrong" in caplog.text
+    assert h.shown()["orders"][0]["state"] == "PICKED_UP" and h.shown()["trouble"] is None
+    assert stands(h) == ("open", "new", None)

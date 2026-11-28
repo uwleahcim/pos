@@ -4,8 +4,11 @@
 /// which check on the POS it is.
 ///
 /// Three things can be changed there from here, each by a person's tap and never by itself: a delivery is
-/// given to a driver, taken back from one, and marked as it goes ([ShipdayChanged]). Nothing Shipday says
-/// changes a check.
+/// given to a driver, taken back from one, and marked as it goes ([ShipdayChanged]).
+///
+/// The other way, the hub follows Shipday by itself where the location has it so ([ShipdayBoard.movesChecks]):
+/// a delivery picked up there takes its check Out here, and one delivered there closes it unless money is
+/// still due. What Shipday last said is on the check ([ShipdaySaid]), for a screen to say beside it.
 library;
 
 import 'phone.dart' show formatPhoneNumber;
@@ -40,6 +43,60 @@ const shipdaySteps = ['STARTED', 'PICKED_UP', 'READY_TO_DELIVER', 'ALREADY_DELIV
 
 /// The marks that end a delivery: it leaves Shipday's list of active ones.
 const shipdayEnds = {'ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'};
+
+/// Whether a driver's id on a check is one of Shipday's drivers (`shipday:501`, or `shipday` for one Shipday
+/// did not name): nobody of the POS's own staff. The hub writes it when Shipday takes a check Out.
+bool isShipdayDriver(String driverId) => driverId == 'shipday' || driverId.startsWith('shipday:');
+
+/// A driver by name as a check says who has it: "Tom Reyes (Shipday)" for one of Shipday's, so nobody takes
+/// them for the Tom on the POS's own staff.
+String driverCalled(String name, String driverId) => isShipdayDriver(driverId) ? '$name (Shipday)' : name;
+
+/// What Shipday last said of a delivery, as the hub wrote it onto its check (the order's field `shipday`,
+/// docs/shipday.md, "Shipday moves the check"). Only the hub writes it.
+class ShipdaySaid {
+  const ShipdaySaid({required this.state, this.atMs, this.id, this.number = ''});
+
+  static ShipdaySaid? of(Object? json) {
+    if (json is! Map) return null;
+    final state = _text(json['state']);
+    if (state.isEmpty) return null;
+    return ShipdaySaid(
+      state: state,
+      atMs: _whole(json['at_ms']),
+      id: _whole(json['id']),
+      number: _text(json['number']),
+    );
+  }
+
+  /// Shipday's word for where the delivery stood: `PICKED_UP`, `ALREADY_DELIVERED`, `FAILED_DELIVERY` or
+  /// `INCOMPLETE`.
+  final String state;
+
+  /// When (ms): the moment Shipday named where the hub could take its word for it, else when the hub heard.
+  final int? atMs;
+
+  /// Shipday's own id and number for the delivery.
+  final int? id;
+  final String number;
+
+  bool get delivered => state == 'ALREADY_DELIVERED';
+  bool get pickedUp => state == 'PICKED_UP';
+
+  /// "Shipday: delivered 6:55 PM", "Shipday: failed 7:02 PM".
+  String get words =>
+      ['Shipday: ${shipdayStateWords(state).toLowerCase()}', if (atMs != null) clockTime(atMs!)].join(' ');
+}
+
+/// What a screen says beside an open delivery of what Shipday said of it, where that is more than the check
+/// says itself: "Shipday: delivered 6:55 PM" on one that stays open for its money, "Shipday: failed 7:02 PM",
+/// "Shipday: picked up 6:40 PM" on one the POS never sent out. Null where there is nothing to add: Shipday
+/// said nothing, the check is closed or marked delivered, or it is out as Shipday said.
+String? shipdaySaysBeside(ShipdaySaid? said, {required bool open, required String stage}) {
+  if (said == null || !open || stage == 'picked_up') return null;
+  if (said.pickedUp && stage == 'out') return null;
+  return said.words;
+}
 
 /// What the screen says once a delivery was marked: "Marked picked up."
 String shipdayMarkedWords(String step) => 'Marked ${shipdayStateWords(step).toLowerCase()}.';
@@ -144,12 +201,16 @@ class ShipdayCheck {
   /// (the customer's phone number is).
   final String by;
 
-  /// "Check #12", and what became of it where it is open no longer.
+  /// "Check #12", or "Its check" where the hub gave it no number yet.
+  String get named => orderNo == null ? 'Its check' : 'Check #$orderNo';
+
+  /// "Check #12", and what became of it where it is open no longer, or that it is out with a driver.
   String get words {
-    final check = orderNo == null ? 'Its check' : 'Check #$orderNo';
+    final check = named;
     return switch (status) {
       'void' => '$check · voided',
       'closed' => '$check · closed',
+      _ when stage == 'out' => '$check · out',
       _ => check,
     };
   }
@@ -361,6 +422,7 @@ class ShipdayBoard {
     this.trouble,
     this.eta = 'off',
     this.can = const {},
+    this.movesChecks = false,
     this.orders = const [],
     this.done = const [],
     this.drivers = const [],
@@ -372,6 +434,7 @@ class ShipdayBoard {
     trouble: ShipdayTrouble.fromJson(json['trouble']),
     eta: json['eta'] is String ? json['eta'] as String : 'off',
     can: {...(json['can'] is List ? json['can'] as List : const []).whereType<String>()},
+    movesChecks: json['moves_checks'] == true,
     orders: [for (final row in json['orders'] is List ? json['orders'] as List : const []) ?ShipdayOrder.fromJson(row)],
     done: [for (final row in json['done'] is List ? json['done'] as List : const []) ?ShipdayOrder.fromJson(row)],
     drivers: [
@@ -400,6 +463,11 @@ class ShipdayBoard {
 
   /// The hub marks a delivery as it goes (started, picked up, delivered, ...).
   bool get marks => can.contains('status');
+
+  /// What Shipday says of a delivery moves its check on the POS: picked up takes it Out, delivered closes it
+  /// unless money is due (Location, "Shipday moves the check"). False from a hub older than that, and where
+  /// the location turned it off.
+  final bool movesChecks;
 
   /// The deliveries that are not finished, as Shipday lists them.
   final List<ShipdayOrder> orders;

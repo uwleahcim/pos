@@ -314,6 +314,12 @@ final List<SettingEntry> locationSettings = List.unmodifiable([
     also: 'miles close to the restaurant radius',
   ),
   const SettingEntry(
+    'shipday-moves',
+    'Shipday moves the check',
+    about: 'Picked up or delivered in Shipday takes a check Out or closes it by itself',
+    also: 'delivery driver status sync follow automatic out delivered',
+  ),
+  const SettingEntry(
     'kitchen-notes',
     'Kitchen notes',
     about: 'The notes to the kitchen that take one tap on a dish',

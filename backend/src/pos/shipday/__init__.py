@@ -11,9 +11,12 @@ and mark it as it goes:
 - `match`: which order on the POS a delivery in Shipday is (`matched`).
 - `board`: the asking, every few seconds while somebody looks, the picture it keeps, and the three changes a
   person can ask for (`ShipdayBoard`).
+- `follow`: what Shipday says of a delivery, turned into what the POS writes on its check (`ops_following`):
+  picked up there is Out here, delivered there is Delivered here unless money is due.
 
 Nothing of the POS is sent to Shipday by this package: the key in a header, and ids and numbers Shipday
 itself handed over. Nothing is changed there by the hub itself: only what a person tapped, a delivery's
-driver and how far along it is, and nothing else. Nothing Shipday says is stored: the picture is kept in
-memory, and read again after a restart.
+driver and how far along it is, and nothing else. The picture Shipday gives is kept in memory, and read
+again after a restart. What the hub writes onto a check because Shipday said so (`follow`, the location's
+choice and its switch) is in the order's own log, like any tap.
 """

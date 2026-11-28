@@ -73,6 +73,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **To-go question**, on the same card: whether a to-go order is asked what goes in the bag before it is
   sent (on to start), the question's words and the things it offers, eight at most (see
   `to-go-question.md`).
+- **Shipday moves the check**, on the same card: on or off (on to start). Whether a delivery picked up or
+  delivered in Shipday takes its check Out or closes it by itself (see `shipday.md`, "Shipday moves the
+  check"). A hub from before it shows no such switch.
 - **Kitchen notes**, on the same card: the one-tap notes a dish's sheet offers over its note ("Rush",
   "Split for 2"), twelve at most (see `kitchen-notes.md`).
 - **Floor plan**: the floor the map shows, drawn in the app: tables moved, sized and turned, new ones

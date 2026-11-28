@@ -1105,6 +1105,12 @@ from that minute.
 - A text about a delay is no longer sent once it is out.
 - The order itself says "out with Tom since 18:40" on the line under its bar.
 
+**A delivery that Shipday's driver carries is sent out by Shipday.** Where the restaurant dispatches in
+Shipday and the hub has its key, a check goes Out by itself when the driver marks the delivery picked up
+there, with the driver's name as Shipday has it ("Tom Reyes (Shipday)"), and is closed by itself when it is
+marked delivered, unless money is still due. The POS sends no "on its way" text for it: Shipday tells the
+customer. All of it, and the switch that turns it off, is in `shipday.md`, "Shipday moves the check".
+
 ### The Deliveries screen
 
 Orders screen › **Deliveries**: a button in the row at the top of a tablet or a Mac, a tile under **More** on
@@ -1125,6 +1131,12 @@ one under the other on a phone and side by side on a tablet:
     went to the wrong driver. Send it out again when it leaves.
 
 A driver who is signed in finds their own bags first, under **You**. The arrow on a card opens the order.
+
+A bag that Shipday sent out stands under its driver's name with "(Shipday)" behind it, and has the same two
+buttons. A card says in colour what Shipday said of it where the check did not move with it: "Shipday:
+delivered 18:55" on one that stays open for its money (take the money, then Delivered), "Shipday: failed
+19:02" on one that was not delivered (Came back, or void the check), and under Waiting "Shipday: picked up
+18:40" on one that left though the kitchen never had its check (`shipday.md`).
 
 The screen follows the hub: what another screen does shows here within a moment. With no hub answering it
 keeps its last picture and says it may be behind; what is tapped is kept and sent when the hub is back,
@@ -1162,6 +1174,11 @@ Delivered, or its check closed at the counter) is counted in a line under the to
 marked delivered with no driver named." A check closed while its bag was out counts as delivered at the
 moment it was closed.
 
+**Shipday's drivers.** A bag Shipday sent out is in a run of its driver's, under the name Shipday has for
+them with "(Shipday)" behind it. It left when Shipday says it was picked up, where the hub could take its
+word for that (`shipday.md`), and it was delivered when the hub heard of it from Shipday: within about a
+minute of the driver's own tap while a terminal is on. Nobody has to tap at the counter for either.
+
 **No money.** No amount is on this screen: not what the bags came to and not what was collected. Anyone
 signed in can open it, as anyone can open the list of checks, which says the same names and addresses.
 
@@ -1172,7 +1189,8 @@ disagree with the history of a check.
 
 The check's history (`check-history.md`) says "Left with Tom", "Handed from Tom to Wei" when an order that
 is out is given to somebody else, "Came back from the driver" and "Marked delivered", each with who tapped
-it and when.
+it and when. What the hub did because Shipday said so is Shipday's there, and what Shipday said of a check
+that stayed as it was has a step of its own ("Shipday says it was delivered").
 
 ## What it does not do
 

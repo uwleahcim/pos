@@ -126,6 +126,10 @@ ORDER_FIELDS = frozenset(
         # restaurant calls it and that it is the one for testing, {account, store, test}. Only the hub
         # writes it.
         "online",
+        # What Shipday last said of a delivery that the hub wrote onto its check (pos.shipday.follow):
+        # Shipday's own id and number for it, its word for where the delivery stands and when that was,
+        # {id, number, state, at_ms}. Only the hub writes it.
+        "shipday",
     }
 )
 ALLERGY_NOTE_MAX = 80

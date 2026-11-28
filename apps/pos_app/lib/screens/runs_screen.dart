@@ -6,6 +6,7 @@ import '../api.dart';
 import '../live.dart';
 import '../runs.dart';
 import '../session.dart';
+import '../shipday.dart';
 import 'theme.dart';
 
 /// The drivers' runs of a day of service (docs/delivery.md, "Runs"): for each driver who took a delivery
@@ -258,7 +259,7 @@ class _Driver extends StatelessWidget {
                     ? 'You'
                     : driver.driver.isEmpty
                     ? 'No driver named'
-                    : driver.driver,
+                    : driverCalled(driver.driver, driver.driverId),
                 style: theme.textTheme.titleMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w800),
               ),
               Text(

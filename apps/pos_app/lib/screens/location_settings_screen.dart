@@ -174,6 +174,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   int _added = 0;
   bool? _seats; // whether a table has seats, as the hub has it; null until it answers, and from an older hub
   bool? _seatsDraft; // as the switch stands on the screen while it waits to be saved
+  bool? _shipdayMoves; // whether Shipday moves the checks, as the hub has it; null from a hub older than that
+  bool? _shipdayMovesDraft; // as the switch stands on the screen while it waits to be saved
   List<_PhoneRow> _phones = [];
   int _phonesAdded = 0;
   DeskPhoneLinks _phonesKept = const DeskPhoneLinks(); // the desk phones as the hub has them
@@ -375,6 +377,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       if (mounted) setState(() => _seats = seats);
     } on ApiException {
       // nothing answered about the seats: the switch says so
+    }
+    try {
+      final moves = await widget.api.shipdayMovesChecks();
+      if (mounted) setState(() => _shipdayMoves = moves);
+    } on ApiException {
+      // nothing answered about Shipday: there is no switch to show
     }
     try {
       final pbx = await widget.api.pbxStatus();
@@ -768,6 +776,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   static const _coursesPart = 'Courses';
   static const _seatsPart = 'Seats';
+  static const _shipdayPart = 'Shipday';
   static const _clockPart = 'Time clock';
   static const _ticketsPart = 'Tickets';
   static const _phonesPart = 'Desk phones';
@@ -795,6 +804,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   bool get _seatsWait => _seatsDraft != null && _seats != null && _seatsDraft != _seats;
+  bool get _shipdayWaits => _shipdayMovesDraft != null && _shipdayMoves != null && _shipdayMovesDraft != _shipdayMoves;
   bool get _clockWaits => _clockDraft != null && _clock != null && _clockDraft != _clock;
   bool get _ticketsWait => _ticketWordsDraft != null && _ticketWords != null && _ticketWordsDraft != _ticketWords;
   bool get _faceWaits => _faceDraft != null && _faceDraft != _faceEnabled;
@@ -804,6 +814,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   List<String> get _waiting => [
     if (_coursesWait) _coursesPart,
     if (_seatsWait) _seatsPart,
+    if (_shipdayWaits) _shipdayPart,
     if (_clockWaits) _clockPart,
     if (_ticketsWait) _ticketsPart,
     if (_phonesWait) _phonesPart,
@@ -813,7 +824,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
 
   /// "Courses, desk phones and face sign-in": parts by name in a sentence, the first as it is written.
   static String _named(List<String> parts) =>
-      inSentence([...parts.take(1), for (final part in parts.skip(1)) part.toLowerCase()]);
+      inSentence([...parts.take(1), for (final part in parts.skip(1)) _small(part)]);
+
+  /// A part's name inside a sentence: in small letters, but for a name that is somebody's own.
+  static String _small(String words) => words.toLowerCase().replaceAll('shipday', 'Shipday');
 
   /// A letter was typed in a course's name or a desk phone's row: the Save bar follows when that makes a
   /// part wait, or stop waiting. (Not a rebuild a letter.)
@@ -882,6 +896,10 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
         await send(_seatsPart, () => api.saveSeats(token, enabled: _seatsDraft!), (saved) {
           _seats = saved;
           _seatsDraft = null;
+        }) &&
+        await send(_shipdayPart, () => api.saveShipdayMovesChecks(token, moves: _shipdayMovesDraft!), (saved) {
+          _shipdayMoves = saved;
+          _shipdayMovesDraft = null;
         }) &&
         await send(_clockPart, () => api.saveClockSetting(token, _clockDraft!), (saved) {
           _clock = saved;
@@ -1681,6 +1699,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     trailing: const Icon(Icons.chevron_right),
                     onTap: _addressList == null ? null : _addressListSetting,
                   ),
+                  if (_shipdayMoves != null) ...[const Divider(height: 1), _shipdaySwitch()],
                   const Divider(height: 1),
                   ListTile(
                     key: const ValueKey('kitchen-notes'),
@@ -1871,13 +1890,13 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       // Back closes the search before it leaves the screen
       onBack: _searching ? _closeSearch : null,
       saveKey: const ValueKey('location-save'),
-      waiting: 'Not saved: ${waiting.join(', ').toLowerCase()}',
+      waiting: 'Not saved: ${_small(waiting.join(', '))}',
       // (a part put back as it was waits no longer, and what was said about it goes with it)
       problems: [
         for (final problem in _problems)
           if (waiting.contains(problem.about)) problem,
       ],
-      unsaved: 'Not saved yet: ${_named(waiting).toLowerCase()}.',
+      unsaved: 'Not saved yet: ${_small(_named(waiting))}.',
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
@@ -1962,6 +1981,27 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             : seats
             ? 'Each dish is rung in for a seat, or for the whole table'
             : 'Every dish is for the table; the order screen shows no seats, only the size of the party',
+      ),
+    );
+  }
+
+  /// Whether what Shipday says of a delivery moves its check (docs/shipday.md, "Shipday moves the check"),
+  /// with the rest of what the location says of its deliveries. On to start, as the owner chose; off for a
+  /// house that wants Out and Delivered tapped on the POS. It waits for Save. A hub older than it follows
+  /// nothing and shows no switch; one without a key for Shipday has nothing to follow, whatever this says.
+  Widget _shipdaySwitch() {
+    final moves = _shipdayMovesDraft ?? _shipdayMoves ?? true;
+    return SwitchListTile(
+      key: const ValueKey('shipday-moves'),
+      secondary: const Icon(Icons.local_shipping_outlined),
+      value: moves,
+      onChanged: _saving ? null : (on) => setState(() => _shipdayMovesDraft = on),
+      title: const Text('Shipday moves the check'),
+      subtitle: Text(
+        moves
+            ? 'Picked up in Shipday takes a check Out, delivered closes it unless money is due. The POS sends '
+                  'no text for it'
+            : 'A check stays where it is whatever Shipday says: Out and Delivered are tapped on the POS',
       ),
     );
   }
