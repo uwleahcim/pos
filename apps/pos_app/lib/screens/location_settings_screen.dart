@@ -176,6 +176,8 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   bool? _seatsDraft; // as the switch stands on the screen while it waits to be saved
   bool? _shipdayMoves; // whether Shipday moves the checks, as the hub has it; null from a hub older than that
   bool? _shipdayMovesDraft; // as the switch stands on the screen while it waits to be saved
+  bool? _shipdayTells; // whether a check marked Ready tells Shipday; null from a hub older than that
+  bool? _shipdayTellsDraft;
   List<_PhoneRow> _phones = [];
   int _phonesAdded = 0;
   DeskPhoneLinks _phonesKept = const DeskPhoneLinks(); // the desk phones as the hub has them
@@ -379,8 +381,13 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
       // nothing answered about the seats: the switch says so
     }
     try {
-      final moves = await widget.api.shipdayMovesChecks();
-      if (mounted) setState(() => _shipdayMoves = moves);
+      final shipday = await widget.api.shipdaySetting();
+      if (mounted) {
+        setState(() {
+          _shipdayMoves = shipday?.movesChecks;
+          _shipdayTells = shipday?.tellsReady;
+        });
+      }
     } on ApiException {
       // nothing answered about Shipday: there is no switch to show
     }
@@ -804,7 +811,11 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   }
 
   bool get _seatsWait => _seatsDraft != null && _seats != null && _seatsDraft != _seats;
-  bool get _shipdayWaits => _shipdayMovesDraft != null && _shipdayMoves != null && _shipdayMovesDraft != _shipdayMoves;
+  bool get _shipdayMovesWaits =>
+      _shipdayMovesDraft != null && _shipdayMoves != null && _shipdayMovesDraft != _shipdayMoves;
+  bool get _shipdayTellsWaits =>
+      _shipdayTellsDraft != null && _shipdayTells != null && _shipdayTellsDraft != _shipdayTells;
+  bool get _shipdayWaits => _shipdayMovesWaits || _shipdayTellsWaits;
   bool get _clockWaits => _clockDraft != null && _clock != null && _clockDraft != _clock;
   bool get _ticketsWait => _ticketWordsDraft != null && _ticketWords != null && _ticketWordsDraft != _ticketWords;
   bool get _faceWaits => _faceDraft != null && _faceDraft != _faceEnabled;
@@ -897,10 +908,20 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
           _seats = saved;
           _seatsDraft = null;
         }) &&
-        await send(_shipdayPart, () => api.saveShipdayMovesChecks(token, moves: _shipdayMovesDraft!), (saved) {
-          _shipdayMoves = saved;
-          _shipdayMovesDraft = null;
-        }) &&
+        await send(
+          _shipdayPart,
+          // only the switch that was turned is sent: the hub keeps the other as it stands
+          () => api.saveShipdaySetting(
+            token,
+            movesChecks: _shipdayMovesWaits ? _shipdayMovesDraft : null,
+            tellsReady: _shipdayTellsWaits ? _shipdayTellsDraft : null,
+          ),
+          (saved) {
+            _shipdayMoves = saved.movesChecks;
+            _shipdayTells = saved.tellsReady ?? _shipdayTells;
+            _shipdayMovesDraft = _shipdayTellsDraft = null;
+          },
+        ) &&
         await send(_clockPart, () => api.saveClockSetting(token, _clockDraft!), (saved) {
           _clock = saved;
           _clockDraft = null;
@@ -1700,6 +1721,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                     onTap: _addressList == null ? null : _addressListSetting,
                   ),
                   if (_shipdayMoves != null) ...[const Divider(height: 1), _shipdaySwitch()],
+                  if (_shipdayTells != null) ...[const Divider(height: 1), _shipdayReadySwitch()],
                   const Divider(height: 1),
                   ListTile(
                     key: const ValueKey('kitchen-notes'),
@@ -2002,6 +2024,27 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
             ? 'Picked up in Shipday takes a check Out, delivered closes it unless money is due. The POS sends '
                   'no text for it'
             : 'A check stays where it is whatever Shipday says: Out and Delivered are tapped on the POS',
+      ),
+    );
+  }
+
+  /// Whether a delivery's check marked Ready on the POS tells Shipday it is ready for pickup (docs/shipday.md,
+  /// "Saying it is ready for pickup"), under the other thing the location says of Shipday. On to start, as
+  /// the owner chose; off for a house that tells Shipday by the button alone. It waits for Save. A hub older
+  /// than it shows no switch; one without a key for Shipday has nobody to tell, whatever this says.
+  Widget _shipdayReadySwitch() {
+    final tells = _shipdayTellsDraft ?? _shipdayTells ?? true;
+    return SwitchListTile(
+      key: const ValueKey('shipday-ready'),
+      secondary: const Icon(Icons.shopping_bag_outlined),
+      value: tells,
+      onChanged: _saving ? null : (on) => setState(() => _shipdayTellsDraft = on),
+      title: const Text('Ready tells Shipday'),
+      subtitle: Text(
+        tells
+            ? "A delivery's check marked Ready tells Shipday it is ready for pickup, once. The button on the "
+                  'Shipday screen stays for the odd one'
+            : 'Shipday is told a delivery is ready only by Ready for pickup on the Shipday screen',
       ),
     );
   }

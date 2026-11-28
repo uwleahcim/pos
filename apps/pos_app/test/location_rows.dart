@@ -5,7 +5,7 @@ import 'package:pos_app/screens/location_settings_screen.dart';
 /// A screen tall enough for the whole of Location settings with nothing to scroll, and room for the rows
 /// still to come: for the tests of the cards at its bottom. A height that just fits the list as it is
 /// today pushes those cards out with the next row added above them.
-const wholeLocation = Size(1100, 5000);
+const wholeLocation = Size(1100, 5600);
 
 /// Brings a row of Location settings (by its key) up onto the screen. The screen is a list that builds only
 /// what is near the screen, so a row far down it is neither found nor tapped until the list is scrolled to

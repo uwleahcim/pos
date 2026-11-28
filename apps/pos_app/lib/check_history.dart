@@ -424,6 +424,13 @@ StepWords wordsOf(HistoryStep step, {required String Function(int ms) time}) {
         // Shipday's own moment for it, where that is not the minute the hub heard
         under: [if (when != null && (step.atMs - when).abs() >= 60000) 'at ${time(when)}, as Shipday has it'],
       );
+    case 'shipday_ready':
+      // Shipday was told the delivery is made and waits for its driver (docs/shipday.md): by the hub itself
+      // because the check was marked Ready, or by whoever tapped Ready for pickup on the Shipday screen
+      return (
+        title: 'Told Shipday it is ready for pickup',
+        under: [if (said['auto'] == true) 'By itself, as the check was marked Ready'],
+      );
     case 'closed':
       return (title: 'Closed the check', under: const []);
     case 'reopened':

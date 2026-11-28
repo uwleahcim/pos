@@ -125,7 +125,8 @@ void main() {
       ShipdayCheck check(String status, String stage) =>
           ShipdayCheck.fromJson(Hub.shipdayCheck('o-7', 14, status: status, stage: stage))!;
       expect(check('open', 'out').words, 'Check #14 · out');
-      expect(check('open', 'ready').words, 'Check #14');
+      expect(check('open', 'ready').words, 'Check #14 · ready');
+      expect(check('open', 'new').words, 'Check #14');
       expect(check('closed', 'picked_up').words, 'Check #14 · closed');
       expect(check('void', 'out').words, 'Check #14 · voided');
     });

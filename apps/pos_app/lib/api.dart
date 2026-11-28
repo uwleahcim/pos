@@ -1886,28 +1886,40 @@ class PosApi {
     }, timeout: const Duration(seconds: 60)),
   );
 
+  /// Tells Shipday that a delivery is ready for pickup: the food is made and waits for its driver. Shipday's
+  /// list never shows it, so the answer's `done` is Shipday's own word and its `shown` is always false.
+  /// Like [shipdayGive] otherwise.
+  Future<ShipdayChanged> shipdayReady(int orderId, {required String staffId}) async => ShipdayChanged.fromJson(
+    await _post('/shipday/orders/$orderId/ready', {'staff_id': staffId}, timeout: const Duration(seconds: 60)),
+  );
+
   /// Whether what Shipday says of a delivery moves its check on the POS (`GET /settings/shipday`,
   /// docs/shipday.md, "Shipday moves the check"), for the screen that sets it: null from a hub older than
   /// that, which follows nothing.
-  Future<bool?> shipdayMovesChecks() async {
+  /// And whether a delivery's check marked Ready on the POS tells Shipday it is ready for pickup
+  /// ([ShipdaySetting.tellsReady], docs/shipday.md, "Saying it is ready for pickup"): null there from a hub
+  /// older than that.
+  Future<ShipdaySetting?> shipdaySetting() async {
     try {
-      return await _repeated('/settings/shipday', (json) => json['moves_checks'] as bool? ?? true);
+      return await _repeated('/settings/shipday', ShipdaySetting.fromJson);
     } on ApiException catch (err) {
       if (err.status == 404 || err.status == 405) return null;
       rethrow;
     }
   }
 
-  /// A manager (token from [adminSession]) says whether Shipday moves the checks, for the whole location.
-  Future<bool> saveShipdayMovesChecks(String token, {required bool moves}) async {
+  /// A manager (token from [adminSession]) says what the location wants of Shipday: whether it moves the
+  /// checks, and whether a check marked Ready tells it. Only what is named is sent, and the hub keeps the
+  /// other as it stands: a hub from before the second switch is never sent it.
+  Future<ShipdaySetting> saveShipdaySetting(String token, {bool? movesChecks, bool? tellsReady}) async {
     final kept = await _withFailover(
       (base) => _client.put(
         Uri.parse('$base/settings/shipday'),
         headers: {'content-type': 'application/json', ..._bearer(token)},
-        body: jsonEncode({'moves_checks': moves}),
+        body: jsonEncode({'moves_checks': ?movesChecks, 'tells_ready': ?tellsReady}),
       ),
     );
-    return kept['moves_checks'] as bool? ?? moves;
+    return ShipdaySetting.fromJson(kept);
   }
 
   /// A manager's try of the hub's key for Shipday: Shipday is asked once, for its deliveries and its

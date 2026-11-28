@@ -1,7 +1,8 @@
 """Shipday on the hub's own wire (`pos.api.shipday`, and the key in `pos.api.keys`): off until a manager
 types the key, in force the moment it is typed, tried from the page of keys, each delivery told with the
-check it is on the POS, a delivery given to a driver, taken back or marked when a person asks for exactly
-that, and a check moved by what Shipday says of its delivery."""
+check it is on the POS, a delivery given to a driver, taken back, marked or said ready for pickup when a
+person asks for exactly that, a check moved by what Shipday says of its delivery, and Shipday told by the
+hub itself that a delivery is ready for pickup when its check is marked Ready."""
 
 from __future__ import annotations
 
@@ -118,11 +119,12 @@ def test_a_hub_without_the_key_reads_nothing_and_says_it_is_off():
         "read": False,
         "trouble": None,
         "eta": "off",
-        "can": ["driver", "status"],
+        "can": ["driver", "status", "ready"],
         "orders": [],
         "done": [],
         "drivers": [],
         "moves_checks": True,
+        "tells_ready": True,
     }
     refused = h.c.post("/shipday/ask")
     assert refused.status_code == 409 and refused.json()["detail"]["error"] == "no_key"
@@ -164,11 +166,12 @@ def test_a_manager_types_the_key_and_the_hub_reads_shipday_with_it_at_once():
         "read": False,
         "trouble": None,
         "eta": "off",
-        "can": ["driver", "status"],
+        "can": ["driver", "status", "ready"],
         "orders": [],
         "done": [],
         "drivers": [],
         "moves_checks": True,
+        "tells_ready": True,
     }
 
 
@@ -343,7 +346,7 @@ def outcome(answer: dict) -> tuple:
 def test_a_delivery_is_given_to_a_driver_and_taken_back_with_the_list_read_before_and_after():
     h = Hub(key=True)
     waiting(h)
-    assert h.shown()["can"] == ["driver", "status"]
+    assert h.shown()["can"] == ["driver", "status", "ready"]
     h.shipday.now = h.now
     given = give(h)
     assert outcome(given) == (True, True, True, None) and (given["said"], given["told"]) == ("", "")
@@ -706,6 +709,189 @@ def test_who_marks_is_somebody_the_hub_knows_and_the_mark_one_of_shipday_s_words
     assert bare.shipday.calls == []
 
 
+# --- a delivery is said to be ready for pickup ----------------------------------------------------------------
+
+
+def ready(h: Hub, *, order_id: int = 7001, staff: str = "s1") -> dict:
+    answer = h.c.post(f"/shipday/orders/{order_id}/ready", json={"staff_id": staff})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+def test_a_delivery_is_said_ready_for_pickup_and_the_hub_remembers_that_it_told():
+    h = Hub(key=True)
+    held(h)
+    before = h.shown()["orders"][0]
+    assert (before["can_ready"], before["ready_ms"]) == (True, None)
+    as_listed = json.dumps(h.shipday.orders)
+    said = ready(h)
+    # Shipday's list has no place for it: done is Shipday's own answer, and shown is never true
+    assert outcome(said) == (True, True, False, None) and (said["said"], said["told"]) == ("", "")
+    assert h.shipday.calls[-3:] == ["GET /orders", "PUT /orders/7001/meta", "GET /orders"]
+    put = next(sent for sent in h.shipday.sent if sent.method == "PUT")
+    assert json.loads(put.content) == {"readyToPickup": True}, "one word of Shipday's own, and nothing of the POS"
+    assert put.headers["content-type"] == "application/json"
+    assert (put.headers["authorization"], put.headers["x-api-key"]) == (f"Basic {KEY}", KEY)
+    assert h.shipday.ready == {7001: True}
+    assert json.dumps(h.shipday.orders) == as_listed, "nothing Shipday lists of the order says so afterwards"
+    now = said["shipday"]["orders"][0]
+    assert (now["ready_ms"], now["can_ready"]) == (h.now, False), "so the hub says that it told, and when"
+    assert (now["state"], now["steps"]) == (before["state"], before["steps"]), "and it stands where it stood"
+    assert h.shown() == said["shipday"], "every screen reads what the one that asked was answered"
+    assert h.shipday.asked("/carriers") == 1, "the drivers are not asked for again for it"
+    # one nobody has yet is said ready as well: the food can be made before a driver is found
+    h = Hub(key=True)
+    waiting(h)
+    assert outcome(ready(h, staff="s3")) == (True, True, False, None)
+    assert h.shown()["orders"][0]["ready_ms"] == h.now
+    # and where Shipday answers 202 with nothing, as its page also lists
+    h = Hub(key=True)
+    held(h, "STARTED")
+    h.shipday.ready_answers = 202
+    assert outcome(ready(h)) == (True, True, False, None)
+    assert h.shown()["orders"][0]["ready_ms"] == h.now
+
+
+def test_the_picture_says_which_deliveries_can_be_said_ready_for_pickup():
+    h = Hub(key=True)
+    h.shipday.orders = [
+        order(1, "A-1"),
+        order(2, "A-2", state="NOT_ACCEPTED", driver=TOM),
+        order(3, "A-3", state="NOT_STARTED_YET", driver=TOM),
+        order(4, "A-4", state="STARTED", driver=TOM),
+        order(5, "A-5", state="PICKED_UP", driver=TOM),
+        order(6, "A-6", state="READY_TO_DELIVER", driver=TOM),
+        order(7, "A-7", state="SOMETHING_NEW", driver=TOM),
+    ]
+    h.board.round()
+    assert {each["number"]: each["can_ready"] for each in h.shown()["orders"]} == {
+        "A-1": True,  # nobody has it yet
+        "A-2": True,
+        "A-3": True,
+        "A-4": True,
+        "A-5": False,  # it left already
+        "A-6": False,
+        "A-7": False,  # a word this hub does not know: nothing is guessed
+    }
+    assert all(each["ready_ms"] is None for each in h.shown()["orders"])
+    # one that finished cannot be, and still says when it was
+    h = Hub(key=True)
+    held(h)
+    told_at = h.now
+    ready(h)
+    h.now += 60_000
+    h.shipday.now = h.now
+    mark(h, "ALREADY_DELIVERED", "NOT_STARTED_YET")
+    done = h.shown()["done"][0]
+    assert (done["id"], done["can_ready"], done["ready_ms"]) == (7001, False, told_at)
+
+
+def test_nothing_is_said_ready_that_was_picked_up_or_left_the_list():
+    h = Hub(key=True)
+    held(h, "STARTED")
+    # meanwhile the driver's app said picked up: the hub has not heard, and asks before it sends
+    h.shipday.orders = [order(7001, "A-1", state="PICKED_UP", driver=TOM)]
+    assert outcome(ready(h)) == (False, False, False, "on_its_way")
+    assert h.shown()["orders"][0]["state"] == "PICKED_UP", "and the screens show where it stands"
+    h.shipday.orders = [order(7001, "A-1", state="READY_TO_DELIVER", driver=TOM)]
+    assert outcome(ready(h)) == (False, False, False, "on_its_way")
+    # a word for where it stands that this hub does not know: nothing is guessed
+    h.shipday.orders = [order(7001, "A-1", state="SOMETHING_NEW", driver=TOM)]
+    assert outcome(ready(h)) == (False, False, False, "unsure")
+    # it left the list (delivered, or deleted there), or was never on it
+    h.shipday.orders = []
+    assert outcome(ready(h)) == (False, False, False, "not_listed")
+    assert outcome(ready(h, order_id=4242)) == (False, False, False, "not_listed")
+    assert h.shipday.changes() == [] and h.shipday.ready == {}, "not one change was asked of Shipday"
+    assert h.shown()["done"][0]["ready_ms"] is None
+
+
+def test_ready_for_pickup_shipday_will_not_take_or_never_answers_is_said_as_it_is_and_not_remembered():
+    h = Hub(key=True)
+    held(h)
+    h.shipday.refuses = (400, {"message": "Order is locked"})
+    refused = ready(h)
+    assert outcome(refused) == (False, True, False, "rejected")
+    assert (refused["said"], refused["told"]) == ("Shipday would not do it (400)", "Order is locked")
+    now = refused["shipday"]["orders"][0]
+    assert (now["ready_ms"], now["can_ready"]) == (None, True), "it can be tried again"
+    # the answer was lost on the way back: Shipday may have taken it, and its list cannot say. Not done,
+    # not remembered, and said so
+    h.shipday.refuses, h.shipday.lost = False, True
+    lost = ready(h)
+    assert outcome(lost) == (False, True, False, "slow") and lost["said"] == "Shipday did not answer in time"
+    assert h.shipday.ready == {7001: True}, "Shipday did take it, as it happens"
+    assert h.shown()["orders"][0]["ready_ms"] is None
+    # telling it again does no harm, and is remembered once Shipday answers
+    h.shipday.lost = False
+    assert outcome(ready(h)) == (True, True, False, None)
+    assert h.shown()["orders"][0]["ready_ms"] == h.now
+    first = h.now
+    h.now += 30_000
+    assert outcome(ready(h)) == (True, True, False, None), "the hub itself does not refuse a second telling"
+    assert h.shown()["orders"][0]["ready_ms"] == first + 30_000
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"] * 4
+    # and where it cannot be asked first, nothing is sent
+    h = Hub(key=True)
+    held(h)
+    h.shipday.fail = 401
+    assert outcome(ready(h)) == (False, False, False, "refused")
+    h.shipday.fail = httpx.ConnectError("no way out")
+    assert outcome(ready(h)) == (False, False, False, "unreachable")
+    assert h.shipday.changes() == []
+
+
+def test_what_was_said_ready_is_kept_for_the_day_and_forgotten_with_another_key():
+    h = Hub(key=True)
+    held(h)
+    ready(h)
+    told_at = h.now
+    h.now += 3 * 60 * 60_000
+    h.board.round()
+    assert h.shown()["orders"][0]["ready_ms"] == told_at, "still told, hours later the same evening"
+    h.now += 24 * 60 * 60_000
+    h.board.round()
+    tomorrow = h.shown()["orders"][0]
+    assert (tomorrow["ready_ms"], tomorrow["can_ready"]) == (None, True), "another day of service"
+    ready(h)
+    h.board.use(h.shipday.source("AnotherKey0.SomebodyElsesAccount99"))
+    h.board.round()
+    assert h.shown()["orders"][0]["ready_ms"] is None, "another account's orders are not this one's"
+
+
+def test_the_screens_are_told_when_a_delivery_was_said_ready():
+    h = Hub(key=True)
+    held(h)
+    told: list[str] = []
+    h.c.app.state.feed.changed = told.append
+    ready(h)
+    assert told == ["shipday"], "Shipday's list reads as before: what the hub told is part of the picture"
+
+
+def test_who_says_ready_is_somebody_the_hub_knows_and_it_is_written_down_without_the_customer(caplog):
+    h = Hub(key=True)
+    held(h)
+    path = "/shipday/orders/7001/ready"
+    stranger = h.c.post(path, json={"staff_id": "nobody"})
+    assert stranger.status_code == 404 and stranger.json()["detail"]["error"] == "unknown_staff"
+    assert h.c.post(path, json={}).status_code == 422
+    assert h.c.post("/shipday/orders/a-1/ready", json={"staff_id": "s1"}).status_code == 422
+    assert h.shipday.changes() == []
+    with caplog.at_level(logging.DEBUG):
+        assert outcome(ready(h)) == (True, True, False, None), "a server may, as anybody bags an order"
+        h.shipday.refuses = (400, {"message": "Order is locked"})
+        assert outcome(ready(h, staff="s3"))[3] == "rejected"
+    assert "shipday: order 7001 said ready for pickup by Amy" in caplog.text
+    assert "shipday: order 7001 not said ready for pickup (rejected), asked by Mike" in caplog.text
+    assert "locked" not in caplog.text, "what Shipday said is for the person who asked, and for no log"
+    for word in (KEY, "Linda", "Elm St", "5550101", "Tom", "A-1"):
+        assert word not in caplog.text
+    bare = Hub()
+    answer = bare.c.post(path, json={"staff_id": "s1"})
+    assert answer.status_code == 409 and answer.json()["detail"]["error"] == "no_key"
+    assert bare.shipday.calls == []
+
+
 # --- Shipday moves the check ----------------------------------------------------------------------------------
 
 TEA = {"unit_price": "10.00", "tax_class": "prepared_food", "name": "Tea"}
@@ -934,14 +1120,15 @@ def test_a_delivery_that_is_on_no_check_moves_none():
 
 def test_a_manager_turns_it_off_and_on_again_under_location():
     h = Hub(key=True)
-    assert h.c.get("/settings/shipday").json() == {"moves_checks": True}, "on to start: the restaurant chose it"
+    both = {"moves_checks": True, "tells_ready": True}
+    assert h.c.get("/settings/shipday").json() == both, "on to start: the restaurant chose it"
     assert h.shown()["moves_checks"] is True
     assert h.c.put("/settings/shipday", json={"moves_checks": False}).status_code == 401
     assert h.c.put("/settings/shipday", json={"moves_checks": "no"}, headers=h.manager()).status_code == 422
     told: list = []
     h.c.app.state.feed.changed = told.append
     off = h.c.put("/settings/shipday", json={"moves_checks": False}, headers=h.manager())
-    assert off.status_code == 200 and off.json() == {"moves_checks": False}
+    assert off.status_code == 200 and off.json() == {"moves_checks": False, "tells_ready": True}
     assert told == ["settings", "shipday"], "the screens that say so read it again"
     cooking(h, paid=True)
     heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
@@ -1015,3 +1202,331 @@ def test_a_hub_whose_following_goes_wrong_still_reads_and_shows_shipday(caplog):
     assert "following it on the POS went wrong" in caplog.text
     assert h.shown()["orders"][0]["state"] == "PICKED_UP" and h.shown()["trouble"] is None
     assert stands(h) == ("open", "new", None)
+
+
+# --- a check marked Ready tells Shipday ----------------------------------------------------------------------
+
+
+def bagged(h: Hub, order_id: str = "o-7", *, by: str = "Amy") -> None:
+    """Somebody at a screen marks the check Ready."""
+    h.op(order_id, "set_field", stage="ready", by=by, by_id="s1")
+
+
+def told_on(h: Hub, order_id: str = "o-7") -> dict | None:
+    return check_of(h, order_id)["fields"].get("shipday_ready")
+
+
+def test_a_check_marked_ready_tells_shipday_it_is_ready_for_pickup_by_itself_and_once():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("NOT_STARTED_YET"))
+    assert h.shipday.changes() == [], "a check that is cooking tells Shipday nothing"
+    waiting_one = h.shown()["orders"][0]
+    assert (waiting_one["can_ready"], waiting_one["ready_ms"]) == (True, None)
+    bagged(h)
+    assert h.shipday.changes() == [], "nothing is sent from the tap itself: the hub's next reading does it"
+    as_listed = json.dumps([raj("NOT_STARTED_YET")])
+    heard(h, raj("NOT_STARTED_YET"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"] and h.shipday.ready == {7001: True}
+    put = next(sent for sent in h.shipday.sent if sent.method == "PUT")
+    assert json.loads(put.content) == {"readyToPickup": True}, "one word of Shipday's own, and nothing of the POS"
+    assert h.shipday.calls[-2:] == ["GET /orders", "PUT /orders/7001/meta"], "on the list just read: not asked twice"
+    assert json.dumps(h.shipday.orders) == as_listed
+    # the check says so, the picture says so, and nothing else moved
+    assert told_on(h) == {"id": 7001, "at_ms": h.now, "auto": True}
+    now = h.shown()["orders"][0]
+    assert (now["ready_ms"], now["can_ready"], now["pos"]["stage"]) == (h.now, False, "ready")
+    assert stands(h) == ("open", "ready", None) and texts(h) == [], "no text: a delivery is brought"
+    steps = h.c.get("/orders/o-7/history", headers=h.manager()).json()["steps"]
+    said = [step for step in steps if step["what"] == "shipday_ready"]
+    assert [(step["auto"], step["told_ms"], step["by"], step["device"]) for step in said] == [
+        (True, h.now, "Shipday", "shipday")
+    ]
+    # once: not at the next readings, not after the check went back and was marked Ready again
+    told_at = h.now
+    heard(h, raj("NOT_STARTED_YET"))
+    h.op("o-7", "set_field", stage="new", by="Amy", by_id="s1")
+    heard(h, raj("STARTED"))
+    bagged(h)
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"]
+    assert told_on(h) == {"id": 7001, "at_ms": told_at, "auto": True}
+    # and what Shipday says afterwards moves the check as before
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert stands(h) == ("open", "out", "Tom Reyes")
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"]
+
+
+def test_a_delivery_nobody_has_yet_and_one_the_website_marked_ready_are_told_too():
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    heard(h, raj("NOT_ASSIGNED", driver=None))
+    assert h.shipday.ready == {7001: True}, "the food can be made before a driver is found"
+    assert told_on(h) == {"id": 7001, "at_ms": h.now, "auto": True}
+    # GloriaFood's own word that an order is ready is written on the check by the hub: who marked it Ready
+    # makes no difference
+    h = Hub(key=True)
+    h.from_the_website("1270166229", "Linda Chen", "781 555 0101")
+    h.store.append(
+        [
+            Op(
+                "gf-1270166229:ready",
+                "gf-1270166229",
+                HLC(h.now, 1, "online"),
+                "online",
+                "set_field",
+                {"stage": "ready", "by": "Online order"},
+            )
+        ]
+    )
+    heard(h, order(7002, "1270166229", state="STARTED", driver=TOM))
+    assert h.shipday.ready == {7002: True}
+    assert told_on(h, "gf-1270166229") == {"id": 7002, "at_ms": h.now, "auto": True}
+
+
+def test_nothing_is_told_by_itself_of_a_delivery_that_left_or_has_no_ready_check_here():
+    h = Hub(key=True)
+    cooking(h)
+    # picked up in Shipday before anybody marked the check: the check goes Out, and nothing is ready any more
+    bagged(h)
+    heard(h, raj("PICKED_UP", picked_up=h.now + 20_000))
+    assert stands(h) == ("open", "out", "Tom Reyes") and h.shipday.changes() == []
+    # a delivery Shipday lists that is on no check here: the button on the Shipday screen is for that one
+    h = Hub(key=True)
+    heard(h, order(7003, "S-90", state="STARTED", driver=TOM))
+    assert h.shipday.changes() == [] and h.shown()["orders"][0]["can_ready"] is True
+    # a check that was closed or voided while it stood at Ready
+    for end in ("close", "void_order"):
+        h = Hub(key=True)
+        cooking(h, paid=True)
+        bagged(h)
+        h.op("o-7", end, **({"reason": "customer cancelled", "by": "Mike"} if end == "void_order" else {"by": "Amy"}))
+        heard(h, raj("STARTED"))
+        assert h.shipday.changes() == [] and told_on(h) is None, end
+    # an order that comes to the counter is no delivery, whatever Shipday lists under its phone number
+    h = Hub(key=True)
+    h.op("o-8", "create", order_type="takeout", customer_name="Sam", phone="781 555 0103")
+    h.op("o-8", "set_field", stage="ready", by="Amy", by_id="s1")
+    heard(h, order(7004, "S-91", name="Sam", phone="+17815550103", state="STARTED", driver=TOM))
+    assert h.shipday.changes() == [] and h.shown()["orders"][0]["pos"] is None
+
+
+def test_a_hub_that_restarted_reads_on_the_check_that_shipday_was_told():
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    heard(h, raj("STARTED"))
+    told_at = h.now
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"]
+    # everything the hub kept in memory is gone, as after `hubctl update`: the check still says it
+    h.board.use(None)
+    h.board.use(h.shipday.source())
+    heard(h, raj("STARTED"))
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"], "not told a second time"
+    now = h.shown()["orders"][0]
+    assert (now["ready_ms"], now["can_ready"]) == (told_at, False), "and the screens still say when"
+    # what the check says of another delivery is not this one's: Shipday made the order anew under another id
+    h.board.use(None)
+    h.board.use(h.shipday.source())
+    again = {**raj("STARTED"), "orderId": 7009}
+    heard(h, again)
+    assert h.shipday.changes() == ["PUT /orders/7001/meta", "PUT /orders/7009/meta"]
+    assert told_on(h) == {"id": 7009, "at_ms": h.now, "auto": True}
+
+
+def test_shipday_not_answering_is_tried_again_a_few_times_and_a_refusal_is_not_repeated(caplog):
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    h.shipday.lost = True  # it takes the word and its answer never arrives
+    with caplog.at_level(logging.DEBUG):
+        heard(h, raj("STARTED"))
+        assert h.shipday.changes() == ["PUT /orders/7001/meta"]
+        assert told_on(h) is None and h.shown()["orders"][0]["ready_ms"] is None, "not known: nothing is written"
+        heard(h, raj("STARTED"))
+        assert len(h.shipday.changes()) == 1, "half a minute later is too soon"
+        heard(h, raj("STARTED"))
+        assert len(h.shipday.changes()) == 2, "a minute later it is tried again"
+        heard(h, raj("STARTED"))
+        heard(h, raj("STARTED"))
+        assert len(h.shipday.changes()) == 3
+        for _ in range(6):
+            heard(h, raj("STARTED"))
+        assert len(h.shipday.changes()) == 3, "three tries, and no more while it stands as it does"
+        assert h.shown()["orders"][0]["can_ready"] is True, "the button on the Shipday screen is still there"
+    assert (
+        "shipday: order 7001 not said ready for pickup (slow), by the hub itself as its check is ready" in caplog.text
+    )
+    assert "not tried again while it stands as it does" in caplog.text
+    # it stands elsewhere in Shipday (another driver has it): asked afresh, and Shipday answers now
+    h.shipday.lost = False
+    heard(h, raj("NOT_STARTED_YET", driver=WEI))
+    assert len(h.shipday.changes()) == 4 and told_on(h) == {"id": 7001, "at_ms": h.now, "auto": True}
+    # a refusal is Shipday's answer: the same is not asked again
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    h.shipday.refuses = (400, {"message": "Order is locked"})
+    with caplog.at_level(logging.DEBUG):
+        for _ in range(6):
+            heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"] and told_on(h) is None
+    assert "locked" not in caplog.text, "what Shipday said is in no log"
+    h.shipday.refuses = False
+    heard(h, raj("STARTED"))
+    assert len(h.shipday.changes()) == 1, "still where it stood"
+    heard(h, raj("STARTED", driver=WEI))
+    assert len(h.shipday.changes()) == 2 and told_on(h) is not None
+    # and a person's tap is never held back by the hub's own tries
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    h.shipday.refuses = (400, {"message": "Order is locked"})
+    heard(h, raj("STARTED"))
+    h.shipday.refuses = False
+    assert outcome(ready(h)) == (True, True, False, None)
+    assert told_on(h) == {"id": 7001, "at_ms": h.now, "auto": False}
+
+
+def test_the_button_writes_on_the_check_who_told_shipday_and_the_hub_does_not_tell_it_again():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("STARTED"))
+    assert outcome(ready(h)) == (True, True, False, None), "tapped while the check is still cooking"
+    assert told_on(h) == {"id": 7001, "at_ms": h.now, "auto": False}
+    steps = h.c.get("/orders/o-7/history", headers=h.manager()).json()["steps"]
+    assert [(step["auto"], step["by"]) for step in steps if step["what"] == "shipday_ready"] == [(False, "Amy")]
+    assert stands(h) == ("open", "new", None), "the tap tells Shipday: it marks nothing on the POS"
+    bagged(h)
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"], "told once, by Amy"
+    # a delivery that is on no check: told, remembered by the hub, written nowhere
+    h = Hub(key=True)
+    held(h)
+    assert outcome(ready(h)) == (True, True, False, None)
+    assert h.shown()["orders"][0]["ready_ms"] == h.now
+
+
+def test_a_tap_on_the_button_before_the_hub_s_own_turn_tells_shipday_once():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("STARTED"))
+    bagged(h)
+    # the hub has not read Shipday since: the person's tap reads it first, where the hub tells by itself
+    said = ready(h)
+    assert outcome(said) == (True, True, False, None)
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"], "one telling, not the hub's and the person's"
+    assert told_on(h) == {"id": 7001, "at_ms": h.now, "auto": True}
+    assert said["shipday"]["orders"][0]["ready_ms"] == h.now
+
+
+def test_marking_a_delivery_ready_brings_the_hub_s_next_reading_forward():
+    h = Hub(key=True)
+    hurried: list[int] = []
+    h.board.hurry = lambda: hurried.append(1)
+    cooking(h)
+    assert hurried == []
+    bagged(h)
+    assert hurried == [1], "Shipday is asked and told now, not at the next turn"
+    h.op("o-7", "set_field", stage="new", by="Amy", by_id="s1")
+    h.op("o-7", "set_field", note="ring twice")
+    assert hurried == [1]
+    h.op("o-8", "create", order_type="takeout", customer_name="Sam", phone="781 555 0103")
+    h.op("o-8", "set_field", stage="ready", by="Amy", by_id="s1")
+    assert hurried == [1], "an order that comes to the counter is nothing of Shipday's"
+    h.c.put("/settings/shipday", json={"tells_ready": False}, headers=h.manager())
+    bagged(h)
+    assert hurried == [1], "and nothing while the hub does not tell Shipday by itself"
+    bare = Hub()
+    bare.board.hurry = lambda: hurried.append(2)
+    cooking(bare)
+    bagged(bare)
+    assert hurried == [1], "nor on a hub without the key"
+
+
+def test_a_manager_turns_the_telling_off_and_on_again_under_location():
+    h = Hub(key=True)
+    assert h.shown()["tells_ready"] is True, "on to start: the restaurant chose it"
+    assert h.c.put("/settings/shipday", json={"tells_ready": False}).status_code == 401
+    assert h.c.put("/settings/shipday", json={"tells_ready": "no"}, headers=h.manager()).status_code == 422
+    off = h.c.put("/settings/shipday", json={"tells_ready": False}, headers=h.manager())
+    assert off.status_code == 200 and off.json() == {"moves_checks": True, "tells_ready": False}
+    # each switch is saved without the other: an app from before the second one sends the first alone
+    kept = h.c.put("/settings/shipday", json={"moves_checks": False}, headers=h.manager())
+    assert kept.json() == {"moves_checks": False, "tells_ready": False}
+    kept = h.c.put("/settings/shipday", json={"moves_checks": True}, headers=h.manager())
+    assert kept.json() == {"moves_checks": True, "tells_ready": False}
+    assert h.c.put("/settings/shipday", json={}, headers=h.manager()).json() == kept.json(), "nothing named"
+    cooking(h)
+    bagged(h)
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == [] and told_on(h) is None
+    picture = h.shown()
+    assert picture["tells_ready"] is False and picture["orders"][0]["can_ready"] is True
+    # the button still tells Shipday, as a person asked for exactly that
+    h2 = Hub(key=True)
+    h2.c.put("/settings/shipday", json={"tells_ready": False}, headers=h2.manager())
+    cooking(h2)
+    bagged(h2)
+    heard(h2, raj("STARTED"))
+    assert outcome(ready(h2)) == (True, True, False, None) and told_on(h2)["auto"] is False
+    # on again: the hub tells at its next reading, also of the check marked meanwhile
+    both = h.c.put("/settings/shipday", json={"tells_ready": True}, headers=h.manager())
+    assert both.json() == {"moves_checks": True, "tells_ready": True}
+    assert h.shipday.changes() == [], "not before Shipday was read again"
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"] and told_on(h)["auto"] is True
+
+
+def test_a_hub_that_stands_by_tells_shipday_nothing():
+    h = Hub(key=True)
+    cooking(h)
+    bagged(h)
+    h.store.role = "replica"  # the location's other hub: it reads, and the one that serves tells
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == [] and told_on(h) is None
+    h.store.role = "primary"
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"]
+
+
+def test_only_the_hub_writes_on_a_check_that_shipday_was_told():
+    h = Hub(key=True)
+    cooking(h)
+    h.op("o-7", "set_field", note="ring twice", shipday_ready={"id": 7001, "at_ms": 1, "auto": True})
+    fields = check_of(h)["fields"]
+    assert fields["note"] == "ring twice" and "shipday_ready" not in fields
+    bagged(h)
+    heard(h, raj("STARTED"))
+    assert h.shipday.changes() == ["PUT /orders/7001/meta"], "a screen's word for it holds nothing back"
+
+
+def test_the_screens_are_told_when_the_hub_told_shipday_by_itself():
+    h = Hub(key=True)
+    cooking(h)
+    heard(h, raj("STARTED"))
+    bagged(h)
+    told: list[str] = []
+    poked: list[int] = []
+    h.c.app.state.feed.changed = told.append
+    h.c.app.state.feed.poke = lambda: poked.append(1)
+    heard(h, raj("STARTED"))
+    assert told == ["shipday"], "the Shipday screens read the picture again"
+    assert poked == [1], "and the check's own screens hear that it was written on"
+    heard(h, raj("STARTED"))
+    assert (told, poked) == (["shipday"], [1]), "and not when nothing was told"
+
+
+def test_the_hub_s_own_telling_is_logged_by_number_and_shipday_s_id_and_no_customer(caplog):
+    h = Hub(key=True)
+    number = cooking(h)
+    bagged(h)
+    with caplog.at_level(logging.DEBUG):
+        heard(h, raj("STARTED"))
+    ours = "\n".join(r.getMessage() for r in caplog.records if r.name.startswith("pos"))
+    assert "shipday: order 7001 said ready for pickup by the hub itself, as its check is ready" in ours
+    assert f"shipday: check #{number} says that Shipday was told it is ready (its order 7001)" in ours
+    for word in (KEY, "Raj", "Oak R", "5550102", "Tom", "S-77"):
+        assert word not in ours, word

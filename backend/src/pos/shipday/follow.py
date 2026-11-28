@@ -33,7 +33,8 @@ The rules that keep it from doing harm:
 - **Once.** Every operation has a fixed id, so the hub writes each step of a delivery once however often
   it reads Shipday. What a person does on the POS afterwards stands: a bag that came back is not sent Out
   again because Shipday still says picked up (another driver picking it up is another step).
-- **One way.** Nothing here tells Shipday anything.
+- **One way.** Nothing here tells Shipday anything. (What the POS tells Shipday by itself is one thing,
+  that a delivery whose check is marked Ready is ready for pickup: `pos.shipday.ready`.)
 
 Shipday's times are read as UTC from pages that show them without a zone (`pos.shipday.read`), so a moment
 Shipday names is used only where it can be right (`_when`): otherwise the moment the hub heard of it.
@@ -55,6 +56,9 @@ BY = "Shipday"
 """Who a check's history says did it."""
 FIELD = "shipday"
 """The order field that keeps what Shipday last said, which only the hub writes."""
+READY_FIELD = "shipday_ready"
+"""The order field that keeps that Shipday was told a delivery is ready for pickup (`pos.shipday.ready`):
+the hub's alone to write as well."""
 DRIVER = "shipday"
 """How the id of a driver who is Shipday's begins (`shipday:4012`): nobody of the POS's staff."""
 NAMELESS = "Shipday driver"
@@ -74,9 +78,10 @@ and stays open for its money; only what Shipday said was written on it."""
 
 
 def own_word(op: Op) -> Op:
-    """An operation as a screen may send it: without `shipday`, which is the hub's alone to write."""
-    if op.kind in ("create", "set_field") and FIELD in op.data:
-        return replace(op, data={name: value for name, value in op.data.items() if name != FIELD})
+    """An operation as a screen may send it: without `shipday` and `shipday_ready`, which are the hub's
+    alone to write."""
+    if op.kind in ("create", "set_field") and (FIELD in op.data or READY_FIELD in op.data):
+        return replace(op, data={name: value for name, value in op.data.items() if name not in (FIELD, READY_FIELD)})
     return op
 
 
@@ -182,6 +187,7 @@ __all__ = [
     "NOT_MADE",
     "ON_ITS_WAY",
     "OUT",
+    "READY_FIELD",
     "RECENT_MS",
     "can_leave",
     "ops_following",

@@ -30,14 +30,30 @@ Which order on the POS each delivery is (`pos.shipday.match`) is worked out when
 POS's deliveries as they stand at that moment (`pos`, which the API sets): a check rung up a second ago is
 matched at once.
 
-**Changes.** Three things are changed in Shipday, each only when a person at a terminal asked for exactly
-that: a delivery is given to a driver (`give`), taken back from one (`take_back`), and marked as it goes
-(`mark`: started, picked up, at the customer's, delivered, failed, incomplete). None is ever done by the hub
-itself. Before one is sent the hub asks Shipday for its list again and sends nothing where the delivery no
-longer stands as the person's screen showed it (it left the list, somebody else gave it to a driver, the
-driver picked it up or marked it in Shipday's app); after it the list is asked for once more, so the screens show
-what Shipday now says and the answer can tell whether the change shows there (`shown`). A change whose
-answer did not come is not taken for made or for not made: the list read after it says which.
+**Changes.** Four things are changed in Shipday when a person at a terminal asked for exactly that: a
+delivery is given to a driver (`give`), taken back from one (`take_back`), marked as it goes (`mark`:
+started, picked up, at the customer's, delivered, failed, incomplete), and said to be ready for pickup
+(`ready`). The first three are never done by the hub itself; the last one is, for a delivery whose check on
+the POS is marked Ready (below). Before a person's change is sent the hub asks Shipday for its list again
+and sends nothing where the delivery no longer stands as the person's screen showed it (it left the list,
+somebody else gave it to a driver, the driver picked it up or marked it in Shipday's app); after it the list
+is asked for once more, so the screens show what Shipday now says and the answer can tell whether the change
+shows there (`shown`). A change whose answer did not come is not taken for made or for not made: the list
+read after it says which.
+
+**Ready for pickup** is the one change Shipday's list never shows: nothing Shipday answers about an order
+says whether it was marked ready. So the hub keeps what it told itself (`ready_ms` on a delivery in the
+picture: when Shipday was told): in memory for the day of service, and on the delivery's check on the POS
+where it has one (`pos.shipday.ready`, which the API writes and the matching reads back), so a hub that
+restarted still knows of those. It is told of a delivery that has not been picked up, with a driver or
+without one (`can_ready`), and it is made when Shipday answers that it is: an answer that did not come
+leaves it unknown, and the person is told so.
+
+It is also the one change the hub makes **by itself** (`ready_by_itself`): after a round Shipday answered,
+the API looks for deliveries whose check on the POS is marked Ready and has the board tell Shipday of each,
+on the list that round just read. Shipday not answering is tried again a minute later, `READY_TRIES` times
+in all; a telling Shipday refused is not repeated until the delivery stands elsewhere there (another
+driver, another step), since asking the same again gets the same answer.
 
 What a delivery can be marked as depends on where it stands (`steps_of`), and the picture says it of each
 delivery (`steps`), so a screen offers what this hub would send and nothing else. Only forward: a mark made
@@ -63,7 +79,7 @@ from datetime import date
 from typing import Any
 
 from .. import localtime
-from .client import LIMIT, REFUSED, Shipday, ShipdayFailed
+from .client import LIMIT, NOT_FOUND, REFUSED, REJECTED, Shipday, ShipdayFailed
 from .match import OnPos, matched
 from .read import (
     ACTIVE,
@@ -125,11 +141,20 @@ ETA_OFF, ETA_ON, ETA_PLAN = "off", "on", "plan"
 """Whether Shipday says how far away a delivery is: not asked yet; it answers; the account's plan has no
 such call."""
 
-CAN = ("driver", "status")
-"""What this hub changes in Shipday when a person asks: a delivery's driver, and how far along it is. A
-screen offers no more than is listed here, so one that knows of more offers nothing this hub would not do."""
+CAN = ("driver", "status", "ready")
+"""What this hub changes in Shipday when a person asks: a delivery's driver, how far along it is, and that
+it is ready for pickup. A screen offers no more than is listed here, so one that knows of more offers
+nothing this hub would not do."""
 HELD = (NOT_ACCEPTED, NOT_STARTED_YET, STARTED)
 """Where a delivery stands while a driver has it and has not picked it up: it can still be taken back."""
+WAITING = (NOT_ASSIGNED, *HELD)
+"""Where a delivery stands before it is picked up: it can be said to be ready for that."""
+READY_MOST = 400
+"""How many deliveries the hub remembers having said ready, the last ones told."""
+READY_TRIES = 3
+"""How often the hub tries by itself to say one delivery ready while Shipday gives no answer to it."""
+READY_AGAIN_MS = 60_000
+"""How long after a try that got no answer the next one comes."""
 NO_KEY, NOT_LISTED, HAS_DRIVER, NO_DRIVER, OTHER_DRIVER, ON_ITS_WAY, UNSURE, UNKNOWN_DRIVER, MOVED, NOT_A_STEP = (
     "no_key",
     "not_listed",
@@ -211,6 +236,11 @@ class ShipdayBoard:
         self._eta: dict[int, tuple[int, int | None]] = {}  # by order: when it may be asked again, the moment
         self._eta_state = ETA_OFF
         self._eta_hold_ms = 0
+        self._ready: dict[int, int] = {}  # by order: when this hub told Shipday it is ready for pickup
+        # by order, of the telling the hub does by itself: tries so far, when the next may come, and where
+        # the delivery stood in Shipday (its step and driver) when they were made
+        self._ready_missed: dict[int, tuple[int, int, tuple[str, int]]] = {}
+        self._ready_itself: set[int] = set()  # told by the hub itself since a person last asked for it
         self._picture = ""
 
     # --- the key -----------------------------------------------------------------------------------------
@@ -273,6 +303,8 @@ class ShipdayBoard:
         self._etas(source, orders, now)
         with self._lock:
             self._orders = orders
+            self._ready_missed = {ident: tried for ident, tried in self._ready_missed.items() if ident in orders}
+            self._ready_itself &= orders.keys()
             if raw_drivers is not None:
                 self._drivers = [driver for raw in raw_drivers if (driver := driver_of(raw)) is not None]
                 self._drivers_ms = now
@@ -289,6 +321,13 @@ class ShipdayBoard:
             self.on_round()
         except Exception:  # noqa: BLE001 - the picture is read and shown whatever becomes of the checks
             log.error("shipday: following it on the POS went wrong\n%s", traceback.format_exc(limit=3, chain=False))
+        self._told()  # a delivery the hub said ready by itself reads differently now
+
+    def hurry(self) -> None:
+        """Something on the POS changed that Shipday is told of by itself (a delivery's check was marked
+        Ready): the next round comes now and not after the usual pause. Nothing without a key."""
+        if self.source is not None:
+            self._wake.set()
 
     # --- what a person changes ------------------------------------------------------------------------------
 
@@ -366,19 +405,101 @@ class ShipdayBoard:
             order_id, check, lambda source: source.mark(order_id, status), shown, by, f"marked {status}"
         )
 
+    def ready(self, order_id: int, *, by: str) -> dict[str, Any]:
+        """Tells Shipday that a delivery is made and waits for its driver, because `by` asked at a terminal.
+        Nothing is sent for one that is no longer on Shipday's list, or that was picked up: it left already.
+        One nobody has yet can be said ready as well as one a driver has.
+
+        Shipday's list says nothing of it afterwards (`shown` is never true), so it is `done` when Shipday
+        answered that it is, and the hub writes down that it told (`ready_ms` in the picture). Where the
+        answer did not come, nothing is written down and the person is told that it is not known."""
+
+        def check(order: dict[str, Any] | None) -> str | None:
+            if order is None:
+                return NOT_LISTED
+            if order["state"] in (PICKED_UP, READY_TO_DELIVER):
+                return ON_ITS_WAY
+            return None if order["state"] in WAITING else UNSURE
+
+        with self._lock:
+            self._ready_itself.discard(order_id)
+
+        def send(source: Shipday) -> None:
+            with self._lock:
+                told = order_id in self._ready_itself
+            if told:
+                return  # the hub told Shipday by itself in the reading just made: it is not told twice
+            source.ready(order_id)
+            with self._lock:  # Shipday answered that it is: the list read after this tells the screens
+                self._said_ready(order_id, self._now())
+
+        return self._changed(order_id, check, send, None, by, "said ready for pickup")
+
+    def _said_ready(self, order_id: int, now: int) -> None:
+        """Shipday answered that a delivery is ready for pickup: remembered, for whoever holds `_lock`."""
+        self._ready_missed.pop(order_id, None)
+        self._ready.pop(order_id, None)
+        self._ready[order_id] = now
+        for ident in list(self._ready)[: max(0, len(self._ready) - READY_MOST)]:
+            del self._ready[ident]
+
+    def ready_by_itself(self, order_id: int) -> int | None:
+        """Tells Shipday that a delivery is ready for pickup because its check on the POS is marked Ready.
+        Only for `on_round`: it runs inside a round, on the list that round just read, so whoever calls
+        holds `_asking` already and Shipday is not asked for its list again. Answers when Shipday said that
+        it is; None where nothing was sent or Shipday did not say so.
+
+        Nothing is sent for a delivery that is not on the list as it was just read, one that was picked up,
+        one this hub has told already, or one whose tries are used up (`READY_TRIES`, and at once where
+        Shipday refused) while it still stands where it stood."""
+        source = self.source
+        if source is None:
+            return None
+        now = self._now()
+        with self._lock:
+            order = self._orders.get(order_id)
+            if order is None or order["state"] not in WAITING or order_id in self._ready:
+                return None
+            stands = (str(order["state"]), int(order["driver"]["id"]) if order["driver"] is not None else 0)
+            tries, again, stood = self._ready_missed.get(order_id, (0, 0, stands))
+        if stood != stands:
+            tries, again = 0, 0  # it stands elsewhere in Shipday than when it was tried: asked afresh
+        if tries >= READY_TRIES or now < again:
+            return None
+        try:
+            source.ready(order_id)
+        except ShipdayFailed as err:
+            # an answer that says no is the answer; one that did not come is asked for again, a few times
+            tries = READY_TRIES if err.reason in (REJECTED, NOT_FOUND) else tries + 1
+            with self._lock:
+                self._ready_missed[order_id] = (tries, now + READY_AGAIN_MS, stands)
+            log.warning(
+                "shipday: order %s not said ready for pickup (%s), by the hub itself as its check is ready%s",
+                order_id,
+                err.reason,
+                "" if tries < READY_TRIES else "; not tried again while it stands as it does",
+            )
+            return None
+        with self._lock:
+            self._said_ready(order_id, now)
+            self._ready_itself.add(order_id)
+        log.warning("shipday: order %s said ready for pickup by the hub itself, as its check is ready", order_id)
+        return now
+
     def _changed(
         self,
         order_id: int,
         check: Callable[[dict[str, Any] | None], str | None],
         send: Callable[[Shipday], None],
-        shown: Callable[[dict[str, Any] | None], bool],
+        shown: Callable[[dict[str, Any] | None], bool] | None,
         by: str,
         what: str,
     ) -> dict[str, Any]:
         """One change a person asked for: the list is read, the change is sent where the delivery stands as
         `check` wants it, and the list is read again. Answers `done` (Shipday made it, as far as it said or
-        its list shows), `sent` (it was asked to), `shown` (its list shows it), and why not (`reason`,
-        `said`, and `told`: Shipday's own words for refusing, for the person and for no log)."""
+        its list shows), `sent` (it was asked to), `shown` (its list shows it; never of a change the list
+        has no place for, where `shown` is None), and why not (`reason`, `said`, and `told`: Shipday's own
+        words for refusing, for the person and for no log)."""
         answer: dict[str, Any] = {"done": False, "sent": False, "shown": False, "reason": None, "said": "", "told": ""}
         with self._asking:
             source = self.source
@@ -404,7 +525,7 @@ class ShipdayBoard:
                 # as it is listed now: among the active ones, or among the ones that ended today
                 order = self._orders.get(order_id) or self._done.get(order_id)
             answer["sent"] = True
-            answer["shown"] = after["answered"] and shown(order)
+            answer["shown"] = shown is not None and after["answered"] and shown(order)
             answer["done"] = failed is None or answer["shown"]
             if not answer["done"] and failed is not None:
                 answer.update(reason=failed.reason, said=failed.said, told=failed.told)
@@ -432,6 +553,7 @@ class ShipdayBoard:
             before = dict(self._orders)
             if self._done_day != day:
                 self._done, self._done_day = {}, day
+                self._ready, self._ready_missed, self._ready_itself = {}, {}, set()
         for ident, order in before.items():
             if ident not in orders and ident not in self._done:
                 self._leaving.setdefault(ident, (order, 0))
@@ -509,6 +631,7 @@ class ShipdayBoard:
                     self._drivers,
                     self._trouble(),
                     self._eta_state,
+                    sorted(self._ready.items()),
                 ],
                 sort_keys=True,
             )
@@ -551,6 +674,7 @@ class ShipdayBoard:
             trouble = self._trouble()
             read = self._answered_ms is not None
             eta = self._eta_state
+            ready = dict(self._ready)
         names = {driver["id"]: driver for driver in drivers}
         found = matched([*orders, *done], list(self.pos()) if self.pos is not None else [])
         loads: dict[int, int] = {}
@@ -561,7 +685,13 @@ class ShipdayBoard:
             match = found.get(order["id"])
             order["pos"] = match[0].about(match[1]) if match is not None else None
             order["steps"] = list(steps_of(order))
+            told = ready.get(order["id"])
+            if told is None and match is not None and match[0].told_id == order["id"]:
+                told = match[0].told_ms  # its check says so: told before this hub started, or by the other hub
+            order["ready_ms"] = told
+            order["can_ready"] = False
         for order in orders:
+            order["can_ready"] = order["state"] in WAITING and order["ready_ms"] is None
             if order["driver"] is not None and order["state"] in ACTIVE:
                 loads[order["driver"]["id"]] = loads.get(order["driver"]["id"], 0) + 1
         for driver in drivers:
@@ -643,6 +773,7 @@ __all__ = [
     "OTHER_DRIVER",
     "UNKNOWN_DRIVER",
     "UNSURE",
+    "WAITING",
     "ShipdayBoard",
     "steps_of",
 ]

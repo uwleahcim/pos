@@ -13,10 +13,11 @@ import 'theme.dart';
 /// the ones on their way, and under a fold the ones that finished today. Beside each delivery is the check
 /// it is on the POS, which a tap opens; one the hub finds no check for says so.
 ///
-/// A delivery nobody has is given to a driver here, one a driver has not picked up yet is taken back, and
-/// one is marked as it goes (started, picked up, delivered, ...): each by a tap that says so, on a hub that
-/// does it ([ShipdayBoard.givesToDrivers], [ShipdayBoard.marks]). The hub reads Shipday's list before it
-/// sends anything and again after, and the screen says what came of it.
+/// A delivery nobody has is given to a driver here, one a driver has not picked up yet is taken back, one
+/// is marked as it goes (started, picked up, delivered, ...), and one that waits for its driver is said to
+/// be ready for pickup: each by a tap that says so, on a hub that does it ([ShipdayBoard.givesToDrivers],
+/// [ShipdayBoard.marks], [ShipdayBoard.saysReady]). The hub reads Shipday's list before it sends anything
+/// and again after, and the screen says what came of it.
 ///
 /// It reads the hub's picture when the hub says it changed (or a check did, which may be the one a
 /// delivery is), and now and then while the hub cannot say. Every read tells the hub that somebody is
@@ -216,9 +217,23 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
     );
   }
 
+  /// Said to be ready for pickup: the food is made and waits for its driver. Sent on the tap, like a
+  /// driver's own steps. Shipday's list never shows it, so its own answer is what the screen goes by.
+  Future<void> _ready(ShipdayOrder order) => _change(
+    order,
+    (staffId) => widget.api.shipdayReady(order.id, staffId: staffId),
+    'Shipday was told it is ready for pickup.',
+    listed: false,
+  );
+
   /// One change in Shipday that a tap asked for: the hub is asked, the screen takes the picture it answers
-  /// with, and says what came of it.
-  Future<void> _change(ShipdayOrder order, Future<ShipdayChanged> Function(String staffId) ask, String did) async {
+  /// with, and says what came of it. [listed] is false for a change Shipday's list has no place for.
+  Future<void> _change(
+    ShipdayOrder order,
+    Future<ShipdayChanged> Function(String staffId) ask,
+    String did, {
+    bool listed = true,
+  }) async {
     final staffId = widget.staffId;
     if (staffId == null || _changing.contains(order.id)) return;
     setState(() => _changing.add(order.id));
@@ -230,7 +245,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
       final board = changed.board;
       if (board != null) setState(() => _board = board);
       final now = board?.orders.where((each) => each.id == order.id).firstOrNull;
-      words = changed.words(did, order: now);
+      words = changed.words(did, order: now, listed: listed);
       bad = changed.bad;
     } on ApiException catch (err) {
       if (!mounted) return;
@@ -267,6 +282,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
   List<Widget> _cards(List<ShipdayOrder> orders) {
     final acts = widget.staffId != null && (_board?.givesToDrivers ?? false);
     final marks = widget.staffId != null && (_board?.marks ?? false);
+    final readies = widget.staffId != null && (_board?.saysReady ?? false);
     return [
       for (final order in orders)
         _DeliveryCard(
@@ -276,6 +292,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
           onGive: acts && order.canBeGiven ? () => _give(order) : null,
           onTakeBack: acts && order.canBeTakenBack ? () => _takeBack(order) : null,
           onMark: marks && order.canBeMarked ? () => _mark(order) : null,
+          onReady: readies && order.canBeSaidReady ? () => _ready(order) : null,
           busy: _changing.contains(order.id),
         ),
     ];
@@ -464,6 +481,11 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
             else
               "This screen only reads Shipday. A delivery is given to a driver, and marked as it goes, in Shipday's "
                   'own app for now.',
+            if (board.saysReady && board.tellsReady)
+              'A delivery whose check is marked Ready on the POS is told to Shipday as ready for pickup by itself. '
+                  'The Ready for pickup button stays for the odd one.'
+            else if (board.saysReady)
+              'Ready for pickup tells Shipday the food is made and waits for its driver.',
             if (board.movesChecks)
               'What Shipday says moves the check: picked up takes it Out, and delivered closes it unless money '
                   'is still due.',
@@ -620,8 +642,9 @@ class _DriverChip extends StatelessWidget {
 
 /// One delivery: whose it is and where it goes, who has it and what happened last, when it is expected,
 /// and the check it is on the POS. One nobody has can be given to a driver, one a driver has not picked up
-/// can be taken back, and one can be marked as it goes, where the screen lets it ([onGive], [onTakeBack],
-/// [onMark]).
+/// can be taken back, one can be marked as it goes, and one that was not picked up can be said to be ready
+/// for that, where the screen lets it ([onGive], [onTakeBack], [onMark], [onReady]). One the hub said ready
+/// says so, with when.
 class _DeliveryCard extends StatelessWidget {
   const _DeliveryCard({
     super.key,
@@ -630,6 +653,7 @@ class _DeliveryCard extends StatelessWidget {
     this.onGive,
     this.onTakeBack,
     this.onMark,
+    this.onReady,
     this.busy = false,
   });
 
@@ -644,6 +668,9 @@ class _DeliveryCard extends StatelessWidget {
 
   /// Opens what it can be marked as from where it stands; null where it cannot be marked.
   final VoidCallback? onMark;
+
+  /// Tells Shipday it is ready for pickup; null where it cannot be said, or was said already.
+  final VoidCallback? onReady;
 
   /// A change is under way for it: the hub is asking Shipday.
   final bool busy;
@@ -664,6 +691,7 @@ class _DeliveryCard extends StatelessWidget {
     final expected = order.expected;
     final facts = order.facts;
     final check = order.check;
+    final told = order.finished ? null : order.toldReady;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
       shape: RoundedRectangleBorder(
@@ -717,6 +745,12 @@ class _DeliveryCard extends StatelessWidget {
                 key: ValueKey('shipday-progress-${order.id}'),
                 style: theme.textTheme.bodyMedium,
               ),
+            if (told != null)
+              Text(
+                told,
+                key: ValueKey('shipday-ready-told-${order.id}'),
+                style: theme.textTheme.bodyMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w700),
+              ),
             // what a driver needs on the way; of one that finished, who had it and how it ended is enough
             if (facts.isNotEmpty && !order.finished) Text(facts, style: small),
             if (order.note.trim().isNotEmpty && !order.finished) Text(order.note.trim(), style: small),
@@ -750,10 +784,34 @@ class _DeliveryCard extends StatelessWidget {
                       icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
                       label: const Text('Give to a driver'),
                     ),
-                  if (onMark != null)
-                    // the step a delivery with a driver takes next is what is mostly wanted: it stands out
-                    // there, and is quiet on one that waits for a driver first
+                  if (onReady != null)
+                    // what the restaurant itself has to say of a delivery: it stands out once the delivery
+                    // has its driver, and is quiet on one that waits for a driver first
                     onGive == null
+                        ? FilledButton.tonalIcon(
+                            key: ValueKey('shipday-ready-${order.id}'),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                            ),
+                            onPressed: onReady,
+                            icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                            label: const Text('Ready for pickup'),
+                          )
+                        : TextButton.icon(
+                            key: ValueKey('shipday-ready-${order.id}'),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                            onPressed: onReady,
+                            icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                            label: const Text('Ready for pickup'),
+                          ),
+                  if (onMark != null)
+                    // a driver's own steps: the button stands out where it is the one thing left to say of
+                    // the delivery, and is quiet beside Give to a driver and Ready for pickup
+                    onGive == null && onReady == null
                         ? FilledButton.tonalIcon(
                             key: ValueKey('shipday-mark-${order.id}'),
                             style: FilledButton.styleFrom(

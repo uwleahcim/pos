@@ -1,7 +1,8 @@
 """A Shipday for the tests: it answers the hub's four questions from what a test put into it, in the shapes
-Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), makes the three changes
-the hub asks for (a driver given an order, an order taken back, an order marked as it goes), and writes down
-every call it was made. Nobody's account, nobody's key, and no customer who exists."""
+Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), makes the four changes
+the hub asks for (a driver given an order, an order taken back, an order marked as it goes, an order said
+ready for pickup), and writes down every call it was made. Nobody's account, nobody's key, and no customer
+who exists."""
 
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ TRACK = "https://dispatch.shipday.com/trackingPage/"
 STATUSES = ("STARTED", "PICKED_UP", "READY_TO_DELIVER", "ALREADY_DELIVERED", "INCOMPLETE", "FAILED_DELIVERY")
 """What `PUT /orders/{orderId}/status` takes, as the table on its page lists them."""
 _STATUS_PATH = re.compile(r"^/orders/(\d+)/status$")
+_META_PATH = re.compile(r"^/orders/(\d+)/meta$")
 
 TOM = {"id": 501, "name": "Tom Reyes", "phone": "+17815550150"}
 WEI = {"id": 502, "name": "Wei Zhang", "phone": "+17815550151"}
@@ -152,7 +154,12 @@ class FakeShipday:
     failed or incomplete leaves `orders` and is what `finished` says of its number from then on. `refuses`
     makes it refuse changes instead: a status with what it says, or `True` for an answer that says `success`
     false. `deaf` makes it answer that the change is made and make none. `lost` makes the change and then
-    loses the answer on the way back."""
+    loses the answer on the way back.
+
+    `PUT /orders/{orderId}/meta` with `{"readyToPickup": true}` is written down in `ready` (the ids it was
+    said of, and what was said) and answered as its page shows: 200 with `{}`, or what `ready_answers` says
+    (the page also lists 202 with nothing). As with Shipday itself, nothing it lists of an order says so
+    afterwards."""
 
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
@@ -165,6 +172,8 @@ class FakeShipday:
         self.deaf = False
         self.lost = False
         self.given_as = "NOT_ACCEPTED"  # where an order stands once it was given to a driver
+        self.ready: dict[int, bool] = {}  # the orders it was told are ready for pickup, and what it was told
+        self.ready_answers = 200  # what it answers to that: 200 with {}, or 202 with nothing
         self.now: int | None = None  # the moment a change is written down with
         self.calls: list[str] = []
         self.sent: list[httpx.Request] = []
@@ -208,6 +217,23 @@ class FakeShipday:
             raise httpx.ReadTimeout("the answer never came")
         return answer
 
+    def _meta(self, ident: str, request: httpx.Request) -> httpx.Response:
+        """`PUT /orders/{orderId}/meta`: the order is ready for pickup, or is not, as the body says."""
+        if (refusal := self._refusal()) is not None:
+            return refusal
+        found = [each for each in self.orders if str(each.get("orderId")) == ident]
+        try:
+            said = json.loads(request.content)["readyToPickup"]
+        except (ValueError, KeyError, TypeError):
+            return httpx.Response(400)
+        if not found or not isinstance(said, bool):
+            return httpx.Response(400)
+        if not self.deaf:
+            self.ready[int(ident)] = said
+        if self.lost:
+            raise httpx.ReadTimeout("the answer never came")
+        return httpx.Response(202) if self.ready_answers == 202 else httpx.Response(200, json={})
+
     def _change(self, path: str) -> httpx.Response:
         if (refusal := self._refusal()) is not None:
             return refusal
@@ -249,6 +275,8 @@ class FakeShipday:
             return self._change(path)
         if request.method == "PUT" and (marked := _STATUS_PATH.match(path)) is not None:
             return self._mark(marked.group(1), request)
+        if request.method == "PUT" and (meta := _META_PATH.match(path)) is not None:
+            return self._meta(meta.group(1), request)
         if request.method != "GET":
             return httpx.Response(405, json={})
         if path == "/orders":

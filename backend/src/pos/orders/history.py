@@ -52,7 +52,10 @@ Each step is a dict:
 - `shipday` (what Shipday said of the delivery, written on the check by the hub where the check did not
   move with it, pos.shipday.follow: delivered while money is still due, failed, incomplete, or picked up
   while the kitchen never had it): `state` (Shipday's own word) and `said_ms` (the moment the check keeps
-  for it). Where Shipday moved the check, the `stage` and `closed` steps say so, by "Shipday".
+  for it). Where Shipday moved the check, the `stage` and `closed` steps say so, by "Shipday";
+- `shipday_ready` (Shipday was told the delivery is ready for pickup, pos.shipday.ready): `auto` (the hub
+  told it by itself because the check was marked Ready; a person tapped it on the Shipday screen otherwise,
+  and is the step's `by`) and `told_ms` (when Shipday answered that it is).
 """
 
 from __future__ import annotations
@@ -61,6 +64,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from ..shipday.follow import FIELD as SHIPDAY
+from ..shipday.follow import READY_FIELD as SHIPDAY_READY
 from ..sync.oplog import LINE_FIELDS, Line, Op, OrderState, apply, is_delivery
 from .adjustments import PricingRules
 from .bag import FIELD as BAG
@@ -262,6 +266,9 @@ def history(
                     word = now.get("state") if isinstance(now, Mapping) else None
                     if word and not moved and (not isinstance(was, Mapping) or was.get("state") != word):
                         step("shipday", state=str(word), said_ms=now.get("at_ms"))
+                elif name == SHIPDAY_READY:
+                    if isinstance(now, Mapping):
+                        step("shipday_ready", auto=now.get("auto") is True, told_ms=now.get("at_ms"))
 
         elif kind == "add_line":
             added = state.lines.get(data.get("line_id"))
