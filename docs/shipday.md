@@ -14,8 +14,9 @@ everything from the pos-app without using the shipday apps."
 It is built in pieces. **The first piece reads.** The hub asks Shipday, with the restaurant's own key, for
 its deliveries and its drivers, and the app shows them on a screen of their own, each delivery beside the
 check it is on the POS. **The second gives a delivery to a driver, and takes it back**
-("Giving a delivery to a driver"): the only two things the POS ever changes in Shipday, each by a tap that
-says so and never by itself. Nothing Shipday says changes a check. Marking a delivery as it goes comes next
+("Giving a delivery to a driver"). **The third marks a delivery as it goes**: started, picked up, delivered,
+or failed ("Marking a delivery as it goes"). Those three are all the POS ever changes in Shipday, each by a
+tap that says so and never by itself. Nothing Shipday says changes a check yet: that is the next piece
 ("What comes next").
 
 Nothing here was ever tried against Shipday itself: see "Never tried for real" before relying on it.
@@ -48,6 +49,8 @@ Each delivery is a card:
 - The note for the driver.
 - **Give to a driver** on one nobody has, and **Take it back** on one a driver has and has not picked up
   ("Giving a delivery to a driver").
+- **Mark…** on one that is not finished: says in Shipday how far along it is ("Marking a delivery as it
+  goes").
 - **The check it is on the POS** ("Check #12"): a tap opens it, and Back returns here. A check that was
   closed or voided says so. A delivery the hub finds no check for says **Not on the POS**.
 - The number Shipday's own apps show it by, to find it there.
@@ -96,6 +99,53 @@ While the hub is asking, the card says "Asking Shipday…" and takes no second t
 Nothing here is ever done by the hub on its own: not on a timer, not when a check changes, not when a
 driver signs in on the POS.
 
+## Marking a delivery as it goes
+
+A driver says in Shipday's app how far along a delivery is. **Mark…**, on a delivery that is not finished,
+says it from the POS instead: for a driver whose phone is dead, one who forgot, or a delivery that will not
+be made. It opens **Mark it as…**, which names the delivery, who has it and where it stands now, and shows
+as buttons only what it can be marked as from there, in Shipday's own words:
+
+| Where it stands | What it can be marked as |
+| --- | --- |
+| A driver has it: *Not accepted yet*, *Accepted* | Started, Picked up, Delivered, Failed, Incomplete |
+| *Started* | Picked up, Delivered, Failed, Incomplete |
+| *Picked up* | Ready to deliver, Delivered, Failed, Incomplete |
+| *Ready to deliver* | Delivered, Failed, Incomplete |
+| Nobody has it | Failed, Incomplete |
+
+It goes forward only. A delivery is not marked back to an earlier step from the POS, and one nobody has is
+not marked started, picked up or delivered: it is given to a driver first. Those rules are the hub's, and
+they are a careful reading: Shipday's page names the six words and says nothing about which may follow
+which ("Never tried for real").
+
+**Started, Picked up and Ready to deliver are sent on the tap**, as in the driver's app. **Delivered,
+Failed and Incomplete end the delivery and ask first** ("Mark it delivered? Mei Lin's delivery leaves
+Shipday's active deliveries as Delivered. That cannot be taken back from the POS."). Failed and Incomplete
+stand apart under "It will not be delivered:". What an ended delivery was marked as shows on it under
+Finished today.
+
+**A mark made by mistake is put right in Shipday's own app.** The POS has no way back, on purpose: it would
+have to guess what Shipday allows.
+
+The hub is as careful as with a driver:
+
+1. **It asks Shipday for its list first**, and sends nothing if the delivery no longer stands where the
+   screen showed it: the driver marked it in the meantime, it was given to somebody or taken back, it left
+   the list. The screen says so ("Shipday has it as "Picked up" by now. Nothing was changed.") and shows the
+   list as it now is. A second look and a second tap mark it from where it really stands.
+2. **It asks Shipday for the one change**: Shipday's number for the delivery and the one word.
+3. **It asks for the list again.** The screen that asked says "Marked picked up."
+
+What Shipday refuses, an answer that never comes and a hub that does not answer are told as with a driver.
+Anybody who is signed in can mark a delivery, and the hub's log has who did, with Shipday's number and the
+word and nothing of the customer.
+
+**A mark on the POS does not move the check on the POS.** A delivery marked Delivered here leaves its check
+as it was; the check is taken Out and Delivered on the Deliveries screen as before (`delivery.md`). Whether
+Shipday sends the customer its own text when a delivery is marked from here, as it may when the driver
+marks it, is not written on Shipday's pages.
+
 ## Setting it up
 
 1. In Shipday's Dispatch Dashboard (dispatch.shipday.com), under **My Account**, copy the **API key**.
@@ -108,8 +158,8 @@ The key is sealed on the hub like every other (`hub-keys.md`) and never shown ag
 card stops the asking, and the Shipday button goes away. Never send the key to anybody in a message: it lets
 its holder change the restaurant's deliveries.
 
-With the key on the hub, whoever is signed in at a terminal can give a delivery to a driver and take it
-back. There is no switch that leaves the reading on and turns that off.
+With the key on the hub, whoever is signed in at a terminal can give a delivery to a driver, take it back,
+and mark it as it goes. There is no switch that leaves the reading on and turns those off.
 
 ## Which check a delivery is
 
@@ -173,16 +223,14 @@ seconds while the screen is open.
 
 ## What comes next
 
-What the API does have, and the next pieces will put on this screen, each behind a tap that says what it
-does:
+In this order, each its own piece:
 
-- **Say how far along it is**: started, picked up, delivered, failed.
+- **Shipday moves the check.** The owner chose this on 2026-11-28: when a driver marks a delivery picked up
+  or delivered in Shipday, its check on the POS goes Out or Delivered by itself. The POS sends no second
+  "on its way" text, and a check with money due stays open. One way only: Out or Delivered tapped on the
+  POS does not mark Shipday. Not built yet: until it is, nothing Shipday says changes a check.
 - **Say that it is ready** for its driver to pick up.
 - **Send the POS's own deliveries to Shipday** (the phone and counter ones, which Shipday does not know).
-
-Still to be decided with the owner, not built: whether what a driver marks in Shipday should also move the
-check on the POS (Out, Delivered). That would send the POS's own "on its way" text and close checks by
-itself, so it is not done on a guess.
 
 ## Never tried for real
 
@@ -203,6 +251,12 @@ real one. What may turn out otherwise:
   or started), what it answers then, or where a delivery stands right after it was given: the screen shows
   whatever Shipday's list says. The first time, do it with one delivery and look at it in Shipday's own app
   too.
+- **Marking a delivery.** The page gives the call, the six words and one example answer. It does not say
+  which word may follow which, whether a delivery nobody has can be marked, whether a mark can be taken
+  back, what Shipday answers when it refuses (the example is an empty answer, so the screen may only say
+  "Shipday would not do it."), or whether Shipday texts the customer on a mark that came from here. The
+  first time, mark one delivery **Started** (the mark that matters least), look at it in Shipday's own app,
+  and only then try Delivered on one that really was.
 - **The form of the arrival time on the order itself.** One that is not a time is shown as Shipday wrote it
   ("Shipday says 12 min").
 
@@ -211,18 +265,20 @@ real one. What may turn out otherwise:
 A hub from before this lists no Shipday key and has no Shipday button: nothing changes. An app from before
 this on a new hub has no card and no button, and the hub asks Shipday all the same once it has a key.
 
-A hub that reads Shipday and does not yet give deliveries to drivers says so to the app, which then shows
-neither button and says under the lists that it is done in Shipday's own app. An app from before the
-buttons on a newer hub reads as it did.
+A hub says to the app what it changes in Shipday when asked, and the app shows a button only for that: on a
+hub that reads and does no more there is no button, and the line under the lists says it is done in
+Shipday's own app; on a hub that gives deliveries to drivers and does not yet mark them there is no
+**Mark…**. An app from before a button on a newer hub goes on as it did.
 
 ## The calls
 
 | Call | What it does |
 | --- | --- |
-| `GET /shipday` | The picture: `on`, `read`, `trouble` (null, or `since_ms`, `reason`, `said`), `eta` (`off`, `on`, `plan`), `can` (what this hub changes in Shipday when asked: `driver`), `orders`, `done`, `drivers`. Every delivery has Shipday's `id`, `number` and `state`, the customer's `name`, `address` and `phone`, its `driver` or null, its times in ms, `eta_ms` or `eta_said`, `total`, `fee`, `tip`, `payment`, `items`, `note`, `tracking`, `scheduled`, and `pos`: the check (`order_id`, `order_no`, `status`, `stage`, `by`) or null. `?looking=true` says a screen shows it. Anyone at a terminal reads it, like the list of orders |
+| `GET /shipday` | The picture: `on`, `read`, `trouble` (null, or `since_ms`, `reason`, `said`), `eta` (`off`, `on`, `plan`), `can` (what this hub changes in Shipday when asked: `driver`, `status`), `orders`, `done`, `drivers`. Every delivery has Shipday's `id`, `number` and `state`, its `steps` (what it can be marked as from there, in Shipday's words; none on a finished one), the customer's `name`, `address` and `phone`, its `driver` or null, its times in ms, `eta_ms` or `eta_said`, `total`, `fee`, `tip`, `payment`, `items`, `note`, `tracking`, `scheduled`, and `pos`: the check (`order_id`, `order_no`, `status`, `stage`, `by`) or null. `?looking=true` says a screen shows it. Anyone at a terminal reads it, like the list of orders |
 | `POST /shipday/ask` | Asks Shipday now. Not passed on within ten seconds of the last asking (`soon`). 409 `no_key` |
 | `POST /shipday/orders/{id}/driver` | `{staff_id, driver_id}`: gives the delivery with Shipday's id `{id}` to that driver. Answers `done`, `sent` (Shipday was asked to), `shown` (its list shows it), why not (`reason`, `said`, and `told`: Shipday's own words) and the picture after it (`shipday`). `reason` when nothing was sent: `not_listed`, `has_driver`, `unsure`, `unknown_driver`, or why Shipday could not be asked first; when it was: `rejected`, `not_found`, or why no answer came. 409 `no_key`, 404 `unknown_staff` |
 | `POST /shipday/orders/{id}/driver/back` | `{staff_id, driver_id}`: takes it back from the driver the screen showed it with. The same answer; `reason` when nothing was sent: `not_listed`, `no_driver`, `other_driver`, `on_its_way`, `unsure` |
+| `POST /shipday/orders/{id}/status` | `{staff_id, status, was}`: marks it `status` (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`, `INCOMPLETE`), where `was` is the `state` the screen showed. The same answer; `reason` when nothing was sent: `not_listed`, `moved` (it stands elsewhere by now), `not_a_step` (not one of its `steps`). 422 for a word that is none of the six |
 | `PUT` / `DELETE /hub/keys/shipday` | The key, a manager's (`hub-keys.md`) |
 | `POST /hub/shipday/try` | A manager's try: asks once, answers like `GET /hub/keys` with `shipday_tried` (`ok`, `reason`, `said`, `orders`, `drivers`, `on_shift`). 409 `no_key` |
 
@@ -231,10 +287,11 @@ buttons on a newer hub reads as it did.
 customer is in it.
 
 The change feed (`GET /live`) says `shipday` when the picture reads differently or the key changed, which
-it does after a delivery was given to a driver or taken back.
+it does after a delivery was given to a driver, taken back or marked.
 
-What the hub asks of Shipday for the two changes: `PUT /orders/assign/{orderId}/{carrierId}` and
-`PUT /orders/unassign/{orderId}`, with nothing in them.
+What the hub asks of Shipday for the three changes: `PUT /orders/assign/{orderId}/{carrierId}` and
+`PUT /orders/unassign/{orderId}`, with nothing in them, and `PUT /orders/{orderId}/status` with
+`{"status": "PICKED_UP"}`.
 
 The code: `backend/src/pos/shipday/` (`client.py` asks, `read.py` reads what comes back, `match.py` finds the
 check, `board.py` keeps the picture and paces the asking) and `backend/src/pos/api/shipday.py` (the calls);

@@ -1271,6 +1271,10 @@ class Hub {
   /// else did in Shipday meanwhile. [shipdayChangeSays] is answered instead, with nothing done: what the
   /// hub or Shipday would not do. [shipdayChangeStatus] makes the call fail with that status, and while
   /// [shipdayChangeHeld] is not done no answer comes. A hub whose picture lists no `can` only reads: 405.
+  ///
+  /// A delivery is marked as it goes (`POST /shipday/orders/{id}/status`) the same way, on a hub whose `can`
+  /// lists `status` ("mark 7001 PICKED_UP s1 was STARTED"): it stands where the mark says, with the time
+  /// of it ([shipdayAnsweredMs]), and one that was ended is the first of the finished ones from then on.
   Map<String, dynamic>? shipday = shipdayStands(on: false);
   final shipdayChanges = <String>[];
   void Function()? shipdayOnChange;
@@ -1299,7 +1303,7 @@ class Hub {
     bool read = true,
     Map<String, dynamic>? trouble,
     String eta = 'off',
-    List<String>? can = const ['driver'],
+    List<String>? can = const ['driver', 'status'],
     List<Map<String, dynamic>> orders = const [],
     List<Map<String, dynamic>> done = const [],
     List<Map<String, dynamic>> drivers = const [],
@@ -1314,8 +1318,24 @@ class Hub {
     'drivers': drivers,
   };
 
+  /// What the hub lets a delivery be marked as from where it stands (`steps_of` in the hub's board.py): only
+  /// forward, a driver's steps only with a driver, and one nobody has only ended as not delivered.
+  static List<String> shipdayStepsOf(String state, {required bool driver}) {
+    const ends = ['ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'];
+    if (state == 'NOT_ASSIGNED') return driver ? const [] : const ['FAILED_DELIVERY', 'INCOMPLETE'];
+    if (!driver) return const [];
+    return switch (state) {
+      'NOT_ACCEPTED' || 'NOT_STARTED_YET' => ['STARTED', 'PICKED_UP', ...ends],
+      'STARTED' => ['PICKED_UP', ...ends],
+      'PICKED_UP' => ['READY_TO_DELIVER', ...ends],
+      'READY_TO_DELIVER' => ends,
+      _ => const [],
+    };
+  }
+
   /// One of Shipday's deliveries as the hub tells a screen. [check] is the check it is on the POS
-  /// ([shipdayCheck]).
+  /// ([shipdayCheck]). [steps] is what it can be marked as: what the hub would say from where it stands,
+  /// unless given (none for one that ended).
   static Map<String, dynamic> shipdayOrder(
     int id,
     String number, {
@@ -1338,6 +1358,7 @@ class Hub {
     String payment = 'CREDIT_CARD',
     String note = '',
     Map<String, dynamic>? check,
+    List<String>? steps,
   }) => {
     'id': id,
     'number': number,
@@ -1365,6 +1386,7 @@ class Hub {
     'tracking': '',
     'scheduled': false,
     'pos': check,
+    'steps': steps ?? (endedMs != null ? const <String>[] : shipdayStepsOf(state, driver: driver != null)),
   };
 
   /// A driver of the Shipday account as the hub tells a screen.
@@ -1434,14 +1456,30 @@ class Hub {
       shipdayOnAsk?.call();
       return json({...shipdayAsked, 'shipday': shipday});
     }
-    final change = RegExp(r'^/shipday/orders/(\d+)/driver(/back)?$').firstMatch(request.url.path);
-    if (change != null && request.method == 'POST' && picture['can'] is List) {
+    final change = RegExp(r'^/shipday/orders/(\d+)/(driver|driver/back|status)$').firstMatch(request.url.path);
+    final marks = change?.group(2) == 'status';
+    if (change != null &&
+        request.method == 'POST' &&
+        picture['can'] is List &&
+        (!marks || (picture['can'] as List).contains('status'))) {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final staff = body['staff_id'];
       final orderId = int.parse(change.group(1)!);
       final driverId = body['driver_id'];
-      final back = change.group(2) != null;
-      if (staff is! String || driverId is! int) return json({'detail': 'Unprocessable'}, 422);
+      final status = body['status'];
+      final was = body['was'];
+      final back = change.group(2) == 'driver/back';
+      const statuses = [
+        'STARTED',
+        'PICKED_UP',
+        'READY_TO_DELIVER',
+        'ALREADY_DELIVERED',
+        'FAILED_DELIVERY',
+        'INCOMPLETE',
+      ];
+      if (staff is! String || (marks ? !statuses.contains(status) || was is! String : driverId is! int)) {
+        return json({'detail': 'Unprocessable'}, 422);
+      }
       if (!(roster ?? const <Map<String, dynamic>>[]).any((person) => person['staff_id'] == staff)) {
         return json({
           'detail': {'error': 'unknown_staff', 'message': 'Nobody here has this id.'},
@@ -1452,7 +1490,9 @@ class Hub {
           'detail': {'error': 'no_key', 'message': 'this hub has no key for Shipday yet'},
         }, 409);
       }
-      shipdayChanges.add('${back ? 'back' : 'give'} $orderId $driverId $staff');
+      shipdayChanges.add(
+        marks ? 'mark $orderId $status $staff was $was' : '${back ? 'back' : 'give'} $orderId $driverId $staff',
+      );
       if (shipdayChangeHeld != null) await shipdayChangeHeld!.future;
       if (shipdayChangeStatus != null) return json({'detail': 'Something went wrong'}, shipdayChangeStatus!);
       shipdayOnChange?.call();
@@ -1473,12 +1513,38 @@ class Hub {
         for (final each in now['drivers'] as List) Map<String, dynamic>.of(each as Map<String, dynamic>),
       ];
       final orders = [for (final each in now['orders'] as List) Map<String, dynamic>.of(each as Map<String, dynamic>)];
+      final done = [for (final each in now['done'] as List) each as Map<String, dynamic>];
       final order = orders.firstWhere((each) => each['id'] == orderId);
-      final driver = drivers.firstWhere((each) => each['id'] == driverId);
-      order['driver'] = back ? null : {'id': driver['id'], 'name': driver['name'], 'phone': driver['phone']};
-      order['state'] = back ? 'NOT_ASSIGNED' : 'NOT_ACCEPTED';
-      driver['orders'] = (driver['orders'] as int) + (back ? -1 : 1);
-      shipday = {...now, 'orders': orders, 'drivers': drivers};
+      if (marks) {
+        order['state'] = status;
+        final at = switch (status) {
+          'STARTED' => 'started_ms',
+          'PICKED_UP' => 'picked_up_ms',
+          'READY_TO_DELIVER' => 'arrived_ms',
+          'ALREADY_DELIVERED' => 'delivered_ms',
+          _ => null,
+        };
+        if (at != null) order[at] = shipdayAnsweredMs;
+        if (const ['ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'].contains(status)) {
+          // it ended: off the active ones, the first of the finished, and its driver has one less out
+          orders.remove(order);
+          order['ended_ms'] = shipdayAnsweredMs;
+          done.insert(0, order);
+          final has = (order['driver'] as Map?)?['id'];
+          for (final driver in drivers) {
+            if (driver['id'] == has) driver['orders'] = (driver['orders'] as int) - 1;
+          }
+        }
+      } else {
+        final driver = drivers.firstWhere((each) => each['id'] == driverId);
+        order['driver'] = back ? null : {'id': driver['id'], 'name': driver['name'], 'phone': driver['phone']};
+        order['state'] = back ? 'NOT_ASSIGNED' : 'NOT_ACCEPTED';
+        driver['orders'] = (driver['orders'] as int) + (back ? -1 : 1);
+      }
+      order['steps'] = order['ended_ms'] != null
+          ? const <String>[]
+          : shipdayStepsOf(order['state'] as String, driver: order['driver'] != null);
+      shipday = {...now, 'orders': orders, 'done': done, 'drivers': drivers};
       return json({
         'done': true,
         'sent': true,

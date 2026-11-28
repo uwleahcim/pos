@@ -30,13 +30,18 @@ Which order on the POS each delivery is (`pos.shipday.match`) is worked out when
 POS's deliveries as they stand at that moment (`pos`, which the API sets): a check rung up a second ago is
 matched at once.
 
-**Changes.** Two things are changed in Shipday, each only when a person at a terminal asked for exactly that:
-a delivery is given to a driver (`give`), and taken back from one (`take_back`). Neither is ever done by the
-hub itself. Before one is sent the hub asks Shipday for its list again and sends nothing where the delivery
-no longer stands as the person's screen showed it (it left the list, somebody else gave it to a driver, the
-driver picked it up); after it the list is asked for once more, so the screens show what Shipday now says
-and the answer can tell whether the change shows there (`shown`). A change whose answer did not come is not
-taken for made or for not made: the list read after it says which.
+**Changes.** Three things are changed in Shipday, each only when a person at a terminal asked for exactly
+that: a delivery is given to a driver (`give`), taken back from one (`take_back`), and marked as it goes
+(`mark`: started, picked up, at the customer's, delivered, failed, incomplete). None is ever done by the hub
+itself. Before one is sent the hub asks Shipday for its list again and sends nothing where the delivery no
+longer stands as the person's screen showed it (it left the list, somebody else gave it to a driver, the
+driver picked it up or marked it in Shipday's app); after it the list is asked for once more, so the screens show
+what Shipday now says and the answer can tell whether the change shows there (`shown`). A change whose
+answer did not come is not taken for made or for not made: the list read after it says which.
+
+What a delivery can be marked as depends on where it stands (`steps_of`), and the picture says it of each
+delivery (`steps`), so a screen offers what this hub would send and nothing else. Only forward: a mark made
+by mistake is put right in Shipday's own app.
 
 Nothing here names a customer in a log: an order is told of by Shipday's own id.
 """
@@ -48,7 +53,7 @@ import logging
 import threading
 import time
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
@@ -57,8 +62,11 @@ from .client import LIMIT, REFUSED, Shipday, ShipdayFailed
 from .match import OnPos, matched
 from .read import (
     ACTIVE,
+    ALREADY_DELIVERED,
+    FAILED_DELIVERY,
     FINISHED,
     GONE,
+    INCOMPLETE,
     NOT_ACCEPTED,
     NOT_ASSIGNED,
     NOT_STARTED_YET,
@@ -112,12 +120,12 @@ ETA_OFF, ETA_ON, ETA_PLAN = "off", "on", "plan"
 """Whether Shipday says how far away a delivery is: not asked yet; it answers; the account's plan has no
 such call."""
 
-CAN = ("driver",)
-"""What this hub changes in Shipday when a person asks: a delivery's driver. A screen offers no more than
-is listed here, so one that knows of more offers nothing this hub would not do."""
+CAN = ("driver", "status")
+"""What this hub changes in Shipday when a person asks: a delivery's driver, and how far along it is. A
+screen offers no more than is listed here, so one that knows of more offers nothing this hub would not do."""
 HELD = (NOT_ACCEPTED, NOT_STARTED_YET, STARTED)
 """Where a delivery stands while a driver has it and has not picked it up: it can still be taken back."""
-NO_KEY, NOT_LISTED, HAS_DRIVER, NO_DRIVER, OTHER_DRIVER, ON_ITS_WAY, UNSURE, UNKNOWN_DRIVER = (
+NO_KEY, NOT_LISTED, HAS_DRIVER, NO_DRIVER, OTHER_DRIVER, ON_ITS_WAY, UNSURE, UNKNOWN_DRIVER, MOVED, NOT_A_STEP = (
     "no_key",
     "not_listed",
     "has_driver",
@@ -126,11 +134,37 @@ NO_KEY, NOT_LISTED, HAS_DRIVER, NO_DRIVER, OTHER_DRIVER, ON_ITS_WAY, UNSURE, UNK
     "on_its_way",
     "unsure",
     "unknown_driver",
+    "moved",
+    "not_a_step",
 )
 """Why the hub sent Shipday no change: it has no key; the delivery is no longer on Shipday's list; it has a
 driver already; it has none to take it back from; another driver has it than the screen showed; it was
 picked up; Shipday says of it something this hub does not know what to make of; Shipday lists no such
-driver, or one it does not let take orders."""
+driver, or one it does not let take orders; it stands elsewhere than the screen showed; it cannot be marked
+as that from where it stands."""
+
+
+def steps_of(order: Mapping[str, Any]) -> tuple[str, ...]:
+    """What a delivery can be marked as from where it stands, in Shipday's own words and in the order a
+    delivery goes: only forward, and never a step it is already at or past.
+
+    What a driver does (started, picked up, at the customer's, delivered) is said only of a delivery a driver
+    has. One nobody has can only be ended as not delivered. Shipday's pages do not say what Shipday itself
+    lets through: this is what the hub is willing to ask for."""
+    state = order["state"]
+    if state not in ACTIVE:
+        return ()
+    if state == NOT_ASSIGNED or order["driver"] is None:
+        # with a driver and "not assigned", or without one and further along: nothing is guessed
+        return (FAILED_DELIVERY, INCOMPLETE) if state == NOT_ASSIGNED and order["driver"] is None else ()
+    steps: list[str] = []
+    if state in (NOT_ACCEPTED, NOT_STARTED_YET):
+        steps.append(STARTED)
+    if state in HELD:
+        steps.append(PICKED_UP)
+    if state == PICKED_UP:
+        steps.append(READY_TO_DELIVER)
+    return (*steps, ALREADY_DELIVERED, FAILED_DELIVERY, INCOMPLETE)
 
 
 class ShipdayBoard:
@@ -291,6 +325,29 @@ class ShipdayBoard:
             order_id, check, lambda source: source.unassign(order_id), shown, by, f"taken back from driver {driver_id}"
         )
 
+    def mark(self, order_id: int, status: str, was: str, *, by: str) -> dict[str, Any]:
+        """Marks a delivery as it goes (`status`: one of Shipday's own words), because `by` asked at a
+        terminal whose screen showed it standing at `was`. Nothing is sent for a delivery that stands
+        elsewhere by now (the driver marked it first, somebody took it back), or for a step that is not
+        one from where it stands (`steps_of`)."""
+
+        def check(order: dict[str, Any] | None) -> str | None:
+            if order is None:
+                return NOT_LISTED
+            if order["state"] != was:
+                return MOVED
+            return None if status in steps_of(order) else NOT_A_STEP
+
+        def shown(order: dict[str, Any] | None) -> bool:
+            if status in FINISHED:
+                # it ended: gone from the active ones, and not ended as something else
+                return order is None or order["state"] in (status, GONE)
+            return order is not None and order["state"] == status
+
+        return self._changed(
+            order_id, check, lambda source: source.mark(order_id, status), shown, by, f"marked {status}"
+        )
+
     def _changed(
         self,
         order_id: int,
@@ -326,7 +383,8 @@ class ShipdayBoard:
                 failed = err
             after = self._round(forced=True, drivers=False)
             with self._lock:
-                order = self._orders.get(order_id)
+                # as it is listed now: among the active ones, or among the ones that ended today
+                order = self._orders.get(order_id) or self._done.get(order_id)
             answer["sent"] = True
             answer["shown"] = after["answered"] and shown(order)
             answer["done"] = failed is None or answer["shown"]
@@ -484,6 +542,7 @@ class ShipdayBoard:
                 order["driver"] = {**driver, "name": names[driver["id"]]["name"], "phone": names[driver["id"]]["phone"]}
             match = found.get(order["id"])
             order["pos"] = match[0].about(match[1]) if match is not None else None
+            order["steps"] = list(steps_of(order))
         for order in orders:
             if order["driver"] is not None and order["state"] in ACTIVE:
                 loads[order["driver"]["id"]] = loads.get(order["driver"]["id"], 0) + 1
@@ -557,6 +616,8 @@ __all__ = [
     "ETA_ON",
     "ETA_PLAN",
     "HAS_DRIVER",
+    "MOVED",
+    "NOT_A_STEP",
     "NOT_LISTED",
     "NO_DRIVER",
     "NO_KEY",
@@ -565,4 +626,5 @@ __all__ = [
     "UNKNOWN_DRIVER",
     "UNSURE",
     "ShipdayBoard",
+    "steps_of",
 ]

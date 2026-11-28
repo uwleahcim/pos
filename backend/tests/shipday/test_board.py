@@ -67,7 +67,7 @@ def test_a_round_keeps_the_active_orders_and_the_drivers_with_what_each_has():
         "read": False,
         "trouble": None,
         "eta": "off",
-        "can": ["driver"],
+        "can": ["driver", "status"],
         "orders": [],
         "done": [],
         "drivers": [],

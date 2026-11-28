@@ -3,8 +3,9 @@
 /// how far along it is. The hub asks Shipday for them with the restaurant's own key and says beside each
 /// which check on the POS it is.
 ///
-/// Two things can be changed there from here, each by a person's tap and never by itself: a delivery is
-/// given to a driver, and taken back from one ([ShipdayChanged]). Nothing Shipday says changes a check.
+/// Three things can be changed there from here, each by a person's tap and never by itself: a delivery is
+/// given to a driver, taken back from one, and marked as it goes ([ShipdayChanged]). Nothing Shipday says
+/// changes a check.
 library;
 
 import 'phone.dart' show formatPhoneNumber;
@@ -32,6 +33,16 @@ String shipdayStateWords(String state) => switch (state) {
   'GONE' => 'No longer listed',
   _ => 'Shipday does not say',
 };
+
+/// What a delivery can be marked as, in Shipday's own words and in the order a delivery goes. The last three
+/// end it ([shipdayEnds]).
+const shipdaySteps = ['STARTED', 'PICKED_UP', 'READY_TO_DELIVER', 'ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'];
+
+/// The marks that end a delivery: it leaves Shipday's list of active ones.
+const shipdayEnds = {'ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'};
+
+/// What the screen says once a delivery was marked: "Marked picked up."
+String shipdayMarkedWords(String step) => 'Marked ${shipdayStateWords(step).toLowerCase()}.';
 
 /// Why an asking of Shipday got no answer, for a person: what is wrong, and what to do about it.
 String shipdayTroubleWords(String reason, String said) => switch (reason) {
@@ -170,6 +181,7 @@ class ShipdayOrder {
     this.note = '',
     this.scheduled = false,
     this.check,
+    this.steps = const [],
   });
 
   static ShipdayOrder? fromJson(Object? json) {
@@ -200,6 +212,11 @@ class ShipdayOrder {
       note: _text(json['note']),
       scheduled: json['scheduled'] == true,
       check: ShipdayCheck.fromJson(json['pos']),
+      // a word this build has no button for is left out: nothing is offered that it cannot name
+      steps: [
+        for (final step in json['steps'] is List ? json['steps'] as List : const [])
+          if (step is String && shipdaySteps.contains(step)) step,
+      ],
     );
   }
 
@@ -251,6 +268,13 @@ class ShipdayOrder {
 
   /// The check it is on the POS; null where the hub found none.
   final ShipdayCheck? check;
+
+  /// What it can be marked as from where it stands, as the hub says: Shipday's own words, in the order a
+  /// delivery goes. Empty from a hub that marks nothing, and for one that is finished.
+  final List<String> steps;
+
+  /// It can be marked as something from where it stands.
+  bool get canBeMarked => !finished && steps.isNotEmpty;
 
   bool get needsDriver => state == 'NOT_ASSIGNED';
   bool get onItsWay => state == 'PICKED_UP' || state == 'READY_TO_DELIVER';
@@ -374,6 +398,9 @@ class ShipdayBoard {
   /// The hub gives a delivery to a driver and takes it back.
   bool get givesToDrivers => can.contains('driver');
 
+  /// The hub marks a delivery as it goes (started, picked up, delivered, ...).
+  bool get marks => can.contains('status');
+
   /// The deliveries that are not finished, as Shipday lists them.
   final List<ShipdayOrder> orders;
 
@@ -468,8 +495,8 @@ class ShipdayAsked {
   }
 }
 
-/// What came of a change a person asked for in Shipday (a delivery given to a driver, or taken back), with
-/// the picture after it. The hub reads Shipday's list before it sends anything and again after.
+/// What came of a change a person asked for in Shipday (a delivery given to a driver, taken back, or marked
+/// as it goes), with the picture after it. The hub reads Shipday's list before it sends anything and again after.
 class ShipdayChanged {
   const ShipdayChanged({
     this.done = false,
@@ -512,7 +539,7 @@ class ShipdayChanged {
   bool get bad => !done;
 
   /// What to tell the person who asked. [did] says the change as done ("Given to Tom Reyes."); [order] is
-  /// the delivery as the picture after it has it, for who has it now.
+  /// the delivery as the picture after it has it, for who has it now and where it stands.
   String words(String did, {ShipdayOrder? order}) {
     if (done) return shown ? did : 'Shipday took it. Its list does not show it yet.';
     final has = order?.driver?.called;
@@ -524,6 +551,11 @@ class ShipdayChanged {
       'on_its_way' => 'It was picked up already.',
       'unsure' => 'Shipday says something of it this app does not know.',
       'unknown_driver' => 'Shipday no longer lists that driver.',
+      'moved' =>
+        order == null
+            ? 'It stands elsewhere in Shipday by now.'
+            : 'Shipday has it as "${shipdayStateWords(order.state)}" by now.',
+      'not_a_step' => 'It cannot be marked as that from where it stands.',
       'no_key' => 'This hub has no key for Shipday.',
       'rejected' ||
       'not_found' => told.trim().isEmpty ? 'Shipday would not do it.' : 'Shipday would not do it: "${told.trim()}"',

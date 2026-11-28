@@ -32,33 +32,38 @@
   Shipday's own ids of both. Shipday tells the driver.
 - `POST /shipday/orders/{id}/driver/back` `{staff_id, driver_id}`: takes a delivery back from the driver the
   screen showed it with (`driver_id`), so that nobody has it.
+- `POST /shipday/orders/{id}/status` `{staff_id, status, was}`: marks a delivery as it goes. `status` is one
+  of Shipday's own words (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`,
+  `INCOMPLETE`) and one of the steps the picture lists for that delivery (`steps`); `was` is where the
+  screen showed it standing.
 
-  Both: the hub asks Shipday for its list first and sends nothing where the delivery no longer stands as
-  the screen showed it; after the change it asks once more. The answer says `done` (Shipday made the
+  All three: the hub asks Shipday for its list first and sends nothing where the delivery no longer stands
+  as the screen showed it; after the change it asks once more. The answer says `done` (Shipday made the
   change, as far as it said or its list shows), `sent` (it was asked to), `shown` (its list shows it), why
   not (`reason`: `not_listed`, `has_driver`, `no_driver`, `other_driver`, `on_its_way`, `unsure`,
-  `unknown_driver`, or a reason Shipday gave no answer for, or `rejected` and `not_found` when it would
-  not; `said` in words; `told`: what Shipday itself said) and the picture after it (`shipday`). 409
-  `no_key` on a hub without a key, 404 `unknown_staff`.
+  `unknown_driver`, `moved`, `not_a_step`, or a reason Shipday gave no answer for, or `rejected` and
+  `not_found` when it would not; `said` in words; `told`: what Shipday itself said) and the picture after
+  it (`shipday`). 409 `no_key` on a hub without a key, 404 `unknown_staff`.
 
   Who may: whoever is signed in, as anybody hands a bag to a driver on the POS's own Deliveries screen
   (docs/delivery.md). Staff have no token: a screen passes who is signed in (`staff_id`), as it does for
   the texts, and the hub writes down who asked, by Shipday's ids and with no customer.
 
-`GET /shipday` lists what this hub changes in Shipday when asked (`can`: `driver`), so a screen offers
-nothing an older hub would not do.
+`GET /shipday` lists what this hub changes in Shipday when asked (`can`: `driver`, `status`), so a screen
+offers nothing an older hub would not do, and of each delivery what it can be marked as from where it
+stands (`steps`).
 
 The key is one of the hub's (`shipday`; `pos.keys`, `pos.api.keys`): `GET /hub/keys` says how the asking
 goes (`shipday`) and `POST /hub/shipday/try` tries the key.
 
-Reading changes nothing on the POS and nothing in Shipday. The two changes above are the only things the
+Reading changes nothing on the POS and nothing in Shipday. The three changes above are the only things the
 hub ever changes there, each because a person tapped exactly that; nothing Shipday says changes a check.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -82,6 +87,14 @@ class DriverIn(BaseModel):
     staff_id: str = Field(max_length=120)
     driver_id: int = Field(ge=0, le=2**53)
     """Shipday's own id of the driver: the one to give it to, or the one it is taken back from."""
+
+
+class MarkIn(BaseModel):
+    staff_id: str = Field(max_length=120)
+    status: Literal["STARTED", "PICKED_UP", "READY_TO_DELIVER", "ALREADY_DELIVERED", "FAILED_DELIVERY", "INCOMPLETE"]
+    """What it is marked as, in Shipday's own word."""
+    was: str = Field(max_length=40)
+    """Where the screen showed it standing when the person tapped, in Shipday's own word."""
 
 
 def source_for(keys: HubKeys, **made_with: Any) -> Shipday | None:
@@ -164,4 +177,11 @@ def add_shipday(app: FastAPI) -> None:
         """Takes a delivery back from the driver the screen showed it with: nobody has it then."""
         board, person = asking(body.staff_id)
         answer = await run_in_threadpool(board.take_back, order_id, body.driver_id, by=person.name)
+        return {**answer, "shipday": await run_in_threadpool(board.said)}
+
+    @app.post("/shipday/orders/{order_id}/status")
+    async def mark_delivery(order_id: int, body: MarkIn) -> dict[str, Any]:
+        """Marks a delivery as it goes: started, picked up, at the customer's, delivered, failed, incomplete."""
+        board, person = asking(body.staff_id)
+        answer = await run_in_threadpool(board.mark, order_id, body.status, body.was, by=person.name)
         return {**answer, "shipday": await run_in_threadpool(board.said)}

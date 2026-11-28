@@ -1,10 +1,12 @@
 """A Shipday for the tests: it answers the hub's four questions from what a test put into it, in the shapes
-Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), makes the two changes
-the hub asks for (a driver given an order, an order taken back), and writes down every call it was made.
-Nobody's account, nobody's key, and no customer who exists."""
+Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), makes the three changes
+the hub asks for (a driver given an order, an order taken back, an order marked as it goes), and writes down
+every call it was made. Nobody's account, nobody's key, and no customer who exists."""
 
 from __future__ import annotations
 
+import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote
@@ -19,6 +21,10 @@ KEY = "MadeUpKey0.NobodysShipdayKey123456"
 ELM = "12 Elm St, Winchester, MA 01890"
 OAK = "4 Oak Rd, Winchester, MA 01890"
 TRACK = "https://dispatch.shipday.com/trackingPage/"
+
+STATUSES = ("STARTED", "PICKED_UP", "READY_TO_DELIVER", "ALREADY_DELIVERED", "INCOMPLETE", "FAILED_DELIVERY")
+"""What `PUT /orders/{orderId}/status` takes, as the table on its page lists them."""
+_STATUS_PATH = re.compile(r"^/orders/(\d+)/status$")
 
 TOM = {"id": 501, "name": "Tom Reyes", "phone": "+17815550150"}
 WEI = {"id": 502, "name": "Wei Zhang", "phone": "+17815550151"}
@@ -140,12 +146,13 @@ class FakeShipday:
     id (an answer, or the status it refuses with). `fail` makes every call fail: a status, or an error of
     the network. Every call is written down in `calls`, and what each carried in `sent`.
 
-    A change (`PUT /orders/assign/{orderId}/{carrierId}`, `PUT /orders/unassign/{orderId}`) is made to
-    `orders` and answered as the pages show: 204 with "assignment successful", 200 with "Carrier removed.".
-    `refuses` makes it refuse changes instead: a status with what it says, or `True` for an answer that
-    says `success` false. `deaf` makes it answer that the change is made and make none. `lost` makes the
-    change and then loses the answer on the way back. `before_change` is called just before a change is
-    made: what somebody else did in Shipday in that moment."""
+    A change (`PUT /orders/assign/{orderId}/{carrierId}`, `PUT /orders/unassign/{orderId}`,
+    `PUT /orders/{orderId}/status`) is made to `orders` and answered as the pages show: 204 with "assignment
+    successful", 200 with "Carrier removed.", 200 with "UPDATED STATUS: STARTED". An order marked delivered,
+    failed or incomplete leaves `orders` and is what `finished` says of its number from then on. `refuses`
+    makes it refuse changes instead: a status with what it says, or `True` for an answer that says `success`
+    false. `deaf` makes it answer that the change is made and make none. `lost` makes the change and then
+    loses the answer on the way back."""
 
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
@@ -162,11 +169,48 @@ class FakeShipday:
         self.calls: list[str] = []
         self.sent: list[httpx.Request] = []
 
-    def _change(self, path: str) -> httpx.Response:
+    def _refusal(self) -> httpx.Response | None:
         if self.refuses is True:
             return httpx.Response(200, json={"success": False, "response": "Carrier is not available."})
         if self.refuses:
             return httpx.Response(self.refuses[0], json=self.refuses[1])
+        return None
+
+    def _mark(self, ident: str, request: httpx.Request) -> httpx.Response:
+        """`PUT /orders/{orderId}/status`: the order stands where the body says, with the time of it."""
+        if (refusal := self._refusal()) is not None:
+            return refusal
+        found = [each for each in self.orders if str(each.get("orderId")) == ident]
+        try:
+            status = json.loads(request.content)["status"]
+        except (ValueError, KeyError, TypeError):
+            return httpx.Response(400, json={})
+        if not found or status not in STATUSES:
+            return httpx.Response(400, json={})
+        if not self.deaf:
+            order = found[0]
+            order["orderStatus"] = {"incomplete": status == "INCOMPLETE", "accepted": True, "orderState": status}
+            time_of = {
+                "STARTED": "startTime",
+                "PICKED_UP": "pickedUpTime",
+                "READY_TO_DELIVER": "arrivedTime",
+                "ALREADY_DELIVERED": "deliveryTime",
+            }
+            if status in time_of:
+                order["activityLog"][time_of[status]] = utc(self.now)
+            if status in ("ALREADY_DELIVERED", "INCOMPLETE", "FAILED_DELIVERY"):
+                self.orders.remove(order)
+                self.finished[order["orderNumber"]] = order
+        answer = httpx.Response(
+            200, json={"orderId": int(ident), "success": True, "response": f"UPDATED STATUS: {status}"}
+        )
+        if self.lost:
+            raise httpx.ReadTimeout("the answer never came")
+        return answer
+
+    def _change(self, path: str) -> httpx.Response:
+        if (refusal := self._refusal()) is not None:
+            return refusal
         pieces = path.strip("/").split("/")  # orders, assign | unassign, the order, the carrier
         found = [each for each in self.orders if str(each.get("orderId")) == pieces[2]]
         if not found:
@@ -203,6 +247,8 @@ class FakeShipday:
         path = unquote(request.url.path)
         if request.method == "PUT" and path.startswith(("/orders/assign/", "/orders/unassign/")):
             return self._change(path)
+        if request.method == "PUT" and (marked := _STATUS_PATH.match(path)) is not None:
+            return self._mark(marked.group(1), request)
         if request.method != "GET":
             return httpx.Response(405, json={})
         if path == "/orders":

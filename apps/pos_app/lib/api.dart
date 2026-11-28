@@ -1841,6 +1841,21 @@ class PosApi {
         }, timeout: const Duration(seconds: 60)),
       );
 
+  /// Marks a delivery as it goes: [status] is one of Shipday's own words, among the steps the hub lists for
+  /// it, and [was] where this screen showed it standing. Like [shipdayGive] otherwise.
+  Future<ShipdayChanged> shipdayMark(
+    int orderId,
+    String status, {
+    required String was,
+    required String staffId,
+  }) async => ShipdayChanged.fromJson(
+    await _post('/shipday/orders/$orderId/status', {
+      'staff_id': staffId,
+      'status': status,
+      'was': was,
+    }, timeout: const Duration(seconds: 60)),
+  );
+
   /// A manager's try of the hub's key for Shipday: Shipday is asked once, for its deliveries and its
   /// drivers, and nothing is changed there. Answers how the keys stand, with what the try came to in
   /// [HubKeys.shipdayTried]. 409 on a hub without the key, 404 from one older than reading Shipday.
