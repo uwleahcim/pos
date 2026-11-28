@@ -90,6 +90,9 @@ merges after any disconnect.
 - Keys and connections (a manager types the hub's keys for the map service, Google Maps, GloriaFood and
   Apple's push in the app, under Location, where they used to be put on the hub in its terminal; a typed
   key is sealed on the hub, in use at once, and never shown again): `docs/hub-keys.md`
+- Shipday (the hub reads the restaurant's deliveries and drivers in Shipday with its own key, and a screen
+  shows them by how far along they are, each beside the check it is on the POS, with when it is expected
+  where Shipday says; reading only so far: nothing is changed in Shipday): `docs/shipday.md`
 - Tax-exempt checks (a manager marks a check exempt from sales tax with their PIN; the organisation and its
   certificate number stay with the check, print on the bill and are listed in the day's report; every sale
   stays in the sales): `docs/tax-exempt.md`

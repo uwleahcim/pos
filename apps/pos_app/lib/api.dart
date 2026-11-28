@@ -46,6 +46,7 @@ import 'sales_report.dart';
 import 'seated.dart';
 import 'settings.dart';
 import 'shift_notes.dart';
+import 'shipday.dart';
 import 'staff_list.dart';
 import 'suggestions_report.dart';
 import 'takeout.dart';
@@ -1794,6 +1795,38 @@ class PosApi {
   /// than most calls. 409 from a hub with no key for asking.
   Future<OnlineAsked> onlineFetch() async => OnlineAsked.fromJson(
     await _post('/online/fetch', const <String, dynamic>{}, timeout: const Duration(seconds: 30)),
+  );
+
+  // Shipday (docs/shipday.md). -------------------------------------------------------------------------------
+
+  /// Shipday's deliveries and drivers as the hub last heard of them, each delivery with the check it is on
+  /// the POS. The very same object as last time while nothing changed. With [looking] the hub takes it
+  /// that a screen shows the answer, and asks Shipday oftener for the next two minutes. Null from a hub
+  /// older than reading Shipday.
+  Future<ShipdayBoard?> shipday({bool looking = false}) async {
+    try {
+      return await _repeated('/shipday', ShipdayBoard.fromJson, query: looking ? const {'looking': 'true'} : null);
+    } on ApiException catch (err) {
+      if (err.status == 404 || err.status == 405) return null;
+      rethrow;
+    }
+  }
+
+  /// Asks Shipday now, out of the hub's own turn: the screen's button. Answers what came of it and the
+  /// picture after it. The hub waits for Shipday, so this waits longer than most calls. 409 from a hub
+  /// with no key for Shipday.
+  Future<ShipdayAsked> shipdayAsk() async => ShipdayAsked.fromJson(
+    await _post('/shipday/ask', const <String, dynamic>{}, timeout: const Duration(seconds: 30)),
+  );
+
+  /// A manager's try of the hub's key for Shipday: Shipday is asked once, for its deliveries and its
+  /// drivers, and nothing is changed there. Answers how the keys stand, with what the try came to in
+  /// [HubKeys.shipdayTried]. 409 on a hub without the key, 404 from one older than reading Shipday.
+  Future<HubKeys> tryShipday(String token) async => HubKeys.fromJson(
+    await _withFailover(
+      (base) => _client.post(Uri.parse('$base/hub/shipday/try'), headers: _bearer(token)),
+      timeout: const Duration(seconds: 45),
+    ),
   );
 
   // The hub's keys (docs/hub-keys.md). ----------------------------------------------------------------------

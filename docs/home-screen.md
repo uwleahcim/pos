@@ -47,7 +47,7 @@ there only where the thing is in use and the person signed in may open it, as th
 
 | Group | Tiles |
 | --- | --- |
-| **Guests & orders** | Waitlist, Reservations, Orders ahead, Deliveries, Online orders, Texts, Kitchen rush |
+| **Guests & orders** | Waitlist, Reservations, Orders ahead, Deliveries, Online orders, Shipday, Texts, Kitchen rush |
 | **Shift** | Time clock, Notes, Contests, Waste |
 | **Manager** | Today, Location, Menu editor |
 | **This device** | Closed checks, Display, Settings |
@@ -58,6 +58,8 @@ Some tiles say what is going on behind them:
   when a party or a table is near its time and red when one is past it.
 - **Kitchen rush** is filled while a rush runs, and says how many minutes it adds and until when.
 - **Online orders** has a red dot and "Take a look" while there is something to look at.
+- **Shipday** is there once the hub has a key for Shipday, and says how its deliveries stand ("2 need a
+  driver", "3 out"): `shipday.md`.
 - **Texts** carries the number of conversations that hold something nobody has read ("2 not read"), and
   puts the red dot on **More** while one waits (`text-inbox.md`).
 - **Notes** says how many are up.
@@ -80,7 +82,7 @@ have one to a row for the same reason, and the menu scrolls.
 | Reservations: in a phone's list, behind the waitlist on a tablet | A button in a tablet's row and a tile on every screen |
 | Orders ahead, Deliveries: icons in a tablet's row, lines of a phone's list | Buttons with their words in a tablet's row; tiles on every screen |
 | Show closed / Hide closed | The **Closed checks** tile |
-| Notes, Contests, Time clock, Waste, Kitchen rush, Online orders, Today, Location, Menu editor, Display, Settings | Tiles in the menu |
+| Notes, Contests, Time clock, Waste, Kitchen rush, Online orders, Shipday, Today, Location, Menu editor, Display, Settings | Tiles in the menu |
 
 **To go** and **Tab**, at the bottom right, are where they were. So are the search and the to-go stages
 over the list of checks, and the rooms over the floor map.

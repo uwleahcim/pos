@@ -13,8 +13,13 @@
 ///
 /// One is the restaurant's Twilio account (`texts`; docs/texts.md), which the texts to customers go out
 /// with. The hub says how the texts are doing ([TextsState]) and can send one to try it ([TextTried]).
+///
+/// One is the restaurant's key for Shipday (`shipday`; docs/shipday.md), which the hub reads the deliveries
+/// and the drivers there with. The hub says how that asking goes ([ShipdayAbout]) and can try the key
+/// ([ShipdayTried]).
 library;
 
+import 'shipday.dart' show ShipdayAbout, ShipdayTried;
 import 'takeout.dart' show clockTime;
 
 /// One key as the hub describes it.
@@ -47,7 +52,7 @@ class HubKey {
   );
 
   /// `maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `online_push`, `online_tunnel`,
-  /// `push_apple` or `texts`; `online:<id>` for a further account of GloriaFood's.
+  /// `push_apple`, `texts` or `shipday`; `online:<id>` for a further account of GloriaFood's.
   final String name;
 
   /// A key is in force on the hub.
@@ -546,6 +551,8 @@ class HubKeys {
     this.textTried,
     this.textsWay,
     this.textsWayTried,
+    this.shipday,
+    this.shipdayTried,
   });
 
   factory HubKeys.fromJson(Map<String, dynamic> json) => HubKeys(
@@ -574,6 +581,10 @@ class HubKeys {
     textsWayTried: json['way_tried'] is Map
         ? TextsWayTried.fromJson((json['way_tried'] as Map).cast<String, dynamic>())
         : null,
+    shipday: json['shipday'] is Map ? ShipdayAbout.fromJson((json['shipday'] as Map).cast<String, dynamic>()) : null,
+    shipdayTried: json['shipday_tried'] is Map
+        ? ShipdayTried.fromJson((json['shipday_tried'] as Map).cast<String, dynamic>())
+        : null,
   );
 
   /// The account that was just added, in the answer to adding one.
@@ -596,6 +607,12 @@ class HubKeys {
 
   /// What a try of Twilio's way in came to, in the answer to trying it.
   final TextsWayTried? textsWayTried;
+
+  /// How the hub's asking of Shipday goes; null from a hub older than reading Shipday.
+  final ShipdayAbout? shipday;
+
+  /// What a try of Shipday's key came to, in the answer to trying it.
+  final ShipdayTried? shipdayTried;
 
   final List<HubKey> keys;
 
@@ -788,5 +805,17 @@ const hubKeyInfo = <String, HubKeyInfo>{
         "In Twilio's console (console.twilio.com), on the first page: the Account SID and the Auth Token. Send "
         "from one of the account's own numbers that can text.",
     removing: 'The hub stops texting customers.',
+  ),
+  'shipday': HubKeyInfo(
+    title: 'Shipday (deliveries)',
+    short: 'Shipday',
+    about:
+        'The hub reads your deliveries and your drivers in Shipday with it, and the Shipday screen shows them '
+        'beside the checks they are on the POS. It only reads: nothing is changed in Shipday.',
+    without: 'Without it the hub asks Shipday for nothing, and there is no Shipday screen.',
+    where:
+        "In Shipday's Dispatch Dashboard (dispatch.shipday.com), under My Account: the API key. Copy it "
+        'whole.',
+    removing: 'The hub stops asking Shipday, and the Shipday screen goes away. Nothing changes in Shipday.',
   ),
 };

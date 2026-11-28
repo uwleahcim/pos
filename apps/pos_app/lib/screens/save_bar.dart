@@ -50,6 +50,7 @@ class SaveBarScaffold extends StatefulWidget {
     required this.child,
     this.appBar,
     this.always = false,
+    this.onBack,
     this.saveKey,
     this.label = 'Save',
     this.waiting = 'Changes not saved',
@@ -73,6 +74,10 @@ class SaveBarScaffold extends StatefulWidget {
   /// The bar stays up with nothing changed here: for a page that has something to save all the same (a
   /// terminal's first set-up, printers the hub was handed some other way). Leaving asks only for a change.
   final bool always;
+
+  /// What Back does before the page is left, when the page has something of its own open that Back
+  /// closes first (its search): Back calls this and the page stays. Null for a page that Back leaves.
+  final VoidCallback? onBack;
 
   /// The key of the Save button.
   final Key? saveKey;
@@ -195,9 +200,10 @@ class _SaveBarScaffoldState extends State<SaveBarScaffold> with SingleTickerProv
       _problems = widget.problems;
     }
     return PopScope(
-      canPop: !widget.changed,
+      canPop: !widget.changed && widget.onBack == null,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
+        if (widget.onBack case final back?) return back();
         final navigator = Navigator.of(context);
         if (await confirmLeave(context, widget.unsaved)) navigator.pop();
       },

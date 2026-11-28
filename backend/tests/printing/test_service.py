@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 import time
 
 import pytest
@@ -137,6 +138,35 @@ def test_hub_prints_on_fire_and_unrouted_lines_go_to_the_first_printer():
     finally:
         epson.close()
         star.close()
+
+
+def test_a_ticket_slow_to_hand_over_prints_once():
+    """What doubled tickets at the restaurant (2026-11-27): one printer takes every station's ticket of an
+    order, a ticket each, so the later ones wait for the printer to finish the ones before. The hub's loop
+    gives every job that is not done another go every few seconds, and it took a job that was still being
+    handed over for one that had not gone out: the ticket printed twice."""
+    sent: list[bytes] = []
+    taking, free = threading.Event(), threading.Event()
+
+    def busy(printer: str, data: bytes) -> None:
+        sent.append(data)
+        taking.set()
+        assert free.wait(5)
+
+    service = PrintService([Printer("kitchen", "10.0.0.5")], send=busy)
+    client = TestClient(create_app(OpStore(physical=lambda: T0 + 100), printing=service))
+    client.post("/orders/o1/ops", json=[payload(o) for o in ORDER])
+    fired = client.post("/orders/o1/ops", json=[payload(op("f", "fire", 5, course="*"))]).json()
+    assert fired["print_jobs"] == ["f:kitchen"]
+    assert taking.wait(5)  # the printer has begun to take it
+    assert service.retry_pending() == 0  # the loop comes round while it does
+    listed = client.get("/print/jobs").json()["jobs"][0]
+    assert listed["status"] == "leased" and listed["leased_to"] == "hub"  # being written, as the list says
+    assert client.post("/print/jobs/claim", json={"relay": "ipad1", "printers": ["10.0.0.5"]}).json()["job"] is None
+    free.set()
+    wait_for(lambda: client.get("/print/jobs").json()["jobs"][0]["status"] == "done")
+    assert len(sent) == 1
+    assert client.get("/print/jobs").json()["jobs"][0]["attempts"] == 1
 
 
 def test_cloud_leaves_jobs_for_a_relay():

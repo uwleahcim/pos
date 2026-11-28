@@ -3,8 +3,8 @@
 Every call is a manager's (the token from `/admin/session`): no setting hands them out.
 
 - `GET /hub/keys`: every key the hub can hold, as a screen may see it (`pos.keys.HubKeys.views`): `keys`, each
-  with its `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `push_apple`, `texts`), whether
-  one is in force (`set`), where
+  with its `name` (`maps`, `maps_google`, `maps_mapbox`, `maps_azure`, `online`, `push_apple`, `texts`,
+  `shipday`), whether one is in force (`set`), where
   from (`source`: `app`, `hub` for the hub's own file, or null), its last characters (`ending`), Apple's ids
   (`shown`), who touched it in the app last and when (`by`, `at_ms`), `removed` and `unreadable`. And
   `kept`: false on a hub that has nowhere to keep its sealing secret, where a key typed in the app lasts
@@ -90,6 +90,20 @@ by the push door and the tunnel, at the address above, under a word the hub make
   the door and, with an address, from outside, and says whether each call reached it: `way_tried.door` and
   `way_tried.outside`, each with `ok`, `reason` and the answer's `code`. 409 `off` while it is not turned on.
 
+**Shipday** (`pos.shipday`; docs/shipday.md). The restaurant's key for Shipday is the key `shipday`:
+`PUT /hub/keys/shipday` with `{"key": "..."}`. From the moment it is typed the hub asks Shipday for its
+deliveries and drivers, and with it removed it asks nothing.
+
+- `GET /hub/keys` also gives `shipday`: how the asking goes: `on` (a key is in force), `running`, when
+  Shipday was last asked and last answered (`asked_ms`, `answered_ms`), `trouble` (null, or `since_ms`,
+  `reason` and `said` for an asking that got no answer), whether Shipday says how far away a delivery is
+  (`eta`: `off`, `on`, `plan`), and how many active `orders`, `drivers` and drivers `on_shift` it last
+  listed. No order and no customer.
+- `POST /hub/shipday/try`: Shipday is asked now, for its active orders and its drivers, and what came of
+  it is answered as `shipday_tried`: `ok`, `reason` and `said` when not, and how many `orders`, `drivers`
+  and drivers `on_shift` it listed. Nothing is changed in Shipday. 409 `no_key` on a hub without a key.
+  Answers like the `GET` beside it.
+
 A key changes the service that uses it in place (`use_keys`): the map lookups keep the day's counts, the
 online orders start asking (or stop), Apple's sender is exchanged and so is the messenger the texts go out
 with. A hub also looks once a minute whether
@@ -117,6 +131,7 @@ from ..keys import (
     ONLINE_PUSH,
     ONLINE_TUNNEL,
     PUSH_APPLE,
+    SHIPDAY,
     SLOTS,
     TEXTS,
     TEXTS_WAY,
@@ -135,9 +150,11 @@ from ..online.wayin import ADDRESS_SETTING, WayIn, clean_address
 from ..push.apns import ApnsConfig, ApnsSender
 from ..push.relay import PushRelay
 from ..settings import SettingStore
+from ..shipday.board import ShipdayBoard
 from ..sync.pgstore import ReadOnlyError
 from ..twilio import TwilioMessenger, config_of
 from .auth import manager_from
+from .shipday import use_shipday
 
 log = logging.getLogger(__name__)
 
@@ -427,6 +444,9 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
     if names is None or TEXTS_WAY in wanted:
         await run_in_threadpool(hand_texts_way, app)
         app.state.feed.changed("texts")  # the screens say whether a text can carry a picture
+    if SHIPDAY in wanted:
+        # never in the middle of a round, which may be waiting for Shipday: off the loop
+        await run_in_threadpool(use_shipday, app)
     app.state.keys_mark = await run_in_threadpool(keys_mark, keys, app.state.settings)
 
 
@@ -487,6 +507,7 @@ def add_hub_keys(app: FastAPI) -> None:
             "way_in": {"address": address(), **wayin.about()},
             "texts": texts(),
             "texts_way": twilio_way(),
+            "shipday": app.state.shipday.about(),
         }
 
     def slot_of(name: str) -> str:
@@ -737,3 +758,25 @@ def add_hub_keys(app: FastAPI) -> None:
         words = f"A test from the POS at {app.state.location}: texts to customers are working."
         tried = await run_in_threadpool(messenger.try_now, body.to, words)
         return {**await run_in_threadpool(said), "tried": tried}
+
+    @app.post("/hub/shipday/try")
+    async def try_shipday(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Shipday is asked now, with the key in force, for its active orders and its drivers: whether it
+        answered, and how many of each it listed. Nothing is changed in Shipday."""
+        manager_from(app.state.tokens, authorization)
+        board: ShipdayBoard = app.state.shipday
+        if not board.configured:
+            message = "this hub has no key for Shipday yet"
+            raise HTTPException(409, {"error": "no_key", "message": message})
+        came = await run_in_threadpool(lambda: board.round(forced=True))
+        now = await run_in_threadpool(said)
+        about = now["shipday"]
+        tried = {
+            "ok": came["answered"],
+            "reason": came["reason"],
+            "said": came["said"],
+            "orders": about["orders"] if came["answered"] else None,
+            "drivers": about["drivers"] if came["answered"] else None,
+            "on_shift": about["on_shift"] if came["answered"] else None,
+        }
+        return {**now, "shipday_tried": tried}

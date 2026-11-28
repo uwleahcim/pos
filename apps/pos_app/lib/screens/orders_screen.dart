@@ -26,6 +26,7 @@ import '../print_relay.dart';
 import '../roster.dart';
 import '../session.dart';
 import '../shift_notes.dart';
+import '../shipday.dart';
 import '../staff_list.dart' show roleName;
 import '../switching.dart';
 import '../tags.dart';
@@ -61,6 +62,7 @@ import 'rush.dart';
 import 'server_picker.dart';
 import 'shift_notes_dialog.dart';
 import 'shift_notes_screen.dart';
+import 'shipday_screen.dart';
 import 'settings_screen.dart';
 import 'status_bar.dart';
 import 'tab_dialog.dart';
@@ -183,6 +185,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // the website stopped answering is nothing the hub announces). Null until it was read, and from an older hub.
   OnlineStatus? _online;
   bool _onlineStale = true;
+  // Shipday's deliveries and drivers as the hub last heard of them (docs/shipday.md), for the button that
+  // opens them: there once the hub has a key for Shipday. Null until it was read, and from an older hub.
+  // Read when the hub says the picture changed, and now and then while it cannot say.
+  ShipdayBoard? _shipday;
+  bool _shipdayStale = true;
+  DateTime _shipdayRead = DateTime.fromMillisecondsSinceEpoch(0);
   int _onlineTicks = 0; // of this screen's two-second timer since it was last due by itself
   // Rings once, at the next moment the clock alone changes what this screen shows: an order for later
   // nears its start, or the rush runs out. Nothing here redraws by the second.
@@ -230,6 +238,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (change.reservations || change.everything) _bookStale = true;
       if (change.online || change.everything) _onlineStale = true;
       if (change.texts || change.everything) _textsStale = true;
+      if (change.shipday || change.everything) _shipdayStale = true;
       // a party seated from the book or the waitlist, or put back: its check says whose it is
       if (_inFront && (change.anyOrder || change.reservations || change.waitlist)) _reader();
       if (_inFront && change.notes) unawaited(_readNotes());
@@ -237,6 +246,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (_inFront && change.reservations) unawaited(_readBook());
       if (_inFront && change.online) unawaited(_readOnline());
       if (_inFront && change.texts) unawaited(_readTexts());
+      if (_inFront && change.shipday) unawaited(_readShipday());
     });
     widget.outbox.addListener(_onOutbox);
     widget.settings.addListener(_onOpensOn);
@@ -366,6 +376,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     unawaited(_readBook());
     unawaited(_readOnline());
     unawaited(_readTexts());
+    unawaited(_readShipday());
     try {
       // Finding a check looks through the closed ones too: the last day's, or the day a manager picked.
       final finding = _finding;
@@ -515,6 +526,37 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } on ApiException {
       // nothing answers: the alert keeps what it said, and the status bar shows the outage
     }
+  }
+
+  /// Shipday's deliveries and drivers, for the button that opens them and the few words on it: read when the
+  /// hub says they changed, and now and then while it cannot say (twice a minute at most). Nothing here
+  /// makes the hub ask Shipday oftener: only the Shipday screen does. The answer is the one already held
+  /// unless something changed.
+  Future<void> _readShipday() async {
+    final now = DateTime.now();
+    if (!_shipdayStale && now.difference(_shipdayRead) < const Duration(seconds: 30)) return;
+    _shipdayStale = false;
+    _shipdayRead = now;
+    try {
+      final board = await widget.api.shipday();
+      if (!mounted || identical(board, _shipday)) return;
+      setState(() => _shipday = board);
+    } on ApiException {
+      // nothing answers: the button keeps what it showed
+    }
+  }
+
+  /// Shipday on a screen of its own (docs/shipday.md): its drivers, and its deliveries with the check each
+  /// is on the POS. A check tapped there opens on top of it.
+  Future<void> _openShipday() async {
+    await Navigator.of(context).push(
+      PosPageRoute(
+        builder: (_) => ShipdayScreen(api: widget.api, board: _shipday, onOpen: _open),
+      ),
+    );
+    if (!mounted) return;
+    _shipdayStale = true;
+    unawaited(_readShipday());
   }
 
   /// How the online orders are doing, on a screen of its own: opening it is the looking, so the alert is over
@@ -1864,6 +1906,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _onlineOrders,
           note: OnlineAlertStrip.shows(_online) ? 'Take a look' : null,
           attention: OnlineAlertStrip.shows(_online),
+        ),
+      // where the hub reads the restaurant's Shipday account (docs/shipday.md)
+      if (_shipday?.on ?? false)
+        HomeEntry(
+          'shipday',
+          'Shipday',
+          Icons.local_shipping_outlined,
+          _openShipday,
+          note: _shipday!.note,
+          count: _shipday!.needDriver.length,
         ),
       if (showsTexts)
         HomeEntry(

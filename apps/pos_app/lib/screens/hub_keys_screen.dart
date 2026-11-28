@@ -151,6 +151,7 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
       'online_push' => "Saved. The push door is open for it. Put the same key into GloriaFood's admin.",
       'online_tunnel' => 'Saved. The tunnel is started with it.',
       'texts' => 'Saved. Texts to customers go out through Twilio from now on. Try it with your own phone.',
+      'shipday' => 'Saved. The hub reads Shipday with it from now on. Press Try it to see that it works.',
       _ => 'Saved. The hub uses it from now on.',
     });
     _watchTunnel();
@@ -590,10 +591,34 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
     unawaited(showDialog<void>(context: context, builder: (_) => const TextsWayHelp()));
   }
 
+  /// Shipday is asked once with the key in force, for its deliveries and its drivers. Nothing is changed
+  /// there.
+  Future<void> _tryShipday(String name) => _trying(name, () async {
+    final HubKeys answer;
+    try {
+      answer = await widget.api.tryShipday(widget.token);
+    } on ApiException catch (err) {
+      if (err.status == 409) return (words: 'This hub has no key for Shipday in force. Type it again here.', bad: true);
+      if (err.status == 404 || err.status == 405) {
+        return (words: 'This hub is older than reading Shipday. Update it first.', bad: true);
+      }
+      rethrow;
+    }
+    if (mounted) {
+      setState(() => _keys = answer);
+      widget.onChanged?.call(answer);
+    }
+    final tried = answer.shipdayTried;
+    if (tried == null) return (words: 'The hub did not say what the try came to.', bad: true);
+    return (words: tried.words, bad: tried.bad);
+  });
+
   void _try(HubKey key, OnlineAccount? account) {
     switch (key.name) {
       case 'texts':
         _tryTexts(key.name);
+      case 'shipday':
+        _tryShipday(key.name);
       case 'maps':
         _tryMaps(key.name, 'geocodio', 'Geocodio');
       case 'maps_google':
@@ -684,6 +709,7 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
             ),
             ..._wayInLines(context, key),
             ..._textsLines(context, key),
+            ..._shipdayLines(context, key),
             const SizedBox(height: 4),
             Text(
               [
@@ -897,6 +923,27 @@ class _HubKeysScreenState extends State<HubKeysScreen> {
           key: const ValueKey('texts-failed'),
           style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.error),
         ),
+    ];
+  }
+
+  /// What the card of Shipday's key says beyond the key: when Shipday last answered and how much it
+  /// listed, or why it does not answer, and what the account's plan leaves out. No order and no customer.
+  List<Widget> _shipdayLines(BuildContext context, HubKey key) {
+    final shipday = _keys.shipday;
+    if (key.name != 'shipday' || !key.set || shipday == null || !shipday.on) return const [];
+    final theme = Theme.of(context);
+    final words = shipday.words;
+    final plan = shipday.planWords;
+    return [
+      if (words != null) ...[
+        const SizedBox(height: 2),
+        Text(
+          words,
+          key: const ValueKey('shipday-state'),
+          style: theme.textTheme.bodyMedium?.copyWith(color: shipday.trouble != null ? theme.colorScheme.error : null),
+        ),
+      ],
+      if (plan != null) Text(plan, key: const ValueKey('shipday-plan'), style: theme.textTheme.bodyMedium),
     ];
   }
 

@@ -27,10 +27,10 @@ An order sent ahead of its time (tonight at seven, Saturday's catering) prints n
 the hub keeps which dishes wait (`pos.printing.held`, in the database, so a restart loses nothing) and
 makes the ticket when the time comes, from the order as it stands then (`release_due`).
 
-A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default); the cloud cannot reach a
-LAN printer, so it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way
-the job store is the queue; the printing itself is retried in the background and never holds up the order
-call.
+A hub writes jobs straight to the printers (`POS_PRINT_DIRECT=1`, the default), each printer's one at a
+time and in the order they were queued (`pos.printing.jobs.Lines`); the cloud cannot reach a LAN printer, so
+it runs with `POS_PRINT_DIRECT=0` and leaves jobs for a terminal relay to claim. Either way the job store is
+the queue; the printing itself is done and retried in the background and never holds up the order call.
 
 Every paper queued is written in the print log (`pos.printing.log`) with what became of it, and can be
 printed again from there, headed REPRINT (`PrintService.reprint`).
@@ -59,7 +59,7 @@ from .bill import Bill, render_bill
 from .day import DayPaper, render_day
 from .escpos import find_font
 from .held import Held, HeldTickets, Part
-from .jobs import JobStore, PrintJob, send_raw
+from .jobs import JobStore, Lines, PrintJob, send_raw
 from .labels import BagLabels, render_labels
 from .log import DAY_MS, KEEP_DAYS, Event, Print, PrintLog
 from .pack import PackSheet, render_pack
@@ -643,6 +643,8 @@ class PrintService:
         self._holding = threading.Lock()  # one at a time decides what waits and what prints of an order
         self.direct = direct
         self._send = send
+        self.lines = Lines(self.store, lambda printer, data: self._send(printer, data))
+        """A hub's delivery: a line for each printer, handed one paper at a time (`pos.printing.jobs`)."""
         self._font = font or find_font()
         self._dots = dots
         self._now = now
@@ -1540,21 +1542,21 @@ class PrintService:
         return data, fallbacks
 
     def _start(self, job: PrintJob) -> None:
-        """A hub writes a job to its printer as soon as it is queued, on a thread of its own."""
+        """A hub writes a job to its printer as soon as it is queued: its printer's line takes it, behind
+        whatever that printer has not taken yet."""
         if self.direct:
-            threading.Thread(target=self._deliver, args=(job,), daemon=True).start()
-
-    def _deliver(self, job: PrintJob) -> None:
-        self.store.deliver_direct(job, send=self._send)
+            self.lines.wake(job.printer)
 
     def start_retrying(self, interval: float = 3.0) -> None:
         """A daemon that every `interval` seconds makes the tickets of the orders sent ahead whose time has
-        come (`release_due`), and on a hub gives undelivered jobs another go."""
+        come (`release_due`), and on a hub wakes the line of every printer that has papers waiting: one
+        that failed them is tried again. Neither waits for a printer, so one that is off holds up nothing
+        here."""
 
         def loop() -> None:
             while True:
                 time.sleep(interval)
-                for step in (self.release_due, self.retry_pending):
+                for step in (self.release_due, self.wake_lines):
                     try:
                         step()
                     except Exception:  # noqa: BLE001 - a printing hiccup must never stop the loop
@@ -1562,8 +1564,16 @@ class PrintService:
 
         threading.Thread(target=loop, name="print-retry", daemon=True).start()
 
+    def wake_lines(self) -> None:
+        """The hub's second chance for jobs its first write could not deliver: their printers' lines are
+        worked again, each on its own thread."""
+        if self.direct:
+            self.lines.wake_all()
+
     def retry_pending(self) -> int:
-        """The hub's second chance for jobs its first write could not deliver. Returns how many printed."""
+        """One go at every job that waits, here and now, a printer at a time (`Lines.sweep`): what the
+        lines do by themselves on a hub, for a caller that wants it done before it goes on. Returns how
+        many printed."""
         if not self.direct:
             return 0
-        return sum(1 for job in self.store.pending() if self.store.deliver_direct(job, send=self._send))
+        return self.lines.sweep()

@@ -1208,6 +1208,34 @@ class Hub {
   int? refuseNotesSeen;
   (int, String, String)? refuseNote;
 
+  // Twilio's way in, as the last paragraph but one of the words over [hubKeys] says.
+  bool? textsWayOn = false;
+  int textsWayMade = 0;
+  bool? textsWayDoor = true;
+  int? textsWayCalledMs;
+  Map<String, dynamic> textsWayTried = {
+    'door': {'ok': true, 'reason': null, 'code': 200},
+    'outside': null,
+  };
+  int textsWayTries = 0;
+
+  /// The hub's word for Twilio, as the address it made last carries it.
+  String get textsWayWord => 'w${textsWayMade}XuW3q0c9fHk2mLr8sTz5vYb1nGd4jPa7eQo6iUx';
+
+  /// Twilio's way in as the hub says it beside its keys.
+  Map<String, dynamic>? get textsWaySaid {
+    final on = textsWayOn;
+    if (on == null) return null;
+    final address = wayIn?['address'] as String? ?? '';
+    return {
+      'on': on,
+      'address': address,
+      'url': on && address.isNotEmpty ? 'https://$address/twilio/$textsWayWord/text' : null,
+      'door': textsWayDoor,
+      'called_ms': textsWayCalledMs,
+    };
+  }
+
   /// The hub's keys (docs/hub-keys.md). [hubKeys] is how each stands, by name, as `GET /hub/keys` says it;
   /// null is a hub older than keys typed in the app. Only Mike's token reads or changes them
   /// ([hubKeysAuth] keeps the last one sent). `PUT /hub/keys/<name>` puts the typed key in force as one typed
@@ -1247,33 +1275,10 @@ class Hub {
   /// none of its calls. `POST /hub/texts/way` turns it on (`again` makes a new word; 409 without a Twilio
   /// account), `DELETE` turns it off, and `POST /hub/texts/way/try` answers [textsWayTried]
   /// ([textsWayTries] counts them), or 409 while it is off.
-  bool? textsWayOn = false;
-  int textsWayMade = 0;
-  bool? textsWayDoor = true;
-  int? textsWayCalledMs;
-  Map<String, dynamic> textsWayTried = {
-    'door': {'ok': true, 'reason': null, 'code': 200},
-    'outside': null,
-  };
-  int textsWayTries = 0;
-
-  /// The hub's word for Twilio, as the address it made last carries it.
-  String get textsWayWord => 'w${textsWayMade}XuW3q0c9fHk2mLr8sTz5vYb1nGd4jPa7eQo6iUx';
-
-  /// Twilio's way in as the hub says it beside its keys.
-  Map<String, dynamic>? get textsWaySaid {
-    final on = textsWayOn;
-    if (on == null) return null;
-    final address = wayIn?['address'] as String? ?? '';
-    return {
-      'on': on,
-      'address': address,
-      'url': on && address.isNotEmpty ? 'https://$address/twilio/$textsWayWord/text' : null,
-      'door': textsWayDoor,
-      'called_ms': textsWayCalledMs,
-    };
-  }
-
+  ///
+  /// Shipday (docs/shipday.md): the key `shipday`, and beside the keys how the hub's asking goes, worked out
+  /// from [shipday] ([shipdayAbout]). `POST /hub/shipday/try` answers [shipdayTried] ([shipdayTries] counts
+  /// them), or 409 without the key. A hub from before Shipday ([shipday] null) lists no such key.
   Map<String, Map<String, dynamic>>? hubKeys = {
     for (final name in [
       'maps',
@@ -1285,9 +1290,175 @@ class Hub {
       'online_tunnel',
       'push_apple',
       'texts',
+      'shipday',
     ])
       name: noKey(name),
   };
+
+  /// Shipday's deliveries and drivers as the hub answers `GET /shipday` (docs/shipday.md): null is a hub
+  /// older than reading Shipday (404). [shipdayAsks] counts the reads and [shipdayLooks] the ones that said
+  /// a screen is looking. `POST /shipday/ask` answers [shipdayAsked] with the picture ([shipdayAskCount]
+  /// counts them; [shipdayOnAsk] runs first, to change the picture as Shipday's answer would), or 409 while
+  /// the picture says the hub has no key. [shipdayDown] makes every one of these calls fail.
+  Map<String, dynamic>? shipday = shipdayStands(on: false);
+  int shipdayAsks = 0;
+  int shipdayLooks = 0;
+  int shipdayAskCount = 0;
+  bool shipdayDown = false;
+  void Function()? shipdayOnAsk;
+  Map<String, dynamic> shipdayAsked = {'asked': true, 'answered': true, 'soon': false, 'reason': null, 'said': ''};
+  Map<String, dynamic> shipdayTried = {
+    'ok': true,
+    'reason': null,
+    'said': '',
+    'orders': 0,
+    'drivers': 0,
+    'on_shift': 0,
+  };
+  int shipdayTries = 0;
+
+  /// The picture `GET /shipday` gives.
+  static Map<String, dynamic> shipdayStands({
+    bool on = true,
+    bool read = true,
+    Map<String, dynamic>? trouble,
+    String eta = 'off',
+    List<Map<String, dynamic>> orders = const [],
+    List<Map<String, dynamic>> done = const [],
+    List<Map<String, dynamic>> drivers = const [],
+  }) => {
+    'on': on,
+    'read': on && read,
+    'trouble': trouble,
+    'eta': eta,
+    'orders': orders,
+    'done': done,
+    'drivers': drivers,
+  };
+
+  /// One of Shipday's deliveries as the hub tells a screen. [check] is the check it is on the POS
+  /// ([shipdayCheck]).
+  static Map<String, dynamic> shipdayOrder(
+    int id,
+    String number, {
+    String state = 'NOT_ASSIGNED',
+    String name = 'Linda Chen',
+    String address = '12 Elm St, Winchester, MA 01890',
+    String phone = '+17815550101',
+    Map<String, dynamic>? driver,
+    int? placedMs,
+    int? dueMs,
+    int? assignedMs,
+    int? startedMs,
+    int? pickedUpMs,
+    int? arrivedMs,
+    int? deliveredMs,
+    int? endedMs,
+    int? etaMs,
+    String etaSaid = '',
+    String? total = '42.75',
+    String payment = 'CREDIT_CARD',
+    String note = '',
+    Map<String, dynamic>? check,
+  }) => {
+    'id': id,
+    'number': number,
+    'state': state,
+    'name': name,
+    'address': address,
+    'phone': phone,
+    'driver': driver == null ? null : {'id': driver['id'], 'name': driver['name'], 'phone': driver['phone']},
+    'placed_ms': placedMs,
+    'due_ms': dueMs,
+    'assigned_ms': assignedMs,
+    'started_ms': startedMs,
+    'picked_up_ms': pickedUpMs,
+    'arrived_ms': arrivedMs,
+    'delivered_ms': deliveredMs,
+    'ended_ms': ?endedMs,
+    'eta_ms': etaMs,
+    'eta_said': etaSaid,
+    'total': total,
+    'fee': '4.00',
+    'tip': '5.00',
+    'payment': payment,
+    'items': 3,
+    'note': note,
+    'tracking': '',
+    'scheduled': false,
+    'pos': check,
+  };
+
+  /// A driver of the Shipday account as the hub tells a screen.
+  static Map<String, dynamic> shipdayDriver(
+    int id,
+    String name, {
+    bool onShift = true,
+    bool active = true,
+    int orders = 0,
+  }) => {
+    'id': id,
+    'name': name,
+    'phone': '+1781555${(id % 10000).toString().padLeft(4, '0')}',
+    'on_shift': onShift,
+    'active': active,
+    'orders': orders,
+  };
+
+  /// The check on the POS a delivery is, as the hub says it beside the delivery.
+  static Map<String, dynamic> shipdayCheck(
+    String orderId,
+    int? orderNo, {
+    String status = 'open',
+    String stage = 'new',
+    String by = 'number',
+  }) => {'order_id': orderId, 'order_no': orderNo, 'status': status, 'stage': stage, 'by': by};
+
+  /// How the asking of Shipday goes, as the hub says it beside its keys: worked out from [shipday], with
+  /// the last answer at [answeredMs].
+  Map<String, dynamic>? shipdayAbout({int? answeredMs}) {
+    final picture = shipday;
+    if (picture == null) return null;
+    final drivers = (picture['drivers'] as List).cast<Map<String, dynamic>>();
+    final on = picture['on'] == true;
+    return {
+      'on': on,
+      'running': on,
+      'asked_ms': on ? answeredMs ?? shipdayAnsweredMs : null,
+      'answered_ms': on && picture['read'] == true ? answeredMs ?? shipdayAnsweredMs : null,
+      'trouble': picture['trouble'],
+      'eta': picture['eta'],
+      'orders': (picture['orders'] as List).length,
+      'drivers': drivers.length,
+      'on_shift': drivers.where((driver) => driver['on_shift'] == true).length,
+    };
+  }
+
+  /// When Shipday last answered the hub, for the page of the keys.
+  int shipdayAnsweredMs = DateTime(2026, 11, 16, 18, 30).millisecondsSinceEpoch;
+
+  http.Response _shipday(http.Request request) {
+    final picture = shipday;
+    if (picture == null) return json({'detail': 'Not Found'}, 404);
+    if (shipdayDown) throw const SocketException('down');
+    if (request.url.path == '/shipday' && request.method == 'GET') {
+      shipdayAsks += 1;
+      if (request.url.queryParameters['looking'] == 'true') shipdayLooks += 1;
+      return json(picture);
+    }
+    if (request.url.path == '/shipday/ask' && request.method == 'POST') {
+      if (picture['on'] != true) {
+        return json({
+          'detail': {'error': 'no_key', 'message': 'this hub has no key for Shipday yet'},
+        }, 409);
+      }
+      shipdayAskCount += 1;
+      shipdayOnAsk?.call();
+      return json({...shipdayAsked, 'shipday': shipday});
+    }
+    return json({'detail': 'Method Not Allowed'}, 405);
+  }
+
   Map<String, dynamic>? texts = textsStand();
   Map<String, dynamic> textTried = {'ok': true, 'state': 'delivered', 'code': null, 'said': ''};
   final textTries = <String>[];
@@ -1552,12 +1723,25 @@ class Hub {
       }
       return json({...hubKeysSaid(), 'tried': textTried});
     }
+    if (request.url.path == '/hub/shipday/try') {
+      if (shipday == null) return json({'detail': 'Not Found'}, 404);
+      shipdayTries += 1;
+      if (hubKeys!['shipday']!['set'] != true) {
+        return json({
+          'detail': {'error': 'no_key', 'message': 'this hub has no key for Shipday yet'},
+        }, 409);
+      }
+      return json({...hubKeysSaid(), 'shipday_tried': shipdayTried});
+    }
     final name = request.url.pathSegments.length > 2 ? request.url.pathSegments[2] : null;
     // an account's own key: `online:<id>`, of an account this hub has
     final further = name != null && name.startsWith('online:') ? name.substring(7) : null;
     final ofAccount = further != null && (onlineAccounts ?? const []).any((account) => account['id'] == further);
     final held = ofAccount ? accountKeys : hubKeys!;
-    final older = (wayIn == null && wayInKeys.contains(name)) || (texts == null && name == 'texts');
+    final older =
+        (wayIn == null && wayInKeys.contains(name)) ||
+        (texts == null && name == 'texts') ||
+        (shipday == null && name == 'shipday');
     if (name != null && !ofAccount && (!hubKeys!.containsKey(name) || older)) {
       return json({
         'detail': {'error': 'unknown_key', 'message': 'this hub holds no key of that name'},
@@ -1597,12 +1781,15 @@ class Hub {
       }
       // the tunnel's program has not looked at the new token yet
       if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('starting')};
+      // the hub asks Shipday from now on, and has not heard from it yet
+      if (name == 'shipday') shipday = {...shipday!, 'on': true, 'read': false};
     }
     if (request.method == 'DELETE' && name != null) {
       keysRemoved.add(name);
       held[name] = {...noKey(name), 'by': 'Mike', 'at_ms': keysAtMs, 'removed': true};
       if (name == 'online_tunnel') wayIn = {...wayIn!, 'tunnel': tunnelStands('off')};
       if (name == 'texts') texts = textsStand();
+      if (name == 'shipday') shipday = shipdayStands(on: false);
     }
     if (request.method == 'GET') {
       hubKeysAsks += 1;
@@ -1643,12 +1830,16 @@ class Hub {
   Map<String, dynamic> hubKeysSaid() => {
     'keys': [
       for (final key in hubKeys!.values)
-        if ((wayIn != null || !wayInKeys.contains(key['name'])) && (texts != null || key['name'] != 'texts')) key,
+        if ((wayIn != null || !wayInKeys.contains(key['name'])) &&
+            (texts != null || key['name'] != 'texts') &&
+            (shipday != null || key['name'] != 'shipday'))
+          key,
     ],
     'kept': hubKeysKept,
     'way_in': ?wayIn,
     'texts': ?texts,
     'texts_way': ?textsWaySaid,
+    'shipday': ?shipdayAbout(),
     if (onlineAccounts != null)
       'online_accounts': [
         {'id': 'main', 'name': firstAccountName, 'test': firstAccountTest, 'key': hubKeys!['online']},
@@ -2954,13 +3145,18 @@ class Hub {
   /// it names for a reprint, and [refuseReprint] the words it refuses the next one with (409).
   /// [printLogTypes] are the types it reads its log by (`type`), and it searches it (`q`): in a print's
   /// title, its printer and who asked for it, then on the lines of its paper, which it then says (`found`).
-  /// Null is a hub from before both: it says no `types` and reads neither.
+  /// Null is a hub from before both: it says no `types` and reads neither. While [papersHeld] is set no
+  /// paper goes out until a test completes it; [papersAtOnce] is the most papers that were ever being
+  /// asked for at the same time.
   List<Map<String, dynamic>>? printLog = [];
   List<String>? printLogTypes = ['kitchen', 'bar', 'bill', 'reprint', 'other'];
   final papers = <String, List<List<Map<String, dynamic>>>>{};
   List<Map<String, dynamic>> logPrinters = [];
   final printLogAsks = <Map<String, String>>[];
   final paperAsks = <String>[];
+  Completer<void>? papersHeld;
+  int papersAtOnce = 0;
+  int _papersOut = 0;
   final reprints = <Map<String, dynamic>>[];
   String? printLogAuth;
   String? refuseReprint;
@@ -4157,9 +4353,11 @@ class Hub {
         path.startsWith('/hub/online/accounts') ||
         path.startsWith('/hub/online/push/') ||
         path.startsWith('/hub/texts/way') ||
-        path == '/hub/texts/try') {
+        path == '/hub/texts/try' ||
+        path == '/hub/shipday/try') {
       return _keys(request);
     }
+    if (path == '/shipday' || path.startsWith('/shipday/')) return _shipday(request);
     if (path == '/push/status' || path == '/push/test') return _push(request);
     if (path == '/online/fetch' && onlineFetchHeld != null && !onlineDown) await onlineFetchHeld!.future;
     if (path.startsWith('/online/')) return _online(request);
@@ -5125,6 +5323,13 @@ class Hub {
         printLogAuth = request.headers['authorization'];
         final job = request.url.queryParameters['job']!;
         paperAsks.add(job);
+        if (++_papersOut > papersAtOnce) papersAtOnce = _papersOut;
+        try {
+          if (papersHeld != null) await papersHeld!.future;
+          await Future<void>.value(); // a paper takes a moment: the next one is asked for meanwhile
+        } finally {
+          _papersOut--;
+        }
         final entry = printLog!.where((p) => p['job_id'] == job).firstOrNull;
         if (entry == null || papers[job] == null) {
           return json({

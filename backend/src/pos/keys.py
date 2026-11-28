@@ -5,7 +5,8 @@ asks GloriaFood for the website's orders and wakes a locked iPhone through Apple
 and until now each key was put on the hub from its terminal (`hubctl maps key`, `hubctl online key`,
 `hubctl push apple`), into `/opt/pos/.env`. This module lets a manager type the same keys in the app
 (Location, Keys and connections; docs/hub-keys.md). The Twilio account the texts to customers go out with
-(`texts`, docs/texts.md) is kept here too, and is typed in the app only.
+(`texts`, docs/texts.md) is kept here too, and is typed in the app only. So is the restaurant's key for
+Shipday (`shipday`, docs/shipday.md), which the hub reads the deliveries and the drivers there with.
 
 What is kept, and how:
 
@@ -91,6 +92,8 @@ AZURE_KEY = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 ONLINE_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{8,200}$")
 PUSH_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{16,200}$")
 """The key GloriaFood's pushes carry: what `hubctl online push key` takes."""
+SHIPDAY_KEY = re.compile(r"^[A-Za-z0-9._~+/=-]{16,200}$")
+"""Shipday's API key (My Account in its Dispatch Dashboard): letters and digits with a dot in the middle."""
 TUNNEL_TOKEN = re.compile(r"^[A-Za-z0-9_=+/-]{40,4000}$")
 """A Cloudflare Tunnel's token: one long run of letters and digits. What `hubctl online tunnel token` takes."""
 TUNNEL_ID = re.compile(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,63}$")
@@ -246,6 +249,7 @@ TEXTS = "texts"
 TEXTS_WAY = "texts_way"
 """The hub's word for Twilio's calls and its secret for the pictures' addresses: made by the hub, kept like
 a key, and no key a screen lists or a manager types (`slot_for`)."""
+SHIPDAY = "shipday"
 
 SLOTS: dict[str, Slot] = {
     slot.name: slot
@@ -326,6 +330,14 @@ SLOTS: dict[str, Slot] = {
             _clean_twilio,
             lambda env: None,
             shown=("account", "sender", "key_sid"),
+        ),
+        # The restaurant's key for Shipday, which its deliveries and drivers are read with (docs/shipday.md).
+        # Typed in the app only: no hubctl command sets it, and the hub's own file never names it.
+        Slot(
+            SHIPDAY,
+            (),
+            _one_key(SHIPDAY_KEY, "letters and digits, 16 or more, no spaces"),
+            lambda env: None,
         ),
     )
 }
@@ -693,6 +705,7 @@ __all__ = [
     "ONLINE_PUSH",
     "ONLINE_TUNNEL",
     "PUSH_APPLE",
+    "SHIPDAY",
     "SLOTS",
     "TEXTS",
     "TEXTS_WAY",

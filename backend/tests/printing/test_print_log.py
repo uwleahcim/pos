@@ -232,6 +232,30 @@ def test_a_ticket_that_went_to_the_fallback_says_where_it_printed():
     assert texts(printing.log.get("t1")[1])[0] == "WOK"  # the log keeps it as it was made for the wok
 
 
+def test_tickets_waiting_behind_one_their_printer_failed_say_the_same_in_the_log():
+    """A printer that is down is tried once a round, with the oldest ticket (`pos.printing.jobs.Lines`).
+    The tickets behind it count the try too, and the log says of each what it says of the first."""
+    wires, clock = Wires(), [T0]
+    wires.down = {"10.0.0.1"}
+    printing = service(clock=clock, wires=wires)
+    for name in ("t1", "t2", "t3"):
+        printing.queue(DEMO, printing.printers[0], job_id=name)
+    for n in range(FALLBACK_AFTER):
+        clock[0] = T0 + (n + 1) * 3000
+        assert printing.retry_pending() == 0
+    for name in ("t1", "t2", "t3"):
+        entry = printing.log.get(name)[0]
+        assert [(e.what, e.text) for e in entry.events] == [("failed", "timed out"), ("moved", "Bar")]
+        # the second failure, the same within the minute, is counted when the ticket prints
+        assert (entry.tries, entry.error, printing.status(entry)) == (1, "timed out", "waiting")
+    clock[0] = T0 + 9000
+    assert printing.retry_pending() == 3
+    assert [address for address, _ in wires.got] == ["10.0.0.2"] * 3
+    for name in ("t1", "t2", "t3"):
+        entry = printing.log.get(name)[0]
+        assert entry.printed and entry.elsewhere and (entry.printed_name, entry.tries) == ("Bar", 2)
+
+
 def test_a_print_still_waiting_when_the_hub_stopped_reads_as_lost():
     log, wires = PrintLog(), Wires()
     wires.down = {"10.0.0.1", "10.0.0.2"}

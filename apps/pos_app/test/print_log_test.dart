@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -213,6 +215,14 @@ String said(WidgetTester tester, String key) => tester.widget<Text>(find.byKey(V
 /// The words of a print's line, with its time.
 String line(WidgetTester tester, String job) =>
     tester.widget<Text>(find.byKey(ValueKey('print-line:$job'))).textSpan!.toPlainText();
+
+/// The words a search has marked in [within], top to bottom: on a paper, in a line of the log.
+List<String> marked(WidgetTester tester, Finder within) => [
+  for (final text in tester.widgetList<Text>(find.descendant(of: within, matching: find.byType(Text), matchRoot: true)))
+    if (text.textSpan case final TextSpan span)
+      for (final part in span.children ?? const <InlineSpan>[])
+        if (part is TextSpan && part.style?.backgroundColor == PaperView.marker) part.text!,
+];
 
 void main() {
   group('the words of the log', () {
@@ -451,22 +461,308 @@ void main() {
     await stop(tester);
   });
 
-  testWidgets('the button in the bar shows every paper, one under the other', (tester) async {
+  testWidgets('Expand all opens every print as a tap does, and Collapse all closes every one', (tester) async {
     final t = await pumpLog(tester, size: const Size(700, 9000));
-    await tester.tap(find.byKey(const ValueKey('log-papers')));
+    final all = find.byKey(const ValueKey('log-all'));
+    expect(find.descendant(of: all, matching: find.text('Expand all')), findsOneWidget);
+    await tester.tap(all);
     await tester.pumpAndSettle();
     expect(t.hub.paperAsks.toSet(), {'t5', 't4', 'b1', 't2', 't1', 'y1', 'o1'});
     expect(find.byType(PaperView), findsNWidgets(7));
-    // each paper has its Reprint under it; what happened to it is for the print that is opened
+    // each as a tap opens it: its paper, what happened to it, and Reprint under it
+    expect(find.byKey(const ValueKey('print-story:b1')), findsOneWidget);
     expect(find.byKey(const ValueKey('reprint:b1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('print-story:b1')), findsNothing);
+    expect(find.descendant(of: all, matching: find.text('Collapse all')), findsOneWidget);
+    expect(find.text('Expand all'), findsNothing);
+
+    // a tap closes that one alone, and another opens it again
     await tester.tap(find.byKey(const ValueKey('print-row:b1')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('print-story:b1')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('log-papers')));
+    expect(find.byKey(const ValueKey('paper:b1')), findsNothing);
+    expect(find.byType(PaperView), findsNWidgets(6));
+    await tester.tap(find.byKey(const ValueKey('print-row:b1')));
     await tester.pumpAndSettle();
-    expect(find.byType(PaperView), findsOneWidget); // the one that was opened
+    expect(find.byType(PaperView), findsNWidgets(7));
+
+    // every one is closed, the one closed by hand and the rest
+    await tester.tap(find.byKey(const ValueKey('print-row:t1')));
+    await tester.pumpAndSettle();
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    expect(find.byType(PaperView), findsNothing);
+    expect(find.descendant(of: all, matching: find.text('Expand all')), findsOneWidget);
+
+    // one opened by hand does not make the button "Collapse all"; every one is opened, and then closed with it
+    await tester.tap(find.byKey(const ValueKey('print-row:t2')));
+    await tester.pumpAndSettle();
+    expect(find.byType(PaperView), findsOneWidget);
+    expect(find.descendant(of: all, matching: find.text('Expand all')), findsOneWidget);
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    expect(find.byType(PaperView), findsNWidgets(7));
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    expect(find.byType(PaperView), findsNothing);
+    expect(t.hub.paperAsks.length, 7); // through all of it each paper was read once
+    await stop(tester);
+  });
+
+  testWidgets('with every print open the list is still built a screenful at a time, and the papers are read ahead', (
+    tester,
+  ) async {
+    final t = await pumpLog(
+      tester,
+      size: const Size(700, 900),
+      arrange: (hub) {
+        hub.logPrinters = [wokPrinter];
+        hub.printLog = [
+          for (var n = 70; n > 0; n--)
+            printed('j${n.toString().padLeft(2, '0')}', atMs: at(26, 12, 0) + n * 60000, title: 'Table $n'),
+        ];
+        for (final p in hub.printLog!) {
+          hub.papers[p['job_id'] as String] = ticketPaper(p['title'] as String, ['1 x General Tso', '2 x Egg Roll']);
+        }
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('log-all')));
+    await tester.pumpAndSettle();
+    // the prints on the screen are built, not the fifty listed
+    expect(find.byKey(const ValueKey('paper:j70')), findsOneWidget);
+    expect(find.byType(PaperView).evaluate().length, lessThan(8));
+    // their papers were all read meanwhile, for the scrolling: each once, four at a time, first to last
+    expect(t.hub.paperAsks.length, 50);
+    expect(t.hub.paperAsks.toSet().length, 50);
+    expect(t.hub.papersAtOnce, 4);
+    expect(t.hub.paperAsks.sublist(8), [for (var n = 62; n > 20; n--) 'j$n']);
+
+    // scrolled to, a print comes with its paper on it: nothing is asked for on the way down
+    final list = find.descendant(of: find.byKey(const ValueKey('log-list')), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('log-more')), 2000, scrollable: list, maxScrolls: 100);
+    expect(find.byKey(const ValueKey('paper:j21')), findsOneWidget);
+    expect(find.byType(PaperView).evaluate().length, lessThan(8));
+    expect(t.hub.paperAsks.length, 50);
+
+    // the older prints are open as they come, and their papers read
+    await tester.tap(find.byKey(const ValueKey('log-more')));
+    await tester.pumpAndSettle();
+    expect(t.hub.paperAsks.length, 70);
+    expect(t.hub.papersAtOnce, 4);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('log-end')), 2000, scrollable: list, maxScrolls: 100);
+    expect(find.byKey(const ValueKey('paper:j01')), findsOneWidget);
+    expect(t.hub.paperAsks.length, 70);
+    await stop(tester);
+  });
+
+  testWidgets('a paper that comes draws its own print again, not the screen, and a paper is drawn once', (
+    tester,
+  ) async {
+    final t = await pumpLog(tester, size: const Size(700, 9000));
+    t.hub.papersHeld = Completer<void>();
+    await tester.tap(find.byKey(const ValueKey('log-all')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100)); // every print is open and waits for its paper
+    expect(find.byType(PaperView), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNWidgets(7));
+
+    final drawn = <String>[];
+    debugOnRebuildDirtyWidget = (element, _) => drawn.add('${element.widget.runtimeType}');
+    try {
+      t.hub.papersHeld!.complete();
+      t.hub.papersHeld = null;
+      await tester.pumpAndSettle();
+      expect(find.byType(PaperView), findsNWidgets(7));
+      expect(drawn.where((w) => w == 'PaperView').length, 7);
+      expect(drawn, isNot(contains('PrintLogScreen')));
+
+      // the screen drawn again (a print is closed): the papers that stay are not
+      drawn.clear();
+      await tester.tap(find.byKey(const ValueKey('print-row:b1')));
+      await tester.pumpAndSettle();
+      expect(find.byType(PaperView), findsNWidgets(6));
+      expect(drawn, contains('PrintLogScreen'));
+      expect(drawn.where((w) => w == '_Sheet' || w.startsWith('LayoutBuilder')), isEmpty);
+
+      // nor when the log is read again and has a new print at its top
+      drawn.clear();
+      t.hub.printLog!.insert(0, printed('t6', atMs: at(26, 19, 50), title: 'Table 8'));
+      t.hub.papers['t6'] = ticketPaper('Table 8', ['1 x Lo Mein']);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('paper:t6')), findsOneWidget); // open, like the rest
+      expect(drawn.where((w) => w == '_Sheet').length, 1);
+    } finally {
+      debugOnRebuildDirtyWidget = null;
+    }
+    await stop(tester);
+  });
+
+  testWidgets('a print made while an older one is read comes in above the screen and moves nothing on it', (
+    tester,
+  ) async {
+    final t = await pumpLog(tester, size: const Size(700, 600));
+    void make(String job, int minute, String table) {
+      t.hub.printLog!.insert(0, printed(job, atMs: at(26, 19, minute), title: table));
+      t.hub.papers[job] = ticketPaper(table, ['1 x Lo Mein']);
+    }
+
+    await tester.tap(find.byKey(const ValueKey('log-all')));
+    await tester.pumpAndSettle();
+    final list = find.descendant(of: find.byKey(const ValueKey('log-list')), matching: find.byType(Scrollable));
+    // the newest print's paper is being read, a little way down: the day's name is off the top of the screen
+    await tester.drag(list, const Offset(0, -60));
+    await tester.pumpAndSettle();
+    final newest = tester.getRect(find.byKey(const ValueKey('paper:t5')));
+    make('t6', 50, 'Table 8');
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    // the day's name went up to the new print, and the paper being read has not moved for it
+    expect(tester.getRect(find.byKey(const ValueKey('paper:t5'))), newest);
+    expect(find.byKey(const ValueKey('print-row:t6')).hitTestable(), findsNothing);
+
+    // further down the log
+    final reading = find.byKey(const ValueKey('paper:t2'));
+    await tester.scrollUntilVisible(reading, 300, scrollable: list);
+    await tester.pumpAndSettle();
+    final where = tester.getRect(reading);
+    make('t8', 52, 'Table 6');
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(reading), where);
+    expect(find.byKey(const ValueKey('print-row:t8')).hitTestable(), findsNothing);
+
+    // they are there, above: at the top of the list, under the day's name, each with its paper
+    for (var drags = 0; drags < 2; drags++) {
+      await tester.drag(list, const Offset(0, 9000)); // a list finds out how long it is as it is scrolled
+      await tester.pumpAndSettle();
+    }
+    final top = tester.getTopLeft(find.byKey(const ValueKey('log-list'))).dy;
+    expect(tester.getTopLeft(find.text('Today')).dy, closeTo(top + 14, 0.5));
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.byKey(const ValueKey('paper:t8')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('print:t6'))).dy,
+      tester.getBottomLeft(find.byKey(const ValueKey('print:t8'))).dy,
+    );
+
+    // read from the top, the next one shows there as it comes
+    make('t7', 55, 'Table 4');
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Today')).dy, closeTo(top + 14, 0.5));
+    expect(find.byKey(const ValueKey('paper:t7')).hitTestable(), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('print:t8'))).dy,
+      tester.getBottomLeft(find.byKey(const ValueKey('print:t7'))).dy,
+    );
+    expect(listed(tester).take(2), ['t7', 't8']);
+
+    // and the list scrolls from its newest print to the end of the log as one list
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('log-end')), 400, scrollable: list, maxScrolls: 100);
+    expect(find.byKey(const ValueKey('paper:o1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await stop(tester);
+  });
+
+  testWidgets('a paper the hub does not give says so under its own print, and is asked for again', (tester) async {
+    final t = await pumpLog(tester);
+    final paper = t.hub.papers.remove('t1')!;
+    await tester.tap(find.byKey(const ValueKey('print-row:t1')));
+    await tester.pumpAndSettle();
+    final t1 = find.byKey(const ValueKey('print:t1'));
+    expect(find.descendant(of: t1, matching: find.text('This paper is no longer in the log.')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reprint:t1')), findsOneWidget);
+    // the others are not held up by it
+    await tester.tap(find.byKey(const ValueKey('print-row:t2')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('paper:t2')), findsOneWidget);
+
+    t.hub.papers['t1'] = paper;
+    await tester.tap(find.descendant(of: t1, matching: find.text('Try again')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('paper:t1')), findsOneWidget);
+    expect(find.text('This paper is no longer in the log.'), findsNothing);
+    expect(t.hub.paperAsks, ['t1', 't2', 't1']);
+    await stop(tester);
+  });
+
+  testWidgets('the words of a search are marked on the papers and in the lines of the log', (tester) async {
+    await pumpLog(tester, arrange: night, size: const Size(700, 9000));
+    await tester.tap(find.byKey(const ValueKey('log-all')));
+    await tester.pumpAndSettle();
+    expect(marked(tester, find.byKey(const ValueKey('log-list'))), isEmpty); // no search marks nothing
+
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await search(tester, 'tsing');
+    expect(listed(tester), ['r1', 'd1']);
+    // every print is still open, and the paper has the words marked as it has them, and nothing else
+    final paper = find.byKey(const ValueKey('paper:d1'));
+    expect(marked(tester, paper), ['Tsing']);
+    expect(marked(tester, find.byKey(const ValueKey('paper:r1'))), ['Tsing']);
+    final beers = tester.widget<Text>(find.descendant(of: paper, matching: find.text('2 x Tsingtao')));
+    final mark = (beers.textSpan! as TextSpan).children!.cast<TextSpan>()[1].style!;
+    expect((mark.backgroundColor, mark.color), (PaperView.marker, PaperView.ink));
+    expect(mark.fontWeight, isNull); // a printer's letters keep their width
+    // and the line it was found on, under the print's own line
+    expect(marked(tester, find.byKey(const ValueKey('print-found:d1'))), ['Tsing']);
+    expect(marked(tester, find.byKey(const ValueKey('print-line:d1'))), isEmpty);
+
+    // found in what the print is called: marked there, and on the paper where it says it too
+    await search(tester, 'table 9');
+    expect(listed(tester), ['r1', 'd1']);
+    expect(marked(tester, find.byKey(const ValueKey('print-line:d1'))), ['Table 9']);
+    expect(line(tester, 'r1'), endsWith('Reprint · Ticket · Table 9'));
+    expect(marked(tester, paper), ['Table 9']);
+
+    // in its printer's name, not in how it ended
+    await search(tester, 'bar');
+    expect(listed(tester), ['r1', 'd1', 'b1']);
+    final ended = find.byKey(const ValueKey('print-outcome:b1'));
+    expect(tester.widget<Text>(ended).textSpan!.toPlainText(), 'Bar · Printed');
+    expect(marked(tester, ended), ['Bar']);
+
+    // in who asked for a reprint, where the print says so
+    await search(tester, 'mike');
+    expect(listed(tester), ['r1']);
+    final story = find.byKey(const ValueKey('print-story:r1'));
+    expect(find.descendant(of: story, matching: find.text('A reprint asked for by Mike.')), findsOneWidget);
+    expect(marked(tester, story), ['Mike']);
+
+    // words that begin on the left of the paper and end on its right are marked on both sides
+    await search(tester, '9 7:05');
+    expect(listed(tester), ['r1', 'd1']);
+    expect(marked(tester, paper), ['9', '7:05']);
+
+    // on a line that is white on black the marker is still the marker
+    await search(tester, 'peanut');
+    expect(listed(tester).length, 9);
+    expect(marked(tester, find.byKey(const ValueKey('paper:t1'))), ['PEANUT']);
+
+    // the search ended: the prints are still open, and nothing is marked
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    expect(listed(tester).length, 9);
+    expect(find.byType(PaperView), findsNWidgets(9));
+    expect(marked(tester, find.byKey(const ValueKey('log-list'))), isEmpty);
+    await stop(tester);
+  });
+
+  testWidgets('on a phone Expand all is its mark alone, and with large type the bar still fits', (tester) async {
+    await pumpLog(tester, arrange: night, size: const Size(320, 6000), textScale: 1.6);
+    final all = find.byKey(const ValueKey('log-all'));
+    expect(tester.widget(all), isA<IconButton>());
+    expect(tester.widget<IconButton>(all).tooltip, 'Expand all');
+    await tester.tap(find.byKey(const ValueKey('log-search')));
+    await tester.pumpAndSettle();
+    await search(tester, 'mai tai');
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(all).tooltip, 'Collapse all');
+    expect(tester.takeException(), isNull); // nothing ran over the edge
+    expect(tester.getRect(find.byKey(const ValueKey('log-search-box'))).width, greaterThan(100));
+    final paper = tester.getRect(find.byKey(const ValueKey('paper:d1')));
+    expect((paper.left, paper.right), (16, 304));
+    expect(marked(tester, find.byKey(const ValueKey('paper:d1'))), ['Mai Tai']);
     await stop(tester);
   });
 
@@ -1049,6 +1345,95 @@ void main() {
       expect(tester.getTopLeft(find.text('Subtotal')).dx, lessThan(tester.getTopLeft(find.text('\$24.00')).dx));
       expect(tester.getTopRight(find.text('\$24.00')).dx, closeTo(tester.getTopRight(find.text('plain')).dx, 0.5));
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a search marks its words where the paper has them: a whole number, either case, both columns', (
+      tester,
+    ) async {
+      const pages = [
+        [
+          PaperStep(kind: 'line', text: '*** REPRINT ***', big: true, bold: true, center: true, invert: true),
+          PaperStep(kind: 'cols', text: 'Table 1', right: '7:05 PM', bold: true),
+          PaperStep(kind: 'line', text: 'moved from table 12'),
+          PaperStep(kind: 'line', text: '2 x  Kung Pao   Chicken', big: true),
+          PaperStep(kind: 'cols', text: '1 Peking Duck', right: '48.00'),
+          PaperStep(kind: 'rule'),
+          PaperStep(kind: 'cut'),
+        ],
+      ];
+      Future<List<String>> marks(String typed) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: PaperView(pages: pages, find: PrintFind.of(typed)),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        return marked(tester, find.byType(PaperView));
+      }
+
+      tester.view
+        ..physicalSize = const Size(400, 2000)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      expect(await marks(''), isEmpty);
+      expect(await marks('table 1'), ['Table 1']); // not table 12
+      expect(await marks('TABLE'), ['Table', 'table']);
+      expect(await marks('kung pao chicken'), ['Kung Pao   Chicken']); // with the room the paper leaves
+      expect(await marks('duck 48.00'), ['Duck', '48.00']);
+      expect(await marks('8.00'), isEmpty); // 48.00 is not 8.00
+      expect(await marks('reprint'), ['REPRINT']);
+      // marked or not, the paper is as tall and its lines are where they were
+      final tall = tester.getSize(find.byType(PaperView));
+      final at = tester.getTopLeft(find.text('1 Peking Duck'));
+      expect(await marks('nothing of the kind'), isEmpty);
+      expect(tester.getSize(find.byType(PaperView)), tall);
+      expect(tester.getTopLeft(find.text('1 Peking Duck')), at);
+    });
+
+    testWidgets('a paper is drawn again for another search or another text size, and for nothing else', (tester) async {
+      const pages = [
+        [PaperStep(kind: 'line', text: '1 x Egg Roll'), PaperStep(kind: 'cut')],
+      ];
+      var sheets = 0;
+      Future<int> drawnFor({String typed = '', double textScale = 1, String around = 'a'}) async {
+        sheets = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    Text(around),
+                    PaperView(pages: pages, find: PrintFind.of(typed)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        return sheets;
+      }
+
+      tester.view
+        ..physicalSize = const Size(400, 2000)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      debugOnRebuildDirtyWidget = (element, _) => sheets += '${element.widget.runtimeType}' == '_Sheet' ? 1 : 0;
+      try {
+        expect(await drawnFor(), 1);
+        expect(await drawnFor(around: 'b'), 0); // the screen around it changed: the paper did not
+        expect(await drawnFor(typed: 'egg'), 1);
+        expect(await drawnFor(typed: ' EGG ', around: 'c'), 1); // another way to type it marks another way
+        expect(await drawnFor(typed: ' EGG ', around: 'd'), 0);
+        expect(await drawnFor(typed: ' EGG ', textScale: 1.5), 1);
+      } finally {
+        debugOnRebuildDirtyWidget = null;
+      }
     });
 
     testWidgets('the papers of one job stand one under the other, and a narrow screen gets a narrow paper', (

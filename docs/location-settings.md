@@ -91,8 +91,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
   At its top, **Print log**: every paper the hub printed in the last 14 days, how it went, the paper itself
-  on the screen, and **Reprint**; read by printer, by kind of print (kitchen, bar, bills, reprints, the
-  rest) or by a search of the papers (see `printing.md`, "The print log").
+  on the screen (one at a tap, or every one with **Expand all**), and **Reprint**; read by printer, by kind
+  of print (kitchen, bar, bills, reprints, the rest) or by a search of the papers, which marks the words it
+  found on them (see `printing.md`, "The print log").
   On the same card, two switches for what the tickets of one send say about each other: **Number the
   tickets of one send** ("Ticket 2 of 3") and **Name the other stations on each ticket** ("Also at: Wok 2,
   Sushi Bar"). A third switch, **Print PAID or NOT PAID on to-go orders**, is for the takeout station's
@@ -118,6 +119,58 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 **Save**, in the bar at the bottom of the screen, sends the courses to the hub, which checks them (a name
 on every course, no name twice, at least one course while coursing is on) and keeps them. Every terminal
 reads the setting when it opens an order, so a change reaches the floor on the next check anyone opens.
+
+## Finding a setting
+
+The screen is long and half of its settings are inside the pages and dialogs its rows open, so it has a
+search. The **magnifier** at the top right opens it (**⌘F** on a Mac, **Ctrl+F** on another keyboard): the
+title becomes a box with the keyboard in it, and what is typed lists what it finds, as it is typed, in the
+place of the screen. The cross, **Escape** or Back closes it and the screen is as it was.
+
+- **What is searched**: the name of every row of the screen, and of every setting inside a row's page or
+  dialog ("Charge sales tax on the fee" in Delivery fee, each power of Who may do what, each key of Keys and
+  connections, the fallback of a printer). Also the words people say for a setting that its name does not
+  have: "receipt" finds The bill, "employees" and "password" find Staff and PINs, "payroll" finds the hours
+  and the pay week, "86" finds Sold out and running low. Not searched: what a setting is set to (a person's
+  name, a void reason, a printer's address), and a device's own Settings (the gear).
+- **How it reads what is typed**: capitals do not matter, nor the order of the words, nor small words
+  ("the fee for a delivery" is "fee delivery"). Every word typed must be found. A start of a word is
+  enough ("deliv"); "togo", "to go" and "to-go" are the same; "taxes" finds "tax". When nothing is found as
+  typed, one typing mistake in a word is forgiven ("recipt", "delviery"). Nothing found says so, with what
+  to try.
+- **The order**: the best match first. A name that is what was typed comes before one that only has it in
+  it, a row before a setting inside one, and of two as good the one that is higher on the screen.
+- **What a result shows**: the name with the part that was typed in bold, the icon of its row, and under it
+  what the row is for, or "In Delivery fee" for a setting inside that row. An arrow where a tap opens
+  something.
+- **A tap on a result** (Enter takes the first):
+  - a setting **on the screen itself** (Seat numbers, the time clock, the ticket switches): the search
+    closes, the screen scrolls to the setting and it is **lit** for a moment, a ring in the theme's colour
+    that fades. The keyboard's focus goes to it.
+  - a row that **opens a page or a dialog**: it opens, over the results. A setting inside it: the page
+    opens scrolled to that setting, lit there. Closed again, the results are still there for the next one.
+  - a row the hub has not answered for (an older hub) is shown where it stands, where it says why.
+- **Who finds what**: only the rows that are on the screen for whoever opened it. Someone who was handed
+  the reports and no settings finds the reports and nothing else.
+- **What waits to be saved** waits through a search: the bar with Save stays where it is, the search open
+  or not, and Back closes the search before it asks about leaving.
+
+### For whoever adds a row or a setting
+
+The search reads one list, `locationSettings` in `apps/pos_app/lib/setting_search.dart`, in the order of
+the screen. A line is a row (its key on the screen and its name), a setting inside a row's page or dialog
+(the row's key, its name, and a `Spot`: the key the setting's widget already has, or the words that head
+it), or a setting that shows under another on the screen (`under`). `also` holds the other words for it.
+Nothing else is written down: whether a row is there for this person and this hub, its icon, and what a tap
+on it does are read from the screen as it is built (the list builds all its rows for that), and a result
+opens a page by the row's own tap. A page opened that way is wrapped in `Spotlight`
+(`screens/spotlight.dart`), which finds the spot, scrolls to it and lights it; the page knows nothing of it.
+A function that opens a page takes `final lit = _lit;` as its first line and shows `lit(page)`.
+
+Two tests keep the list and the screen together (`test/location_search_test.dart`): every row of the screen
+with a key must be in the list, and every line of the list must open and land on its setting on a
+phone-sized screen. A new row without a line fails the first; a line whose key or heading has changed fails
+the second.
 
 ## Coursing on the order screen
 

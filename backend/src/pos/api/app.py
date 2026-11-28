@@ -138,6 +138,7 @@ from ..settings import (
     rush_now,
     skipped_stations,
 )
+from ..shipday.board import ShipdayBoard
 from ..sync.hlc import HLC
 from ..sync.oplog import KINDS, ClockDriftError, Discount, Op, OpStore, OrderState, apply
 from ..tax import TaxProfile, load_profile
@@ -177,6 +178,7 @@ from .prints import add_print_log
 from .reservations import add_reservations
 from .runs import add_runs
 from .sales import add_sales_report
+from .shipday import add_shipday, source_for
 from .staff import add_staff_list, use_staff, watch_staff
 from .texts import add_texts
 from .timeclock import add_time_clock
@@ -997,6 +999,7 @@ def create_app(
     staff_list: StaffList | None = None,
     recordings: Recordings | None = None,
     texts: Texts | None = None,
+    shipday: ShipdayBoard | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -1034,6 +1037,11 @@ def create_app(
                     "the way in: the door and the tunnel could not be told at the start (%s)", type(err).__name__
                 )
                 app.state.keys_mark = ""  # so that the next look at the keys puts them all to work (`watch_keys`)
+        if shipday is None:
+            # Shipday is asked for its deliveries and drivers, only where the API is serving. Nothing without
+            # its key; one typed in the app later starts the asking (`use_shipday`).
+            app.state.shipday.start()
+            app.state.asks_shipday = True
         # A key typed on the location's other hub, or taken back with hubctl, is found within the minute.
         watching = asyncio.create_task(watch_keys(app)) if keys is None else None
         # So is a change of the staff: made on the other hub, or a PIN set with `hubctl staff pin`.
@@ -1235,6 +1243,11 @@ def create_app(
         sources, accounts = online_setup(app.state.keys, app.state.settings)
         pushes = push_key_from_env(outside)  # typed in the app, or in the hub's own file
         app.state.online = OnlineOrders(sources, default_inbox(), push_key=pushes, accounts=accounts)
+    # Shipday's deliveries and drivers, read with the restaurant's own key when the hub has one
+    # (docs/shipday.md): asked every few seconds while a screen looks, and kept in memory only.
+    app.state.shipday_made_with = {}
+    app.state.asks_shipday = False
+    app.state.shipday = shipday if shipday is not None else ShipdayBoard(source_for(app.state.keys))
     # What the API hands the push door and the tunnel, and hears back (`pos.online.wayin`). Nothing on a
     # machine that runs neither.
     app.state.wayin = wayin if wayin is not None else wayin_from_env()
@@ -2907,6 +2920,7 @@ def create_app(
     add_texts(app)
     add_runs(app)
     add_online_orders(app, number_orders)
+    add_shipday(app)
     add_hub_keys(app)
     add_address_list(app)
     add_staff_list(app)

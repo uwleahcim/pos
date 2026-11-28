@@ -237,6 +237,35 @@ What separate tickets change, and what they do not:
 - Bills, the day's report, pack sheets, prep lists and bag labels are not kitchen tickets and print as
   before.
 
+**Every paper comes out once, and a printer is handed one at a time.** A printer prints one paper at a
+time, so the hub keeps a line for each printer (`pos.printing.jobs.Lines`) and hands it one job, waits
+until the printer has taken it, and hands it the next:
+
+- **In order.** The oldest first. The tickets of one order come out in the order its stations stand on the
+  printer's card, every time.
+- **Side by side.** Each printer's line is worked on its own, so a printer that is off, out of paper or
+  slow keeps only its own papers waiting.
+- **A printer that fails one paper has failed the ones behind it.** They would have met the same, so each
+  counts the try without being sent. A printer that is down is tried twice in all, about ten seconds, and
+  then everything in its line that has a fallback goes there together, in order. What has no fallback
+  waits, and the printer is tried again every three seconds.
+- **A long paper takes as long as it takes.** The four seconds a printer is given are for standing still
+  (to answer, or to take some more of the job), not for the whole job: a catering order's pack sheet goes
+  in at the speed of the paper.
+
+While the hub is writing a job, the job is the hub's (`leased`, to `hub`, in `GET /print/jobs`): nothing
+else sends it, neither the hub's second look every three seconds nor a terminal printing in relay mode. A
+job with more than one of `attempts` says in `last_error` what kept the earlier ones from going out; it was
+tried again, which is no second copy. One case is left where a paper can come out twice, and it is on
+purpose: a printer that fails halfway through a job (the cable, the power). The hub cannot know how much of
+it came out, so it sends the whole job again; a ticket too many is the safe side of a ticket missing.
+
+(Until 2026-11-27 the hub wrote every job the moment it was queued, on a connection each, and a job being
+written still counted as not gone out. A printer with a ticket for each station got all of an order's at
+once and took them one at a time; the ones that waited were written again by the second look and printed
+twice. In the list such a job had two `attempts` and no `last_error`. The tests are in
+`tests/printing/test_printing.py` and `tests/printing/test_lines.py`.)
+
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
 printers already set, and lists what answers: receipt printers first, each with its name and language and
 an **Add** that makes a new card with its address (or the stations it prints for, when it has a card);
@@ -305,7 +334,9 @@ it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
   out** (a print waits in the hub's memory, so one still waiting when the hub stops is gone; the log is how
   that is seen, and Reprint how it is mended). The list can be read for one printer, and for **Problems**
   alone: everything that did not print first time at its own printer. It follows what the printers do
-  without a tap (the change feed's `prints`).
+  without a tap (the change feed's `prints`). A print made while the top of the list is on the screen
+  shows there as it comes; one made while an older print is being read comes in above the screen and moves
+  nothing on it, and is there when the list is scrolled back up.
 - **By kind of print**, the line of chips under the printer: **All**, **Kitchen**, **Bar**, **Bills**,
   **Reprints**, **Other**. Kitchen and Bar are an order's tickets (new, changed, voided, moved, an allergy
   notice, a bag slip) by where their dishes are made; a ticket with dishes of both, on a printer that prints
@@ -318,16 +349,23 @@ it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
   the log (what it is, what for, its stations, its printer, who asked for a reprint) and on every line of
   the paper itself: a dish, a choice, a server, a guest's name, an order's number, a price. A number typed is
   a whole number: "table 1" is not table 12, "#45" is not order 451. A print found by its paper shows the
-  line it was found on under it ("On the paper: 1 Peking Duck 48.00"). The search works together with the
-  printer, the kind and Problems; when nothing has the words, **Show all prints** drops the kind, Problems
-  and the search.
+  line it was found on under it ("On the paper: 1 Peking Duck 48.00"). The words are **marked**, as with
+  a marker pen, wherever a print has them: in what it is called and in its printer's name in the list, in
+  the line it was found on, and on its paper once it is open, on every line that has them. What is marked
+  is what the hub found and no more: "table 1" marks Table 1 and leaves Table 12 alone. The search works
+  together with the printer, the kind and Problems; when nothing has the words, **Show all prints** drops
+  the kind, Problems and the search.
 - **The paper on the screen**: a tap on a print opens its paper as it came out, line for line: big where
   the paper is big, white on black where the paper is, the rules, the cut. Under it, what happened to it one
   thing after the other (sent, each reason it failed and how often, passed on to which printer, printed,
-  printed again by whom). The button in the bar shows **every paper** at once, one under the other, like the
-  roll at the printer. The paper is drawn from what the hub wrote down, in the screen's own letters: it says
-  what the paper said, in the same order and sizes, and is not a photograph of it (a long line may break at
-  another word than on the paper, and Chinese is drawn in the screen's font).
+  printed again by whom). Another tap closes it. The paper is drawn from what the hub wrote down, in the
+  screen's own letters: it says what the paper said, in the same order and sizes, and is not a photograph of
+  it (a long line may break at another word than on the paper, and Chinese is drawn in the screen's font).
+- **Expand all**, in the bar (its two arrows alone on a phone): every print opens at once, each as a tap
+  opens it, one paper under the other like the roll at the printer, to be read by scrolling. It stays that
+  way for the prints that come after: the older ones brought by **Older prints**, another printer or kind,
+  a search, a print made meanwhile. A tap still closes one print and opens it again. The button then reads
+  **Collapse all**, which closes every one, the ones opened by a tap as well.
 - **Reprint**, under every paper: prints it again at the printer it was made for, or **At another
   printer** at any printer on the list. The paper that comes out is headed `*** REPRINT ***`, white on black,
   with a line under it saying when the first came out ("FIRST PRINTED THU NOV 26 19:05") or that it never did
@@ -343,6 +381,15 @@ reprint plays back on the builder of whichever printer it goes to, so a paper fi
 reprints on a Star. The log is the table `print_log` on the hub (in memory without a database); a failure
 that repeats is written once a minute at most, so a printer that is off all night does not fill it. A log
 that cannot be written never stops a paper from printing.
+
+How the screen stays quick with every print open (`print_log_screen.dart`, `paper_shelf.dart`,
+`paper_view.dart`): the list builds the prints on the screen and no others; the papers are asked of the
+hub four at a time, the one on the screen first and the ones further down the list before they are scrolled
+to, each once; a paper that arrives draws its own print again and not the screen; and a paper is drawn
+once, however often the list around it is. What a search marks on a paper is worked out in the app
+(`PrintFind` in `print_log.dart`) by the hub's own rule (`pattern_of`); the two are held to the same cases,
+`backend/tests/printing/search_cases.json`, which both sides' tests read. A change to how the hub searches
+goes into that file first.
 
 A waiting print that is reprinted is not taken back: when its own printer answers again, it still comes
 out there, without the REPRINT heading.
