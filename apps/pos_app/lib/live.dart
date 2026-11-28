@@ -22,6 +22,7 @@ class LiveChange {
     this.calls = false,
     this.texts = false,
     this.shipday = false,
+    this.showing = false,
   });
 
   /// The orders that changed, by id.
@@ -67,6 +68,10 @@ class LiveChange {
   /// (docs/shipday.md).
   final bool shipday;
 
+  /// A screen opened an order or left one: a guest display linked to it shows something else
+  /// (docs/guest-display.md).
+  final bool showing;
+
   /// Whether a screen showing this order has something to read.
   bool touches(String orderId) => everything || orders.contains(orderId);
 
@@ -75,7 +80,7 @@ class LiveChange {
 
   @override
   String toString() =>
-      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', if (texts) 'texts', if (shipday) 'shipday', ...orders].join(', ')})';
+      'LiveChange(${[if (everything) 'everything', if (menu) 'menu', if (settings) 'settings', if (notes) 'notes', if (waitlist) 'waitlist', if (reservations) 'reservations', if (online) 'online', if (floor) 'floor', if (prints) 'prints', if (calls) 'calls', if (texts) 'texts', if (shipday) 'shipday', if (showing) 'showing', ...orders].join(', ')})';
 }
 
 /// Where the feed stands.
@@ -285,6 +290,7 @@ class LiveFeed extends ChangeNotifier {
             calls: topics.contains('calls'),
             texts: topics.contains('texts'),
             shipday: topics.contains('shipday'),
+            showing: topics.contains('showing'),
           ),
         );
     }

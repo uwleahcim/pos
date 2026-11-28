@@ -47,8 +47,9 @@ The board follows the stages the staff already use on the list of checks (`count
 ## Turning it on
 
 On the device that faces the shelf: **Settings › Pickup board**, turn the switch on, then **Save**. Each
-device keeps its own switch. A device is the pickup board or a station's kitchen screen
-(`kitchen-screens.md`), never both: turning the board on takes the device's stations away.
+device keeps its own switch. A device is one thing only: the pickup board, a station's kitchen screen
+(`kitchen-screens.md`) or a guest display (`guest-display.md`). Turning the board on takes the device's
+stations and its link to another screen away.
 
 From then on that device shows the board whenever nobody is signed in on it, where another device shows
 the sign-in pad.

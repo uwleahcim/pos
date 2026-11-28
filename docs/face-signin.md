@@ -79,6 +79,7 @@ A device set to stand as a station's kitchen screen, the pass or the pickup boar
 `pickup-board.md`) is the one place the camera does not sign in whoever is in front of it. The people in
 front of such a screen are reading it: a cook at the tickets, a server or a customer at the shelf. Signing
 them in would put the orders screen where the tickets were, every time somebody enrolled looked at them.
+The same holds for a guest display (`guest-display.md`): the person in front of it is the guest.
 
 - **While the tickets or the board show**, no frame goes to the hub and no face signs anyone in. The
   camera's frame stream is let go.

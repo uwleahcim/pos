@@ -72,6 +72,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _sound = widget.settings.kitchenSound;
   StationList? _stations; // the location's stations, to pick a kitchen screen's from; null until the hub says
   bool _noStations = false; // the hub did not say
+  late String _guestOf = widget.settings.guestDisplayOf; // the screen this one faces the guest of; '' for none
+  List<String>? _screens; // the screens the hub hears from, to pick that one from; null until the hub says
+  bool _noScreens = false; // the hub did not say
   late final TextEditingController _pbx = TextEditingController(text: widget.settings.phone.server);
   late final TextEditingController _extension = TextEditingController(text: widget.settings.phone.extension);
   late final TextEditingController _secret = TextEditingController(text: widget.settings.phone.secret);
@@ -95,6 +98,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.camera?.addListener(_changed);
     unawaited(_askFaces());
     unawaited(_askStations());
+    unawaited(_askScreens());
     unawaited(_checkReadiness());
   }
 
@@ -118,6 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _signOutAfterSend != kept.signOutAfterSend ||
         _opensOn != kept.opensOn ||
         _pickupBoard != kept.pickupBoard ||
+        _guestOf != kept.guestDisplayOf ||
         !setEquals(_kitchen.toSet(), kept.kitchenStations.toSet()) ||
         _pass != kept.kitchenPass ||
         _sound != kept.kitchenSound ||
@@ -169,6 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settings.saveOpensOn(_opensOn);
     await widget.settings.savePickupBoard(_pickupBoard);
     await widget.settings.saveKitchenStations(_kitchen, pass: _pass, sound: _sound);
+    await widget.settings.saveGuestDisplayOf(_guestOf);
     await widget.settings.savePhone(
       PhoneSettings.clean(
         enabled: _phoneOn,
@@ -196,6 +202,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on ApiException {
       if (mounted) setState(() => _noStations = true);
     }
+  }
+
+  Future<void> _askScreens() async {
+    final api = widget.api;
+    if (api == null) return;
+    try {
+      final screens = await api.devicesSeen();
+      if (mounted) setState(() => _screens = screens);
+    } on ApiException {
+      if (mounted) setState(() => _noScreens = true);
+    }
+  }
+
+  /// The screens a guest display can be linked to: the ones the hub hears from, without this one, and the
+  /// one this device is already linked to (it may be switched off right now).
+  List<String> get _linkable {
+    final own = widget.settings.device.toLowerCase();
+    final found = [
+      for (final screen in _screens ?? const <String>[])
+        if (screen.toLowerCase() != own) screen,
+    ];
+    final kept = widget.settings.guestDisplayOf;
+    return [...found, if (kept.isNotEmpty && !found.any((screen) => screen.toLowerCase() == kept.toLowerCase())) kept];
   }
 
   /// The stations a kitchen screen can stand at: the location's, and any this device was already set to.
@@ -409,14 +438,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     key: const ValueKey('pickup-board-line'),
                   ),
                   value: _pickupBoard,
-                  // (one or the other: a board for the customers shows no kitchen tickets)
+                  // (one thing only: a board for the customers shows no kitchen tickets, and no guest's order)
                   onChanged: (on) => setState(() {
                     _pickupBoard = on;
                     if (on) {
                       _kitchen.clear();
                       _pass = false;
+                      _guestOf = '';
                     }
                   }),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // A guest display: what this screen shows while nobody is signed in, turned to the customer;
+              // the screen it is linked to is picked from the ones the hub hears from; kept with Save.
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.tv_outlined, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text('Guest display', style: theme.textTheme.titleMedium)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _guestOf.isNotEmpty
+                            ? 'While nobody is signed in, this screen faces the guest: it shows the order open on '
+                                  '$_guestOf as it is rung up, dish by dish, with the total. Staff, in its corner, '
+                                  'brings up the sign-in pad.'
+                            : _linkable.isNotEmpty
+                            ? 'For a screen turned to the guest at a register: while nobody is signed in it shows '
+                                  'the order being rung up on the screen it is linked to, dish by dish, with the '
+                                  'total. Pick that screen.'
+                            : _screens != null
+                            ? 'For a screen turned to the guest at a register. No other screen is up right now: '
+                                  'start the app on the register\'s screen, then come back here.'
+                            : _noScreens || widget.api == null
+                            ? 'For a screen turned to the guest at a register. The screens could not be read from '
+                                  'the hub: come back here once it answers.'
+                            : 'For a screen turned to the guest at a register. Asking the hub for the screens…',
+                        key: const ValueKey('guest-display-line'),
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      if (_linkable.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final screen in _linkable)
+                              ChoiceChip(
+                                key: ValueKey('guest-display-of:$screen'),
+                                label: Text(screen),
+                                selected: _guestOf.toLowerCase() == screen.toLowerCase(),
+                                // (tapped again, it is a guest display no longer; and it is one thing only:
+                                // no pickup board, no kitchen screen)
+                                onSelected: (on) => setState(() {
+                                  _guestOf = on ? screen : '';
+                                  if (on) {
+                                    _pickupBoard = false;
+                                    _kitchen.clear();
+                                    _pass = false;
+                                  }
+                                }),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -478,6 +573,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         if (on) {
                                           _kitchen.add(station.code);
                                           _pickupBoard = false;
+                                          _guestOf = '';
                                         } else {
                                           _kitchen.remove(station.code);
                                         }
@@ -501,7 +597,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: _pass,
                         onChanged: (on) => setState(() {
                           _pass = on;
-                          if (on) _pickupBoard = false;
+                          if (on) {
+                            _pickupBoard = false;
+                            _guestOf = '';
+                          }
                         }),
                       ),
                       // The chime when a ticket comes in: on, unless this device is told to keep quiet.

@@ -76,6 +76,9 @@ Future<void> main() async {
   // The hub tells this screen what changed, the moment it does, over one connection held open: the screens
   // stop asking every two seconds while it is up, and go back to asking whenever it is not.
   api.live.start();
+  // Which order is open here, told to the hub as it is opened and left: a guest display linked to this
+  // screen shows it (docs/guest-display.md). Nothing while nobody is signed in.
+  api.showing.start(session: session);
   // Who is at this screen, for as long as the app runs: the camera signs people in and switches between them
   // hands-free (docs/face-signin.md), and a badge reader on the keyboard does the same by tag.
   final faces = FaceSignIn(api, settings, camera, session);
@@ -303,8 +306,8 @@ class _PosAppState extends State<PosApp> {
                         tagsOf: canOrder ? api.customerTags : null,
                         child: LockLayer(
                           session: session,
-                          // (a pickup board or a kitchen screen stands over the pad too: the screen on the
-                          // wall locked itself)
+                          // (a pickup board, a kitchen screen or a guest display stands over the pad too:
+                          // the screen on the wall locked itself)
                           pad: (context) => StandingGate(
                             settings: settings,
                             api: api,
@@ -340,8 +343,8 @@ class _PosAppState extends State<PosApp> {
                 );
               } else if (!session.signedIn && !session.locked) {
                 // (a screen locked for standing idle keeps what was open, under the pad the lock lays over it)
-                // On a device that is a pickup board or a station's kitchen screen, that stands here, the pad
-                // one tap behind it.
+                // On a device that is a pickup board, a station's kitchen screen or a guest display, that
+                // stands here, the pad one tap behind it.
                 screen = StandingGate(
                   key: const ValueKey('sign-in'),
                   settings: settings,

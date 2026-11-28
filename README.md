@@ -174,6 +174,11 @@ merges after any disconnect.
 - The pickup board (a screen facing the pickup shelf lists the to-go orders being made and the ones ready,
   by number and first name and nothing else; a switch on the device, the board standing where the sign-in
   pad stands, with Staff in its corner for the pad): `docs/pickup-board.md`
+- The guest display (a screen turned to the customer, linked in its Settings to the screen the order is
+  taken on, shows the order open there as it is rung up: the dishes with their choices, the tax, the total,
+  what was paid and the change, as the bill says them and worked out on the hub; the restaurant's name and a
+  welcome while no order is open, a thank you when a paid one is left; nothing on it can be tapped but Staff):
+  `docs/guest-display.md`
 - Kitchen screens (a screen at a station lists what the station has to make, in the words of its paper
   ticket, coloured by how long it has waited; a tap marks a dish made and Recall brings a finished ticket
   back; a mark changes nothing of the check; the paper prints as before; the pass shows each ticket whole

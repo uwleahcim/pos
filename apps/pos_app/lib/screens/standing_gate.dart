@@ -6,13 +6,15 @@ import '../api.dart';
 import '../kitchen_bell.dart';
 import '../outbox.dart';
 import '../settings.dart';
+import 'guest_display_screen.dart';
 import 'kitchen_screen.dart';
 import 'pickup_board_screen.dart';
 
 /// What a screen shows while nobody is signed in on it: the sign-in pad or, on a device set to stand as
 /// something, that: a station's kitchen screen or the pass (`Settings.kitchenStations`,
-/// `Settings.kitchenPass`, docs/kitchen-screens.md) or the pickup board (`Settings.pickupBoard`,
-/// docs/pickup-board.md), with the pad one tap away for the staff.
+/// `Settings.kitchenPass`, docs/kitchen-screens.md), the pickup board (`Settings.pickupBoard`,
+/// docs/pickup-board.md) or a guest display (`Settings.guestDisplayOf`, docs/guest-display.md), with the
+/// pad one tap away for the staff.
 ///
 /// [pad] builds the sign-in pad; it is handed the way back to the standing screen, for its bar. A pad nobody
 /// touches for [backAfter] goes back by itself, so the screen on the wall never stays on a PIN pad because
@@ -60,8 +62,8 @@ class _StandingGateState extends State<StandingGate> {
     super.dispose();
   }
 
-  // The device was just made a board or a kitchen screen, from Settings behind the pad: it comes up when
-  // Settings closes.
+  // The device was just made a board, a kitchen screen or a guest display, from Settings behind the pad: it
+  // comes up when Settings closes.
   void _onSettings() {
     if (mounted) setState(() {});
   }
@@ -97,6 +99,14 @@ class _StandingGateState extends State<StandingGate> {
           pass: settings.kitchenPass,
           bell: widget.bell,
           sound: settings.kitchenSound,
+          onStaff: _toPad,
+        );
+      }
+      if (settings.guestDisplay) {
+        return GuestDisplayScreen(
+          key: const ValueKey('guest-display'),
+          api: widget.api,
+          of: settings.guestDisplayOf,
           onStaff: _toPad,
         );
       }

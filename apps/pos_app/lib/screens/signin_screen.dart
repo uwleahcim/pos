@@ -48,8 +48,9 @@ class SignInScreen extends StatefulWidget {
   /// shown above the pad. Null on the plain sign-in screen.
   final String? lockedNote;
 
-  /// On a device that is a pickup board (docs/pickup-board.md) or a station's kitchen screen
-  /// (docs/kitchen-screens.md): back to it, from the bar. Null on every other device.
+  /// On a device that is a pickup board (docs/pickup-board.md), a station's kitchen screen
+  /// (docs/kitchen-screens.md) or a guest display (docs/guest-display.md): back to it, from the bar. Null on
+  /// every other device.
   final VoidCallback? onBoard;
 
   @override
@@ -204,7 +205,12 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final clockOn = _clock?.enabled ?? false;
-    final kitchen = widget.settings.kitchen; // what this screen stands as, left alone
+    // what this screen stands as, left alone: its name and its mark, for the way back to it
+    final (standsAs, standsIcon) = widget.settings.kitchen
+        ? ('Kitchen screen', Icons.soup_kitchen_outlined)
+        : widget.settings.guestDisplay
+        ? ('Guest display', Icons.tv_outlined)
+        : ('Pickup board', Icons.view_module_outlined);
     final atClock = _atClock;
     final heading = _clocking || atClock != null
         ? 'Time clock'
@@ -244,22 +250,19 @@ class _SignInScreenState extends State<SignInScreen> with SingleTickerProviderSt
               label: Text(_clocking ? 'Back to sign in' : 'Time clock'),
               onPressed: _busy ? null : _toggleClock,
             ),
-          // On the shelf's screen or a station's: back to the pickup board or the kitchen screen (it comes
-          // back by itself too, left alone).
+          // On the shelf's screen, a station's or the one facing the guest: back to the pickup board, the
+          // kitchen screen or the guest display (it comes back by itself too, left alone).
           if (widget.onBoard != null && compact(context))
             IconButton(
               key: const ValueKey('board-back'),
-              icon: Icon(
-                kitchen ? Icons.soup_kitchen_outlined : Icons.view_module_outlined,
-                semanticLabel: kitchen ? 'Kitchen screen' : 'Pickup board',
-              ),
+              icon: Icon(standsIcon, semanticLabel: standsAs),
               onPressed: widget.onBoard,
             )
           else if (widget.onBoard != null)
             TextButton.icon(
               key: const ValueKey('board-back'),
-              icon: Icon(kitchen ? Icons.soup_kitchen_outlined : Icons.view_module_outlined),
-              label: Text(kitchen ? 'Kitchen screen' : 'Pickup board'),
+              icon: Icon(standsIcon),
+              label: Text(standsAs),
               onPressed: widget.onBoard,
             ),
           if (widget.onSettings != null)
