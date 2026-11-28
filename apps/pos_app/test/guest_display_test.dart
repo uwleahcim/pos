@@ -13,7 +13,9 @@ import 'package:pos_app/phone.dart';
 import 'package:pos_app/photos.dart';
 import 'package:pos_app/print_relay.dart';
 import 'package:pos_app/queue_store.dart';
+import 'package:pos_app/screens/guest_display_dialog.dart';
 import 'package:pos_app/screens/guest_display_screen.dart';
+import 'package:pos_app/screens/location_settings_screen.dart';
 import 'package:pos_app/screens/order_screen.dart';
 import 'package:pos_app/screens/orders_screen.dart';
 import 'package:pos_app/screens/pickup_board_screen.dart';
@@ -24,6 +26,7 @@ import 'package:pos_app/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'hub.dart';
+import 'location_rows.dart';
 import 'phone_test.dart' show FakeStack;
 
 /// The guest display (docs/guest-display.md): a device linked to another screen shows, while nobody is
@@ -75,6 +78,21 @@ Map<String, dynamic> paidOrder() => counterOrder(
   due: '0.00',
   paidInFull: true,
 );
+
+/// The tips the hub suggests for the counter order: 18%, 20% and 25% of its 40.00 before tax.
+Map<String, dynamic> tipsOf40() => {
+  'base': 'before_tax',
+  'of': '40.00',
+  'rows': [
+    {'percent': 18, 'amount': '7.20'},
+    {'percent': 20, 'amount': '8.00'},
+    {'percent': 25, 'amount': '10.00'},
+  ],
+};
+
+/// The hub knows whose order this is: what to call them, and whether they have been here before.
+void known(Hub hub, String name, {bool back = false, String order = 'o7'}) =>
+    hub.guestHosts[order] = {'name': name, 'back': back};
 
 Map<String, dynamic> dish(int qty, String name, String amount) => {
   'qty': qty,
@@ -172,8 +190,73 @@ void main() {
         'order': null,
         'left': {'order_id': 'o7', 'paid_in_full': true},
       });
-      expect(view.left, (orderId: 'o7', paidInFull: true));
+      expect(view.left, (orderId: 'o7', paidInFull: true, name: ''));
       expect(GuestDisplay.fromJson({'of': 'mac1', 'left': null}).left, isNull);
+      final named = GuestDisplay.fromJson({
+        'of': 'mac1',
+        'left': {'order_id': 'o7', 'paid_in_full': true, 'name': 'Linda'},
+      });
+      expect(named.left, (orderId: 'o7', paidInFull: true, name: 'Linda'));
+    });
+
+    test('whose order it is, and how they are greeted', () {
+      GuestDisplay of(Object? guest) => GuestDisplay.fromJson({'of': 'mac1', 'showing': 'o7', 'guest': guest});
+      expect(of({'name': 'Linda', 'back': true}).guest, (name: 'Linda', back: true));
+      expect(of(null).guest, isNull); // nobody to name, or a hub older than the greeting
+      expect(guestGreeting((name: 'Linda', back: true)), 'Welcome back, Linda');
+      expect(guestGreeting((name: 'Linda', back: false)), 'Welcome, Linda');
+      expect(guestGreeting((name: 'Mr. Wong', back: true)), 'Welcome back, Mr. Wong');
+      // a number that ordered before with no name on it: known, and not named
+      expect(guestGreeting((name: '', back: true)), 'Welcome back');
+      expect(guestGreeting((name: '', back: false)), '');
+      expect(guestGreeting(null), '');
+    });
+
+    test('the tips the hub suggests', () {
+      final order = GuestDisplay.fromJson({
+        'of': 'mac1',
+        'showing': 'o7',
+        'order': {...counterOrder(), 'tips': tipsOf40()},
+      }).order!;
+      final tips = order.tips!;
+      expect((tips.base, tips.of), ('before_tax', '40.00'));
+      expect(tips.rows, [(percent: 18, amount: '7.20'), (percent: 20, amount: '8.00'), (percent: 25, amount: '10.00')]);
+      expect(tips.basis, r'On $40.00 before tax');
+      expect(
+        GuestTips.fromJson({
+          'base': 'after_tax',
+          'of': '42.80',
+          'rows': [
+            {'percent': 20, 'amount': '8.56'},
+          ],
+        })!.basis,
+        r'On the total of $42.80',
+      );
+      // none suggested: the location turned it off, a gratuity is on the check, an older hub
+      expect(GuestDisplay.fromJson({'of': 'mac1', 'showing': 'o7', 'order': counterOrder()}).order!.tips, isNull);
+      expect(GuestTips.fromJson({'base': 'before_tax', 'of': '40.00', 'rows': <dynamic>[]}), isNull);
+    });
+
+    test('what the location set for its guest displays', () {
+      const start = GuestDisplayRules();
+      expect((start.tips, start.base), (false, 'before_tax'));
+      expect(start.percents, [18, 20, 25]);
+      expect(start.summary, 'No tip is suggested');
+      final rules = GuestDisplayRules.fromJson({
+        'tips': true,
+        'tip_percents': [15, 20],
+        'tip_base': 'after_tax',
+      });
+      expect((rules.tips, rules.base), (true, 'after_tax'));
+      expect(rules.percents, [15, 20]);
+      expect(rules.summary, 'Suggests a tip of 15% and 20% of the total');
+      expect(rules.toJson(), {
+        'tips': true,
+        'tip_percents': [15, 20],
+        'tip_base': 'after_tax',
+      });
+      expect(const GuestDisplayRules(tips: true).summary, 'Suggests a tip of 18%, 20% and 25% before tax');
+      expect(GuestDisplayRules.listed([20]), '20%');
     });
   });
 
@@ -261,7 +344,8 @@ void main() {
       opens(t.hub, paidOrder());
       await nextRead(tester);
       expect(find.byKey(const ValueKey('guest-paid-in-full')), findsOneWidget);
-      expect(find.text('Paid in full. Thank you!'), findsOneWidget);
+      expect(find.text('Paid in full.'), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-paid-thanks'))).data, 'Thank you!');
       expect(find.text('50.00 handed over, 7.20 change'), findsOneWidget);
       expect(find.byKey(const ValueKey('guest-due')), findsNothing);
       await away(tester);
@@ -273,7 +357,7 @@ void main() {
       leaves(t.hub);
       await nextRead(tester);
       expect(find.byKey(const ValueKey('guest-thanks')), findsOneWidget);
-      expect(words(tester).take(2), ['Thank you!', 'China Sky']);
+      expect(words(tester).take(3), ['Thank you!', 'We hope to see you again soon.', 'China Sky']);
       expect(find.text('Jasmine Tea'), findsNothing);
       await tester.pump(const Duration(seconds: 8));
       await tester.pump(const Duration(milliseconds: 300));
@@ -402,6 +486,28 @@ void main() {
       await away(tester);
     });
 
+    testWidgets('a hub that stops answering takes the guest\'s name off as it takes the order off', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          hub.screenShows('mac1', 'o7'); // opened, no dish yet: greeted by name
+          known(hub, 'Linda', back: true);
+        },
+      );
+      expect(words(tester).first, 'Welcome back, Linda');
+      t.hub.down = true;
+      await nextRead(tester);
+      expect(words(tester).first, 'Welcome back, Linda'); // a hub that restarts is back within seconds
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pump(const Duration(milliseconds: 300));
+      // whose order is open there now is not known: the next guest is not greeted as Linda
+      expect(words(tester), ['China Sky', 'Welcome', 'The hub is not answering.', 'Staff']);
+      t.hub.down = false;
+      await nextRead(tester);
+      expect(words(tester).first, 'Welcome back, Linda');
+      await away(tester);
+    });
+
     testWidgets('a hub back within the ten seconds never took the order off', (tester) async {
       final t = await pumpDisplay(tester, hub: (hub) => opens(hub, counterOrder()));
       t.hub.down = true;
@@ -444,6 +550,236 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('guest-staff')));
       expect(staff, 1);
       expect(find.byType(Dialog), findsNothing);
+      await away(tester);
+    });
+
+    testWidgets('greets the guest by name over their order, and does not say the name twice', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          opens(hub, counterOrder());
+          known(hub, 'Linda', back: true);
+        },
+      );
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-hello'))).data, 'Welcome back, Linda');
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-where'))).data, 'Order #7');
+      expect(words(tester).take(3), ['Welcome back, Linda', 'Order #7', '2']);
+      // the name stands over the order number, and larger
+      final hello = tester.getRect(find.byKey(const ValueKey('guest-hello')));
+      final where = tester.getRect(find.byKey(const ValueKey('guest-where')));
+      expect(hello.bottom, lessThanOrEqualTo(where.top));
+      expect(hello.height, greaterThan(where.height));
+      // a first visit is welcomed, not welcomed back
+      known(t.hub, 'Linda');
+      await nextRead(tester);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-hello'))).data, 'Welcome, Linda');
+      await away(tester);
+    });
+
+    testWidgets('a guest the hub knows by number alone is welcomed back; one it cannot name is not greeted', (
+      tester,
+    ) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          opens(hub, counterOrder());
+          known(hub, '', back: true);
+        },
+      );
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-hello'))).data, 'Welcome back');
+      // what was typed on the order still tells them it is theirs
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-where'))).data, 'Order #7 · Linda');
+      t.hub.guestHosts.clear();
+      await nextRead(tester);
+      expect(find.byKey(const ValueKey('guest-hello')), findsNothing);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-where'))).data, 'Order #7 · Linda');
+      await away(tester);
+    });
+
+    testWidgets('greets by name the moment the order is opened, before its first dish', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          hub.screenShows('mac1', 'o7'); // opened from the caller's card: no dish on it yet
+          known(hub, 'Linda', back: true);
+        },
+      );
+      expect(find.byKey(const ValueKey('guest-welcome')), findsOneWidget);
+      expect(words(tester), ['Welcome back, Linda', 'China Sky', 'Linked to mac1', 'Staff']);
+      // the first dish: the order, under the same greeting
+      opens(t.hub, counterOrder());
+      await nextRead(tester);
+      expect(find.byKey(const ValueKey('guest-order')), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-hello'))).data, 'Welcome back, Linda');
+      // the order is left unpaid: the next guest is not greeted as Linda
+      leaves(t.hub);
+      await nextRead(tester);
+      expect(words(tester), ['China Sky', 'Welcome', 'Linked to mac1', 'Staff']);
+      await away(tester);
+    });
+
+    testWidgets('thanks the guest by name: when the order is paid, and when it is left', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          opens(hub, paidOrder());
+          known(hub, 'Linda', back: true);
+        },
+      );
+      expect(find.text('Paid in full.'), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-paid-thanks'))).data, 'Thank you, Linda!');
+      leaves(t.hub);
+      await nextRead(tester);
+      expect(find.byKey(const ValueKey('guest-thanks')), findsOneWidget);
+      expect(words(tester).take(3), ['Thank you, Linda!', 'We hope to see you again soon.', 'China Sky']);
+      // and the next guest is greeted as anyone is
+      await tester.pump(const Duration(seconds: 8));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(words(tester), ['China Sky', 'Welcome', 'Linked to mac1', 'Staff']);
+      await away(tester);
+    });
+
+    testWidgets('an order paid and left in one tap is thanked for by name too', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) {
+          opens(hub, counterOrder());
+          known(hub, 'Mr. Wong');
+        },
+      );
+      t.hub.guestViews['o7'] = paidOrder();
+      leaves(t.hub);
+      await nextRead(tester);
+      expect(words(tester).first, 'Thank you, Mr. Wong!');
+      await away(tester);
+    });
+
+    testWidgets('suggests the tips the hub worked out, under the total, and takes none', (tester) async {
+      var staff = 0;
+      final t = await terminal(tester);
+      opens(t.hub, {...counterOrder(), 'tips': tipsOf40()});
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GuestDisplayScreen(api: t.api, of: 'mac1', onStaff: () => staff++),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('guest-tips')), findsOneWidget);
+      final said = words(tester);
+      expect(said.sublist(said.indexOf('Total')), [
+        'Total',
+        r'$42.80',
+        'Suggested tip',
+        '18%',
+        r'$7.20',
+        '20%',
+        r'$8.00',
+        '25%',
+        r'$10.00',
+        r'On $40.00 before tax',
+        'Linked to mac1',
+        'Staff',
+      ]);
+      // under the total, side by side
+      final total = tester.getRect(find.byKey(const ValueKey('guest-total')));
+      final first = tester.getRect(find.byKey(const ValueKey('guest-tip:18')));
+      final last = tester.getRect(find.byKey(const ValueKey('guest-tip:25')));
+      expect(first.top, greaterThanOrEqualTo(total.bottom));
+      expect((first.top, first.bottom), (last.top, last.bottom));
+      expect(last.width, closeTo(first.width, 0.01));
+      expect(last.left, greaterThan(first.right));
+      // an amount is read, not tapped: nothing happens, and the total stays what it was
+      final before = t.hub.requests.length;
+      await tester.tap(find.byKey(const ValueKey('guest-tip:20')));
+      await tester.pump();
+      expect((staff, t.hub.requests.length), (0, before));
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-total'))).data, r'$42.80');
+      await away(tester);
+    });
+
+    testWidgets('says what the tips are a percentage of, and nothing where the hub suggests none', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) => opens(hub, {
+          ...counterOrder(),
+          'tips': {
+            'base': 'after_tax',
+            'of': '42.80',
+            'rows': [
+              {'percent': 20, 'amount': '8.56'},
+            ],
+          },
+        }),
+      );
+      expect(find.text(r'On the total of $42.80'), findsOneWidget);
+      expect(find.byKey(const ValueKey('guest-tip:20')), findsOneWidget);
+      expect(find.byKey(const ValueKey('guest-tip:18')), findsNothing);
+      // the location turned the suggestion off, or the check now carries a gratuity
+      opens(t.hub, counterOrder());
+      await nextRead(tester);
+      expect(find.byKey(const ValueKey('guest-tips')), findsNothing);
+      expect(find.text('Suggested tip'), findsNothing);
+      await away(tester);
+    });
+
+    testWidgets('part paid, the tips stand under what is still due; paid in full, they are gone', (tester) async {
+      final t = await pumpDisplay(
+        tester,
+        hub: (hub) => opens(hub, {
+          ...counterOrder(
+            paid: [
+              {'label': 'Paid cash', 'amount': '-20.00'},
+            ],
+            due: '22.80',
+          ),
+          'tips': tipsOf40(),
+        }),
+      );
+      final due = tester.getRect(find.byKey(const ValueKey('guest-due')));
+      expect(tester.getRect(find.byKey(const ValueKey('guest-tips'))).top, greaterThanOrEqualTo(due.bottom));
+      opens(t.hub, paidOrder()); // the hub suggests none on a check paid in full
+      await nextRead(tester);
+      expect(find.byKey(const ValueKey('guest-tips')), findsNothing);
+      expect(find.byKey(const ValueKey('guest-paid-in-full')), findsOneWidget);
+      await away(tester);
+    });
+
+    testWidgets('a greeting and the tips on a small phone with large type overflow nothing', (tester) async {
+      final t = await terminal(tester);
+      opens(t.hub, {
+        ...counterOrder(total: '1,042.80'),
+        'tips': {
+          'base': 'before_tax',
+          'of': '1,000.00',
+          'rows': [
+            {'percent': 18, 'amount': '180.00'},
+            {'percent': 20, 'amount': '200.00'},
+            {'percent': 25, 'amount': '250.00'},
+          ],
+        },
+      });
+      known(t.hub, 'Bartholomew-Alexander', back: true);
+      tester.view.physicalSize = const Size(320, 568);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(size: Size(320, 568), textScaler: TextScaler.linear(1.6)),
+            child: GuestDisplayScreen(api: t.api, of: 'mac1', onStaff: () {}),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('guest-hello')), findsOneWidget);
+      expect(find.byKey(const ValueKey('guest-tips')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      // the total is still in view: the tips never push it off
+      final screen = tester.getRect(find.byType(GuestDisplayScreen));
+      // and so are the tips: on a screen this small the sums may take a little more of it
+      expect(screen.contains(tester.getRect(find.byKey(const ValueKey('guest-tip:25'))).bottomRight), isTrue);
+      expect(screen.contains(tester.getRect(find.byKey(const ValueKey('guest-total'))).bottomRight), isTrue);
       await away(tester);
     });
 
@@ -492,7 +828,8 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      expect(find.text('Paid in full. Thank you!'), findsOneWidget);
+      expect(find.text('Paid in full.'), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const ValueKey('guest-paid-thanks'))).data, 'Thank you!');
       expect(tester.takeException(), isNull);
       await away(tester);
     });
@@ -923,6 +1260,174 @@ void main() {
       t.session.signOut();
       await tester.pumpAndSettle();
       await away(tester);
+    });
+  });
+
+  group('what a manager sets under Location', () {
+    Future<Terminal> pumpLocation(WidgetTester tester, {bool older = false, void Function(Hub hub)? hub}) async {
+      final t = await terminal(tester);
+      if (older) t.hub.guestDisplayRules = null;
+      hub?.call(t.hub);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LocationSettingsScreen(api: t.api, token: 'tok-admin', device: 't1'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await bringUp(tester, 'guest-display');
+      return t;
+    }
+
+    String rowWords(WidgetTester tester) =>
+        ((tester.widget<ListTile>(find.byKey(const ValueKey('guest-display'))).subtitle!) as Text).data!;
+
+    String sample(WidgetTester tester) => tester.widget<Text>(find.byKey(const ValueKey('guest-tip-sample'))).data!;
+
+    bool canSave(WidgetTester tester) =>
+        tester.widget<FilledButton>(find.byKey(const ValueKey('guest-display-save'))).onPressed != null;
+
+    Future<void> open(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('guest-display')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('no tip is suggested until a manager turns it on', (tester) async {
+      final t = await pumpLocation(tester);
+      expect(rowWords(tester), 'No tip is suggested. A device becomes a guest display in its own Settings.');
+      await open(tester);
+      expect(tester.widget<SwitchListTile>(find.byKey(const ValueKey('guest-tips-on'))).value, isFalse);
+      // the percentages it would start with, and what they come to on fifty dollars
+      expect(
+        [
+          for (var i = 0; i < 3; i++)
+            tester.widget<TextField>(find.byKey(ValueKey('guest-tip-percent:$i'))).controller!.text,
+        ],
+        ['18', '20', '25'],
+      );
+      expect(sample(tester), startsWith(r'On $50.00 the display suggests $9.00, $10.00 and $12.50.'));
+      await tester.tap(find.byKey(const ValueKey('guest-tips-on')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('guest-display-save')));
+      await tester.pumpAndSettle();
+      expect(t.hub.guestDisplayRulesAuth, 'Bearer tok-admin');
+      expect(t.hub.guestDisplayRules, {
+        'tips': true,
+        'tip_percents': [18, 20, 25],
+        'tip_base': 'before_tax',
+      });
+      expect(find.text('Guest display saved'), findsOneWidget);
+      expect(rowWords(tester), startsWith('Suggests a tip of 18%, 20% and 25% before tax.'));
+    });
+
+    testWidgets('the percentages are the manager\'s: fewer, others, and of the total with tax', (tester) async {
+      final t = await pumpLocation(tester, hub: (hub) => hub.guestDisplayRules!['tips'] = true);
+      await open(tester);
+      await tester.enterText(find.byKey(const ValueKey('guest-tip-percent:0')), '22');
+      await tester.enterText(find.byKey(const ValueKey('guest-tip-percent:1')), '15');
+      await tester.enterText(find.byKey(const ValueKey('guest-tip-percent:2')), '');
+      await tester.pumpAndSettle();
+      // lowest first, whatever the order they were typed in
+      expect(sample(tester), startsWith(r'On $50.00 the display suggests $7.50 and $11.00.'));
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('guest-tip-base-says'))).data,
+        startsWith('Of the food and drink, less comps and discounts'),
+      );
+      await tester.tap(find.byKey(const ValueKey('guest-tip-base:after_tax')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('guest-tip-base-says'))).data,
+        startsWith('Of the total as the guest reads it'),
+      );
+      await tester.tap(find.byKey(const ValueKey('guest-display-save')));
+      await tester.pumpAndSettle();
+      expect(t.hub.guestDisplayRules, {
+        'tips': true,
+        'tip_percents': [15, 22],
+        'tip_base': 'after_tax',
+      });
+      expect(rowWords(tester), startsWith('Suggests a tip of 15% and 22% of the total.'));
+    });
+
+    testWidgets('a percentage that cannot be, one typed twice or none at all is not saved', (tester) async {
+      final t = await pumpLocation(tester, hub: (hub) => hub.guestDisplayRules!['tips'] = true);
+      await open(tester);
+      await tester.enterText(find.byKey(const ValueKey('guest-tip-percent:0')), '0');
+      await tester.pumpAndSettle();
+      expect(find.text('1 to 100'), findsOneWidget);
+      expect(canSave(tester), isFalse);
+      await tester.enterText(find.byKey(const ValueKey('guest-tip-percent:0')), '20');
+      await tester.pumpAndSettle();
+      expect(find.text('Twice'), findsOneWidget); // on the second of the two, not on both
+      expect(sample(tester), startsWith('Whole percentages from 1 to 100, no two alike.'));
+      expect(canSave(tester), isFalse);
+      for (var i = 0; i < 3; i++) {
+        await tester.enterText(find.byKey(ValueKey('guest-tip-percent:$i')), '');
+      }
+      await tester.pumpAndSettle();
+      expect(sample(tester), 'Type at least one percentage, or turn the suggestion off.');
+      expect(canSave(tester), isFalse);
+      // off, the boxes may stay empty: the percentages the hub has are kept for the day it is turned on
+      await tester.tap(find.byKey(const ValueKey('guest-tips-on')));
+      await tester.pumpAndSettle();
+      expect(canSave(tester), isTrue);
+      await tester.tap(find.byKey(const ValueKey('guest-display-save')));
+      await tester.pumpAndSettle();
+      expect(t.hub.guestDisplayRules, {
+        'tips': false,
+        'tip_percents': [18, 20, 25],
+        'tip_base': 'before_tax',
+      });
+    });
+
+    testWidgets('what the hub refuses is said in its words, and Cancel saves nothing', (tester) async {
+      final t = await pumpLocation(tester);
+      await open(tester);
+      await tester.tap(find.byKey(const ValueKey('guest-tips-on')));
+      await tester.pumpAndSettle();
+      t.hub.refuseGuestDisplayRules = 'a tip is 1 to 100 percent';
+      await tester.tap(find.byKey(const ValueKey('guest-display-save')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('guest-display-problem'))).data,
+        'a tip is 1 to 100 percent',
+      );
+      expect(t.hub.guestDisplayRules!['tips'], isFalse);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('guest-display-save')), findsNothing);
+      expect(rowWords(tester), startsWith('No tip is suggested.'));
+    });
+
+    testWidgets('the whole of it fits a phone, with large type', (tester) async {
+      final t = await terminal(tester);
+      tester.view.physicalSize = const Size(320, 568);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(size: Size(320, 568), textScaler: TextScaler.linear(1.6)),
+            child: GuestDisplayDialog(api: t.api, token: 'tok-admin', rules: const GuestDisplayRules(tips: true)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // Cancel and Save stay in reach at the foot, whatever the dialog holds
+      final screen = tester.getRect(find.byType(MaterialApp));
+      expect(screen.contains(tester.getRect(find.byKey(const ValueKey('guest-display-save'))).bottomRight), isTrue);
+      expect(screen.contains(tester.getRect(find.text('Cancel')).topLeft), isTrue);
+      // and the last of it is reached by scrolling
+      await tester.ensureVisible(find.byKey(const ValueKey('guest-tip-base:after_tax')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('guest-tip-base:after_tax')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a hub older than the option says so and has nothing to open', (tester) async {
+      await pumpLocation(tester, older: true);
+      expect(rowWords(tester), startsWith('The hub has not answered about guest displays'));
+      await open(tester);
+      expect(find.byKey(const ValueKey('guest-display-save')), findsNothing);
     });
   });
 }

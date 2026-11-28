@@ -397,6 +397,30 @@ final List<SettingEntry> locationSettings = List.unmodifiable([
   const SettingEntry('kitchen-screens', 'Minutes until amber', spot: Spot.key('kitchen-warn'), also: 'warning'),
   const SettingEntry('kitchen-screens', 'Minutes until red', spot: Spot.key('kitchen-late'), also: 'late'),
   const SettingEntry(
+    'guest-display',
+    'Guest display',
+    about: 'What the screens turned to the guests show besides the order: a suggested tip',
+    also: 'customer display facing screen second monitor tips gratuity',
+  ),
+  const SettingEntry(
+    'guest-display',
+    'Suggest a tip',
+    spot: Spot.key('guest-tips-on'),
+    also: 'tips gratuity suggestion suggested customer display',
+  ),
+  const SettingEntry(
+    'guest-display',
+    'Tip percentages',
+    spot: Spot.key('guest-tip-percent:0'),
+    also: 'tips gratuity percent 18 20 25',
+  ),
+  const SettingEntry(
+    'guest-display',
+    'A tip is a percentage of',
+    spot: Spot.key('guest-tip-base:before_tax'),
+    also: 'tips before tax after tax pre-tax post-tax total',
+  ),
+  const SettingEntry(
     'voids',
     'Voids',
     about: "What voiding a sent dish takes: a manager's PIN or not, and the reasons to pick from",

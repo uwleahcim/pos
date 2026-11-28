@@ -18,6 +18,11 @@ import 'theme.dart';
 /// and when the screen it is linked to leaves an order that is paid, this one says thank you for
 /// [thanksFor] before it greets the next guest.
 ///
+/// The guest is greeted by name wherever the hub says what to call them: over their order ("Welcome back,
+/// Linda"), which also tells them it is theirs; from the moment the order is opened, before its first
+/// dish; and in the thank you. Where the location turned it on, tips are suggested under the total: amounts
+/// to read, worked out on the hub, and nothing to tap.
+///
 /// It reads when the hub says the linked screen opened or left an order, or that the order it shows
 /// changed, and now and then while the hub cannot say. A hub that stops answering leaves the last picture up
 /// for [staleAfter] and no longer: a guest is never shown a total that may be behind.
@@ -56,6 +61,8 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
   String _name = ''; // the restaurant's, as last read: it stays up while the hub is away
   String? _watching; // the order the linked screen has open, shown or not yet
   String? _gone; // the order it left a moment ago, unpaid as far as the hub knew then
+  ({String name, bool back})? _guest; // how to greet the guest of the order it has open
+  String _thanked = ''; // what to call the guest who is being thanked; empty for nobody by name
   bool _known = true; // the hub hears from the linked screen
   bool _thanks = false; // a paid order was just left: thank you, for a moment
   bool _away = false; // the last read got no answer
@@ -124,12 +131,13 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
       // a hub from before guest displays: nothing to show a guest, and a word for the staff
       _watching = null;
       _forget();
-      if (!_old || _order != null || _away || _thanks) {
+      if (!_old || _order != null || _away || _thanks || _guest != null) {
         _thanksOver?.cancel();
         setState(() {
           _old = true;
           _away = false;
           _order = null;
+          _guest = null;
           _thanks = false;
         });
       }
@@ -145,7 +153,7 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
     // the order the screen it is linked to left: with this read, or a moment ago
     final moved = before != null && view.showing != before;
     final gone = moved ? before : _gone;
-    var thanks = _thanks;
+    var thanks = _thanks, thanked = _thanked;
     if (next != null) {
       thanks = false;
       _thanksOver?.cancel();
@@ -155,6 +163,7 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
       // hub says whether it is paid: paying and leaving are often one tap, and then no read ever saw the
       // order paid.
       thanks = true;
+      thanked = left.name;
       _forget();
       _thanksOver?.cancel();
       _thanksOver = Timer(widget.thanksFor, () {
@@ -168,10 +177,12 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
       _goneOver = Timer(widget.lateFor, () => _gone = null);
     }
     final grew = next != null && (was == null || was.orderId != next.orderId || next.lines.length != was.lines.length);
-    final (name, known) = (view.name, view.known);
+    final (name, known, guest) = (view.name, view.known, view.guest);
     setState(() {
       _order = next;
+      _guest = guest;
       _thanks = thanks;
+      _thanked = thanked;
       _name = name;
       _known = known;
       _away = false;
@@ -189,7 +200,8 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
   /// a guest is not shown an order that may have changed since.
   void _lost() {
     if (!_away) setState(() => _away = true);
-    if (_stale != null || (_order == null && !_thanks)) return;
+    // a greeting by name goes with the order: whose order is open there now is no longer known
+    if (_stale != null || (_order == null && !_thanks && _guest == null)) return;
     _stale = Timer(widget.staleAfter, () {
       _stale = null;
       if (!mounted) return;
@@ -197,6 +209,7 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
       _read = null;
       setState(() {
         _order = null;
+        _guest = null;
         _thanks = false;
       });
     });
@@ -243,13 +256,28 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
               body = _OrderView(
                 key: const ValueKey('guest-order'),
                 order: order,
+                guest: _guest,
                 unit: unit,
                 wide: wide,
                 scroll: _scroll,
                 most: box.maxHeight,
               );
             } else if (_thanks) {
-              body = _Greeting(key: const ValueKey('guest-thanks'), big: 'Thank you!', small: _name, unit: unit);
+              body = _Greeting(
+                key: const ValueKey('guest-thanks'),
+                big: _thanked.isEmpty ? 'Thank you!' : 'Thank you, $_thanked!',
+                small: 'We hope to see you again soon.',
+                foot: _name,
+                unit: unit,
+              );
+            } else if (guestGreeting(_guest).isNotEmpty) {
+              // their order is open on the linked screen and has no dish yet: greeted by name already
+              body = _Greeting(
+                key: const ValueKey('guest-welcome'),
+                big: guestGreeting(_guest),
+                small: _name,
+                unit: unit,
+              );
             } else {
               body = _Greeting(
                 key: const ValueKey('guest-welcome'),
@@ -303,12 +331,16 @@ class _GuestDisplayScreenState extends State<GuestDisplayScreen> {
   }
 }
 
-/// What the screen says with no order to show: the restaurant's name and a welcome, or a thank you.
+/// What the screen says with no order to show: the restaurant's name and a welcome, the guest's name, or a
+/// thank you.
 class _Greeting extends StatelessWidget {
-  const _Greeting({super.key, required this.big, required this.small, required this.unit});
+  const _Greeting({super.key, required this.big, required this.small, this.foot = '', required this.unit});
 
   final String big;
   final String small;
+
+  /// Under the two, smaller still: the restaurant's name under a thank you.
+  final String foot;
   final double unit;
 
   @override
@@ -333,6 +365,14 @@ class _Greeting extends StatelessWidget {
                 style: TextStyle(fontSize: unit * 1.2, color: scheme.onSurfaceVariant),
               ),
             ],
+            if (foot.isNotEmpty) ...[
+              SizedBox(height: unit * 0.9),
+              Text(
+                foot,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: unit * 0.9, color: scheme.onSurfaceVariant.withValues(alpha: 0.8)),
+              ),
+            ],
           ],
         ),
       ),
@@ -345,6 +385,7 @@ class _OrderView extends StatelessWidget {
   const _OrderView({
     super.key,
     required this.order,
+    required this.guest,
     required this.unit,
     required this.wide,
     required this.scroll,
@@ -352,27 +393,56 @@ class _OrderView extends StatelessWidget {
   });
 
   final GuestOrder order;
+
+  /// How to greet whose order it is; null for nobody by name.
+  final ({String name, bool back})? guest;
   final double unit;
   final bool wide;
   final ScrollController scroll;
 
-  /// The height there is for the whole of it: on a narrow screen the sums take no more than half.
+  /// The height there is for the whole of it: on a narrow screen the sums take little more than half.
   final double most;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // the guest's name first and large: it tells them the order is theirs, and that they are known here
+    final hello = guestGreeting(guest);
+    final named = guest != null && guest!.name.isNotEmpty;
     final dishes = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: EdgeInsets.fromLTRB(unit, unit * 0.7, unit, unit * 0.3),
-          child: Text(
-            [order.where, order.detail].where((part) => part.isNotEmpty).join(' · '),
-            key: const ValueKey('guest-where'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: unit * 0.95, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (hello.isNotEmpty)
+                Text(
+                  hello,
+                  key: const ValueKey('guest-hello'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: unit * 1.35,
+                    fontWeight: FontWeight.w700,
+                    height: 1.15,
+                    color: scheme.primary,
+                  ),
+                ),
+              Text(
+                // the name stands in the greeting: it is not said twice
+                [order.where, if (!named) order.detail].where((part) => part.isNotEmpty).join(' · '),
+                key: const ValueKey('guest-where'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: unit * (hello.isEmpty ? 0.95 : 0.85),
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -390,7 +460,7 @@ class _OrderView extends StatelessWidget {
         ),
       ],
     );
-    final sums = _Sums(order: order, unit: unit);
+    final sums = _Sums(order: order, name: named ? guest!.name : '', unit: unit);
     if (wide) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -415,7 +485,8 @@ class _OrderView extends StatelessWidget {
         ColoredBox(
           color: scheme.surfaceContainerLow,
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: math.max(most * 0.55, 120)),
+            // a little more where a tip is suggested, so the amounts are read without scrolling
+            constraints: BoxConstraints(maxHeight: math.max(most * (order.tips == null ? 0.55 : 0.65), 120)),
             child: SingleChildScrollView(child: sums),
           ),
         ),
@@ -469,11 +540,14 @@ class _DishRow extends StatelessWidget {
 }
 
 /// Under the dishes: the subtotal, each discount and charge, the tax; the total, large; what was paid and
-/// what is still due.
+/// what is still due; and the tips the location suggests, to read and not to tap.
 class _Sums extends StatelessWidget {
-  const _Sums({required this.order, required this.unit});
+  const _Sums({required this.order, required this.name, required this.unit});
 
   final GuestOrder order;
+
+  /// What to call the guest in the thank you; empty for nobody by name.
+  final String name;
   final double unit;
 
   @override
@@ -503,19 +577,27 @@ class _Sums extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(
-            child: Text(label, style: large.copyWith(color: color)),
-          ),
+          Text(label, style: large.copyWith(color: color)),
           SizedBox(width: unit * 0.6),
-          Text(
-            '\$$amount',
-            key: key,
-            style: large.copyWith(color: color, fontFeatures: PosTheme.tabular),
+          // a figure too long for the row (large type on a phone) is drawn smaller, never cut
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text(
+                '\$$amount',
+                key: key,
+                maxLines: 1,
+                style: large.copyWith(color: color, fontFeatures: PosTheme.tabular),
+              ),
+            ),
           ),
         ],
       ),
     );
     final due = order.due;
+    final tips = order.tips;
+    final paidWords = TextStyle(fontSize: unit * 1.15, fontWeight: FontWeight.w700, color: paidInk);
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: unit, vertical: unit * 0.6),
       child: Column(
@@ -527,6 +609,7 @@ class _Sums extends StatelessWidget {
           figure('Total', order.total, key: const ValueKey('guest-total')),
           for (final (i, paid) in order.paid.indexed) row(paid, key: ValueKey('guest-paid:$i')),
           if (due != null && !order.paidInFull) figure('Due', due, key: const ValueKey('guest-due')),
+          if (tips != null) _Tips(tips: tips, unit: unit),
           if (order.paidInFull)
             Padding(
               padding: EdgeInsets.only(top: unit * 0.3),
@@ -535,15 +618,98 @@ class _Sums extends StatelessWidget {
                 children: [
                   Icon(Icons.check_circle, size: unit * 1.5, color: paidInk),
                   SizedBox(width: unit * 0.4),
+                  // two sentences, and a line that is too short breaks between them: the thank you, with
+                  // the name in it, goes under "Paid in full." whole
                   Expanded(
-                    child: Text(
-                      'Paid in full. Thank you!',
-                      style: TextStyle(fontSize: unit * 1.15, fontWeight: FontWeight.w700, color: paidInk),
+                    child: Wrap(
+                      spacing: unit * 0.3,
+                      children: [
+                        Text('Paid in full.', style: paidWords),
+                        Text(
+                          name.isEmpty ? 'Thank you!' : 'Thank you, $name!',
+                          key: const ValueKey('guest-paid-thanks'),
+                          style: paidWords,
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The tips the location suggests, side by side: each percentage with what it comes to, and under them
+/// what they are percentages of. Nothing here can be tapped: the guest reads them and tips as they do today.
+class _Tips extends StatelessWidget {
+  const _Tips({required this.tips, required this.unit});
+
+  final GuestTips tips;
+  final double unit;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final quiet = TextStyle(fontSize: unit * 0.72, color: scheme.onSurfaceVariant, height: 1.3);
+    return Padding(
+      key: const ValueKey('guest-tips'),
+      padding: EdgeInsets.only(top: unit * 0.5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Suggested tip',
+            style: TextStyle(fontSize: unit * 0.85, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant),
+          ),
+          SizedBox(height: unit * 0.3),
+          // one height for all of them: a long amount is drawn smaller, and its box must not be shorter
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final (i, row) in tips.rows.indexed) ...[
+                  if (i > 0) SizedBox(width: unit * 0.4),
+                  Expanded(
+                    child: Container(
+                      key: ValueKey('guest-tip:${row.percent}'),
+                      padding: EdgeInsets.symmetric(vertical: unit * 0.35, horizontal: unit * 0.3),
+                      decoration: BoxDecoration(
+                        color: scheme.surface,
+                        border: Border.all(color: scheme.outlineVariant),
+                        borderRadius: BorderRadius.circular(unit * 0.5),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '${row.percent}%',
+                            style: TextStyle(fontSize: unit * 0.95, fontWeight: FontWeight.w700, height: 1.2),
+                          ),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              '\$${row.amount}',
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: unit * 0.9,
+                                height: 1.25,
+                                color: scheme.onSurfaceVariant,
+                                fontFeatures: PosTheme.tabular,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          SizedBox(height: unit * 0.25),
+          Text(tips.basis, style: quiet),
         ],
       ),
     );

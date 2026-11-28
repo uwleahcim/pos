@@ -84,6 +84,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   a table can be waiting on is given (see "Table timers" below).
 - **Kitchen screens**: the minutes a ticket has been in the kitchen when a station's screen turns it amber,
   and red (see `kitchen-screens.md`).
+- **Guest display**: whether the screens turned to the guests suggest a tip under the total (off to start),
+  the percentages, and whether they are percentages of the check before tax or of the total (see
+  `guest-display.md`). Which device is a guest display is set on that device, in its own Settings.
 - **Voids**: whether voiding a dish the kitchen already has takes a manager's PIN, and the reasons to pick
   from; under it, the **Voids and comps report**, which also lists the dishes taken off a check before they
   were sent (see `voids.md`).
@@ -318,6 +321,10 @@ empty. The kitchen ticket, the check on every terminal and the receipt list the 
 - `GET /settings/kitchen_screens` and `PUT /settings/kitchen_screens` (the manager Bearer token): `{"warn":
   10, "late": 20}`, the minutes after which a ticket on a station's screen turns amber and red; details in
   `kitchen-screens.md`.
+- `GET /settings/guest_display` and `PUT /settings/guest_display` (the manager Bearer token): `{"tips":
+  false, "tip_percents": [18, 20, 25], "tip_base": "before_tax"}`, whether the guest displays suggest a tip,
+  the percentages (one to three, whole, 1 to 100) and what they are of (`before_tax` or `after_tax`);
+  details in `guest-display.md`.
 - An order line's `course` and a `fire`'s `course` are ids; the hub never refuses a line for its course,
   so a terminal with an older list can still send what it took.
 - `GET /settings/quotes`, `PUT /settings/quotes` and `PUT /settings/rush`: see "On the wire" in

@@ -44,6 +44,30 @@ class GuestLine {
   final List<({String text, int depth})> notes;
 }
 
+/// The tips a display suggests under the total, as the hub worked them out: each a percentage with what it
+/// comes to. [base] says what they are percentages of (`before_tax`: the food and drink less discounts;
+/// `after_tax`: the check's total) and [of] is that amount.
+class GuestTips {
+  const GuestTips({required this.base, required this.of, required this.rows});
+
+  static GuestTips? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final rows = [
+      for (final row in json['rows'] as List? ?? const [])
+        if (row is Map) (percent: (row['percent'] as num?)?.toInt() ?? 0, amount: row['amount']?.toString() ?? ''),
+    ];
+    if (rows.isEmpty) return null;
+    return GuestTips(base: json['base']?.toString() ?? 'before_tax', of: json['of']?.toString() ?? '', rows: rows);
+  }
+
+  final String base;
+  final String of;
+  final List<({int percent, String amount})> rows;
+
+  /// What the percentages are of, in a guest's words.
+  String get basis => base == 'after_tax' ? 'On the total of \$$of' : 'On \$$of before tax';
+}
+
 /// An order as a guest reads it.
 class GuestOrder {
   const GuestOrder({
@@ -56,6 +80,7 @@ class GuestOrder {
     this.paid = const [],
     this.due,
     this.paidInFull = false,
+    this.tips,
   });
 
   factory GuestOrder.fromJson(Map<String, dynamic> json) => GuestOrder(
@@ -68,6 +93,7 @@ class GuestOrder {
     paid: [for (final row in json['paid'] as List? ?? const []) GuestRow.fromJson(row as Map<String, dynamic>)],
     due: json['due'] as String?,
     paidInFull: json['paid_in_full'] == true,
+    tips: GuestTips.fromJson(json['tips']),
   );
 
   final String orderId;
@@ -89,20 +115,29 @@ class GuestOrder {
   /// What is still owed once something was paid; null while nothing was.
   final String? due;
   final bool paidInFull;
+
+  /// The tips to suggest under the total; null where the location suggests none, the check carries a
+  /// gratuity already, or it is paid in full.
+  final GuestTips? tips;
 }
 
 /// What a guest display shows now, as the hub answers it.
 class GuestDisplay {
-  const GuestDisplay({this.head = const [], this.showing, this.order, this.left, this.known = true});
+  const GuestDisplay({this.head = const [], this.showing, this.order, this.guest, this.left, this.known = true});
 
   factory GuestDisplay.fromJson(Map<String, dynamic> json) {
-    final left = json['left'];
+    final left = json['left'], guest = json['guest'];
     return GuestDisplay(
       head: [for (final line in json['head'] as List? ?? const []) line.toString()],
       showing: json['showing'] as String?,
       order: json['order'] is Map<String, dynamic> ? GuestOrder.fromJson(json['order'] as Map<String, dynamic>) : null,
+      guest: guest is Map ? (name: guest['name']?.toString() ?? '', back: guest['back'] == true) : null,
       left: left is Map && left['order_id'] is String
-          ? (orderId: left['order_id'] as String, paidInFull: left['paid_in_full'] == true)
+          ? (
+              orderId: left['order_id'] as String,
+              paidInFull: left['paid_in_full'] == true,
+              name: left['name']?.toString() ?? '',
+            )
           : null,
       known: json['known'] != false,
     );
@@ -118,15 +153,67 @@ class GuestDisplay {
   /// That order as a guest reads it; null while there is nothing to show.
   final GuestOrder? order;
 
-  /// The order the linked screen had open before this one (or before none), and whether it is paid in full
-  /// now: an order paid and left in one tap is thanked for although no read ever saw it paid.
-  final ({String orderId, bool paidInFull})? left;
+  /// How to greet the guest of the order the linked screen has open: what to call them (may be empty) and
+  /// whether they have been here before. There before the first dish is; null when the order names nobody.
+  final ({String name, bool back})? guest;
+
+  /// The order the linked screen had open before this one (or before none), whether it is paid in full
+  /// now, and what to call its guest: an order paid and left in one tap is thanked for, by name, although
+  /// no read ever saw it paid.
+  final ({String orderId, bool paidInFull, String name})? left;
 
   /// Whether the hub hears from the linked screen at all right now.
   final bool known;
 
   /// The restaurant's name, to greet with; empty when the location never gave one.
   String get name => head.isEmpty ? '' : head.first;
+}
+
+/// The words a display greets a guest with: "Welcome back, Linda", "Welcome, Linda", "Welcome back"; empty
+/// when there is nobody to name and nothing to say of them.
+String guestGreeting(({String name, bool back})? guest) {
+  if (guest == null) return '';
+  final hello = guest.back ? 'Welcome back' : 'Welcome';
+  if (guest.name.isEmpty) return guest.back ? hello : '';
+  return '$hello, ${guest.name}';
+}
+
+/// What every guest display of the location shows besides the order (Location > Guest display): whether
+/// it suggests a tip under the total, the percentages, and what they are percentages of.
+class GuestDisplayRules {
+  const GuestDisplayRules({this.tips = false, this.percents = const [18, 20, 25], this.base = 'before_tax'});
+
+  factory GuestDisplayRules.fromJson(Map<String, dynamic> json) => GuestDisplayRules(
+    tips: json['tips'] == true,
+    percents: [
+      for (final percent in json['tip_percents'] as List? ?? const [18, 20, 25]) (percent as num).toInt(),
+    ],
+    base: json['tip_base'] == 'after_tax' ? 'after_tax' : 'before_tax',
+  );
+
+  final bool tips;
+
+  /// One to three whole percentages, lowest first.
+  final List<int> percents;
+
+  /// `before_tax` (the food and drink, less discounts) or `after_tax` (the check's total).
+  final String base;
+
+  static const most = 3;
+
+  Map<String, dynamic> toJson() => {'tips': tips, 'tip_percents': percents, 'tip_base': base};
+
+  /// "18%, 20% and 25%".
+  static String listed(List<int> percents) {
+    final words = [for (final percent in percents) '$percent%'];
+    if (words.length < 2) return words.join();
+    return '${words.sublist(0, words.length - 1).join(', ')} and ${words.last}';
+  }
+
+  /// One line for the Location screen.
+  String get summary => tips
+      ? 'Suggests a tip of ${listed(percents)} ${base == 'after_tax' ? 'of the total' : 'before tax'}'
+      : 'No tip is suggested';
 }
 
 /// Tells the hub which order this screen has open, for a guest display linked to it.

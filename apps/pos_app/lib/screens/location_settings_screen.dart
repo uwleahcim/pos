@@ -15,6 +15,7 @@ import '../delivery_fee.dart';
 import '../desk_phone.dart';
 import '../drive_lookups.dart';
 import '../faces.dart';
+import '../guest_display.dart';
 import '../kitchen_notes.dart';
 import '../menu.dart';
 import '../online_orders.dart';
@@ -42,6 +43,7 @@ import 'dishes_screen.dart';
 import 'eighty_six_board.dart';
 import 'face_enroll_dialog.dart';
 import 'floor_editor.dart';
+import 'guest_display_dialog.dart';
 import 'guests_screen.dart';
 import 'kitchen_minutes_dialog.dart';
 import 'kitchen_notes_dialog.dart';
@@ -196,6 +198,7 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
   PrinterSettings? _printers; // the kitchen printers as the hub has them; null until it answers (an older hub)
   TableTimers? _timers; // the table timers as the hub has them; null until it answers (an older hub)
   KitchenMinutes? _kitchenMinutes; // when a station's screen turns a ticket amber and red; null likewise
+  GuestDisplayRules? _guestDisplay; // what the guest displays show besides the order; null likewise
   VoidRules? _voids; // the void rules as the hub has them; null until it answers (an older hub)
   BagQuestion? _bag; // the to-go question as the hub has it; null until it answers (an older hub)
   DeliveryFees? _fees; // what a delivery costs, as the hub has it; null until it answers (an older hub)
@@ -411,6 +414,12 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     try {
       final minutes = await widget.api.kitchenMinutes();
       if (mounted) setState(() => _kitchenMinutes = minutes);
+    } on ApiException {
+      // no answer: the row says so
+    }
+    try {
+      final rules = await widget.api.guestDisplayRules();
+      if (mounted) setState(() => _guestDisplay = rules);
     } on ApiException {
       // no answer: the row says so
     }
@@ -1144,6 +1153,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kitchen screens saved')));
   }
 
+  Future<void> _guestDisplays() async {
+    final lit = _lit;
+    final saved = await showDialog<GuestDisplayRules>(
+      context: context,
+      builder: (_) => lit(GuestDisplayDialog(api: widget.api, token: widget.token, rules: _guestDisplay!)),
+    );
+    if (saved == null || !mounted) return;
+    setState(() => _guestDisplay = saved);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guest display saved')));
+  }
+
   Future<void> _voidRules() async {
     final lit = _lit;
     final saved = await showDialog<VoidRules>(
@@ -1773,6 +1793,17 @@ class _LocationSettingsScreenState extends State<LocationSettingsScreen> {
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _kitchenMinutes == null ? null : _kitchenScreens,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                key: const ValueKey('guest-display'),
+                leading: const Icon(Icons.tv_outlined),
+                title: const Text('Guest display'),
+                subtitle: Text(GuestDisplayDialog.summary(_guestDisplay)),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _guestDisplay == null ? null : _guestDisplays,
               ),
             ),
             const SizedBox(height: 12),

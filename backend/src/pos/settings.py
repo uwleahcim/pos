@@ -90,6 +90,10 @@
   `near_miles` is how far around the restaurant a service's addresses come first (4 unless set).
 - `kitchen_screens`: the colours of a ticket on a station's screen (`pos/printing/screen.py`): the minutes it
   has been in the kitchen when it turns amber (`warn`) and red (`late`); 0 for never.
+- `guest_display`: what the screens turned to the guests show besides the order (`pos/guest_display.py`):
+  `tips`, whether they suggest a tip under the total (off until a manager turns it on), `tip_percents`, the
+  one to three percentages suggested, and `tip_base`, what they are percentages of: `before_tax`, the food
+  and drink less discounts, or `after_tax`, the check's total.
 - `kitchen_notes`: the one-tap notes to the kitchen (`notes`, a list of short words in the order the buttons
   show): what a server would otherwise type on a dish again and again, such as "Rush" or "Split for 2". A
   tap puts the words in the dish's note, so an order carries the words themselves and a note can be reworded
@@ -237,6 +241,8 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "waste": {"reasons": STANDARD_WASTE_REASONS},
     # Minutes a ticket has been in the kitchen before a station's screen turns it amber, and then red.
     "kitchen_screens": {"warn": 10, "late": 20},
+    # what a guest display shows besides the order: tip suggestions, off until a manager turns them on
+    "guest_display": {"tips": False, "tip_percents": [18, 20, 25], "tip_base": "before_tax"},
     # Who may do what, as the hub did before the table could be changed: only a manager or an owner approves
     # a void or a discount and opens the back office; servers and bartenders take tables, hosts give them out.
     "powers": {"roles": STANDARD_POWERS},
@@ -915,6 +921,37 @@ def clean_kitchen_screens(data: Mapping[str, Any]) -> dict[str, Any]:
     if 0 < times["late"] <= times["warn"]:
         raise ValueError("red must come after amber")
     return times
+
+
+TIP_BASES = ("before_tax", "after_tax")
+"""What a suggested tip is a percentage of: the food and drink less discounts, or the check's total."""
+TIP_PERCENTS_MAX = 3
+"""The most tips a guest display suggests side by side: three read at a glance on a phone."""
+TIP_PERCENT_MOST = 100
+
+
+def clean_guest_display(data: Mapping[str, Any]) -> dict[str, Any]:
+    """What the guest displays show besides the order, checked: `tips` (true or false), `tip_percents` (one
+    to three whole percentages from 1 to 100, no two alike; kept lowest first) and `tip_base` (one of
+    `TIP_BASES`). One left out keeps the default. Raises ValueError on a bad value."""
+    cleaned = dict(DEFAULTS["guest_display"])
+    tips = data.get("tips", cleaned["tips"])
+    if not isinstance(tips, bool):
+        raise ValueError("tips must be true or false")
+    percents = data.get("tip_percents", cleaned["tip_percents"])
+    if not isinstance(percents, list | tuple) or not 1 <= len(percents) <= TIP_PERCENTS_MAX:
+        raise ValueError(f"one to {TIP_PERCENTS_MAX} percentages to suggest")
+    for percent in percents:
+        if isinstance(percent, bool) or not isinstance(percent, int | float) or percent != int(percent):
+            raise ValueError("a percentage to suggest is a whole number")
+        if not 1 <= percent <= TIP_PERCENT_MOST:
+            raise ValueError(f"a percentage to suggest is 1 to {TIP_PERCENT_MOST}")
+    if len({int(percent) for percent in percents}) != len(percents):
+        raise ValueError("the percentages to suggest must differ")
+    base = data.get("tip_base", cleaned["tip_base"])
+    if base not in TIP_BASES:
+        raise ValueError(f"tip_base is one of {', '.join(TIP_BASES)}")
+    return {"tips": tips, "tip_percents": sorted(int(percent) for percent in percents), "tip_base": base}
 
 
 def fallback_loop(fallbacks: Mapping[str, list[str]]) -> list[str] | None:
