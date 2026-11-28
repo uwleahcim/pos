@@ -169,17 +169,24 @@ def test_a_write_that_fails_gives_the_job_back():
     assert store.claim(["p"], relay="ipad1") is job  # a relay may have it now
 
 
-def test_a_write_that_breaks_gives_the_job_back_too():
-    """Whatever stops a write, the job is not left as the hub's for good: it would never print."""
+def test_a_write_that_breaks_is_a_failed_try_like_any_other():
+    """Whatever stops a write, the job is not left as the hub's for good, where it would never print: an
+    address that cannot be read is a failed try as much as a printer that does not answer, and the job
+    moves on to its fallback after as many."""
     store = JobStore()
-    job = store.create("p", b"ticket")
+    job = store.create("10.0.0.1:nine", b"ticket", fallbacks=[("10.0.0.2", b"ticket for the bar")])
+    sent: list[tuple[str, bytes]] = []
 
-    def broken(printer: str, data: bytes) -> None:
-        raise ValueError("no such port")
+    def send(printer: str, data: bytes) -> None:
+        if printer.endswith(":nine"):
+            raise ValueError("invalid literal for int() with base 10: 'nine'")
+        sent.append((printer, data))
 
-    with pytest.raises(ValueError):
-        store.deliver_direct(job, send=broken)
-    assert job.status == "queued" and store.pending() == [job]
+    assert store.write(job, send=send) == "failed"
+    assert job.status == "queued" and "nine" in job.last_error and store.pending() == [job]
+    assert store.write(job, send=send) == "failed" and job.printer == "10.0.0.2"
+    assert store.write(job, send=send) == "printed"
+    assert sent == [("10.0.0.2", b"ticket for the bar")]
 
 
 def test_the_hub_leaves_a_job_a_relay_is_printing():

@@ -237,16 +237,34 @@ What separate tickets change, and what they do not:
 - Bills, the day's report, pack sheets, prep lists and bag labels are not kitchen tickets and print as
   before.
 
-**Every paper comes out once.** The hub writes each job to its printer as soon as it is queued, and every
-few seconds gives the jobs that are not done another go. A printer takes one paper at a time, so when an
-order sends it several tickets at once the later ones take seconds to hand over, waiting for the ones
-before. For as long as the hub is writing a job, the job is the hub's (`leased`, to `hub`, in
-`GET /print/jobs`): the second chance passes it over, and so does a terminal printing in relay mode. A job
-with more than one of `attempts` says in `last_error` what kept the earlier ones from going out (the
-printer took no more connections, or is off); it was tried again, which is no second copy. (Until
-2026-11-27 a job being written still counted as not gone out, so a ticket that was slow to hand over was
-written again and printed twice; in the list such a job had two `attempts` and no `last_error`. The tests
-are in `tests/printing/test_printing.py`.)
+**Every paper comes out once, and a printer is handed one at a time.** A printer prints one paper at a
+time, so the hub keeps a line for each printer (`pos.printing.jobs.Lines`) and hands it one job, waits
+until the printer has taken it, and hands it the next:
+
+- **In order.** The oldest first. The tickets of one order come out in the order its stations stand on the
+  printer's card, every time.
+- **Side by side.** Each printer's line is worked on its own, so a printer that is off, out of paper or
+  slow keeps only its own papers waiting.
+- **A printer that fails one paper has failed the ones behind it.** They would have met the same, so each
+  counts the try without being sent. A printer that is down is tried twice in all, about ten seconds, and
+  then everything in its line that has a fallback goes there together, in order. What has no fallback
+  waits, and the printer is tried again every three seconds.
+- **A long paper takes as long as it takes.** The four seconds a printer is given are for standing still
+  (to answer, or to take some more of the job), not for the whole job: a catering order's pack sheet goes
+  in at the speed of the paper.
+
+While the hub is writing a job, the job is the hub's (`leased`, to `hub`, in `GET /print/jobs`): nothing
+else sends it, neither the hub's second look every three seconds nor a terminal printing in relay mode. A
+job with more than one of `attempts` says in `last_error` what kept the earlier ones from going out; it was
+tried again, which is no second copy. One case is left where a paper can come out twice, and it is on
+purpose: a printer that fails halfway through a job (the cable, the power). The hub cannot know how much of
+it came out, so it sends the whole job again; a ticket too many is the safe side of a ticket missing.
+
+(Until 2026-11-27 the hub wrote every job the moment it was queued, on a connection each, and a job being
+written still counted as not gone out. A printer with a ticket for each station got all of an order's at
+once and took them one at a time; the ones that waited were written again by the second look and printed
+twice. In the list such a job had two `attempts` and no `last_error`. The tests are in
+`tests/printing/test_printing.py` and `tests/printing/test_lines.py`.)
 
 **Find printers on the network** scans for port 9100 on the subnets of this terminal, the hub and the
 printers already set, and lists what answers: receipt printers first, each with its name and language and
