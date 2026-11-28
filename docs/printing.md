@@ -305,7 +305,9 @@ it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
   out** (a print waits in the hub's memory, so one still waiting when the hub stops is gone; the log is how
   that is seen, and Reprint how it is mended). The list can be read for one printer, and for **Problems**
   alone: everything that did not print first time at its own printer. It follows what the printers do
-  without a tap (the change feed's `prints`).
+  without a tap (the change feed's `prints`). A print made while the top of the list is on the screen
+  shows there as it comes; one made while an older print is being read comes in above the screen and moves
+  nothing on it, and is there when the list is scrolled back up.
 - **By kind of print**, the line of chips under the printer: **All**, **Kitchen**, **Bar**, **Bills**,
   **Reprints**, **Other**. Kitchen and Bar are an order's tickets (new, changed, voided, moved, an allergy
   notice, a bag slip) by where their dishes are made; a ticket with dishes of both, on a printer that prints
@@ -318,16 +320,23 @@ it for 14 days (`KEEP_DAYS` in `pos.printing.log`):
   the log (what it is, what for, its stations, its printer, who asked for a reprint) and on every line of
   the paper itself: a dish, a choice, a server, a guest's name, an order's number, a price. A number typed is
   a whole number: "table 1" is not table 12, "#45" is not order 451. A print found by its paper shows the
-  line it was found on under it ("On the paper: 1 Peking Duck 48.00"). The search works together with the
-  printer, the kind and Problems; when nothing has the words, **Show all prints** drops the kind, Problems
-  and the search.
+  line it was found on under it ("On the paper: 1 Peking Duck 48.00"). The words are **marked**, as with
+  a marker pen, wherever a print has them: in what it is called and in its printer's name in the list, in
+  the line it was found on, and on its paper once it is open, on every line that has them. What is marked
+  is what the hub found and no more: "table 1" marks Table 1 and leaves Table 12 alone. The search works
+  together with the printer, the kind and Problems; when nothing has the words, **Show all prints** drops
+  the kind, Problems and the search.
 - **The paper on the screen**: a tap on a print opens its paper as it came out, line for line: big where
   the paper is big, white on black where the paper is, the rules, the cut. Under it, what happened to it one
   thing after the other (sent, each reason it failed and how often, passed on to which printer, printed,
-  printed again by whom). The button in the bar shows **every paper** at once, one under the other, like the
-  roll at the printer. The paper is drawn from what the hub wrote down, in the screen's own letters: it says
-  what the paper said, in the same order and sizes, and is not a photograph of it (a long line may break at
-  another word than on the paper, and Chinese is drawn in the screen's font).
+  printed again by whom). Another tap closes it. The paper is drawn from what the hub wrote down, in the
+  screen's own letters: it says what the paper said, in the same order and sizes, and is not a photograph of
+  it (a long line may break at another word than on the paper, and Chinese is drawn in the screen's font).
+- **Expand all**, in the bar (its two arrows alone on a phone): every print opens at once, each as a tap
+  opens it, one paper under the other like the roll at the printer, to be read by scrolling. It stays that
+  way for the prints that come after: the older ones brought by **Older prints**, another printer or kind,
+  a search, a print made meanwhile. A tap still closes one print and opens it again. The button then reads
+  **Collapse all**, which closes every one, the ones opened by a tap as well.
 - **Reprint**, under every paper: prints it again at the printer it was made for, or **At another
   printer** at any printer on the list. The paper that comes out is headed `*** REPRINT ***`, white on black,
   with a line under it saying when the first came out ("FIRST PRINTED THU NOV 26 19:05") or that it never did
@@ -343,6 +352,15 @@ reprint plays back on the builder of whichever printer it goes to, so a paper fi
 reprints on a Star. The log is the table `print_log` on the hub (in memory without a database); a failure
 that repeats is written once a minute at most, so a printer that is off all night does not fill it. A log
 that cannot be written never stops a paper from printing.
+
+How the screen stays quick with every print open (`print_log_screen.dart`, `paper_shelf.dart`,
+`paper_view.dart`): the list builds the prints on the screen and no others; the papers are asked of the
+hub four at a time, the one on the screen first and the ones further down the list before they are scrolled
+to, each once; a paper that arrives draws its own print again and not the screen; and a paper is drawn
+once, however often the list around it is. What a search marks on a paper is worked out in the app
+(`PrintFind` in `print_log.dart`) by the hub's own rule (`pattern_of`); the two are held to the same cases,
+`backend/tests/printing/search_cases.json`, which both sides' tests read. A change to how the hub searches
+goes into that file first.
 
 A waiting print that is reprinted is not taken back: when its own printer answers again, it still comes
 out there, without the REPRINT heading.

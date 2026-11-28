@@ -5,6 +5,9 @@
 /// reads the hub's answers and puts them in words.
 library;
 
+import 'dart:math' as math;
+import 'dart:ui' show TextRange;
+
 import 'package:flutter/foundation.dart';
 
 /// One thing that happened to a print: a try that failed ([text] says why, [times] how often running), a
@@ -329,3 +332,56 @@ String printTypeThings(String? type) => switch (type) {
 
 /// A search as the hub reads it: the words as typed, one space between them.
 String printSearch(String typed) => typed.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).join(' ');
+
+/// A search as its words are found on a paper, the way the hub finds them (`pattern_of` in
+/// `pos.printing.log`): the words as they were typed, in either case, on one line, with whatever room the
+/// paper leaves between them; a number at either end is a whole number there, so "table 1" is not found on
+/// table 12, nor "#45" on order 451. The hub says which prints have the words; this says where on a line
+/// they are, for a screen to mark them. The two are held to the same cases by
+/// `backend/tests/printing/search_cases.json`.
+@immutable
+class PrintFind {
+  const PrintFind._(this.q, this._words);
+
+  /// The search for what was typed; null when nothing was (spaces are no search).
+  static PrintFind? of(String typed) {
+    final q = printSearch(typed);
+    if (q.isEmpty) return null;
+    // what was typed is letters, never a pattern
+    final words = [for (final word in q.split(' ')) word.replaceAllMapped(_signs, (sign) => '\\${sign[0]}')];
+    final before = _digit(q.codeUnitAt(0)) ? '(?<![0-9])' : '';
+    final after = _digit(q.codeUnitAt(q.length - 1)) ? '(?![0-9])' : '';
+    return PrintFind._(q, RegExp('$before${words.join(r'\s+')}$after', caseSensitive: false, unicode: true));
+  }
+
+  static final _signs = RegExp(r'[\\^$.|?*+()\[\]{}]');
+
+  static bool _digit(int unit) => unit >= 0x30 && unit <= 0x39;
+
+  /// The search, as the hub was asked it.
+  final String q;
+  final RegExp _words;
+
+  /// Where on a line the words are: every place, first to last; nowhere is an empty list.
+  List<TextRange> on(String line) => [
+    for (final hit in _words.allMatches(line)) TextRange(start: hit.start, end: hit.end),
+  ];
+
+  /// Where they are on a line of two columns, which the hub reads as one line: the places on the left
+  /// side and the ones on the right; words that begin on the left and end on the right are on both.
+  (List<TextRange>, List<TextRange>) across(String left, String right) {
+    final from = left.length + 2; // where the right side begins in the line as it is read
+    final onLeft = <TextRange>[], onRight = <TextRange>[];
+    for (final hit in _words.allMatches('$left  $right')) {
+      if (hit.start < left.length) onLeft.add(TextRange(start: hit.start, end: math.min(hit.end, left.length)));
+      if (hit.end > from) onRight.add(TextRange(start: math.max(hit.start, from) - from, end: hit.end - from));
+    }
+    return (onLeft, onRight);
+  }
+
+  @override
+  bool operator ==(Object other) => other is PrintFind && other.q == q;
+
+  @override
+  int get hashCode => q.hashCode;
+}

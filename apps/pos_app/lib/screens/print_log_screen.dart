@@ -1,23 +1,32 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../live.dart';
+import '../paper_shelf.dart';
 import '../print_log.dart';
+import 'compact.dart';
 import 'paper_view.dart';
 
 /// The print log, for a manager: every paper the hub made, newest first, with the printer it was for and
 /// how it ended (printed, printed at another printer, still being tried and why, never printed). A tap on
-/// a print opens its paper on the screen as it came out, with what happened to it line by line; the button
-/// in the bar shows every paper at once, one under the other, like the roll in the kitchen. Any of them
-/// prints again with Reprint, at its own printer or at another; the paper that comes out is headed REPRINT
-/// and the log lists it as one.
+/// a print opens its paper on the screen as it came out, with what happened to it line by line, and
+/// another tap closes it; **Expand all** in the bar opens every print at once, one paper under the other
+/// like the roll in the kitchen, the ones listed later as well, and **Collapse all** closes them all. Any
+/// of them prints again with Reprint, at its own printer or at another; the paper that comes out is headed
+/// REPRINT and the log lists it as one.
 ///
 /// The log is read by printer, by type (the kitchen's tickets, the bar's, the bills, the reprints, the
 /// rest: the hub says which this restaurant has) and by the prints with a problem, and it is searched from
 /// the bar: the hub looks for the words on the papers themselves, and says which line it found them on.
+/// The words are marked where a print has them: in its line of the log and on its paper ([PrintFind]).
+///
+/// With every print open the list is still built a screenful at a time. The papers are read a few at a
+/// time, the ones ahead in the list before they are scrolled to ([PaperShelf]); a paper that arrives draws
+/// its own print again and nothing else, and a paper is drawn once however often the list is ([PaperView]).
 ///
 /// The hub keeps the log and decides everything in it (docs/printing.md, "The print log"); this screen
 /// reads it, and reads it again when the hub says a print was made, failed or came out. Behind the manager
@@ -54,11 +63,13 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   final _search = TextEditingController();
   final _searchFocus = FocusNode();
   Timer? _typing;
-  bool _everyPaper = false; // every print shows its paper, not only the ones opened
-  final _open = <String>{};
-  final _papers = <String, PrintPaper>{}; // by [_paperKey]: a paper never changes once it is out
-  final _paperErrors = <String, String>{};
-  final _asking = <String>{};
+  PrintFind? _marks; // where the words of [_q] are on a line, to mark them
+  bool _all = false; // every print is open ("Expand all"), the ones listed later too
+  final _turned = <String>{}; // the prints tapped since: open while the rest are closed, or closed while they are open
+  late final _shelf = PaperShelf(
+    (job) => widget.api.printPaper(widget.token, job),
+    problem: (err) => err.status == 404 ? 'This paper is no longer in the log.' : _words(err),
+  );
   final _sending = <String>{}; // the prints a reprint is being asked for
   final _problems = <String, String>{}; // why a reprint was not made, by print
   bool _read = false; // the hub answered once
@@ -67,6 +78,9 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   String? _refused; // the hub would not show the log, and why
   bool _more = false; // older prints are being read
   String _shown = ''; // what the last read said, in short: the same again draws nothing
+  final _scroll = ScrollController();
+  String? _heldAt; // the print the list starts at; the ones made since stand above it ([_hold])
+  final _heldName = GlobalKey(); // the day's name above that print, while it has it
   late final _poll = SafetyPoll(widget.api.live);
   late final _reader = Paced(const Duration(seconds: 1), _load);
   StreamSubscription<LiveChange>? _live;
@@ -92,8 +106,24 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     _reader.cancel();
     _search.dispose();
     _searchFocus.dispose();
+    _scroll.dispose();
+    _shelf.dispose();
     super.dispose();
   }
+
+  bool _isOpen(PrintEntry entry) => _all != _turned.contains(entry.jobId);
+
+  /// Opens every print, or closes every one: the ones opened or closed by a tap as well.
+  void _openAll(bool all) {
+    setState(() {
+      _all = all;
+      _turned.clear();
+    });
+    _readAhead();
+  }
+
+  /// With every print open, the papers of the ones listed are read before they are scrolled to.
+  void _readAhead() => _shelf.ahead(_all ? _prints : const []);
 
   static bool _sortsAfter(PrintEntry entry, PrintEntry other) =>
       entry.atMs < other.atMs || (entry.atMs == other.atMs && entry.jobId.compareTo(other.jobId) > 0);
@@ -128,6 +158,7 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
       if (page == null) return setState(() => _old = true);
       final mark = _mark(page);
       if (_read && !_away && _refused == null && mark == _shown) return;
+      final before = _prints;
       final newest = {for (final p in page.prints) p.jobId};
       final older = page.prints.isEmpty
           ? const <PrintEntry>[]
@@ -145,7 +176,9 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         _read = true;
         _away = false;
         _refused = null;
+        _hold(before);
       });
+      _readAhead();
     } on ApiException catch (err) {
       if (!mounted || !_asksStill(printer, trouble, type, q)) return;
       setState(() {
@@ -181,6 +214,7 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         ];
         _next = page?.next;
       });
+      _readAhead();
     } on ApiException {
       // the button is still there to press again
     } finally {
@@ -197,13 +231,18 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
       if (printer != null) _printer = printer;
       if (trouble != null) _trouble = trouble;
       if (typed) _type = type;
-      if (q != null) _q = q;
+      if (q != null) {
+        _q = q;
+        _marks = PrintFind.of(q);
+      }
       _prints = const [];
       _next = null;
       _read = false;
       _shown = '';
-      _open.clear();
+      _turned.clear();
+      _heldAt = null;
     });
+    _readAhead();
     unawaited(_reader.now());
   }
 
@@ -245,31 +284,6 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     403 => 'Only a manager reads the print log.',
     _ => err.detail?['message'] as String? ?? err.message,
   };
-
-  /// A paper is asked for once: what came out does not change. One that went to a fallback printer after
-  /// it was first looked at is another paper, since it then carries that printer's line.
-  static String _paperKey(PrintEntry entry) => '${entry.jobId}|${entry.printedOn}';
-
-  void _want(PrintEntry entry) {
-    final key = _paperKey(entry);
-    if (_papers.containsKey(key) || _asking.contains(key) || _paperErrors.containsKey(key)) return;
-    _asking.add(key);
-    unawaited(_readPaper(entry.jobId, key));
-  }
-
-  Future<void> _readPaper(String job, String key) async {
-    try {
-      final paper = await widget.api.printPaper(widget.token, job);
-      if (!mounted) return;
-      setState(() => _papers[key] = paper);
-    } on ApiException catch (err) {
-      if (!mounted) return;
-      final gone = err.status == 404;
-      setState(() => _paperErrors[key] = gone ? 'This paper is no longer in the log.' : _words(err));
-    } finally {
-      _asking.remove(key);
-    }
-  }
 
   Future<void> _reprint(PrintEntry entry, {LogPrinter? at}) async {
     if (_sending.contains(entry.jobId)) return;
@@ -370,14 +384,7 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
               icon: Icon(_searching ? Icons.search_off : Icons.search),
               onPressed: () => _searchOpen(!_searching),
             ),
-          IconButton(
-            key: const ValueKey('log-papers'),
-            tooltip: _everyPaper ? 'Show the list' : 'Show every paper',
-            isSelected: _everyPaper,
-            icon: const Icon(Icons.receipt_long_outlined),
-            selectedIcon: const Icon(Icons.receipt_long),
-            onPressed: _old ? null : () => setState(() => _everyPaper = !_everyPaper),
-          ),
+          if (!_old) _allButton(context),
         ],
       ),
       body: Center(
@@ -391,6 +398,21 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Opens every print at once, and closes them all once they are: its words beside it where there is room,
+  /// the mark alone on a phone.
+  Widget _allButton(BuildContext context) {
+    final says = _all ? 'Collapse all' : 'Expand all';
+    final icon = Icon(_all ? Icons.unfold_less : Icons.unfold_more);
+    void pressed() => _openAll(!_all);
+    if (compact(context)) {
+      return IconButton(key: const ValueKey('log-all'), tooltip: says, icon: icon, onPressed: pressed);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, right: 8),
+      child: TextButton.icon(key: const ValueKey('log-all'), icon: icon, label: Text(says), onPressed: pressed),
     );
   }
 
@@ -486,8 +508,6 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
   }
 
   Widget _list(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     if (_prints.isEmpty) {
       final String words;
       if (_q.isNotEmpty || _type != null) {
@@ -514,28 +534,86 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         againSays: 'Show all prints',
       );
     }
-    // the rows of the list: a day's name where the day changes, then its prints, and what ends the list
-    final rows = <Object>[];
-    String? day;
-    for (final entry in _prints) {
-      final its = _day(entry.atMs);
-      if (its != day) rows.add(day = its);
-      rows.add(entry);
+    // The rows of the list are its prints, each with its day's name above it where the day changes, and
+    // what ends the list. They are two lists back to back: the one that starts where the screen does is
+    // the log as it stood when it was last read from its top, and the prints made since stand above it,
+    // the newest highest. So a print that is made while an older one is being read comes in above the
+    // screen and moves nothing on it.
+    final prints = _prints;
+    final held = _heldIndex(prints);
+    // a row by its key, so that it keeps what it has built (its paper) when the rows are counted anew
+    final above = <String, int>{for (var i = 0; i < held; i++) 'print:${prints[held - 1 - i].jobId}': i};
+    final below = <String, int>{
+      for (var i = held; i < prints.length; i++) 'print:${prints[i].jobId}': i - held,
+      'log-foot': prints.length - held,
+    };
+    Widget row(int n) {
+      if (n == prints.length) return KeyedSubtree(key: const ValueKey('log-foot'), child: _foot(context));
+      return _print(context, prints[n], day: _headed(prints, n) ? _day(prints[n].atMs) : null, heldHere: n == held);
     }
-    return ListView.builder(
+
+    return CustomScrollView(
       key: const ValueKey('log-list'),
-      padding: const EdgeInsets.only(bottom: 24),
-      itemCount: rows.length + 1,
-      itemBuilder: (context, i) {
-        if (i == rows.length) return _foot(context);
-        final row = rows[i];
-        if (row is PrintEntry) return _print(context, row);
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-          child: Text('$row', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant)),
-        );
-      },
+      controller: _scroll,
+      center: _heldHere,
+      slivers: [
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, i) => row(held - 1 - i),
+            childCount: held,
+            findChildIndexCallback: (key) => key is ValueKey<String> ? above[key.value] : null,
+          ),
+        ),
+        SliverPadding(
+          key: _heldHere,
+          padding: const EdgeInsets.only(bottom: 24),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, i) => row(held + i),
+              childCount: prints.length - held + 1,
+              findChildIndexCallback: (key) => key is ValueKey<String> ? below[key.value] : null,
+            ),
+          ),
+        ),
+      ],
     );
+  }
+
+  static const _heldHere = ValueKey('log-held');
+
+  /// Where in [prints] the list is held: the print it starts at; the first one when it is held nowhere.
+  int _heldIndex(List<PrintEntry> prints) {
+    final at = _heldAt == null ? -1 : prints.indexWhere((p) => p.jobId == _heldAt);
+    return at < 0 ? 0 : at;
+  }
+
+  /// Whether a print has its day's name above it: the first of the list, and the first of each day after.
+  bool _headed(List<PrintEntry> prints, int n) => n == 0 || _day(prints[n - 1].atMs) != _day(prints[n].atMs);
+
+  /// Whether the list is at its top: the newest print is the first thing on the screen and nothing is
+  /// moving. A list not on the screen yet is.
+  bool get _atTop {
+    if (!_scroll.hasClients || !_scroll.position.hasContentDimensions) return true;
+    final at = _scroll.position;
+    return at.pixels <= at.minScrollExtent + 1 && !at.isScrollingNotifier.value;
+  }
+
+  /// The log was read again and is about to be drawn as [_prints]; it was drawn as [before]. Read from its
+  /// top, the list starts at the newest print, which shows there as it comes. Read further down, it stays
+  /// held where it was and the prints made since go above it; when the first of them takes the day's name
+  /// from the print the list is held at, the list is moved by the height of that name, so that what is
+  /// being read stays where it is.
+  void _hold(List<PrintEntry> before) {
+    if (_atTop) {
+      _heldAt = _prints.firstOrNull?.jobId;
+      if (_scroll.hasClients && _scroll.position.pixels != 0) _scroll.jumpTo(0);
+      return;
+    }
+    final (was, now) = (_heldIndex(before), _heldIndex(_prints));
+    if (was >= before.length || now >= _prints.length || before[was].jobId != _prints[now].jobId) return;
+    if (!_headed(before, was) || _headed(_prints, now)) return;
+    final name = _heldName.currentContext?.size?.height;
+    if (name != null && !_scroll.position.isScrollingNotifier.value) _scroll.position.correctBy(-name);
   }
 
   Widget _foot(BuildContext context) {
@@ -582,25 +660,21 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     );
   }
 
-  /// The line of a paper a search found its words on, with the words it was searched for in bold.
+  /// The line of a paper a search found its words on, with the words it was searched for marked, in bold.
   Widget _found(BuildContext context, PrintEntry entry) {
     final theme = Theme.of(context);
     final line = entry.found;
-    final at = _q.isEmpty ? -1 : line.toLowerCase().indexOf(_q.toLowerCase());
-    final hit = at >= 0 && at + _q.length <= line.length;
-    const bold = TextStyle(fontWeight: FontWeight.w700);
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Text.rich(
         TextSpan(
           children: [
             const TextSpan(text: 'On the paper: '),
-            if (hit) ...[
-              TextSpan(text: line.substring(0, at)),
-              TextSpan(text: line.substring(at, at + _q.length), style: bold),
-              TextSpan(text: line.substring(at + _q.length)),
-            ] else
-              TextSpan(text: line),
+            ...markedSpans(
+              line,
+              _marks?.on(line) ?? const [],
+              marked: PaperView.marked.copyWith(fontWeight: FontWeight.w700),
+            ),
           ],
         ),
         key: ValueKey('print-found:${entry.jobId}'),
@@ -609,12 +683,13 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
     );
   }
 
-  /// One print: its line in the log, and under it, when it is opened or every paper is shown, the paper.
-  Widget _print(BuildContext context, PrintEntry entry) {
+  /// One print: its line in the log, with the words of a search marked in what it is called and in its
+  /// printer's name, and under it, when it is open, the paper. Above it its [day]'s name, when it is the
+  /// first of that day in the list; [heldHere] is the print the list is held at ([_hold]).
+  Widget _print(BuildContext context, PrintEntry entry, {String? day, bool heldHere = false}) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final opened = _open.contains(entry.jobId);
-    final shown = opened || _everyPaper;
+    final opened = _isOpen(entry);
     final failing = !entry.printed && (entry.lost || entry.tries > 0);
     final (icon, tint) = entry.printed
         ? (entry.trouble ? Icons.warning_amber_rounded : Icons.check_circle_outline, scheme.tertiary)
@@ -622,13 +697,23 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         ? (Icons.error_outline, scheme.error)
         : (Icons.schedule, scheme.onSurfaceVariant);
     final where = entry.name.isEmpty ? entry.printer : entry.name;
+    final find = _marks;
+    // the hub looks for the words in the printer's name, not in how the print ended
+    final named = entry.name.isEmpty || find == null ? const <TextRange>[] : find.on(where);
+    final ended = TextStyle(color: failing ? scheme.error : scheme.onSurfaceVariant);
     return Column(
       key: ValueKey('print:${entry.jobId}'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (day != null)
+          Padding(
+            key: heldHere ? _heldName : null,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            child: Text(day, style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant)),
+          ),
         InkWell(
           key: ValueKey('print-row:${entry.jobId}'),
-          onTap: () => setState(() => opened ? _open.remove(entry.jobId) : _open.add(entry.jobId)),
+          onTap: () => setState(() => _turned.remove(entry.jobId) || _turned.add(entry.jobId)),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
             child: Row(
@@ -653,20 +738,30 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
                                 fontFeatures: const [FontFeature.tabularFigures()],
                               ),
                             ),
-                            TextSpan(text: entry.line),
+                            ...markedSpans(entry.line, find?.on(entry.line) ?? const []),
                           ],
                         ),
                         key: ValueKey('print-line:${entry.jobId}'),
                         style: theme.textTheme.titleSmall,
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        '$where · ${entry.outcome}',
-                        key: ValueKey('print-outcome:${entry.jobId}'),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: failing ? scheme.error : scheme.onSurfaceVariant,
+                      if (named.isEmpty)
+                        Text(
+                          '$where · ${entry.outcome}',
+                          key: ValueKey('print-outcome:${entry.jobId}'),
+                          style: theme.textTheme.bodySmall?.merge(ended),
+                        )
+                      else
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              ...markedSpans(where, named),
+                              TextSpan(text: ' · ${entry.outcome}'),
+                            ],
+                          ),
+                          key: ValueKey('print-outcome:${entry.jobId}'),
+                          style: theme.textTheme.bodySmall?.merge(ended),
                         ),
-                      ),
                       if (entry.found.isNotEmpty) _found(context, entry),
                     ],
                   ),
@@ -683,53 +778,33 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
             ),
           ),
         ),
-        if (shown) _opened(context, entry, details: opened),
+        if (opened) _opened(context, entry),
         Divider(height: 1, color: scheme.outlineVariant),
       ],
     );
   }
 
-  /// Under a print's line: the paper, what happened to it (when the print itself was opened), and Reprint.
-  Widget _opened(BuildContext context, PrintEntry entry, {required bool details}) {
+  /// Under a print's line: the paper, what happened to it, and Reprint.
+  Widget _opened(BuildContext context, PrintEntry entry) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final key = _paperKey(entry);
-    final paper = _papers[key];
-    final failed = _paperErrors[key];
-    if (paper == null && failed == null) _want(entry);
     final sending = _sending.contains(entry.jobId);
     final problem = _problems[entry.jobId];
     final others = [
       for (final p in _printers)
         if (p.id != entry.printer) p,
     ];
-    final Widget sheet;
-    if (paper != null) {
-      sheet = PaperView(key: ValueKey('paper:${entry.jobId}'), pages: paper.pages);
-    } else if (failed != null) {
-      sheet = Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(failed, style: theme.textTheme.bodySmall?.copyWith(color: scheme.error)),
-          ),
-          TextButton(onPressed: () => setState(() => _paperErrors.remove(key)), child: const Text('Try again')),
-        ],
-      );
-    } else {
-      sheet = const Padding(
-        padding: EdgeInsets.all(24),
-        child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-      );
-    }
     return Container(
       color: scheme.surfaceContainerLow,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(child: sheet),
-          if (details) ...[const SizedBox(height: 12), _story(context, entry)],
+          Center(
+            child: _Paper(shelf: _shelf, entry: entry, find: _marks),
+          ),
+          const SizedBox(height: 12),
+          _story(context, entry),
           const SizedBox(height: 8),
           Wrap(
             alignment: WrapAlignment.center,
@@ -819,14 +894,22 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
         if (entry.isReprint)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              [
-                'A reprint',
-                if (entry.by.isNotEmpty) ' asked for by ${entry.by}',
-                if (first != null)
-                  ' of the paper from ${_day(first) == 'Today' ? '' : '${_day(first)}, '}${_time(first)}',
-                '.',
-              ].join(),
+            // who asked is searched too: a search for a name marks it here
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  const TextSpan(text: 'A reprint'),
+                  if (entry.by.isNotEmpty) ...[
+                    const TextSpan(text: ' asked for by '),
+                    ...markedSpans(entry.by, _marks?.on(entry.by) ?? const []),
+                  ],
+                  if (first != null)
+                    TextSpan(
+                      text: ' of the paper from ${_day(first) == 'Today' ? '' : '${_day(first)}, '}${_time(first)}',
+                    ),
+                  const TextSpan(text: '.'),
+                ],
+              ),
               style: theme.textTheme.bodySmall,
             ),
           ),
@@ -863,6 +946,66 @@ class _PrintLogScreenState extends State<PrintLogScreen> {
       ],
     );
   }
+}
+
+/// The paper of a print that is open: the paper once the hub gave it, the turning ring until then, or why
+/// it did not come, with "Try again". It asks the shelf for its paper when it comes onto the screen, and it
+/// alone is drawn again when the paper arrives.
+class _Paper extends StatefulWidget {
+  const _Paper({required this.shelf, required this.entry, this.find});
+
+  final PaperShelf shelf;
+  final PrintEntry entry;
+  final PrintFind? find;
+
+  @override
+  State<_Paper> createState() => _PaperState();
+}
+
+class _PaperState extends State<_Paper> {
+  late ValueListenable<PaperRead?> _read = widget.shelf.of(widget.entry);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.shelf.want(widget.entry);
+  }
+
+  @override
+  void didUpdateWidget(_Paper old) {
+    super.didUpdateWidget(old);
+    if (identical(old.shelf, widget.shelf) && PaperShelf.keyOf(old.entry) == PaperShelf.keyOf(widget.entry)) return;
+    _read = widget.shelf.of(widget.entry); // it printed at another printer since: that is another paper
+    widget.shelf.want(widget.entry);
+  }
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<PaperRead?>(
+    valueListenable: _read,
+    builder: (context, read, _) {
+      final paper = read?.paper;
+      if (paper != null) {
+        return PaperView(key: ValueKey('paper:${widget.entry.jobId}'), pages: paper.pages, find: widget.find);
+      }
+      final problem = read?.problem;
+      if (problem == null) {
+        return const Padding(
+          padding: EdgeInsets.all(24),
+          child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+        );
+      }
+      final theme = Theme.of(context);
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(problem, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error)),
+          ),
+          TextButton(onPressed: () => widget.shelf.again(widget.entry), child: const Text('Try again')),
+        ],
+      );
+    },
+  );
 }
 
 /// A screen with one thing to say.

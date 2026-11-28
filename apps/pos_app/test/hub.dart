@@ -2879,13 +2879,18 @@ class Hub {
   /// it names for a reprint, and [refuseReprint] the words it refuses the next one with (409).
   /// [printLogTypes] are the types it reads its log by (`type`), and it searches it (`q`): in a print's
   /// title, its printer and who asked for it, then on the lines of its paper, which it then says (`found`).
-  /// Null is a hub from before both: it says no `types` and reads neither.
+  /// Null is a hub from before both: it says no `types` and reads neither. While [papersHeld] is set no
+  /// paper goes out until a test completes it; [papersAtOnce] is the most papers that were ever being
+  /// asked for at the same time.
   List<Map<String, dynamic>>? printLog = [];
   List<String>? printLogTypes = ['kitchen', 'bar', 'bill', 'reprint', 'other'];
   final papers = <String, List<List<Map<String, dynamic>>>>{};
   List<Map<String, dynamic>> logPrinters = [];
   final printLogAsks = <Map<String, String>>[];
   final paperAsks = <String>[];
+  Completer<void>? papersHeld;
+  int papersAtOnce = 0;
+  int _papersOut = 0;
   final reprints = <Map<String, dynamic>>[];
   String? printLogAuth;
   String? refuseReprint;
@@ -5037,6 +5042,13 @@ class Hub {
         printLogAuth = request.headers['authorization'];
         final job = request.url.queryParameters['job']!;
         paperAsks.add(job);
+        if (++_papersOut > papersAtOnce) papersAtOnce = _papersOut;
+        try {
+          if (papersHeld != null) await papersHeld!.future;
+          await Future<void>.value(); // a paper takes a moment: the next one is asked for meanwhile
+        } finally {
+          _papersOut--;
+        }
         final entry = printLog!.where((p) => p['job_id'] == job).firstOrNull;
         if (entry == null || papers[job] == null) {
           return json({
