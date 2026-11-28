@@ -33,6 +33,11 @@ every other account's is kept under `online:<id>`, typed in the app only, and go
 tunnel runs with. They are kept here like the rest, and the API hands each of the two programs what it
 needs whenever one changes (`pos.online.wayin`), so neither is restarted and neither is started by the API.
 
+**One is made by the hub itself** and never typed: its word for Twilio's calls (`texts_way`,
+`pos.online.twilio_way`), which is in the address Twilio is given. It is sealed and stored like a key, so
+that the location's other hub has the same one, and it is on no list of keys: a manager turns it on and
+off, and is shown the address it makes.
+
 Nothing here is written to a log but who set or removed which key. No message of this module carries what
 was typed.
 """
@@ -62,6 +67,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from .online.accounts import MAIN, account_of_slot
+from .online.twilio_way import clean as _clean_way
 from .sync.pgstore import ReadOnlyError
 from .twilio import clean as _clean_twilio
 
@@ -240,6 +246,9 @@ MAPS, MAPS_GOOGLE, ONLINE, PUSH_APPLE = "maps", "maps_google", "online", "push_a
 MAPS_MAPBOX, MAPS_AZURE = "maps_mapbox", "maps_azure"
 ONLINE_PUSH, ONLINE_TUNNEL = "online_push", "online_tunnel"
 TEXTS = "texts"
+TEXTS_WAY = "texts_way"
+"""The hub's word for Twilio's calls and its secret for the pictures' addresses: made by the hub, kept like
+a key, and no key a screen lists or a manager types (`slot_for`)."""
 SHIPDAY = "shipday"
 
 SLOTS: dict[str, Slot] = {
@@ -336,10 +345,13 @@ SLOTS: dict[str, Slot] = {
 
 def slot_for(name: str) -> Slot | None:
     """The key of that name: one of `SLOTS`, or the key of a further GloriaFood account (`online:<id>`), which
-    is GloriaFood's key like the first and is in nobody's file. None for a name that is no key's."""
+    is GloriaFood's key like the first and is in nobody's file, or the hub's own word for Twilio's calls
+    (`TEXTS_WAY`), which is on no list. None for a name that is no key's."""
     slot = SLOTS.get(name)
     if slot is not None:
         return slot
+    if name == TEXTS_WAY:
+        return Slot(name, (), _clean_way, lambda env: None)
     if account_of_slot(name) in (None, MAIN):
         return None
     first = SLOTS[ONLINE]
@@ -352,8 +364,9 @@ def ending_of(key: str) -> str:
 
 
 def _ending(slot: Slot, data: Mapping[str, str]) -> str:
-    # of Apple's key the key id is what tells one from another, and it is shown whole
-    return "" if slot.shown else ending_of(data.get("key", ""))
+    # of Apple's key the key id is what tells one from another, and it is shown whole; the hub's own word
+    # for Twilio is on no screen, so nothing of it is kept beside its seal
+    return "" if slot.shown or slot.name == TEXTS_WAY else ending_of(data.get("key", ""))
 
 
 # --- the seal ------------------------------------------------------------------------------------------------
@@ -664,12 +677,14 @@ class HubKeys:
         return self._view(slot, row)
 
     def forget(self, name: str, *, by: str) -> None:
-        """A further GloriaFood account is gone, and its key with it: nothing of it stays. Not for a key of
-        `SLOTS`: the hub's own file may name one of those, so the app's word on it is kept (`remove`)."""
+        """A further GloriaFood account is gone, and its key with it: nothing of it stays. So is the hub's
+        word for Twilio's calls when a manager turns them off. Not for a key of `SLOTS`: the hub's own file
+        may name one of those, so the app's word on it is kept (`remove`)."""
         if name in SLOTS or slot_for(name) is None:
             raise UnknownKey(name)
         self.store.drop(name)
-        log.warning("hub keys: %s was removed with its account by %s", name, by or "a manager")
+        how = "was turned off" if name == TEXTS_WAY else "was removed with its account"
+        log.warning("hub keys: %s %s by %s", name, how, by or "a manager")
 
     def mark(self) -> str:
         return self.store.mark()
@@ -693,6 +708,7 @@ __all__ = [
     "SHIPDAY",
     "SLOTS",
     "TEXTS",
+    "TEXTS_WAY",
     "HubKeys",
     "Kept",
     "KeyStore",

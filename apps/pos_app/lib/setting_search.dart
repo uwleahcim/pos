@@ -184,6 +184,13 @@ final List<SettingEntry> locationSettings = List.unmodifiable([
   ),
   for (final MapEntry(key: name, value: info) in hubKeyInfo.entries)
     SettingEntry('hub-keys', info.title, spot: Spot.key('key-$name'), also: '${info.short} ${info.about}'),
+  // on the card of the texts' key, once the hub texts through Twilio (docs/text-inbox.md)
+  const SettingEntry(
+    'hub-keys',
+    'Instant delivery and pictures',
+    spot: Spot.words('Instant delivery and pictures'),
+    also: 'twilio texts sms mms photo webhook address cloudflare tunnel customer',
+  ),
 
   // how a table's order is taken
   const SettingEntry(

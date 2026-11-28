@@ -84,6 +84,7 @@ from ..online.gloriafood import push_key_from_env
 from ..online.inbox import default_inbox
 from ..online.place import own_word
 from ..online.service import OnlineOrders
+from ..online.twilio_way import Knocks, hush
 from ..online.wayin import WayIn, wayin_from_env
 from ..orders.adjustments import APPROVAL_TTL, PricingRules, load_rules
 from ..orders.ahead import orders_ahead
@@ -156,7 +157,18 @@ from .faces import add_face_signin
 from .feed import ChangeFeed, end_on_stop
 from .guests import add_guest_list, follow_merges, names_by_check, seated_by_check
 from .history import add_history
-from .keys import add_hub_keys, hand_way_in, keys_mark, online_setup, sender_for, texts_for, watch_keys
+from .keys import (
+    add_hub_keys,
+    callback_for,
+    hand_texts_way,
+    hand_way_in,
+    keys_mark,
+    online_setup,
+    sender_for,
+    texts_for,
+    texts_way,
+    watch_keys,
+)
 from .kitchen import add_kitchen
 from .menu_admin import add_menu_admin
 from .notes import add_shift_notes
@@ -1019,6 +1031,7 @@ def create_app(
             # pushes and the tunnel's token in force now, from the app or from the hub's own file.
             try:
                 hand_way_in(app)
+                hand_texts_way(app)  # and the door is told the hub's word for Twilio's calls, where it has one
             except Exception as err:  # noqa: BLE001 - the API starts without it, and tries again within the minute
                 log.warning(
                     "the way in: the door and the tunnel could not be told at the start (%s)", type(err).__name__
@@ -1139,6 +1152,9 @@ def create_app(
     )
     if isinstance(app.state.messenger, TwilioMessenger) and app.state.messenger.keeper is None:
         app.state.messenger.keeper = app.state.texts
+    if isinstance(app.state.messenger, TwilioMessenger) and app.state.messenger.callback is None:
+        # where the hub can be reached from outside, Twilio is told with every text where to say what became of it
+        app.state.messenger.callback = callback_for(app)
     app.state.text_listener = Listener(
         app.state.texts,
         lambda: app.state.messenger if isinstance(app.state.messenger, TwilioMessenger) else None,
@@ -1235,6 +1251,17 @@ def create_app(
     # What the API hands the push door and the tunnel, and hears back (`pos.online.wayin`). Nothing on a
     # machine that runs neither.
     app.state.wayin = wayin if wayin is not None else wayin_from_env()
+    # Twilio's way in (`pos.online.twilio_way`; docs/text-inbox.md): the hub's own word for Twilio's calls,
+    # which come through the same door. Read here; the door is told where the API is serving (`lifespan`).
+    hush()  # the word is in a path: it stays out of the server's lines about its calls
+    app.state.way_secret = None
+    app.state.way_knocks = Knocks()
+    app.state.texts_way = lambda: texts_way(app)
+    try:
+        hand_texts_way(app, tell=False)
+    except Exception as err:  # noqa: BLE001 - the hub starts without it, and looks again within the minute
+        log.warning("texts: the hub's word for Twilio could not be read at the start (%s)", type(err).__name__)
+        app.state.keys_mark = ""
     # Staff tags: a badge held to a reader at the terminal, kept by the person's id, never by name.
     app.state.tags = tags if tags is not None else default_tag_store()
     app.state.notifier = Notifier(

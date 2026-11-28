@@ -678,5 +678,14 @@ void everything(Hub hub) {
       'missing': <String>[],
       'takeout_station': 'takeout',
     }
-    ..ticketWords = {'numbered': true, 'also_at': true, 'paid': true, 'moved': true, 'pack': true};
+    ..ticketWords = {'numbered': true, 'also_at': true, 'paid': true, 'moved': true, 'pack': true}
+    // the texts go out through Twilio, so the card of that key shows Twilio's way in under it
+    ..hubKeys!['texts'] = {
+      ...Hub.hubKey('texts'),
+      'source': 'app',
+      'shown': {'account': 'AC${'0a1b2c3d' * 4}', 'sender': '+17815550100', 'key_sid': ''},
+      'by': 'Mike',
+      'at_ms': hub.keysAtMs,
+    }
+    ..texts = Hub.textsStand(sender: '+17815550100');
 }

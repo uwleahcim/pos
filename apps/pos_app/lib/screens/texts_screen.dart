@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../api.dart';
 import '../live.dart';
 import '../phone.dart' show formatPhoneNumber;
+import '../text_pictures.dart';
 import '../texts.dart';
 import 'theme.dart';
 
@@ -35,6 +36,9 @@ class BookTableFor {
 /// number that has none. From a conversation, **Start order** and **Book a table** leave the screen with a
 /// [StartOrderFor] or a [BookTableFor]: the screen underneath takes it from there.
 ///
+/// A text carries pictures too (the button beside the box): from the device's photos or its camera, made to
+/// fit a text before they leave the device (`text_pictures.dart`). The hub says whether a picture can go.
+///
 /// The hub keeps the texts and tells this screen when one came or went. With [only], the screen is one
 /// conversation and nothing else: the one an order's **Text** button opens.
 class TextsScreen extends StatefulWidget {
@@ -47,6 +51,7 @@ class TextsScreen extends StatefulWidget {
     this.openName = '',
     this.only = false,
     this.nowMs,
+    this.pick,
   });
 
   final PosApi api;
@@ -69,6 +74,9 @@ class TextsScreen extends StatefulWidget {
   /// The hub's clock; the app's reading of it when null.
   final int Function()? nowMs;
 
+  /// How pictures for a text are chosen; the device's own way ([pickPictures]) when null.
+  final PicturePick? pick;
+
   @override
   State<TextsScreen> createState() => _TextsScreenState();
 }
@@ -81,6 +89,9 @@ class _TextsScreenState extends State<TextsScreen> {
   String? _problem; // why there is nothing to show: said in the middle of the screen
   bool _away = false; // no hub answers: what shows is what was last read
   bool _sending = false;
+  bool _picking = false; // the device's photos are open, or what was chosen is being made to fit
+  final _picked = <Uint8List>[]; // the pictures that go with the text in the box
+  String? _pickSaid; // what came of choosing pictures, over the box: it must not cover the box as a bar would
   bool _fetching = false; // the texts before the oldest shown are on their way
   int _sent = 0; // counts this screen's texts, for their ids
   final _q = TextEditingController();
@@ -191,6 +202,8 @@ class _TextsScreenState extends State<TextsScreen> {
       _openName = name.trim();
       _page = null;
       _draft.clear();
+      _picked.clear();
+      _pickSaid = null;
     });
     unawaited(_reader.now());
   }
@@ -200,6 +213,8 @@ class _TextsScreenState extends State<TextsScreen> {
       _open = null;
       _page = null;
       _draft.clear();
+      _picked.clear();
+      _pickSaid = null;
     });
     unawaited(_reader.now());
   }
@@ -230,10 +245,80 @@ class _TextsScreenState extends State<TextsScreen> {
     return '${short.isEmpty ? 'pos' : short}-${DateTime.now().microsecondsSinceEpoch}-${++_sent}';
   }
 
+  /// Why a picture cannot go from this hub yet, for whoever taps the button.
+  static const _noPictures =
+      'A picture cannot go yet: Twilio has to be able to fetch it from this hub. A manager sets that up '
+      'under Location › Keys and connections, Texts to customers.';
+
+  /// The picture button: asks where the pictures come from (a phone has a camera too), lets the person
+  /// choose, and keeps what they chose beside the box until the text goes.
+  Future<void> _attach() async {
+    final sends = _page?.sends ?? const TextSends();
+    if (_picking || _sending) return;
+    if (!sends.pictures) return setState(() => _pickSaid = _noPictures);
+    final room = sends.most - _picked.length;
+    if (room <= 0) return setState(() => _pickSaid = 'A text carries ${sends.most} pictures at the most.');
+    var from = PictureFrom.library;
+    if (takesPhotos) {
+      final chosen = await showModalBottomSheet<PictureFrom>(
+        context: context,
+        showDragHandle: true,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const ValueKey('text-attach-library'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from the photos'),
+                onTap: () => Navigator.of(context).pop(PictureFrom.library),
+              ),
+              ListTile(
+                key: const ValueKey('text-attach-camera'),
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.of(context).pop(PictureFrom.camera),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      from = chosen;
+    }
+    final open = _open;
+    setState(() {
+      _picking = true;
+      _pickSaid = null;
+    });
+    try {
+      final chosen = await (widget.pick ?? pickPictures)(from, room);
+      if (!mounted || _open != open) return;
+      final good = [for (final picture in chosen) ?picture];
+      final bad = chosen.length - good.length;
+      setState(() {
+        _picked.addAll(good.take(room));
+        if (good.length > room) {
+          _pickSaid = 'A text carries ${sends.most} pictures at the most: the others were left out.';
+        } else if (bad > 0) {
+          _pickSaid = bad == 1 && chosen.length == 1
+              ? 'That is not a picture a text can carry. A photo, a JPEG or a PNG goes.'
+              : '${bad == 1 ? 'One was' : '$bad were'} left out: not a picture a text can carry.';
+        }
+      });
+    } on Object {
+      // the device would not open its photos or its camera: it says why itself where it asks leave
+      if (mounted && _open == open) setState(() => _pickSaid = 'The pictures could not be opened on this device.');
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
   Future<void> _send() async {
     final open = _open;
     final body = _draft.text.trim();
-    if (open == null || body.isEmpty || _sending) return;
+    final pictures = [..._picked];
+    if (open == null || (body.isEmpty && pictures.isEmpty) || _sending) return;
     setState(() => _sending = true);
     try {
       final text = await widget.api.sendText(
@@ -243,32 +328,37 @@ class _TextsScreenState extends State<TextsScreen> {
         id: _id(),
         name: _name,
         device: widget.device,
+        pictures: pictures,
       );
       if (!mounted) return;
+      // what was just sent is shown from here, not fetched back from the hub
+      for (final (n, picture) in pictures.indexed) {
+        _pictures['${text.id}/$n'] = Future.value(picture);
+      }
       setState(() {
         _draft.clear();
+        _picked.clear();
+        _pickSaid = null;
         final page = _page;
         // shown at once, as the hub wrote it down; the reading that follows says the rest
         if (page != null && _open == open && !page.texts.any((had) => had.id == text.id)) {
-          _page = TextPage(
-            on: page.on,
-            thread: page.thread,
-            texts: [...page.texts, text],
-            more: page.more,
-            before: page.before,
-            after: page.after,
-          );
+          _page = page.withTexts([...page.texts, text]);
         }
       });
       unawaited(_reader.now());
     } on ApiException catch (err) {
       if (!mounted) return;
+      final kept = pictures.isEmpty ? 'it is still in the box' : 'it is still in the box, with its pictures';
       _say(switch (err.message) {
-        _ when err.status == null => 'The hub cannot be reached. The text was not sent: it is still in the box.',
+        _ when err.status == null => 'The hub cannot be reached. The text was not sent: $kept.',
         'stopped' => 'This customer answered STOP: no text goes to them until they text START.',
         'no_service' => 'This hub has no Twilio account yet. A manager types it under Location › Keys and connections.',
         'too_long' => 'That is too long for one text. Send it as two.',
         'no_number' => 'That is not a number a text can go to.',
+        'no_way' => _noPictures,
+        'too_many' => 'That is more pictures than one text carries. Take one off and send it again.',
+        'too_big' => 'Those pictures are too big together for one text. Take one off and send it again.',
+        'bad_picture' => 'One of those is not a picture a text can carry. Take it off and send it again.',
         _ => err.detail?['message'] as String? ?? 'The text was not sent (${err.message}).',
       }, key: const ValueKey('text-not-sent'));
       unawaited(_reader.now());
@@ -526,8 +616,10 @@ class _TextsScreenState extends State<TextsScreen> {
     final onward = !widget.only && thread != null;
     final on = page?.on ?? true;
     final typed = _draft.text.trim();
-    final goes = page == null ? typed : wrapped(page, typed);
+    final goes = page == null ? typed : wrapped(page, typed, pictures: _picked.isNotEmpty);
     final tooLong = goes.length > textMax;
+    final sends = page?.sends ?? const TextSends();
+    final nothing = typed.isEmpty && _picked.isEmpty;
     return Column(
       children: [
         if (!header) ?_note(context),
@@ -627,7 +719,7 @@ class _TextsScreenState extends State<TextsScreen> {
             words: 'This hub has no Twilio account yet, so nothing can be sent.',
           )
         else if (page != null) ...[
-          if (page.wraps && typed.isNotEmpty)
+          if (page.wraps && !nothing)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
               child: Align(
@@ -641,11 +733,65 @@ class _TextsScreenState extends State<TextsScreen> {
                 ),
               ),
             ),
+          if (_picked.isNotEmpty)
+            SizedBox(
+              key: const ValueKey('text-picked'),
+              height: 72,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                itemCount: _picked.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, i) => _PickedTile(
+                  key: ValueKey('text-picked:$i'),
+                  n: i,
+                  bytes: _picked[i],
+                  onOpen: () => _showPicture(_picked[i]),
+                  onRemove: _sending
+                      ? null
+                      : () => setState(() {
+                          _picked.removeAt(i);
+                          _pickSaid = null;
+                        }),
+                ),
+              ),
+            ),
+          if (_pickSaid != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 4, 0),
+              child: Row(
+                key: const ValueKey('text-pick-said'),
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_pickSaid!, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurface)),
+                  ),
+                  IconButton(
+                    key: const ValueKey('text-pick-said-off'),
+                    tooltip: 'Close',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _pickSaid = null),
+                    icon: const Icon(Icons.close, size: 16),
+                  ),
+                ],
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 8, 8),
+            padding: EdgeInsets.fromLTRB(sends.known ? 4 : 12, 6, 8, 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                // only where the hub knows of pictures in a text; one that cannot carry them yet says why
+                if (sends.known)
+                  IconButton(
+                    key: const ValueKey('text-attach'),
+                    tooltip: 'Add a picture',
+                    onPressed: _picking || _sending ? null : _attach,
+                    icon: _picking
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.add_photo_alternate_outlined),
+                  ),
                 Expanded(
                   child: TextField(
                     key: const ValueKey('text-box'),
@@ -667,7 +813,7 @@ class _TextsScreenState extends State<TextsScreen> {
                 IconButton.filled(
                   key: const ValueKey('text-send'),
                   tooltip: 'Send',
-                  onPressed: typed.isEmpty || tooLong || _sending ? null : _send,
+                  onPressed: nothing || tooLong || _sending ? null : _send,
                   icon: _sending
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.send),
@@ -994,6 +1140,64 @@ class _PictureTile extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// A picture that goes with the text in the box: small, with a cross that takes it off again.
+class _PickedTile extends StatelessWidget {
+  const _PickedTile({super.key, required this.n, required this.bytes, required this.onOpen, required this.onRemove});
+
+  final int n;
+  final Uint8List bytes;
+  final VoidCallback onOpen;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              onTap: onOpen,
+              child: Image.memory(
+                bytes,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                cacheWidth: 192,
+                errorBuilder: (_, _, _) => ColoredBox(
+                  color: scheme.surfaceContainerHighest,
+                  child: Icon(Icons.image_outlined, color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.topRight,
+            child: Semantics(
+              button: true,
+              label: 'Take picture ${n + 1} off',
+              child: InkWell(
+                key: ValueKey('text-picked-off:$n'),
+                onTap: onRemove,
+                customBorder: const CircleBorder(),
+                child: Container(
+                  margin: const EdgeInsets.all(3),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(color: scheme.inverseSurface, shape: BoxShape.circle),
+                  child: Icon(Icons.close, size: 14, color: scheme.onInverseSurface),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

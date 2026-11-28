@@ -11,7 +11,13 @@ what a customer wrote, answer, and start a conversation, and take an order or a 
   how many of the customer's texts nobody has opened yet, and whether they answered STOP.
 
 Where the texts come from: `pos.twilio` sends them and asks Twilio for the new ones (`Listener`); what
-Twilio says of a text is handed to `Texts.take`, however it was heard, so a text is never here twice.
+Twilio says of a text is handed to `Texts.take`, however it was heard, so a text is never here twice. Where
+Twilio can reach the hub (`pos.online.twilio_way`) it also calls the moment a text comes or changes, and the
+hub asks for that one text at once (`Listener.hear`) instead of finding it at its next asking.
+
+**Pictures the staff send** are kept on the hub with the text (`compose`), and Twilio fetches them from the
+hub when the text goes out. They are kept as long as the pictures somebody looked at; Twilio has them after
+that, like a customer's.
 
 **STOP.** A customer who answers STOP (or one of the phone companies' other words for it) is sent nothing
 more by Twilio until they text START. The conversation says so, and `compose` refuses to write to them: a
@@ -57,6 +63,17 @@ PICTURE_MAX = 10 * 1024 * 1024
 PICTURES_KEPT_MS = 30 * 24 * 3600 * 1000
 """How long a picture somebody looked at is kept on the hub. Twilio has them all: an older one is fetched
 again when somebody looks."""
+
+SEND_MOST = 5
+"""The most pictures one text of the staff's carries."""
+SEND_BYTES = 4_500_000
+"""The most the pictures of one text may weigh together, in bytes: Twilio takes five million of a whole text."""
+OWN = "out:"
+"""What the pictures the staff sent are kept under, before the text's id: a customer's are kept under
+Twilio's name for their text."""
+HEARD_A_MINUTE = 120
+"""The most calls of Twilio's in a minute that the hub asks Twilio about at once. More than that wait for
+the next asking, a few seconds on: nobody gets the hub to ask without end."""
 
 RECEIVED, WAITING, SENT, DELIVERED, READ, FAILED = "received", "waiting", "sent", "delivered", "read", "failed"
 _RANK = {WAITING: 0, SENT: 1, DELIVERED: 2, READ: 3}
@@ -147,6 +164,18 @@ def clean_body(value: object) -> str:
     return re.sub(r"\n{3,}", "\n\n", tidy).strip()
 
 
+def picture_kind(data: bytes) -> str | None:
+    """What a picture is, by how it begins: one of the three kinds a text carries to any phone (JPEG, PNG,
+    GIF). None for anything else, whatever it is called."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return None
+
+
 def clean_name(value: object) -> str:
     return " ".join(str(value or "").split())[:NAME_MAX]
 
@@ -156,6 +185,7 @@ class Picture:
     """One picture (or sound, or card) a text carries: Twilio's name for it and what it says it is."""
 
     sid: str
+    """Twilio's name for it; empty for a picture the staff sent, which the hub keeps itself (`OWN`)."""
     type: str = ""
 
     def as_json(self, n: int) -> dict[str, Any]:
@@ -972,18 +1002,28 @@ class Texts:
         device: str = "",
         text_id: str = "",
         name: str = "",
+        pictures: Sequence[bytes] = (),
     ) -> tuple[Text, bool]:
         """A text a person typed, written down as waiting to go: the text, and whether it is new (False for
-        one a screen sent twice under the same id: it is not sent again). Refused for no number, no words,
-        too many, and a customer who answered STOP."""
+        one a screen sent twice under the same id: it is not sent again). `pictures` go with it and are kept
+        on the hub, for Twilio to fetch and for the screens to show. Refused for no number, neither words
+        nor a picture, too many of either, a picture that is none a text carries, and a customer who
+        answered STOP."""
         phone = number_of(to)
         if phone is None:
             raise Refused("no_number", "That is not a number a text can go to.")
         words = clean_body(body)
-        if not words:
+        if not words and not pictures:
             raise Refused("no_text", "A text needs some words.")
         if text_id and not _TEXT_ID.fullmatch(text_id):
             raise Refused("bad_id", "That is no id for a text.")
+        if len(pictures) > SEND_MOST:
+            raise Refused("too_many", f"A text carries {SEND_MOST} pictures at the most.")
+        kinds = [picture_kind(data) for data in pictures]
+        if not all(kinds):
+            raise Refused("bad_picture", "A text carries a JPEG, a PNG or a GIF. That picture is none of them.")
+        if sum(len(data) for data in pictures) > SEND_BYTES:
+            raise Refused("too_big", "Those pictures are too big together for one text.")
         with self._lock:
             if text_id:
                 again = self.store.get(text_id)
@@ -993,16 +1033,22 @@ class Texts:
             if thread is not None and thread.stopped_ms is not None:
                 raise Refused("stopped", "They answered STOP: no text goes to them until they text START.")
             before, after = self.wrap(phone)
-            whole = f"{before}{words}{after}"
+            # a picture alone still says who it is from the first time: the name without its colon
+            head = f"{before}{words}" if words else before.rstrip().removesuffix(":")
+            whole = f"{head}{after}".strip()
             if len(whole) > BODY_MAX:
                 raise Refused("too_long", f"A text holds {BODY_MAX} letters at the most.")
+            now_ms = self._now_ms()
             text = Text(
                 text_id or uuid.uuid4().hex,
                 phone,
                 False,
                 whole,
-                self._now_ms(),
+                now_ms,
                 WAITING,
+                channel="mms" if pictures else "sms",
+                pictures=tuple(Picture("", kind or "") for kind in kinds),
+                pictures_n=len(pictures),
                 by_id=by_id,
                 by_name=by_name,
                 device=device[:80],
@@ -1010,10 +1056,21 @@ class Texts:
             kept = self.store.add(text, name=clean_name(name) or self._name(phone))
             if kept is None:
                 raise Refused("bad_id", "That id is another text's.")
+            try:
+                for n, data in enumerate(pictures):
+                    self.store.keep_picture(f"{OWN}{kept.text_id}", n, kinds[n] or "", data, now_ms)
+            except Exception:
+                self.store.drop(kept.text_id)  # a text whose pictures the hub does not hold cannot go
+                raise
             # whoever answers has read what they answer
             self.store.set_thread(phone, read_seq=self.store.top_seq(phone), read_by=by_name)
         self.tell()
         return kept, True
+
+    def sent_picture(self, text_id: str, n: int) -> tuple[str, bytes] | None:
+        """A picture the staff sent with a text, as the hub keeps it: what it is, and the picture. None
+        where the hub holds none (it was never there, or it is older than the hub keeps them)."""
+        return self.store.picture(f"{OWN}{text_id}", n)
 
     def read(self, phone: str, *, by: str) -> Thread | None:
         """Somebody opened the conversation: the customer's texts in it are read, for everybody."""
@@ -1079,6 +1136,8 @@ class Hears(Protocol):
 
     def heard(self, since_ms: int) -> list[dict[str, Any]] | None: ...
 
+    def one(self, sid: str) -> dict[str, Any] | None: ...
+
     def pictures_of(self, sid: str) -> list[Picture] | None: ...
 
 
@@ -1100,6 +1159,10 @@ class Listener:
     (docs/text-inbox.md, "How a text reaches the hub"), so it asks instead: the list of the account's
     messages since a little before it last asked. A text therefore shows a few seconds after it came, and
     nothing outside the building has to be set up.
+
+    Where Twilio can reach the hub after all (`pos.online.twilio_way`) it calls the moment a text comes or
+    changes, and `hear` asks for that one text at once. The asking goes on beside it: it is the net under
+    a call that did not arrive.
 
     `source` gives what Twilio is asked with now, None while the hub has no Twilio account. `screens` says
     how many screens are on: with none the asking slows down."""
@@ -1124,6 +1187,10 @@ class Listener:
         """Whether the last asking was answered; None before the first."""
         self.at_ms: int | None = None
         """When Twilio last answered."""
+        self.called_ms: int | None = None
+        """When Twilio last called the hub about a text; None where it never has."""
+        self._called: list[float] = []  # when the calls of the last minute came
+        self._lock = threading.Lock()
 
     def about(self) -> dict[str, Any]:
         """How the asking stands, for a screen: whether Twilio answered the last time, and when it last did."""
@@ -1163,6 +1230,34 @@ class Listener:
                 pass
         return changed
 
+    def hear(self, sid: str) -> bool:
+        """Twilio called the hub about this text (its own name for it): it came, or something became of it.
+        Nothing of the call is believed but the name: Twilio itself is asked for that text, and what it
+        answers is written down like a row of its list. Whether anything changed. Nothing on a hub without
+        an account, on a standby, and past `HEARD_A_MINUTE` calls in a minute: the next asking has it."""
+        source = self._source()
+        if source is None:
+            return False
+        now = self._now()
+        with self._lock:
+            self._called = [at for at in self._called if at > now - 60]
+            if len(self._called) >= HEARD_A_MINUTE:
+                return False
+            self._called.append(now)
+            self.called_ms = int(now * 1000)
+        if not self.texts.store.writable():
+            return False
+        told = source.one(sid)
+        if told is None:
+            return False
+        try:
+            changed = self.texts.take(told, pictures=source.pictures_of)
+        except ReadOnlyError:
+            return False
+        if changed:
+            self.texts.tell()
+        return changed
+
     def due(self) -> bool:
         """Whether it is time to ask: every few seconds with a screen on, less often with none."""
         quiet = self._now() - self._last_round
@@ -1191,6 +1286,9 @@ class Listener:
 
 __all__ = [
     "BODY_MAX",
+    "OWN",
+    "SEND_BYTES",
+    "SEND_MOST",
     "DELIVERED",
     "ELSEWHERE",
     "FAILED",
@@ -1211,4 +1309,5 @@ __all__ = [
     "channel_of",
     "default_text_store",
     "number_of",
+    "picture_kind",
 ]

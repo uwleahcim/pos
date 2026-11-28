@@ -124,6 +124,13 @@ restarted. It listens only on the hub itself. And it never holds the key: the hu
 the key (its SHA-256), which is enough to tell a push that carries the key from one that does not, and is of
 no use to anybody who reads it.
 
+Since 27 November 2026 the door lets in one more caller, when a manager turns that on: **Twilio**, for the
+texts with customers (`text-inbox.md`, "Instant delivery and pictures"). Twilio's calls carry no key in a
+header, so theirs is in the address: a long word the hub makes, of which the door again holds only the
+fingerprint. A call under `/twilio/` with that word is handed on (a text came, a text was delivered, a
+picture is fetched); any other is "not found". The two are apart: a push key opens nothing of Twilio's, and
+Twilio's word opens nothing of GloriaFood's.
+
 ### The way in
 
 **Built in: a Cloudflare Tunnel.** The hub calls out to Cloudflare and holds the line open; GloriaFood
@@ -170,7 +177,9 @@ hub's terminal does the same, and its command is under each step.
    when the tunnel has reached Cloudflare.
 3. **The address.** Back at Cloudflare, give the tunnel a public hostname: a subdomain (`orders`), your
    domain, the path `online/push`, the service type **HTTP** and the address **`door:8090`**. Exactly
-   that address: it is the door, and the only thing of the hub the tunnel should ever be told about. Then
+   that address: it is the door, and the only thing of the hub the tunnel should ever be told about.
+   (Where Twilio's calls for the texts are to come the same way, leave the path empty instead:
+   `text-inbox.md`, "Setting it up". The door answers "not found" to everything that is neither.) Then
    **Try it**, on either of the two cards. It asks for the address (`orders.example.com`, your own name),
    which the hub remembers, and should say "The whole way in works". See [Try it](#try-it) for what it
    does and what else it can say.

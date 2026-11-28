@@ -8,22 +8,30 @@ pos.online.door:door_from_env`, the `door` service in infra/hub/docker-compose.y
 - `POST /online/push` that carries this restaurant's key for pushes is handed on to the API's own
   `/online/push` on the hub's inside network, and the API's answer is handed back.
 
+- A call of Twilio's whose path carries the hub's word for Twilio (`pos.online.twilio_way`: a text came,
+  something became of one, or a picture of a text the restaurant is sending is fetched) is handed on to
+  the API under the same path, and the API's answer is handed back: a few fixed letters for the first
+  two, the picture for the third and nothing else of any answer.
+
 Everything else is answered 404 with nothing in it: every other path, every other method, and so is every
-call while the hub has no key for pushes. There is no page that says what this is.
+call while the hub has no key for pushes, and every call of Twilio's kind while it has no word for Twilio.
+There is no page that says what this is.
 
 The door runs all the time, shut until the hub has a key for pushes, and it is told of that key by the API
 (`pos.online.wayin`): a small file in a folder the door may only read (`/door/key.json`), which holds the
 key's SHA-256 and not the key. The door looks at the file with every call, so a key a manager types in the
 app (Location, Keys and connections) opens the door at once, and one that is removed shuts it; the door is
 never restarted for it. A door that was told nothing yet goes by `POS_GLORIAFOOD_PUSH_KEY`, as it always
-did. A file that cannot be read keeps the door shut.
+did. A file that cannot be read keeps the door shut. The word for Twilio is told the same way, in a second
+file beside the first (`/door/twilio.json`), and without that file no call of Twilio's kind gets in.
 
 A push without the key is not read. Only its header is handed on, with an empty body, so that the API can
 count it and say so in its status (`pos.online.service`), and the API's 401 is handed back. A push that
 says it is bigger than a push may be, or turns out to be, is answered 413 and is not handed on.
 
 Nothing is kept here and nothing is written to a log but the line a server writes for each call (the time,
-the path, the answer's number): no header, no body, no key.
+the path, the answer's number): no header, no body, no key. The hub's word for Twilio is in a path, so it is
+taken out of that line before the line is written (`pos.online.twilio_way.hush`).
 """
 
 from __future__ import annotations
@@ -42,6 +50,7 @@ from starlette.responses import JSONResponse, Response
 
 from .gloriafood import PUSH_MOST, allowed, push_key_from_env
 from .tunnel import digest_of
+from .twilio_way import CALL_MOST, PATHS, SENT_KINDS, TWIML, hush
 
 PATH = "/online/push"
 INSIDE = "http://api:8000"
@@ -54,6 +63,10 @@ ANSWER_MOST = 2_000
 DOOR_DIR = "/door"
 """Where the API leaves the door its word (`POS_DOOR_DIR` names another place). The volume `pos-door`."""
 KEY_FILE = "key.json"
+TWILIO_FILE = "twilio.json"
+"""Where the API leaves the SHA-256 of the hub's word for Twilio."""
+PICTURE_MOST = 6_000_000
+"""The most of a picture that is handed out, in bytes: Twilio takes five million of a whole text."""
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 Scope = MutableMapping[str, Any]
@@ -96,7 +109,8 @@ class Told:
 class Door:
     """The door as a server (ASGI). `to` is the API's address on the inside. What a push must carry is what
     the API left in `told` (the key's SHA-256), and until it left anything, `key` (None: the door is shut).
-    `client` is for the tests, which stand an API behind it."""
+    What a call of Twilio's must carry in its path is what the API left in `twilio` (the word's SHA-256);
+    without it there is no such call. `client` is for the tests, which stand an API behind it."""
 
     def __init__(
         self,
@@ -104,11 +118,14 @@ class Door:
         to: str = INSIDE,
         key: str | None = None,
         told: Path | None = None,
+        twilio: Path | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._to = to.rstrip("/") + PATH
+        self._inside_at = to.rstrip("/")
+        self._to = self._inside_at + PATH
         self._key = key or None
         self._told = Told(told) if told is not None else None
+        self._twilio = Told(twilio) if twilio is not None else None
         self._client = client
 
     def _judge(self, authorization: str | None) -> tuple[bool, bool]:
@@ -133,7 +150,9 @@ class Door:
         await response(scope, receive, send)
 
     async def _answer(self, request: Request) -> Response:
-        if request.method != "POST" or request.url.path != PATH:
+        if request.url.path != PATH:
+            return await self._from_twilio(request)
+        if request.method != "POST":
             return Response(status_code=404)
         authorization = request.headers.get("authorization")
         is_open, with_key = self._judge(authorization)
@@ -159,6 +178,44 @@ class Door:
             return JSONResponse({"error": "trouble"}, 502)
         return Response(inside.content, inside.status_code, media_type="application/json")
 
+    async def _from_twilio(self, request: Request) -> Response:
+        """A call of Twilio's kind: handed on when its path carries the hub's word for Twilio, and
+        otherwise not found, like every path there is nothing behind. What comes back is the API's number
+        and, of its answer, only what Twilio is to have: the fixed "nothing to send back" for a call about
+        a text, and a picture for a picture."""
+        found = PATHS.fullmatch(request.url.path)
+        if found is None or self._twilio is None:
+            return Response(status_code=404)
+        _, digest = self._twilio.now()
+        if digest is None or not hmac.compare_digest(digest_of(found[1]), digest):
+            return Response(status_code=404)
+        to = self._inside_at + request.url.path
+        about_text = found[2] in ("text", "status")
+        if request.method not in (("POST",) if about_text else ("GET", "HEAD")):
+            return Response(status_code=404)
+        try:
+            if about_text:
+                body = await body_of(request, CALL_MOST)
+                if body is None:
+                    return Response(status_code=413)
+                kind = request.headers.get("content-type") or "application/x-www-form-urlencoded"
+                inside = await self._inside().post(to, content=body, headers={"Content-Type": kind})
+            else:
+                inside = await self._inside().get(to)  # Twilio asks with HEAD first: the same answer, less its body
+        except httpx.TimeoutException:
+            return Response(status_code=504)
+        except httpx.HTTPError:
+            return Response(status_code=502)
+        if inside.status_code != 200:
+            return Response(status_code=inside.status_code if inside.status_code in (403, 404, 410) else 502)
+        if about_text:
+            return Response(TWIML, 200, media_type="text/xml")
+        kind = inside.headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind not in SENT_KINDS or len(inside.content) > PICTURE_MOST:
+            return Response(status_code=502)
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        return Response(inside.content, 200, media_type=kind, headers=headers)
+
     def _inside(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=WAIT_SECONDS)
@@ -176,17 +233,17 @@ class Door:
                 return
 
 
-async def body_of(request: Request) -> bytes | None:
-    """What a push holds, or None for one that is bigger than a push may be: by what it says of itself,
-    or by what actually comes."""
+async def body_of(request: Request, most: int = PUSH_MOST) -> bytes | None:
+    """What a push holds, or None for one that is bigger than a push may be (`most`, in bytes): by what
+    it says of itself, or by what actually comes."""
     said = request.headers.get("content-length", "")
-    if said.isdigit() and int(said) > PUSH_MOST:
+    if said.isdigit() and int(said) > most:
         return None
     parts: list[bytes] = []
     size = 0
     async for part in request.stream():
         size += len(part)
-        if size > PUSH_MOST:
+        if size > most:
             return None
         parts.append(part)
     return b"".join(parts)
@@ -195,7 +252,14 @@ async def body_of(request: Request) -> bytes | None:
 def door_from_env(environ: MutableMapping[str, str] | None = None) -> Door:
     """The hub's door: the API at `POS_DOOR_TO` (the `api` service unless set), open for the key the API
     tells it of in `POS_DOOR_DIR` (`/door` unless set), and until it is told anything, for the key in
-    `POS_GLORIAFOOD_PUSH_KEY`. Shut without one."""
+    `POS_GLORIAFOOD_PUSH_KEY`. Shut without one. Twilio's calls get in once the API left its word for them
+    in the same folder."""
     env = os.environ if environ is None else environ
     folder = Path((env.get("POS_DOOR_DIR") or "").strip() or DOOR_DIR)
-    return Door(to=(env.get("POS_DOOR_TO") or INSIDE).strip(), key=push_key_from_env(env), told=folder / KEY_FILE)
+    hush()
+    return Door(
+        to=(env.get("POS_DOOR_TO") or INSIDE).strip(),
+        key=push_key_from_env(env),
+        told=folder / KEY_FILE,
+        twilio=folder / TWILIO_FILE,
+    )

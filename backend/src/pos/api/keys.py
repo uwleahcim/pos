@@ -8,7 +8,8 @@ Every call is a manager's (the token from `/admin/session`): no setting hands th
   from (`source`: `app`, `hub` for the hub's own file, or null), its last characters (`ending`), Apple's ids
   (`shown`), who touched it in the app last and when (`by`, `at_ms`), `removed` and `unreadable`. And
   `kept`: false on a hub that has nowhere to keep its sealing secret, where a key typed in the app lasts
-  until the hub restarts. No answer of any call here has a key in it.
+  until the hub restarts. No answer of any call here has a key in it (the address for Twilio, below, is the
+  one thing here that is to be kept to oneself).
 - `PUT /hub/keys/{name}`: a manager typed one: `{"key": "..."}`, and for Apple's `key` is the text of the
   .p8 file, with `key_id`, `team_id` and, if it is not the usual one, `bundle_id`. It is checked, sealed,
   stored, and in force at once: the hub is not restarted. Answers like the `GET`. 422 `bad_value` with words
@@ -71,6 +72,24 @@ go nowhere again.
   for that one text and kept nowhere. 409 `no_service` on a hub without a Twilio account; 422 `bad_value`
   for what is no number. Answers like the `GET` beside it.
 
+**Twilio's way in** (`pos.online.twilio_way`; docs/text-inbox.md, "Instant delivery and pictures"): Twilio
+calls the hub the moment a text comes or changes, and fetches from it the pictures the staff send. It comes
+by the push door and the tunnel, at the address above, under a word the hub makes itself.
+
+- `GET /hub/keys` also gives `texts_way`: `on` (the hub has made its word), `address` (the hub's name on the
+  internet, the same one GloriaFood sends to), `url` (what goes into Twilio's console as "A message comes
+  in", once both are there; null until then), `door` (whether the door could be told; null on a machine
+  that runs none) and `called_ms` (when Twilio last called). `url` holds the hub's word: it is the one thing
+  on this page that is not to be shared, and it is told to a manager because a manager has to copy it into
+  Twilio's console.
+- `POST /hub/texts/way`: turns it on: the hub makes its word, unless it has one. `{"again": true}` makes a
+  new one, after which the old address is dead and Twilio's console wants the new one. Answers like the
+  `GET`. 409 `no_service` on a hub without a Twilio account.
+- `DELETE /hub/texts/way`: turns it off: the word is forgotten and the door lets no call of Twilio's in.
+- `POST /hub/texts/way/try`: the hub calls its own address for Twilio with a word made for that one try, at
+  the door and, with an address, from outside, and says whether each call reached it: `way_tried.door` and
+  `way_tried.outside`, each with `ok`, `reason` and the answer's `code`. 409 `off` while it is not turned on.
+
 **Shipday** (`pos.shipday`; docs/shipday.md). The restaurant's key for Shipday is the key `shipday`:
 `PUT /hub/keys/shipday` with `{"key": "..."}`. From the moment it is typed the hub asks Shipday for its
 deliveries and drivers, and with it removed it asks nothing.
@@ -95,7 +114,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
@@ -115,6 +134,7 @@ from ..keys import (
     SHIPDAY,
     SLOTS,
     TEXTS,
+    TEXTS_WAY,
     HubKeys,
     UnknownKey,
     slot_for,
@@ -124,6 +144,8 @@ from ..messaging import Messenger, about_of, messenger_from_env
 from ..online.accounts import MAIN, SETTING, Account, account_of_slot, accounts_of, clean_accounts, name_of, new_id
 from ..online.gloriafood import GloriaFood
 from ..online.service import OnlineOrders
+from ..online.twilio_way import Knocks, TwilioWay
+from ..online.twilio_way import make as make_way
 from ..online.wayin import ADDRESS_SETTING, WayIn, clean_address
 from ..push.apns import ApnsConfig, ApnsSender
 from ..push.relay import PushRelay
@@ -172,6 +194,12 @@ class TryTextIn(BaseModel):
     to: str = ""
 
 
+class WayOnIn(BaseModel):
+    """Turning Twilio's way in on. `again`: a new word in place of the one the hub has."""
+
+    again: bool = False
+
+
 class AddressIn(BaseModel):
     """The name on the internet GloriaFood sends its pushes to. Empty: none is remembered."""
 
@@ -188,6 +216,83 @@ def hand_way_in(app: FastAPI) -> None:
     online.use_push_key(push_key)
     wayin: WayIn = app.state.wayin
     wayin.hand(push_key, tunnel["key"] if tunnel is not None else None)
+
+
+def hand_texts_way(app: FastAPI, *, tell: bool = True) -> None:
+    """The hub's word for Twilio's calls in force now, or none: the API goes by it, and with `tell` the push
+    door is told (`pos.online.wayin`), so that a call whose path carries the word gets in."""
+    keys: HubKeys = app.state.keys
+    held = keys.data(TEXTS_WAY)
+    good = held is not None and bool(held.get("key")) and bool(held.get("seal"))
+    app.state.way_secret = dict(held) if held is not None and good else None
+    if tell:
+        wayin: WayIn = app.state.wayin
+        wayin.hand_twilio(held["key"] if held is not None and good else None)
+
+
+def texts_way(app: FastAPI) -> TwilioWay | None:
+    """Twilio's way in as it stands: None while it is not turned on, and while the hub has no name on the
+    internet. With it a text can carry pictures, and Twilio is told where to call."""
+    held = app.state.way_secret
+    if not held:
+        return None
+    address = app.state.settings.get(ADDRESS_SETTING).get("address")
+    if not isinstance(address, str) or not address:
+        return None
+    return TwilioWay(address, held["key"], held["seal"])
+
+
+def callback_for(app: FastAPI) -> Callable[[], str]:
+    """What a messenger asks with every text: where Twilio is to say what became of it, or nothing."""
+
+    def where() -> str:
+        way = texts_way(app)
+        return way.status_url if way is not None else ""
+
+    return where
+
+
+def twilio_at_door(came: dict[str, Any], arrived: bool) -> dict[str, Any]:
+    """What a knock the way Twilio comes, at the hub's own door, came to: `ok`, or why not. `shut`: the
+    door does not know the hub's word (an older door, or it could not be told); `no_answer`: no door runs;
+    `api`: the door is up and the API behind it did not answer it; `other`."""
+    code = came["code"]
+    if code == 200 and arrived:
+        reason = None
+    elif code is None:
+        reason = "no_answer"
+    elif code == 404:
+        reason = "shut"
+    elif code in (502, 504):
+        reason = "api"
+    else:
+        reason = "other"
+    return {"ok": reason is None, "reason": reason, "code": code}
+
+
+def twilio_outside(came: dict[str, Any], arrived: bool) -> dict[str, Any]:
+    """What the same knock from outside came to: `ok` when it reached this very hub, or why not, in the
+    words of `knocked_outside`. `elsewhere`: something answers, and it is not this hub. `not_routed`: the
+    name is known and leads nowhere for this path (404): at Cloudflare the public hostname lets only
+    GloriaFood's path through."""
+    code = came["code"]
+    if code == 200 and arrived:
+        reason = None
+    elif code is None:
+        reason = "late" if came["late"] else "no_answer"
+    elif code in (200, 401):
+        reason = "elsewhere"
+    elif code == 404:
+        reason = "not_routed"
+    elif code == 403:
+        reason = "blocked"
+    elif code in (502, 503, 504) or 520 <= code <= 530:
+        reason = "tunnel_down"
+    elif 300 <= code < 400:
+        reason = "redirect"
+    else:
+        reason = "other"
+    return {"ok": reason is None, "reason": reason, "code": code}
 
 
 def knocked_at_door(came: dict[str, Any], arrived: bool) -> dict[str, Any]:
@@ -288,6 +393,8 @@ def use_texts(app: FastAPI) -> None:
     )
     if isinstance(fresh, TwilioMessenger) and fresh.keeper is None:
         fresh.keeper = app.state.texts  # what goes out is written down in the customer's conversation
+    if isinstance(fresh, TwilioMessenger):
+        fresh.callback = callback_for(app)  # and Twilio is told where to say what became of it
     app.state.messenger = fresh
     app.state.notifier.messenger = fresh
     if isinstance(old, TwilioMessenger):
@@ -334,6 +441,9 @@ async def use_keys(app: FastAPI, names: Iterable[str] | None = None) -> None:
             await old.close()
     if TEXTS in wanted:
         await run_in_threadpool(use_texts, app)
+    if names is None or TEXTS_WAY in wanted:
+        await run_in_threadpool(hand_texts_way, app)
+        app.state.feed.changed("texts")  # the screens say whether a text can carry a picture
     if SHIPDAY in wanted:
         # never in the middle of a round, which may be waiting for Shipday: off the loop
         await run_in_threadpool(use_shipday, app)
@@ -374,6 +484,19 @@ def add_hub_keys(app: FastAPI) -> None:
             about["last_failed"] = {**failed, "order_no": state.fields.get("order_no")}
         return about
 
+    def twilio_way() -> dict[str, Any]:
+        """Twilio's way in, for the manager who sets it up: the address is theirs to copy into Twilio's
+        console, and nobody else's to see."""
+        wayin: WayIn = app.state.wayin
+        way = texts_way(app)
+        return {
+            "on": app.state.way_secret is not None,
+            "address": address(),
+            "url": way.text_url if way is not None else None,
+            "door": wayin.twilio_told,
+            "called_ms": app.state.text_listener.called_ms,
+        }
+
     def said() -> dict[str, Any]:
         keys: HubKeys = app.state.keys
         wayin: WayIn = app.state.wayin
@@ -383,6 +506,7 @@ def add_hub_keys(app: FastAPI) -> None:
             "online_accounts": [{**account.about(), "key": keys.view(account.slot)} for account in accounts()],
             "way_in": {"address": address(), **wayin.about()},
             "texts": texts(),
+            "texts_way": twilio_way(),
             "shipday": app.state.shipday.about(),
         }
 
@@ -533,6 +657,7 @@ def add_hub_keys(app: FastAPI) -> None:
             app.state.settings.put(ADDRESS_SETTING, {"address": cleaned})
         except ReadOnlyError as err:
             raise HTTPException(503, {"error": "read_only"}) from err
+        app.state.feed.changed("texts")  # Twilio fetches a text's pictures at this name too
         return said()
 
     @app.post("/hub/online/push/try")
@@ -553,6 +678,71 @@ def add_hub_keys(app: FastAPI) -> None:
             word = online.expect()
             outside = {"address": host, **knocked_outside(await wayin.knock(word, host), online.arrived(word))}
         return {**await run_in_threadpool(said), "tried": {"door": door, "outside": outside}}
+
+    @app.post("/hub/texts/way")
+    async def turn_on_texts_way(
+        body: WayOnIn | None = None, authorization: str | None = Header(None)
+    ) -> dict[str, Any]:
+        """Twilio's way in is turned on: the hub makes its word for Twilio's calls, unless it has one, and
+        the door is told. With `again` a new word is made, and the address Twilio has is dead."""
+        grant = manager_from(app.state.tokens, authorization)
+        if not isinstance(app.state.messenger, TwilioMessenger):
+            message = "this hub has no Twilio account yet"
+            raise HTTPException(409, {"error": "no_service", "message": message})
+        keys: HubKeys = app.state.keys
+        again = body is not None and body.again
+
+        def make() -> None:
+            if not again and keys.data(TEXTS_WAY) is not None:
+                return
+            try:
+                keys.set(TEXTS_WAY, make_way(), by=grant.name)
+            except ReadOnlyError as err:
+                raise HTTPException(503, {"error": "read_only"}) from err
+
+        await run_in_threadpool(make)
+        await use_keys(app, [TEXTS_WAY])
+        return await run_in_threadpool(said)
+
+    @app.delete("/hub/texts/way")
+    async def turn_off_texts_way(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Twilio's way in is turned off: the word is forgotten, and the door lets no call of Twilio's in.
+        The texts are asked for every few seconds again, and a text carries no picture."""
+        grant = manager_from(app.state.tokens, authorization)
+        keys: HubKeys = app.state.keys
+
+        def forget() -> None:
+            try:
+                keys.forget(TEXTS_WAY, by=grant.name)
+            except ReadOnlyError as err:
+                raise HTTPException(503, {"error": "read_only"}) from err
+
+        await run_in_threadpool(forget)
+        await use_keys(app, [TEXTS_WAY])
+        return await run_in_threadpool(said)
+
+    @app.post("/hub/texts/way/try")
+    async def try_texts_way(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """The hub calls its own address for Twilio, at the door and from outside, with a word made for
+        that one try, and says whether each call reached it. Nothing is asked of Twilio and no text is
+        written down."""
+        manager_from(app.state.tokens, authorization)
+        held = app.state.way_secret
+        if not held:
+            message = "Twilio's way in is not turned on yet"
+            raise HTTPException(409, {"error": "off", "message": message})
+        wayin: WayIn = app.state.wayin
+        knocks: Knocks = app.state.way_knocks
+        path = f"/twilio/{held['key']}/text"
+        knock = knocks.expect()
+        door = twilio_at_door(await wayin.knock_twilio(path, knock), knocks.arrived(knock))
+        outside = None
+        host = await run_in_threadpool(address)
+        if host and door["ok"]:
+            knock = knocks.expect()
+            came = await wayin.knock_twilio(path, knock, host)
+            outside = {"address": host, **twilio_outside(came, knocks.arrived(knock))}
+        return {**await run_in_threadpool(said), "way_tried": {"door": door, "outside": outside}}
 
     @app.post("/hub/texts/try")
     async def try_texts(body: TryTextIn, authorization: str | None = Header(None)) -> dict[str, Any]:

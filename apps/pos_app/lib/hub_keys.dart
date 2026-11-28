@@ -408,6 +408,136 @@ class TextTried {
   }
 }
 
+/// Twilio's way in, as the hub says beside its keys (docs/text-inbox.md, "Instant delivery and pictures"):
+/// Twilio calls the hub the moment a text comes or changes, and fetches from it the pictures the staff
+/// send. It comes by the push door and the tunnel, under an address the hub makes itself.
+class TextsWay {
+  const TextsWay({this.on = false, this.address = '', this.url, this.door, this.calledMs});
+
+  factory TextsWay.fromJson(Map<String, dynamic> json) => TextsWay(
+    on: json['on'] == true,
+    address: json['address'] as String? ?? '',
+    url: json['url'] is String && (json['url'] as String).isNotEmpty ? json['url'] as String : null,
+    door: json['door'] as bool?,
+    calledMs: (json['called_ms'] as num?)?.toInt(),
+  );
+
+  /// A manager turned it on: the hub has made its address for Twilio.
+  final bool on;
+
+  /// The hub's name on the internet, the same one GloriaFood sends to; empty while none was given.
+  final String address;
+
+  /// What goes into Twilio's console as "A message comes in"; null until it is on and the hub has a name.
+  /// Whoever has it can call the hub as Twilio does, so it is copied, and shown with its middle left out.
+  final String? url;
+
+  /// Whether the hub could tell the push door of it; null on a machine that runs no door.
+  final bool? door;
+
+  /// When Twilio last called, by the hub's clock; null while it has not since the hub started.
+  final int? calledMs;
+
+  /// Twilio can be given the address: it is on and the hub has a name on the internet.
+  bool get ready => url != null;
+
+  /// [url] for the screen: the part only the hub and Twilio know left out.
+  String get shown => address.isEmpty ? '' : 'https://$address/twilio/…/text';
+
+  /// How it stands, in a line or two. [now] is the terminal's clock.
+  String words(DateTime now) {
+    if (!on) {
+      return 'Off. The hub asks Twilio for new texts every few seconds, and a text carries no picture.';
+    }
+    if (!ready) {
+      return "On, but the hub's name on the internet is not known here yet, so there is no address for Twilio. "
+          'Press Try it and give the name.';
+    }
+    final called = calledMs;
+    if (called == null) {
+      return "On. Twilio has not called yet. Copy the address into Twilio's console, then text the restaurant.";
+    }
+    final day = keyDay(DateTime.fromMillisecondsSinceEpoch(called), now);
+    return 'On. Twilio last called ${day == 'today' ? 'at ${clockTime(called)}' : day}.';
+  }
+}
+
+/// What a try of Twilio's way in came to: the hub called its own address for Twilio at its push door, and,
+/// where it has a name on the internet, from outside.
+class TextsWayTried {
+  const TextsWayTried({required this.doorOk, this.doorReason, this.doorCode, this.outside});
+
+  factory TextsWayTried.fromJson(Map<String, dynamic> json) {
+    final door = (json['door'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+    final outside = (json['outside'] as Map?)?.cast<String, dynamic>();
+    return TextsWayTried(
+      doorOk: door['ok'] == true,
+      doorReason: door['reason'] as String?,
+      doorCode: (door['code'] as num?)?.toInt(),
+      outside: outside == null
+          ? null
+          : (
+              address: outside['address'] as String? ?? '',
+              ok: outside['ok'] == true,
+              reason: outside['reason'] as String?,
+              code: (outside['code'] as num?)?.toInt(),
+            ),
+    );
+  }
+
+  final bool doorOk;
+  final String? doorReason;
+  final int? doorCode;
+
+  /// The call from outside; null when the hub has no name on the internet, and when the door did not open.
+  final ({String address, bool ok, String? reason, int? code})? outside;
+
+  bool get ok => doorOk && (outside?.ok ?? true);
+
+  /// Something is wrong. A door that opens with no name to try from outside is not.
+  bool get bad => !ok;
+
+  String get words {
+    if (!doorOk) {
+      return switch (doorReason) {
+        'no_answer' => 'The push door is not running on this hub. Update the hub (sudo hubctl update).',
+        'shut' =>
+          "This hub's push door does not let Twilio in yet. Update the hub (sudo hubctl update), then try again.",
+        'api' => "The push door is up, but could not hand Twilio's call on to the hub.",
+        _ => 'The push door answered in a way this hub does not know (${doorCode ?? 'nothing'}).',
+      };
+    }
+    final tried = outside;
+    if (tried == null) {
+      return "The door is open for Twilio on this hub. Give the hub's name on the internet, and the way in from "
+          'outside is tried too.';
+    }
+    final at = tried.address;
+    if (tried.ok) {
+      return "The whole way in works: a call to the address reaches this hub from the internet. Copy it into "
+          "Twilio's console. Nothing was sent to Twilio, and nothing went on the POS.";
+    }
+    final why = switch (tried.reason) {
+      'no_answer' => 'nothing answers at $at. Check the name, and that the tunnel has a public hostname for it.',
+      'late' => '$at did not answer in time.',
+      'elsewhere' =>
+        '$at answers, but not from this hub. At Cloudflare, the public hostname must be handed to '
+            'http://door:8090.',
+      'not_routed' =>
+        "$at is known, but lets only GloriaFood's path through. At Cloudflare, open the tunnel's public "
+            'hostname and empty its Path box, or add a second public hostname with the path twilio and the '
+            'service http://door:8090.',
+      'blocked' => '$at turned the call away (403). A rule at Cloudflare is in the way.',
+      'tunnel_down' =>
+        'Cloudflare answers for $at but cannot get to the push door (${tried.code}). Is the tunnel connected, '
+            'and its service http://door:8090?',
+      'redirect' => '$at sends callers on to another address (${tried.code}), which Twilio does not follow here.',
+      _ => "$at answered ${tried.code ?? 'nothing'}, which is not what this hub's door answers.",
+    };
+    return 'The door is open for Twilio, but from outside $why';
+  }
+}
+
 /// Every key the hub holds, as it stands.
 class HubKeys {
   const HubKeys({
@@ -419,6 +549,8 @@ class HubKeys {
     this.tried,
     this.texts,
     this.textTried,
+    this.textsWay,
+    this.textsWayTried,
     this.shipday,
     this.shipdayTried,
   });
@@ -445,6 +577,10 @@ class HubKeys {
     textTried: json['tried'] is Map && (json['tried'] as Map).containsKey('state')
         ? TextTried.fromJson((json['tried'] as Map).cast<String, dynamic>())
         : null,
+    textsWay: json['texts_way'] is Map ? TextsWay.fromJson((json['texts_way'] as Map).cast<String, dynamic>()) : null,
+    textsWayTried: json['way_tried'] is Map
+        ? TextsWayTried.fromJson((json['way_tried'] as Map).cast<String, dynamic>())
+        : null,
     shipday: json['shipday'] is Map ? ShipdayAbout.fromJson((json['shipday'] as Map).cast<String, dynamic>()) : null,
     shipdayTried: json['shipday_tried'] is Map
         ? ShipdayTried.fromJson((json['shipday_tried'] as Map).cast<String, dynamic>())
@@ -465,6 +601,12 @@ class HubKeys {
 
   /// What a try of the texts came to, in the answer to trying them.
   final TextTried? textTried;
+
+  /// Twilio's way in; null from a hub older than instant delivery and pictures in a text.
+  final TextsWay? textsWay;
+
+  /// What a try of Twilio's way in came to, in the answer to trying it.
+  final TextsWayTried? textsWayTried;
 
   /// How the hub's asking of Shipday goes; null from a hub older than reading Shipday.
   final ShipdayAbout? shipday;

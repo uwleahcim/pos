@@ -1208,6 +1208,34 @@ class Hub {
   int? refuseNotesSeen;
   (int, String, String)? refuseNote;
 
+  // Twilio's way in, as the last paragraph but one of the words over [hubKeys] says.
+  bool? textsWayOn = false;
+  int textsWayMade = 0;
+  bool? textsWayDoor = true;
+  int? textsWayCalledMs;
+  Map<String, dynamic> textsWayTried = {
+    'door': {'ok': true, 'reason': null, 'code': 200},
+    'outside': null,
+  };
+  int textsWayTries = 0;
+
+  /// The hub's word for Twilio, as the address it made last carries it.
+  String get textsWayWord => 'w${textsWayMade}XuW3q0c9fHk2mLr8sTz5vYb1nGd4jPa7eQo6iUx';
+
+  /// Twilio's way in as the hub says it beside its keys.
+  Map<String, dynamic>? get textsWaySaid {
+    final on = textsWayOn;
+    if (on == null) return null;
+    final address = wayIn?['address'] as String? ?? '';
+    return {
+      'on': on,
+      'address': address,
+      'url': on && address.isNotEmpty ? 'https://$address/twilio/$textsWayWord/text' : null,
+      'door': textsWayDoor,
+      'called_ms': textsWayCalledMs,
+    };
+  }
+
   /// The hub's keys (docs/hub-keys.md). [hubKeys] is how each stands, by name, as `GET /hub/keys` says it;
   /// null is a hub older than keys typed in the app. Only Mike's token reads or changes them
   /// ([hubKeysAuth] keeps the last one sent). `PUT /hub/keys/<name>` puts the typed key in force as one typed
@@ -1239,6 +1267,14 @@ class Hub {
   /// texts on (`provider` becomes `twilio`, sent from what was typed) and a removed one turns them off.
   /// `POST /hub/texts/try` answers [textTried] ([textTries] keeps the numbers typed), or 409 without an
   /// account.
+  ///
+  /// Twilio's way in (docs/text-inbox.md, "Instant delivery and pictures"): [textsWayOn] says whether a
+  /// manager turned it on, [textsWayWord] is the hub's word in the address it made (a new one each time it is
+  /// made: [textsWayMade] counts them), [textsWayDoor] whether the door could be told and [textsWayCalledMs]
+  /// when Twilio last called. Null [textsWayOn] is a hub from before it: it says nothing of it and knows
+  /// none of its calls. `POST /hub/texts/way` turns it on (`again` makes a new word; 409 without a Twilio
+  /// account), `DELETE` turns it off, and `POST /hub/texts/way/try` answers [textsWayTried]
+  /// ([textsWayTries] counts them), or 409 while it is off.
   ///
   /// Shipday (docs/shipday.md): the key `shipday`, and beside the keys how the hub's asking goes, worked out
   /// from [shipday] ([shipdayAbout]). `POST /hub/shipday/try` answers [shipdayTried] ([shipdayTries] counts
@@ -1638,6 +1674,45 @@ class Hub {
     }
     if (request.url.path.startsWith('/hub/online/accounts')) return _accounts(request);
     if (request.url.path.startsWith('/hub/online/push/')) return _wayIn(request);
+    if (request.url.path.startsWith('/hub/texts/way')) {
+      if (textsWayOn == null) return json({'detail': 'Not Found'}, 404);
+      if (request.url.path.endsWith('/try')) {
+        textsWayTries += 1;
+        if (textsWayOn != true) {
+          return json({
+            'detail': {'error': 'off', 'message': "Twilio's way in is not turned on yet"},
+          }, 409);
+        }
+        final outside = textsWayTried['outside'] as Map<String, dynamic>?;
+        final address = wayIn?['address'] as String? ?? '';
+        return json({
+          ...hubKeysSaid(),
+          'way_tried': {
+            'door': textsWayTried['door'],
+            // from outside only where the door opened and the hub has a name to be called by
+            'outside': address.isEmpty || (textsWayTried['door'] as Map)['ok'] != true
+                ? null
+                : {
+                    'address': address,
+                    ...(outside ?? const {'ok': true, 'reason': null, 'code': 200}),
+                  },
+          },
+        });
+      }
+      if (request.method == 'DELETE') {
+        textsWayOn = false;
+        return json(hubKeysSaid());
+      }
+      if (hubKeys!['texts']!['set'] != true) {
+        return json({
+          'detail': {'error': 'no_service', 'message': 'this hub has no Twilio account yet'},
+        }, 409);
+      }
+      final again = request.body.isNotEmpty && (jsonDecode(request.body) as Map)['again'] == true;
+      if (again || textsWayOn != true) textsWayMade += 1;
+      textsWayOn = true;
+      return json(hubKeysSaid());
+    }
     if (request.url.path == '/hub/texts/try') {
       if (texts == null) return json({'detail': 'Not Found'}, 404);
       textTries.add((jsonDecode(request.body) as Map<String, dynamic>)['to'] as String);
@@ -1763,6 +1838,7 @@ class Hub {
     'kept': hubKeysKept,
     'way_in': ?wayIn,
     'texts': ?texts,
+    'texts_way': ?textsWaySaid,
     'shipday': ?shipdayAbout(),
     if (onlineAccounts != null)
       'online_accounts': [
@@ -3998,7 +4074,9 @@ class Hub {
   /// answers the hub. [textPosts] are the texts sent from a screen (the number, what the call carried),
   /// [textReads] the conversations opened (the number, who), [refuseText] what the next text is refused
   /// with (status, error, words), [textPictures] the pictures by text and place (`t1/0`), and [textAsks]
-  /// how often the count for the button was asked for.
+  /// how often the count for the button was asked for. [textSend] is what a text typed here can carry
+  /// (`pictures` true once Twilio can fetch them from the hub); null is a hub from before pictures in the
+  /// staff's texts, which says nothing of it.
   List<Map<String, dynamic>>? textThreads;
   final textsOf = <String, List<Map<String, dynamic>>>{};
   bool textsOn = true;
@@ -4009,6 +4087,7 @@ class Hub {
   (int, String, String)? refuseText;
   final textPictures = <String, List<int>>{};
   int textAsks = 0;
+  Map<String, dynamic>? textSend = {'pictures': false, 'most': 5, 'bytes': 4500000};
 
   /// A text as the hub lists it.
   static Map<String, dynamic> aText(
@@ -4109,6 +4188,7 @@ class Hub {
         'on': textsOn,
         'number': textsOn ? textsNumber : '',
         'listening': textsListening,
+        'send': ?textSend,
         'unread': unread,
         'threads': [
           for (final thread in threads)
@@ -4141,6 +4221,7 @@ class Hub {
       ];
       return json({
         'on': textsOn,
+        'send': ?textSend,
         'thread': thread(),
         'texts': shown.length > limit ? shown.sublist(shown.length - limit) : shown,
         'more': shown.length > limit,
@@ -4166,16 +4247,23 @@ class Hub {
       }, refused.$1);
     }
     final typed = body['body'] as String;
+    final sent = [for (final picture in body['pictures'] as List? ?? const []) base64Decode(picture as String)];
     final by = (roster ?? const <Map<String, dynamic>>[]).where((row) => row['staff_id'] == staffId).firstOrNull;
     final text = aText(
       body['id'] as String,
       phone,
-      texts.isEmpty ? 'China Sky: $typed\nReply STOP to opt out.' : typed,
+      // the first text says who it is from and how to stop them; a picture alone, the name without a colon
+      texts.isEmpty ? '${typed.isEmpty ? 'China Sky' : 'China Sky: $typed'}\nReply STOP to opt out.' : typed,
       atMs: clockNow,
       inbound: false,
       state: 'waiting',
       by: by?['name'] as String? ?? '',
+      channel: sent.isEmpty ? 'sms' : 'mms',
+      pictures: [for (final _ in sent) 'image/jpeg'],
     );
+    for (final (n, picture) in sent.indexed) {
+      textPictures['${body['id']}/$n'] = picture;
+    }
     texts.add(text);
     final had = thread();
     threads.removeWhere((thread) => thread['phone'] == phone);
@@ -4264,6 +4352,7 @@ class Hub {
         path.startsWith('/hub/keys/') ||
         path.startsWith('/hub/online/accounts') ||
         path.startsWith('/hub/online/push/') ||
+        path.startsWith('/hub/texts/way') ||
         path == '/hub/texts/try' ||
         path == '/hub/shipday/try') {
       return _keys(request);
