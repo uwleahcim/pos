@@ -91,8 +91,9 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
   fallbacks in order, a test print; the stations the menu prints at with no printer yet, to add with a tap;
   finding the printers on the network; the station a to-go order prints whole at (see `printing.md`).
   At its top, **Print log**: every paper the hub printed in the last 14 days, how it went, the paper itself
-  on the screen, and **Reprint**; read by printer, by kind of print (kitchen, bar, bills, reprints, the
-  rest) or by a search of the papers (see `printing.md`, "The print log").
+  on the screen (one at a tap, or every one with **Expand all**), and **Reprint**; read by printer, by kind
+  of print (kitchen, bar, bills, reprints, the rest) or by a search of the papers, which marks the words it
+  found on them (see `printing.md`, "The print log").
   On the same card, two switches for what the tickets of one send say about each other: **Number the
   tickets of one send** ("Ticket 2 of 3") and **Name the other stations on each ticket** ("Also at: Wok 2,
   Sushi Bar"). A third switch, **Print PAID or NOT PAID on to-go orders**, is for the takeout station's
