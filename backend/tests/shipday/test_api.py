@@ -117,7 +117,7 @@ def test_a_hub_without_the_key_reads_nothing_and_says_it_is_off():
         "read": False,
         "trouble": None,
         "eta": "off",
-        "can": ["driver"],
+        "can": ["driver", "status"],
         "orders": [],
         "done": [],
         "drivers": [],
@@ -162,7 +162,7 @@ def test_a_manager_types_the_key_and_the_hub_reads_shipday_with_it_at_once():
         "read": False,
         "trouble": None,
         "eta": "off",
-        "can": ["driver"],
+        "can": ["driver", "status"],
         "orders": [],
         "done": [],
         "drivers": [],
@@ -340,7 +340,7 @@ def outcome(answer: dict) -> tuple:
 def test_a_delivery_is_given_to_a_driver_and_taken_back_with_the_list_read_before_and_after():
     h = Hub(key=True)
     waiting(h)
-    assert h.shown()["can"] == ["driver"]
+    assert h.shown()["can"] == ["driver", "status"]
     h.shipday.now = h.now
     given = give(h)
     assert outcome(given) == (True, True, True, None) and (given["said"], given["told"]) == ("", "")
@@ -517,3 +517,187 @@ def test_a_change_looks_at_shipday_as_a_screen_does_and_does_not_wait_out_a_rest
     assert h.board.round()["asked"] is False
     assert outcome(give(h)) == (True, True, True, None), "a person's change is not held back by the rest"
     assert h.board.pause() == 20.0, "and the hub asks often for a while after it"
+
+
+# --- a delivery is marked as it goes --------------------------------------------------------------------------
+
+
+def held(h: Hub, state: str = "NOT_STARTED_YET") -> None:
+    """One delivery Tom has (accepted, unless said otherwise), and the hub has read it."""
+    h.shipday.orders = [order(7001, "A-1", state=state, driver=TOM, assigned=at(18, 5))]
+    h.shipday.carriers = [carrier(TOM), carrier(WEI, on_shift=False)]
+    h.board.round()
+    h.now += 5_000
+
+
+def mark(h: Hub, status: str, was: str, *, order_id: int = 7001, staff: str = "s1") -> dict:
+    answer = h.c.post(f"/shipday/orders/{order_id}/status", json={"staff_id": staff, "status": status, "was": was})
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+ENDS = ["ALREADY_DELIVERED", "FAILED_DELIVERY", "INCOMPLETE"]
+
+
+def test_the_picture_says_of_each_delivery_what_it_can_be_marked_as_from_where_it_stands():
+    h = Hub(key=True)
+    h.shipday.orders = [
+        order(1, "A-1"),
+        order(2, "A-2", state="NOT_ACCEPTED", driver=TOM),
+        order(3, "A-3", state="NOT_STARTED_YET", driver=TOM),
+        order(4, "A-4", state="STARTED", driver=TOM),
+        order(5, "A-5", state="PICKED_UP", driver=TOM),
+        order(6, "A-6", state="READY_TO_DELIVER", driver=TOM),
+        order(7, "A-7", state="SOMETHING_NEW", driver=TOM),
+        order(8, "A-8", state="PICKED_UP"),  # on its way, and nobody has it: nothing is guessed
+        order(9, "A-9", state="NOT_ASSIGNED", driver=TOM),  # a driver, and "not assigned": the same
+    ]
+    h.board.round()
+    assert {each["number"]: each["steps"] for each in h.shown()["orders"]} == {
+        "A-1": ["FAILED_DELIVERY", "INCOMPLETE"],  # nobody has it: it can only be ended as not delivered
+        "A-2": ["STARTED", "PICKED_UP", *ENDS],
+        "A-3": ["STARTED", "PICKED_UP", *ENDS],
+        "A-4": ["PICKED_UP", *ENDS],
+        "A-5": ["READY_TO_DELIVER", *ENDS],
+        "A-6": ENDS,
+        "A-7": [],
+        "A-8": [],
+        "A-9": [],
+    }
+
+
+def test_a_delivery_is_marked_as_it_goes_with_the_list_read_before_and_after():
+    h = Hub(key=True)
+    held(h)
+    h.shipday.now = h.now
+    marked = mark(h, "PICKED_UP", "NOT_STARTED_YET")
+    assert outcome(marked) == (True, True, True, None) and (marked["said"], marked["told"]) == ("", "")
+    assert h.shipday.calls[-3:] == ["GET /orders", "PUT /orders/7001/status", "GET /orders"]
+    put = next(sent for sent in h.shipday.sent if sent.method == "PUT")
+    assert json.loads(put.content) == {"status": "PICKED_UP"}, "one word of Shipday's own, and nothing of the POS"
+    assert put.headers["content-type"] == "application/json"
+    assert (put.headers["authorization"], put.headers["x-api-key"]) == (f"Basic {KEY}", KEY)
+    now = marked["shipday"]["orders"][0]
+    assert (now["state"], now["picked_up_ms"], now["driver"]["name"]) == ("PICKED_UP", h.now, "Tom Reyes")
+    assert now["steps"] == ["READY_TO_DELIVER", *ENDS], "and what it can be marked as next"
+    assert h.shown() == marked["shipday"], "every screen reads what the one that asked was answered"
+    # a step further, by somebody else
+    assert outcome(mark(h, "READY_TO_DELIVER", "PICKED_UP", staff="s3")) == (True, True, True, None)
+    assert h.shown()["orders"][0]["state"] == "READY_TO_DELIVER"
+    assert h.shipday.changes() == ["PUT /orders/7001/status"] * 2
+    assert h.shipday.asked("/carriers") == 1, "the drivers are not asked for again for a mark"
+
+
+def test_a_delivery_marked_delivered_failed_or_incomplete_leaves_the_list_and_is_among_the_finished():
+    for status in ENDS:
+        h = Hub(key=True)
+        held(h, "PICKED_UP")
+        h.shipday.now = h.now
+        ended = mark(h, status, "PICKED_UP")
+        assert outcome(ended) == (True, True, True, None), status
+        assert h.shipday.calls[-4:] == ["GET /orders", "PUT /orders/7001/status", "GET /orders", "GET /orders/A-1"]
+        assert ended["shipday"]["orders"] == []
+        done = ended["shipday"]["done"][0]
+        assert (done["id"], done["state"], done["steps"]) == (7001, status, []), "nothing more can be said of it"
+        assert [d["orders"] for d in ended["shipday"]["drivers"]] == [0, 0], "and Tom has nothing out"
+    # one nobody has can be ended as not delivered, and as nothing else
+    h = Hub(key=True)
+    waiting(h)
+    assert outcome(mark(h, "ALREADY_DELIVERED", "NOT_ASSIGNED")) == (False, False, False, "not_a_step")
+    assert outcome(mark(h, "INCOMPLETE", "NOT_ASSIGNED")) == (True, True, True, None)
+    assert h.shipday.changes() == ["PUT /orders/7001/status"]
+
+
+def test_the_screens_are_told_when_a_delivery_was_marked():
+    h = Hub(key=True)
+    held(h)
+    told: list[str] = []
+    h.c.app.state.feed.changed = told.append
+    mark(h, "STARTED", "NOT_STARTED_YET")
+    assert told == ["shipday"]
+
+
+def test_nothing_is_marked_that_no_longer_stands_as_the_screen_showed_it():
+    h = Hub(key=True)
+    held(h, "STARTED")
+    # meanwhile the driver's app said picked up: the hub has not heard, and asks before it sends
+    h.shipday.orders = [order(7001, "A-1", state="PICKED_UP", driver=TOM)]
+    assert outcome(mark(h, "PICKED_UP", "STARTED")) == (False, False, False, "moved")
+    assert h.shown()["orders"][0]["state"] == "PICKED_UP", "and the screens show where it stands"
+    # never backwards, never a step it is at, never one that skips what comes first
+    assert outcome(mark(h, "STARTED", "PICKED_UP")) == (False, False, False, "not_a_step")
+    assert outcome(mark(h, "PICKED_UP", "PICKED_UP")) == (False, False, False, "not_a_step")
+    h.shipday.orders = [order(7001, "A-1", state="STARTED", driver=TOM)]
+    assert outcome(mark(h, "READY_TO_DELIVER", "STARTED")) == (False, False, False, "not_a_step")
+    # somebody took it back: what a driver does is not said of a delivery nobody has
+    h.shipday.orders = [order(7001, "A-1")]
+    assert outcome(mark(h, "PICKED_UP", "STARTED")) == (False, False, False, "moved")
+    assert outcome(mark(h, "PICKED_UP", "NOT_ASSIGNED")) == (False, False, False, "not_a_step")
+    # a word for where it stands that this hub does not know: nothing is guessed
+    h.shipday.orders = [order(7001, "A-1", state="SOMETHING_NEW", driver=TOM)]
+    assert outcome(mark(h, "ALREADY_DELIVERED", "UNKNOWN")) == (False, False, False, "not_a_step")
+    # it left the list (the driver delivered it, or it was deleted there)
+    h.shipday.orders = []
+    assert outcome(mark(h, "ALREADY_DELIVERED", "PICKED_UP")) == (False, False, False, "not_listed")
+    assert outcome(mark(h, "INCOMPLETE", "STARTED", order_id=4242)) == (False, False, False, "not_listed")
+    assert h.shipday.changes() == [], "not one change was asked of Shipday"
+
+
+def test_a_mark_shipday_will_not_make_or_never_answers_is_said_as_it_is():
+    h = Hub(key=True)
+    held(h)
+    h.shipday.refuses = (400, {})
+    refused = mark(h, "PICKED_UP", "NOT_STARTED_YET")
+    assert outcome(refused) == (False, True, False, "rejected")
+    assert (refused["said"], refused["told"]) == ("Shipday would not do it (400)", "")
+    assert refused["shipday"]["orders"][0]["state"] == "NOT_STARTED_YET"
+    # it made the mark and its answer was lost on the way back: the list read after it settles it
+    h.shipday.refuses, h.shipday.lost = False, True
+    assert outcome(mark(h, "PICKED_UP", "NOT_STARTED_YET")) == (True, True, True, None)
+    assert outcome(mark(h, "ALREADY_DELIVERED", "PICKED_UP")) == (True, True, True, None), "gone from the list"
+    # it says the mark is made and its list does not show it (yet): done, as Shipday said, and not shown
+    h = Hub(key=True)
+    held(h)
+    h.shipday.deaf = True
+    assert outcome(mark(h, "ALREADY_DELIVERED", "NOT_STARTED_YET")) == (True, True, False, None)
+    # it made none and never answered: not done, and said so
+    h.shipday.lost = True
+    lost = mark(h, "PICKED_UP", "NOT_STARTED_YET")
+    assert outcome(lost) == (False, True, False, "slow") and lost["said"] == "Shipday did not answer in time"
+    # and where it cannot be asked first, nothing is sent
+    h = Hub(key=True)
+    held(h)
+    h.shipday.fail = 401
+    assert outcome(mark(h, "PICKED_UP", "NOT_STARTED_YET")) == (False, False, False, "refused")
+    assert h.shipday.changes() == []
+
+
+def test_who_marks_is_somebody_the_hub_knows_and_the_mark_one_of_shipday_s_words(caplog):
+    h = Hub(key=True)
+    held(h)
+    path = "/shipday/orders/7001/status"
+    stranger = h.c.post(path, json={"staff_id": "nobody", "status": "PICKED_UP", "was": "NOT_STARTED_YET"})
+    assert stranger.status_code == 404 and stranger.json()["detail"]["error"] == "unknown_staff"
+    for body in (
+        {"staff_id": "s1", "status": "PICKED_UP"},
+        {"staff_id": "s1", "was": "NOT_STARTED_YET"},
+        {"status": "PICKED_UP", "was": "NOT_STARTED_YET"},
+        {"staff_id": "s1", "status": "NOT_ASSIGNED", "was": "NOT_STARTED_YET"},  # not a thing to mark it as
+        {"staff_id": "s1", "status": "DELETED", "was": "NOT_STARTED_YET"},
+        {"staff_id": "s1", "status": "picked_up", "was": "NOT_STARTED_YET"},
+    ):
+        assert h.c.post(path, json=body).status_code == 422, body
+    assert h.shipday.changes() == []
+    with caplog.at_level(logging.DEBUG):
+        assert outcome(mark(h, "PICKED_UP", "NOT_STARTED_YET")) == (True, True, True, None), "a server may"
+        h.shipday.refuses = (400, {"message": "Order is locked"})
+        assert outcome(mark(h, "READY_TO_DELIVER", "PICKED_UP", staff="s3"))[3] == "rejected"
+    assert "shipday: order 7001 marked PICKED_UP by Amy" in caplog.text
+    assert "shipday: order 7001 not marked READY_TO_DELIVER (rejected), asked by Mike" in caplog.text
+    assert "locked" not in caplog.text, "what Shipday said is for the person who asked, and for no log"
+    for word in (KEY, "Linda", "Elm St", "5550101", "Tom", "A-1"):
+        assert word not in caplog.text
+    bare = Hub()
+    answer = bare.c.post(path, json={"staff_id": "s1", "status": "PICKED_UP", "was": "NOT_STARTED_YET"})
+    assert answer.status_code == 409 and answer.json()["detail"]["error"] == "no_key"
+    assert bare.shipday.calls == []

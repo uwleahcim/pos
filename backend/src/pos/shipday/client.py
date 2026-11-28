@@ -11,13 +11,16 @@ Four questions, which change nothing:
   is "only available for customer having premium plans" and may be asked three times a minute for one
   order.
 
-And two changes, each made only when a person at a terminal asked for exactly that (`pos.api.shipday`):
+And three changes, each made only when a person at a terminal asked for exactly that (`pos.api.shipday`):
 
 - `PUT /orders/assign/{orderId}/{carrierId}`: gives an order to a driver. Shipday tells the driver.
 - `PUT /orders/unassign/{orderId}`: takes it back from whoever has it.
+- `PUT /orders/{orderId}/status` with `{"status": ...}`: says how far along an order is, in one of Shipday's
+  own words (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`,
+  `INCOMPLETE`), as the driver's app does.
 
-Both go by Shipday's own id of the order (`orderId`), never by the number it is known by, and carry nothing
-else: no body, nothing of the POS.
+All three go by Shipday's own id of the order (`orderId`), never by the number it is known by. The first two
+carry nothing else, and the third one word of Shipday's own: nothing of the POS.
 
 The key goes in the `Authorization` header as `Basic <key>`: the key itself after the word, which is how
 Shipday's pages and its own client libraries send it (it is not a name and password). The same pages'
@@ -105,13 +108,16 @@ class Shipday:
         """Whether another one asks with the same key: then what is known of how the asking goes still holds."""
         return isinstance(other, Shipday) and hmac.compare_digest(other._key.encode(), self._key.encode())
 
-    def _sent(self, method: str, path: str, params: dict[str, str] | None = None) -> httpx.Response:
+    def _sent(
+        self, method: str, path: str, params: dict[str, str] | None = None, body: dict[str, Any] | None = None
+    ) -> httpx.Response:
         """One call, and Shipday's answer whatever it is; `ShipdayFailed` where there is none."""
         try:
             return self._client.request(
                 method,
                 f"{self._url}{path}",
                 params=params,
+                json=body,
                 headers={"Authorization": f"Basic {self._key}", "x-api-key": self._key, "Accept": "application/json"},
             )
         except httpx.TimeoutException:
@@ -135,12 +141,12 @@ class Shipday:
         except ValueError:
             raise ShipdayFailed(UNREADABLE, "Shipday's answer could not be read") from None
 
-    def _change(self, path: str) -> None:
-        """One change, asked for with `PUT` and nothing in it. It is made when Shipday answers that it is
-        (any 2xx that does not say `success` false); anything else is `ShipdayFailed`, with what Shipday
-        said of it where it said anything (`told`). An answer that did not come in time says nothing of
-        whether the change was made: whoever asked looks at the list again."""
-        response = self._sent("PUT", path)
+    def _change(self, path: str, body: dict[str, Any] | None = None) -> None:
+        """One change, asked for with `PUT`, and with `body` where the change has a word to say. It is made
+        when Shipday answers that it is (any 2xx that does not say `success` false); anything else is
+        `ShipdayFailed`, with what Shipday said of it where it said anything (`told`). An answer that did not
+        come in time says nothing of whether the change was made: whoever asked looks at the list again."""
+        response = self._sent("PUT", path, body=body)
         code = response.status_code
         try:
             data = json.loads(response.text) if response.text.strip() else None
@@ -205,6 +211,10 @@ class Shipday:
     def unassign(self, order_id: int) -> None:
         """Takes an order back from whoever has it, by Shipday's own id of it."""
         self._change(f"/orders/unassign/{int(order_id)}")
+
+    def mark(self, order_id: int, status: str) -> None:
+        """Says how far along an order is, by Shipday's own id of it and in Shipday's own word for it."""
+        self._change(f"/orders/{int(order_id)}/status", {"status": status})
 
 
 __all__ = [

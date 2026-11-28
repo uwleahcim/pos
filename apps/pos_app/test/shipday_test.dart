@@ -20,9 +20,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'hub.dart';
 
 /// Shipday in the app (docs/shipday.md): the hub reads the restaurant's deliveries and drivers there, and
-/// the app shows them, each delivery beside the check it is on the POS. A delivery is given to a driver and
-/// taken back by a tap that says so, through the hub. Every Shipday here is the test hub's own picture:
-/// nothing in these tests goes anywhere near Shipday.
+/// the app shows them, each delivery beside the check it is on the POS. A delivery is given to a driver,
+/// taken back and marked as it goes by a tap that says so, through the hub. Every Shipday here is the test
+/// hub's own picture: nothing in these tests goes anywhere near Shipday.
 
 int at(int hour, [int minute = 0]) => DateTime(2026, 11, 16, hour, minute).millisecondsSinceEpoch;
 
@@ -443,7 +443,7 @@ void main() {
       expect(find.text('No address was given'), findsOneWidget);
 
       // what is still done in Shipday's own app, said under the lists
-      expect(textOf(tester, 'shipday-foot'), startsWith('A delivery is given to a driver here or in Shipday'));
+      expect(textOf(tester, 'shipday-foot'), startsWith('A delivery is given to a driver and marked as it goes'));
       expect(textOf(tester, 'shipday-foot'), isNot(contains('higher plans')));
       // with nobody signed in nothing is offered
       expect(find.byKey(const ValueKey('shipday-give-7001')), findsNothing);
@@ -909,6 +909,298 @@ void main() {
       await tapKey(tester, 'shipday-take-7002');
       expect(find.byKey(const ValueKey('shipday-back-yes')), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+  });
+
+  group('a delivery is marked as it goes', () {
+    const tall = Size(390, 2600);
+    const ends = ['ALREADY_DELIVERED', 'FAILED_DELIVERY', 'INCOMPLETE'];
+
+    String said(WidgetTester tester) => textOf(tester, 'shipday-said-words');
+
+    /// The steps the open list offers, in the order of Shipday's own.
+    List<String> offered(WidgetTester tester) => [
+      for (final step in shipdaySteps)
+        if (find.byKey(ValueKey('shipday-step-$step')).evaluate().isNotEmpty) step,
+    ];
+
+    test('what a delivery can be marked as is what the hub says, and what came of a mark is said in words', () {
+      final board = ShipdayBoard.fromJson(evening());
+      expect(board.marks, isTrue);
+      expect(ShipdayBoard.fromJson(Hub.shipdayStands(can: ['driver'])).marks, isFalse);
+      expect(ShipdayBoard.fromJson(Hub.shipdayStands(can: null)).marks, isFalse);
+      expect(
+        [for (final order in board.orders) order.steps],
+        [
+          ['FAILED_DELIVERY', 'INCOMPLETE'],
+          ['STARTED', 'PICKED_UP', ...ends],
+          ['READY_TO_DELIVER', ...ends],
+          ['PICKED_UP', ...ends],
+        ],
+      );
+      expect([for (final order in board.orders) order.canBeMarked], everyElement(isTrue));
+      expect(board.done.single.canBeMarked, isFalse);
+      // a hub from before marking says nothing of steps, and a word this build has no button for is left out
+      final bare = Hub.shipdayOrder(1, 'A-1', state: 'STARTED', driver: tom)..remove('steps');
+      expect(ShipdayOrder.fromJson(bare)!.canBeMarked, isFalse);
+      final newer = Hub.shipdayOrder(1, 'A-1', state: 'STARTED', driver: tom)
+        ..['steps'] = ['PICKED_UP', 'TELEPORTED', 7];
+      expect(ShipdayOrder.fromJson(newer)!.steps, ['PICKED_UP']);
+
+      expect(
+        [for (final step in shipdaySteps) shipdayMarkedWords(step)],
+        [
+          'Marked started.',
+          'Marked picked up.',
+          'Marked ready to deliver.',
+          'Marked delivered.',
+          'Marked failed.',
+          'Marked incomplete.',
+        ],
+      );
+      String words(Map<String, dynamic> answer, {ShipdayOrder? order}) =>
+          ShipdayChanged.fromJson(answer).words('Marked picked up.', order: order);
+      expect(words({'done': true, 'sent': true, 'shown': true}), 'Marked picked up.');
+      expect(words({'done': true, 'sent': true}), 'Shipday took it. Its list does not show it yet.');
+      expect(
+        words({'reason': 'moved'}, order: board.orders[2]),
+        'Shipday has it as "Picked up" by now. Nothing was changed.',
+      );
+      expect(words({'reason': 'moved'}), 'It stands elsewhere in Shipday by now. Nothing was changed.');
+      expect(words({'reason': 'not_a_step'}), 'It cannot be marked as that from where it stands. Nothing was changed.');
+      expect(words({'reason': 'not_listed'}), "It is no longer on Shipday's list. Nothing was changed.");
+    });
+
+    testWidgets('one a driver has is marked as the step tapped, and stands there at once', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      for (final id in [7001, 7002, 7003, 7004]) {
+        expect(find.byKey(ValueKey('shipday-mark-$id')), findsOneWidget);
+      }
+      await tapKey(tester, 'shipday-done');
+      expect(find.byKey(const ValueKey('shipday-order-6990')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-mark-6990')), findsNothing, reason: 'it is finished');
+
+      await tapKey(tester, 'shipday-mark-7002');
+      expect(find.byKey(const ValueKey('shipday-steps')), findsOneWidget);
+      expect(find.text('Mark it as…'), findsOneWidget);
+      expect(textOf(tester, 'shipday-steps-order'), 'Raj Patel · Tom Reyes has it · now: not accepted yet');
+      expect(offered(tester), ['STARTED', 'PICKED_UP', ...ends]);
+      // in Shipday's own words, the ones that say it will not be delivered apart and under the others
+      final steps = find.byKey(const ValueKey('shipday-steps'));
+      for (final words in ['Started', 'Picked up', 'Delivered', 'Failed', 'Incomplete']) {
+        expect(find.descendant(of: steps, matching: find.text(words)), findsOne);
+      }
+      expect(find.text('It will not be delivered:'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('shipday-step-FAILED_DELIVERY'))).dy,
+        greaterThan(tester.getBottomLeft(find.byKey(const ValueKey('shipday-step-ALREADY_DELIVERED'))).dy),
+      );
+      expect(
+        textOf(tester, 'shipday-steps-hint'),
+        "A tap marks it in Shipday at once, as the driver's app does. Delivered, Failed, Incomplete end the "
+        'delivery and ask first.',
+      );
+      expect(t.hub.shipdayChanges, isEmpty, reason: 'opening the list asks for nothing');
+
+      await tester.tap(find.byKey(const ValueKey('shipday-step-PICKED_UP')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['mark 7002 PICKED_UP s3 was NOT_ACCEPTED']);
+      expect(find.byKey(const ValueKey('shipday-steps')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-end')), findsNothing, reason: 'it goes on: nothing to ask');
+      expect(said(tester), 'Marked picked up.');
+      // the picture the hub answered with is on the screen at once
+      expect(find.text('With a driver · 1'), findsOneWidget);
+      expect(find.text('On the way · 2'), findsOneWidget);
+      final card = find.byKey(const ValueKey('shipday-order-7002'));
+      expect(find.descendant(of: card, matching: find.text('Picked up')), findsOne);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsNothing, reason: 'it is on its way');
+      // and what it can be marked as next is another list
+      await tapKey(tester, 'shipday-mark-7002');
+      expect(offered(tester), ['READY_TO_DELIVER', ...ends]);
+      expect(textOf(tester, 'shipday-steps-order'), 'Raj Patel · Tom Reyes has it · now: picked up');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-READY_TO_DELIVER')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges.last, 'mark 7002 READY_TO_DELIVER s3 was PICKED_UP');
+      expect(said(tester), 'Marked ready to deliver.');
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('a mark that ends the delivery asks first', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      await tapKey(tester, 'shipday-mark-7003');
+      expect(offered(tester), ['READY_TO_DELIVER', ...ends]);
+      await tester.tap(find.byKey(const ValueKey('shipday-step-ALREADY_DELIVERED')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shipday-steps')), findsNothing);
+      expect(find.text('Mark it delivered?'), findsOneWidget);
+      expect(
+        textOf(tester, 'shipday-end-words'),
+        "Mei Lin's delivery leaves Shipday's active deliveries as Delivered. That cannot be taken back from the POS.",
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, isEmpty);
+      expect(find.text('On the way · 1'), findsOneWidget);
+
+      await tapKey(tester, 'shipday-mark-7003');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-ALREADY_DELIVERED')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('shipday-end-yes')), matching: find.text('Mark delivered')),
+        findsOne,
+      );
+      await tester.tap(find.byKey(const ValueKey('shipday-end-yes')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['mark 7003 ALREADY_DELIVERED s3 was PICKED_UP']);
+      expect(said(tester), 'Marked delivered.');
+      expect(find.text('On the way · 0'), findsOneWidget);
+      expect(find.text('Finished today · 2'), findsOneWidget);
+      // Tom has one fewer out
+      expect(find.descendant(of: find.byKey(const ValueKey('shipday-driver-501')), matching: find.text('1')), findsOne);
+
+      // one nobody has can only be ended as not delivered
+      await tapKey(tester, 'shipday-mark-7001');
+      expect(offered(tester), ['FAILED_DELIVERY', 'INCOMPLETE']);
+      expect(textOf(tester, 'shipday-steps-order'), 'Linda Chen · nobody has it · now: no driver yet');
+      expect(textOf(tester, 'shipday-steps-hint'), 'Failed, Incomplete end the delivery and ask first.');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-INCOMPLETE')));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark it incomplete?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shipday-end-yes')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges.last, 'mark 7001 INCOMPLETE s3 was NOT_ASSIGNED');
+      expect(said(tester), 'Marked incomplete.');
+      expect(find.text('Need a driver · 0'), findsOneWidget);
+      expect(find.text('Finished today · 3'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('closing the list of steps marks nothing', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      await tapKey(tester, 'shipday-mark-7004');
+      expect(offered(tester), ['PICKED_UP', ...ends]);
+      expect(textOf(tester, 'shipday-steps-order'), 'Order A-55 · Driver 777 has it · now: started');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'shipday-mark-7004');
+      await tester.tapAt(const Offset(5, 5)); // beside the list
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shipday-steps')), findsNothing);
+      expect(t.hub.shipdayChanges, isEmpty);
+      await stop(tester);
+    });
+
+    testWidgets('what the hub or Shipday would not mark is said, with the list as it now stands', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      // the driver's app said picked up a moment ago: the hub looked first and sent nothing
+      t.hub.shipdayOnChange = () {
+        final orders = [...(t.hub.shipday!['orders'] as List).cast<Map<String, dynamic>>()];
+        orders[1] = {
+          ...orders[1],
+          'state': 'PICKED_UP',
+          'steps': ['READY_TO_DELIVER', ...ends],
+        };
+        t.hub.shipday = {...t.hub.shipday!, 'orders': orders};
+      };
+      t.hub.shipdayChangeSays = {'reason': 'moved'};
+      await tapKey(tester, 'shipday-mark-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-STARTED')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['mark 7002 STARTED s3 was NOT_ACCEPTED']);
+      expect(said(tester), 'Shipday has it as "Picked up" by now. Nothing was changed.');
+      expect(find.text('On the way · 2'), findsOneWidget);
+
+      // Shipday itself would not: its own words
+      t.hub.shipdayOnChange = null;
+      t.hub.shipdayChangeSays = {
+        'sent': true,
+        'reason': 'rejected',
+        'said': 'Shipday would not do it (400)',
+        'told': 'Order is not picked up.',
+      };
+      await tapKey(tester, 'shipday-mark-7004');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-ALREADY_DELIVERED')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shipday-end-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'Shipday would not do it: "Order is not picked up."');
+      expect(find.byKey(const ValueKey('shipday-mark-7004')), findsOneWidget, reason: 'it stands where it stood');
+
+      // a hub that does not answer: it may or may not have been done
+      t.hub
+        ..shipdayChangeSays = null
+        ..shipdayChangeStatus = 500;
+      await tapKey(tester, 'shipday-mark-7004');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-PICKED_UP')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'The hub did not answer. Look at the list before trying again: it may have been done.');
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('while the hub asks Shipday the card says so and takes no second tap', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      t.hub.shipdayChangeHeld = Completer<void>();
+      await tapKey(tester, 'shipday-mark-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-step-STARTED')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('shipday-busy-7002')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-mark-7002')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsNothing);
+      t.hub.shipdayChangeHeld!.complete();
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['mark 7002 STARTED s3 was NOT_ACCEPTED']);
+      expect(said(tester), 'Marked started.');
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsOneWidget, reason: 'started is not picked up');
+      await stop(tester);
+    });
+
+    testWidgets('a hub that marks nothing offers no mark, and nobody signed in is offered nothing', (tester) async {
+      final picture = evening()..['can'] = ['driver'];
+      final t = await pumpShipday(tester, picture: picture, size: tall, staffId: 's3');
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsOneWidget);
+      for (final id in [7001, 7002, 7003, 7004]) {
+        expect(find.byKey(ValueKey('shipday-mark-$id')), findsNothing);
+      }
+      expect(textOf(tester, 'shipday-foot'), startsWith('A delivery is given to a driver here or in Shipday'));
+      expect(textOf(tester, 'shipday-foot'), contains("in Shipday's app for now"));
+      // a hub that would, and nobody signed in at this terminal
+      t.hub.shipday = evening();
+      await tester.pumpWidget(const SizedBox());
+      await pumpShipday(tester, size: tall);
+      for (final id in [7001, 7002, 7003, 7004]) {
+        expect(find.byKey(ValueKey('shipday-mark-$id')), findsNothing);
+        expect(find.byKey(ValueKey('shipday-give-$id')), findsNothing);
+      }
+      await stop(tester);
+    });
+
+    testWidgets('the button, the steps and the asking fit the narrowest phone with large type', (tester) async {
+      await pumpShipday(tester, size: const Size(320, 640), textScale: 1.6, staffId: 's3');
+      expect(tester.takeException(), isNull);
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('shipday-foot')),
+        find.byKey(const ValueKey('shipday-list')),
+        const Offset(0, -300),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('shipday-mark-7002')),
+        find.byKey(const ValueKey('shipday-list')),
+        const Offset(0, 200),
+      );
+      await tapKey(tester, 'shipday-mark-7002');
+      expect(offered(tester), ['STARTED', 'PICKED_UP', ...ends]);
+      expect(tester.takeException(), isNull);
+      await tapKey(tester, 'shipday-step-FAILED_DELIVERY');
+      expect(find.text('Mark it failed?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
       await stop(tester);
     });
   });

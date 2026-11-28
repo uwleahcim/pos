@@ -13,10 +13,10 @@ import 'theme.dart';
 /// the ones on their way, and under a fold the ones that finished today. Beside each delivery is the check
 /// it is on the POS, which a tap opens; one the hub finds no check for says so.
 ///
-/// A delivery nobody has is given to a driver here, and one a driver has not picked up yet is taken back:
-/// each by a tap that says so, on a hub that does it ([ShipdayBoard.givesToDrivers]). The hub reads Shipday's
-/// list before it sends anything and again after, and the screen says what came of it. Saying how far along
-/// a delivery is stays in Shipday's own apps, and the screen says so.
+/// A delivery nobody has is given to a driver here, one a driver has not picked up yet is taken back, and
+/// one is marked as it goes (started, picked up, delivered, ...): each by a tap that says so, on a hub that
+/// does it ([ShipdayBoard.givesToDrivers], [ShipdayBoard.marks]). The hub reads Shipday's list before it
+/// sends anything and again after, and the screen says what came of it.
 ///
 /// It reads the hub's picture when the hub says it changed (or a check did, which may be the one a
 /// delivery is), and now and then while the hub cannot say. Every read tells the hub that somebody is
@@ -175,6 +175,42 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
     );
   }
 
+  /// Marked as it goes: one of the steps the hub lists for it is picked, and Shipday is told. A mark that
+  /// ends the delivery (delivered, failed, incomplete) asks first: it cannot be taken back from here.
+  Future<void> _mark(ShipdayOrder order) async {
+    final step = await ShipdayStepPicker.ask(context, order: order);
+    if (step == null || !mounted) return;
+    if (shipdayEnds.contains(step)) {
+      final as = shipdayStateWords(step).toLowerCase();
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          key: const ValueKey('shipday-end'),
+          title: Text('Mark it $as?'),
+          content: Text(
+            "${order.title}'s delivery leaves Shipday's active deliveries as ${shipdayStateWords(step)}. "
+            'That cannot be taken back from the POS.',
+            key: const ValueKey('shipday-end-words'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              key: const ValueKey('shipday-end-yes'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text('Mark $as'),
+            ),
+          ],
+        ),
+      );
+      if (sure != true || !mounted) return;
+    }
+    await _change(
+      order,
+      (staffId) => widget.api.shipdayMark(order.id, step, was: order.state, staffId: staffId),
+      shipdayMarkedWords(step),
+    );
+  }
+
   /// One change in Shipday that a tap asked for: the hub is asked, the screen takes the picture it answers
   /// with, and says what came of it.
   Future<void> _change(ShipdayOrder order, Future<ShipdayChanged> Function(String staffId) ask, String did) async {
@@ -225,6 +261,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
 
   List<Widget> _cards(List<ShipdayOrder> orders) {
     final acts = widget.staffId != null && (_board?.givesToDrivers ?? false);
+    final marks = widget.staffId != null && (_board?.marks ?? false);
     return [
       for (final order in orders)
         _DeliveryCard(
@@ -233,6 +270,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
           onOpen: _open,
           onGive: acts && order.canBeGiven ? () => _give(order) : null,
           onTakeBack: acts && order.canBeTakenBack ? () => _takeBack(order) : null,
+          onMark: marks && order.canBeMarked ? () => _mark(order) : null,
           busy: _changing.contains(order.id),
         ),
     ];
@@ -409,7 +447,13 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Text(
           [
-            if (board.givesToDrivers)
+            if (board.givesToDrivers && board.marks)
+              "A delivery is given to a driver and marked as it goes (picked up, delivered) here or in Shipday's "
+                  'own app. A mark made by mistake is put right in Shipday.'
+            else if (board.marks)
+              "A delivery is marked as it goes (picked up, delivered) here or in Shipday's own app, and given to "
+                  "a driver in Shipday's app."
+            else if (board.givesToDrivers)
               "A delivery is given to a driver here or in Shipday's own app. It is marked as it goes (picked up, "
                   "delivered) in Shipday's app for now."
             else
@@ -567,8 +611,9 @@ class _DriverChip extends StatelessWidget {
 }
 
 /// One delivery: whose it is and where it goes, who has it and what happened last, when it is expected,
-/// and the check it is on the POS. One nobody has can be given to a driver, and one a driver has not picked
-/// up can be taken back, where the screen lets it ([onGive], [onTakeBack]).
+/// and the check it is on the POS. One nobody has can be given to a driver, one a driver has not picked up
+/// can be taken back, and one can be marked as it goes, where the screen lets it ([onGive], [onTakeBack],
+/// [onMark]).
 class _DeliveryCard extends StatelessWidget {
   const _DeliveryCard({
     super.key,
@@ -576,6 +621,7 @@ class _DeliveryCard extends StatelessWidget {
     required this.onOpen,
     this.onGive,
     this.onTakeBack,
+    this.onMark,
     this.busy = false,
   });
 
@@ -587,6 +633,9 @@ class _DeliveryCard extends StatelessWidget {
 
   /// Asks whether to take it back from its driver; null where it cannot be.
   final VoidCallback? onTakeBack;
+
+  /// Opens what it can be marked as from where it stands; null where it cannot be marked.
+  final VoidCallback? onMark;
 
   /// A change is under way for it: the hub is asking Shipday.
   final bool busy;
@@ -681,28 +730,54 @@ class _DeliveryCard extends StatelessWidget {
                       ],
                     ),
                   )
-                else if (onGive != null)
-                  FilledButton.tonalIcon(
-                    key: ValueKey('shipday-give-${order.id}'),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                else ...[
+                  if (onGive != null)
+                    FilledButton.tonalIcon(
+                      key: ValueKey('shipday-give-${order.id}'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: onGive,
+                      icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                      label: const Text('Give to a driver'),
                     ),
-                    onPressed: onGive,
-                    icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
-                    label: const Text('Give to a driver'),
-                  )
-                else if (onTakeBack != null)
-                  TextButton.icon(
-                    key: ValueKey('shipday-take-${order.id}'),
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                  if (onMark != null)
+                    // the step a delivery with a driver takes next is what is mostly wanted: it stands out
+                    // there, and is quiet on one that waits for a driver first
+                    onGive == null
+                        ? FilledButton.tonalIcon(
+                            key: ValueKey('shipday-mark-${order.id}'),
+                            style: FilledButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                            ),
+                            onPressed: onMark,
+                            icon: const Icon(Icons.flag_outlined, size: 18),
+                            label: const Text('Mark…'),
+                          )
+                        : TextButton.icon(
+                            key: ValueKey('shipday-mark-${order.id}'),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                            onPressed: onMark,
+                            icon: const Icon(Icons.flag_outlined, size: 18),
+                            label: const Text('Mark…'),
+                          ),
+                  if (onTakeBack != null)
+                    TextButton.icon(
+                      key: ValueKey('shipday-take-${order.id}'),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: onTakeBack,
+                      icon: const Icon(Icons.undo, size: 18),
+                      label: const Text('Take it back'),
                     ),
-                    onPressed: onTakeBack,
-                    icon: const Icon(Icons.undo, size: 18),
-                    label: const Text('Take it back'),
-                  ),
+                ],
                 if (check != null)
                   TextButton.icon(
                     key: ValueKey('shipday-check-${order.id}'),
@@ -813,6 +888,149 @@ class ShipdayDriverPicker extends StatelessWidget {
         ),
       ),
       actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
+    );
+  }
+}
+
+/// What a delivery is marked as: the steps the hub lists for it from where it stands, as buttons, in the
+/// order a delivery goes, each in the word Shipday's own apps show for it. The ones that say it will not be
+/// delivered stand apart. A tap answers the step; nothing is sent from here.
+class ShipdayStepPicker extends StatelessWidget {
+  const ShipdayStepPicker({super.key, required this.order});
+
+  final ShipdayOrder order;
+
+  /// Asks, and answers the step that was tapped (Shipday's own word): null when none was.
+  static Future<String?> ask(BuildContext context, {required ShipdayOrder order}) => showDialog<String>(
+    context: context,
+    builder: (_) => ShipdayStepPicker(order: order),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    const bad = {'FAILED_DELIVERY', 'INCOMPLETE'};
+    final along = [
+      for (final step in order.steps)
+        if (!bad.contains(step)) step,
+    ];
+    final not = [
+      for (final step in order.steps)
+        if (bad.contains(step)) step,
+    ];
+    final ends = [
+      for (final step in order.steps)
+        if (shipdayEnds.contains(step)) step,
+    ];
+    final who = order.driver?.called;
+    Widget tile(String step) => _StepTile(
+      key: ValueKey('shipday-step-$step'),
+      words: shipdayStateWords(step),
+      bad: bad.contains(step),
+      strong: step == 'ALREADY_DELIVERED',
+      onTap: () => Navigator.of(context).pop(step),
+    );
+    return AlertDialog(
+      key: const ValueKey('shipday-steps'),
+      title: const Text('Mark it as…'),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [
+                  order.title,
+                  who == null ? 'nobody has it' : '$who has it',
+                  'now: ${shipdayStateWords(order.state).toLowerCase()}',
+                ].join(' · '),
+                key: const ValueKey('shipday-steps-order'),
+                style: theme.textTheme.bodyMedium,
+              ),
+              if (along.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(spacing: 8, runSpacing: 8, children: [for (final step in along) tile(step)]),
+              ],
+              if (not.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text('It will not be delivered:', style: quiet),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, runSpacing: 8, children: [for (final step in not) tile(step)]),
+              ],
+              const SizedBox(height: 12),
+              Text(
+                [
+                  if (along.any((step) => !shipdayEnds.contains(step)))
+                    "A tap marks it in Shipday at once, as the driver's app does.",
+                  if (ends.isNotEmpty)
+                    '${[for (final step in ends) shipdayStateWords(step)].join(', ')} '
+                        '${ends.length == 1 ? 'ends the delivery and asks' : 'end the delivery and ask'} first.',
+                ].join(' '),
+                key: const ValueKey('shipday-steps-hint'),
+                style: quiet,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
+    );
+  }
+}
+
+class _StepTile extends StatelessWidget {
+  const _StepTile({super.key, required this.words, required this.onTap, this.bad = false, this.strong = false});
+
+  final String words;
+  final VoidCallback onTap;
+
+  /// It says the delivery will not be made.
+  final bool bad;
+
+  /// It says the delivery was made.
+  final bool strong;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final (fill, ink, edge) = bad
+        ? (scheme.surface, scheme.error, scheme.error)
+        : strong
+        ? (scheme.primaryContainer, scheme.onPrimaryContainer, scheme.primaryContainer)
+        : (scheme.surfaceContainerLow, scheme.onSurface, scheme.outlineVariant);
+    return Material(
+      color: fill,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: edge),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 104, minHeight: 52),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    words,
+                    style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700, color: ink),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
