@@ -1,6 +1,7 @@
 """A Shipday for the tests: it answers the hub's four questions from what a test put into it, in the shapes
-Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), and writes down every
-call it was made. Nobody's account, nobody's key, and no customer who exists."""
+Shipday's reference pages show (https://docs.shipday.com/reference, read 2026-11-28), makes the two changes
+the hub asks for (a driver given an order, an order taken back), and writes down every call it was made.
+Nobody's account, nobody's key, and no customer who exists."""
 
 from __future__ import annotations
 
@@ -137,7 +138,14 @@ class FakeShipday:
     """`orders` is the list of active ones; `finished` what it says of an order asked for by number once
     it is active no longer; `carriers` its drivers; `progress` what it says of a delivery by its tracking
     id (an answer, or the status it refuses with). `fail` makes every call fail: a status, or an error of
-    the network. Every call is written down in `calls`, and what each carried in `sent`."""
+    the network. Every call is written down in `calls`, and what each carried in `sent`.
+
+    A change (`PUT /orders/assign/{orderId}/{carrierId}`, `PUT /orders/unassign/{orderId}`) is made to
+    `orders` and answered as the pages show: 204 with "assignment successful", 200 with "Carrier removed.".
+    `refuses` makes it refuse changes instead: a status with what it says, or `True` for an answer that
+    says `success` false. `deaf` makes it answer that the change is made and make none. `lost` makes the
+    change and then loses the answer on the way back. `before_change` is called just before a change is
+    made: what somebody else did in Shipday in that moment."""
 
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
@@ -146,8 +154,43 @@ class FakeShipday:
         self.progress: dict[str, dict[str, Any] | int] = {}
         self.fail: int | Exception | None = None
         self.unknown = 200  # what it answers for a number it has nothing by: an empty list, or this status
+        self.refuses: tuple[int, dict[str, Any]] | bool = False
+        self.deaf = False
+        self.lost = False
+        self.given_as = "NOT_ACCEPTED"  # where an order stands once it was given to a driver
+        self.now: int | None = None  # the moment a change is written down with
         self.calls: list[str] = []
         self.sent: list[httpx.Request] = []
+
+    def _change(self, path: str) -> httpx.Response:
+        if self.refuses is True:
+            return httpx.Response(200, json={"success": False, "response": "Carrier is not available."})
+        if self.refuses:
+            return httpx.Response(self.refuses[0], json=self.refuses[1])
+        pieces = path.strip("/").split("/")  # orders, assign | unassign, the order, the carrier
+        found = [each for each in self.orders if str(each.get("orderId")) == pieces[2]]
+        if not found:
+            return httpx.Response(400, json={})
+        if pieces[1] == "assign":
+            who = [each for each in self.carriers if str(each.get("id")) == pieces[3]]
+            if not who:
+                return httpx.Response(400, json={})
+            if not self.deaf:
+                found[0]["assignedCarrier"] = {**who[0], "carrrierLocationLat": None, "carrrierLocationLng": None}
+                found[0]["assignedCarrierId"] = who[0]["id"]
+                found[0]["orderStatus"] = {"incomplete": False, "accepted": False, "orderState": self.given_as}
+                found[0]["activityLog"]["assignedTime"] = utc(self.now)
+            answer = httpx.Response(204, json={"success": True, "response": "assignment successful"})
+        else:
+            if not self.deaf:
+                found[0]["assignedCarrier"] = None
+                found[0]["assignedCarrierId"] = None
+                found[0]["orderStatus"] = {"incomplete": False, "accepted": False, "orderState": "NOT_ASSIGNED"}
+                found[0]["activityLog"]["assignedTime"] = None
+            answer = httpx.Response(200, json={"success": True, "response": "Carrier removed."})
+        if self.lost:
+            raise httpx.ReadTimeout("the answer never came")
+        return answer
 
     def _answer(self, request: httpx.Request) -> httpx.Response:
         # as it went over the wire: a number with a slash in it must not read as two pieces of a path
@@ -158,6 +201,8 @@ class FakeShipday:
         if self.fail is not None:
             return httpx.Response(self.fail, json={})
         path = unquote(request.url.path)
+        if request.method == "PUT" and path.startswith(("/orders/assign/", "/orders/unassign/")):
+            return self._change(path)
         if request.method != "GET":
             return httpx.Response(405, json={})
         if path == "/orders":
@@ -184,6 +229,10 @@ class FakeShipday:
     def asked(self, path: str) -> int:
         """How often that was asked."""
         return self.calls.count(f"GET {path}")
+
+    def changes(self) -> list[str]:
+        """Every change it was asked to make, in order: "PUT /orders/assign/7001/501"."""
+        return [call for call in self.calls if not call.startswith("GET ")]
 
 
 def minutes_away(minutes: float | str) -> dict[str, Any]:

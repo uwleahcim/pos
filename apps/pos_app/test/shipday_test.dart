@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pos_app/api.dart';
@@ -18,8 +20,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'hub.dart';
 
 /// Shipday in the app (docs/shipday.md): the hub reads the restaurant's deliveries and drivers there, and
-/// the app shows them, each delivery beside the check it is on the POS. Reading only: no test here has
-/// the app change anything in Shipday, because the app cannot.
+/// the app shows them, each delivery beside the check it is on the POS. A delivery is given to a driver and
+/// taken back by a tap that says so, through the hub. Every Shipday here is the test hub's own picture:
+/// nothing in these tests goes anywhere near Shipday.
 
 int at(int hour, [int minute = 0]) => DateTime(2026, 11, 16, hour, minute).millisecondsSinceEpoch;
 
@@ -120,6 +123,7 @@ Future<Terminal> pumpShipday(
   Size size = const Size(390, 844),
   double textScale = 1,
   List<String>? opened,
+  String? staffId,
 }) async {
   final t = await terminal(tester);
   t.hub.shipday = older ? null : picture ?? evening();
@@ -130,7 +134,7 @@ Future<Terminal> pumpShipday(
         data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
         child: child!,
       ),
-      home: ShipdayScreen(api: t.api, onOpen: (orderId) async => opened?.add(orderId)),
+      home: ShipdayScreen(api: t.api, onOpen: (orderId) async => opened?.add(orderId), staffId: staffId),
     ),
   );
   await tester.pumpAndSettle();
@@ -438,9 +442,12 @@ void main() {
       expect(find.byKey(const ValueKey('shipday-check-7004')), findsNothing);
       expect(find.text('No address was given'), findsOneWidget);
 
-      // reading only, and it says so
-      expect(textOf(tester, 'shipday-foot'), startsWith('This screen only reads Shipday.'));
+      // what is still done in Shipday's own app, said under the lists
+      expect(textOf(tester, 'shipday-foot'), startsWith('A delivery is given to a driver here or in Shipday'));
       expect(textOf(tester, 'shipday-foot'), isNot(contains('higher plans')));
+      // with nobody signed in nothing is offered
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsNothing);
       expect(tester.takeException(), isNull);
       await stop(tester);
     });
@@ -621,6 +628,287 @@ void main() {
       expect(t.hub.shipdayAsks, greaterThan(asks), reason: 'with no feed the screen asks by itself');
       expect(builds, 0);
       expect(tester.state(find.byType(ShipdayScreen)), same(drawn));
+      await stop(tester);
+    });
+  });
+
+  group('a delivery is given to a driver, and taken back', () {
+    const tall = Size(390, 2600);
+
+    String said(WidgetTester tester) => textOf(tester, 'shipday-said-words');
+
+    test('what came of a change, in words', () {
+      final board = ShipdayBoard.fromJson(evening());
+      expect(board.givesToDrivers, isTrue);
+      expect(ShipdayBoard.fromJson(Hub.shipdayStands(can: null)).givesToDrivers, isFalse);
+      expect(ShipdayBoard.fromJson({...evening(), 'can': 'driver'}).givesToDrivers, isFalse);
+      expect([for (final order in board.orders) order.canBeGiven], [true, false, false, false]);
+      expect([for (final order in board.orders) order.canBeTakenBack], [false, true, false, true]);
+      expect(board.done.single.canBeGiven || board.done.single.canBeTakenBack, isFalse);
+
+      String words(Map<String, dynamic> answer, {ShipdayOrder? order}) =>
+          ShipdayChanged.fromJson(answer).words('Given to Wei Zhang.', order: order);
+      final withTom = board.orders[1];
+      expect(words({'done': true, 'sent': true, 'shown': true}), 'Given to Wei Zhang.');
+      expect(words({'done': true, 'sent': true}), 'Shipday took it. Its list does not show it yet.');
+      expect(words({'reason': 'not_listed'}), "It is no longer on Shipday's list. Nothing was changed.");
+      expect(words({'reason': 'has_driver'}), 'It has a driver already. Nothing was changed.');
+      expect(words({'reason': 'has_driver'}, order: withTom), 'Tom Reyes has it already. Nothing was changed.');
+      expect(words({'reason': 'other_driver'}, order: withTom), 'Tom Reyes has it now. Nothing was changed.');
+      expect(words({'reason': 'no_driver'}), 'Nobody has it any more. Nothing was changed.');
+      expect(words({'reason': 'on_its_way'}), 'It was picked up already. Nothing was changed.');
+      expect(words({'reason': 'unknown_driver'}), 'Shipday no longer lists that driver. Nothing was changed.');
+      expect(words({'reason': 'unsure'}), endsWith('this app does not know. Nothing was changed.'));
+      expect(words({'reason': 'unreachable'}), endsWith('no way out to the internet right now. Nothing was changed.'));
+      expect(words({'reason': 'refused'}), allOf(startsWith('Shipday refused the key.'), endsWith('changed.')));
+      // asked, and it would not: its own words where it gave any
+      expect(words({'sent': true, 'reason': 'rejected'}), 'Shipday would not do it.');
+      expect(
+        words({'sent': true, 'reason': 'rejected', 'told': ' Carrier is off shift. '}),
+        'Shipday would not do it: "Carrier is off shift."',
+      );
+      expect(words({'sent': true, 'reason': 'not_found'}), 'Shipday would not do it.');
+      // asked, no answer, and the list does not show it
+      expect(
+        words({'sent': true, 'reason': 'slow'}),
+        "Shipday is taking too long to answer. Shipday's list does not show the change.",
+      );
+      expect(ShipdayChanged.fromJson({'done': true}).bad, isFalse);
+      expect(ShipdayChanged.fromJson({'sent': true, 'reason': 'slow'}).bad, isTrue);
+    });
+
+    testWidgets('one nobody has is given to the driver tapped, the free one offered first', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsOneWidget);
+      // only what nobody has can be given, and only what was not picked up can be taken back
+      for (final id in [7002, 7003, 7004]) {
+        expect(find.byKey(ValueKey('shipday-give-$id')), findsNothing);
+      }
+      expect(find.byKey(const ValueKey('shipday-take-7001')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-take-7003')), findsNothing, reason: 'it is on its way');
+      expect(find.byKey(const ValueKey('shipday-take-7004')), findsOneWidget);
+
+      await tapKey(tester, 'shipday-give-7001');
+      expect(find.byKey(const ValueKey('shipday-picker')), findsOneWidget);
+      expect(find.text('Who takes it?'), findsOneWidget);
+      expect(textOf(tester, 'shipday-picker-order'), 'Linda Chen · 12 Elm St, Winchester, MA 01890');
+      final wei = find.byKey(const ValueKey('shipday-pick-502'));
+      final tom = find.byKey(const ValueKey('shipday-pick-501'));
+      expect(find.descendant(of: wei, matching: find.text('free')), findsOne);
+      expect(find.descendant(of: tom, matching: find.text('2 out')), findsOne);
+      // who has the least comes first: beside the other where there is the width, above it on a phone
+      final (first, second) = (tester.getTopLeft(wei), tester.getTopLeft(tom));
+      expect(first.dy < second.dy || (first.dy == second.dy && first.dx < second.dx), isTrue);
+      expect(find.byKey(const ValueKey('shipday-pick-503')), findsNothing, reason: 'Ana is off shift');
+      expect(
+        textOf(tester, 'shipday-picker-hint'),
+        'A tap gives it to that driver, and Shipday tells them. Off shift: Ana Silva.',
+      );
+      expect(t.hub.shipdayChanges, isEmpty, reason: 'opening the list asks for nothing');
+
+      await tester.tap(wei);
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['give 7001 502 s3']);
+      expect(find.byKey(const ValueKey('shipday-picker')), findsNothing);
+      expect(said(tester), 'Given to Wei Zhang.');
+      // the picture the hub answered with is on the screen at once
+      expect(find.text('Need a driver · 0'), findsOneWidget);
+      expect(find.text('With a driver · 3'), findsOneWidget);
+      final card = find.byKey(const ValueKey('shipday-order-7001'));
+      expect(find.descendant(of: card, matching: find.text('Not accepted yet')), findsOne);
+      expect(find.byKey(const ValueKey('shipday-take-7001')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsNothing);
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('closing the list of drivers gives it to nobody', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      await tapKey(tester, 'shipday-give-7001');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'shipday-give-7001');
+      await tester.tapAt(const Offset(5, 5)); // beside the list
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shipday-picker')), findsNothing);
+      expect(t.hub.shipdayChanges, isEmpty);
+      expect(find.text('Need a driver · 1'), findsOneWidget);
+      await stop(tester);
+    });
+
+    testWidgets('with no driver on shift the list says so and offers nobody', (tester) async {
+      final picture = evening()..['drivers'] = [Hub.shipdayDriver(501, 'Tom Reyes', onShift: false), ana];
+      final t = await pumpShipday(tester, picture: picture, size: tall, staffId: 's3');
+      await tapKey(tester, 'shipday-give-7001');
+      expect(textOf(tester, 'shipday-picker-none'), startsWith('No driver is on shift in Shipday.'));
+      expect(textOf(tester, 'shipday-picker-hint'), 'Off shift: Tom Reyes, Ana Silva.');
+      expect(find.byKey(const ValueKey('shipday-pick-501')), findsNothing);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, isEmpty);
+      await stop(tester);
+    });
+
+    testWidgets('one a driver has not picked up is taken back, after a tap that says so', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      await tapKey(tester, 'shipday-take-7002');
+      expect(find.text('Take it back from Tom Reyes?'), findsOneWidget);
+      expect(
+        textOf(tester, 'shipday-back-words'),
+        "Raj Patel's delivery goes back to Need a driver. Shipday tells Tom Reyes.",
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, isEmpty);
+
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(t.hub.shipdayChanges, ['back 7002 501 s3']);
+      expect(said(tester), 'Taken back from Tom Reyes. Nobody has it now.');
+      expect(find.text('Need a driver · 2'), findsOneWidget);
+      expect(find.text('With a driver · 1'), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-give-7002')), findsOneWidget);
+      // Tom has one fewer
+      expect(find.descendant(of: find.byKey(const ValueKey('shipday-driver-501')), matching: find.text('1')), findsOne);
+      await stop(tester);
+    });
+
+    testWidgets('while the hub asks Shipday the card says so and takes no second tap', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      t.hub.shipdayChangeHeld = Completer<void>();
+      await tapKey(tester, 'shipday-give-7001');
+      await tester.tap(find.byKey(const ValueKey('shipday-pick-502')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('shipday-busy-7001')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsOneWidget, reason: 'the others are as they were');
+      t.hub.shipdayChangeHeld!.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shipday-busy-7001')), findsNothing);
+      expect(t.hub.shipdayChanges, ['give 7001 502 s3']);
+      expect(said(tester), 'Given to Wei Zhang.');
+      await stop(tester);
+    });
+
+    testWidgets('what the hub or Shipday would not do is said, with the list as it now stands', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      // somebody gave it to Tom in Shipday's own app a moment ago: the hub looked first and sent nothing
+      t.hub.shipdayOnChange = () {
+        final orders = [...(t.hub.shipday!['orders'] as List).cast<Map<String, dynamic>>()];
+        orders[0] = {...orders[0], 'state': 'NOT_ACCEPTED', 'driver': tom};
+        t.hub.shipday = {...t.hub.shipday!, 'orders': orders};
+      };
+      t.hub.shipdayChangeSays = {'reason': 'has_driver'};
+      await tapKey(tester, 'shipday-give-7001');
+      await tester.tap(find.byKey(const ValueKey('shipday-pick-502')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'Tom Reyes has it already. Nothing was changed.');
+      expect(find.text('Need a driver · 0'), findsOneWidget);
+      expect(find.byKey(const ValueKey('shipday-take-7001')), findsOneWidget);
+
+      // Shipday itself would not: its own words
+      t.hub.shipdayOnChange = null;
+      t.hub.shipdayChangeSays = {
+        'sent': true,
+        'reason': 'rejected',
+        'said': 'Shipday would not do it (400)',
+        'told': 'Order already accepted.',
+      };
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'Shipday would not do it: "Order already accepted."');
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsOneWidget, reason: 'Tom still has it');
+      expect(tester.takeException(), isNull);
+      await stop(tester);
+    });
+
+    testWidgets('a hub that does not answer, or cannot do it, is said plainly', (tester) async {
+      final t = await pumpShipday(tester, size: tall, staffId: 's3');
+      t.hub.shipdayChangeStatus = 409;
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'This hub has no key for Shipday. Nothing was changed.');
+
+      t.hub.shipdayChangeStatus = 422;
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), startsWith('Nothing was changed: '));
+
+      // somebody the hub does not know
+      t.hub
+        ..shipdayChangeStatus = null
+        ..roster = [];
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'The hub does not know who is signed in. Nothing was changed.');
+      expect(t.hub.shipdayChanges.length, 2, reason: 'the last one was refused before anything was asked');
+
+      // a hub that breaks on it, or no answer at all: it may or may not have been done, and the screen does
+      // not pretend to know
+      t.hub
+        ..roster = [
+          {'staff_id': 's3', 'name': 'Mike', 'role': 'manager'},
+        ]
+        ..shipdayChangeStatus = 500;
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pumpAndSettle();
+      expect(said(tester), 'The hub did not answer. Look at the list before trying again: it may have been done.');
+      t.hub.shipdayDown = true;
+      await tapKey(tester, 'shipday-take-7002');
+      await tester.tap(find.byKey(const ValueKey('shipday-back-yes')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 70));
+      await tester.pump();
+      expect(said(tester), 'The hub did not answer. Look at the list before trying again: it may have been done.');
+      t.api.dispose();
+      await tester.pump();
+    });
+
+    testWidgets('a hub that only reads Shipday offers nothing, and says where it is done', (tester) async {
+      final picture = evening()..remove('can');
+      final t = await pumpShipday(tester, picture: picture, size: tall, staffId: 's3');
+      expect(find.byKey(const ValueKey('shipday-give-7001')), findsNothing);
+      expect(find.byKey(const ValueKey('shipday-take-7002')), findsNothing);
+      expect(textOf(tester, 'shipday-foot'), startsWith('This screen only reads Shipday.'));
+      expect(t.hub.shipdayChanges, isEmpty);
+      await stop(tester);
+    });
+
+    testWidgets('the buttons and the list of drivers fit the narrowest phone with large type', (tester) async {
+      await pumpShipday(tester, size: const Size(320, 640), textScale: 1.6, staffId: 's3');
+      expect(tester.takeException(), isNull);
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('shipday-foot')),
+        find.byKey(const ValueKey('shipday-list')),
+        const Offset(0, -300),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('shipday-give-7001')),
+        find.byKey(const ValueKey('shipday-list')),
+        const Offset(0, 300),
+      );
+      await tapKey(tester, 'shipday-give-7001');
+      expect(find.byKey(const ValueKey('shipday-pick-502')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('shipday-take-7002')),
+        find.byKey(const ValueKey('shipday-list')),
+        const Offset(0, -200),
+      );
+      await tapKey(tester, 'shipday-take-7002');
+      expect(find.byKey(const ValueKey('shipday-back-yes')), findsOneWidget);
+      expect(tester.takeException(), isNull);
       await stop(tester);
     });
   });

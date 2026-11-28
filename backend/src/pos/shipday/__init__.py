@@ -3,14 +3,16 @@
 The restaurant's delivery orders are dispatched in Shipday: its GloriaFood site hands them over there, a
 dispatcher gives each to a driver, and the driver's own app says when it was picked up and delivered. This
 package lets the hub read all of that with the restaurant's own Shipday key, so the POS's screens can show
-it beside the POS's own orders:
+it beside the POS's own orders, and lets a person at a terminal give a delivery to a driver or take it back:
 
 - `client`: Shipday's API as the hub asks it (`Shipday`).
 - `read`: what Shipday answers, turned into what the hub tells a screen (`order_of`, `driver_of`).
 - `match`: which order on the POS a delivery in Shipday is (`matched`).
-- `board`: the asking, every few seconds while somebody looks, and the picture it keeps (`ShipdayBoard`).
+- `board`: the asking, every few seconds while somebody looks, the picture it keeps, and the two changes a
+  person can ask for (`ShipdayBoard`).
 
-Nothing of the POS is sent to Shipday by this package: the key in a header, and the number of an order
-Shipday itself handed over when the hub asks what became of it. Nothing Shipday says is stored: the picture
-is kept in memory, and read again after a restart.
+Nothing of the POS is sent to Shipday by this package: the key in a header, and ids and numbers Shipday
+itself handed over. Nothing is changed there by the hub itself: only what a person tapped, a delivery's
+driver and nothing else. Nothing Shipday says is stored: the picture is kept in memory, and read again after
+a restart.
 """

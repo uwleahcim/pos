@@ -6,23 +6,29 @@ import '../api.dart';
 import '../live.dart';
 import '../shipday.dart';
 import '../takeout.dart' show clockTime;
+import 'theme.dart';
 
 /// Shipday on one screen (docs/shipday.md): the drivers who are on shift with how much each has, and the
 /// deliveries Shipday has, by how far along they are: the ones nobody has yet, the ones a driver was given,
 /// the ones on their way, and under a fold the ones that finished today. Beside each delivery is the check
 /// it is on the POS, which a tap opens; one the hub finds no check for says so.
 ///
-/// It reads and nothing else. Giving a delivery to a driver and saying how far along it is are still done
-/// in Shipday's own apps, and the screen says so.
+/// A delivery nobody has is given to a driver here, and one a driver has not picked up yet is taken back:
+/// each by a tap that says so, on a hub that does it ([ShipdayBoard.givesToDrivers]). The hub reads Shipday's
+/// list before it sends anything and again after, and the screen says what came of it. Saying how far along
+/// a delivery is stays in Shipday's own apps, and the screen says so.
 ///
 /// It reads the hub's picture when the hub says it changed (or a check did, which may be the one a
 /// delivery is), and now and then while the hub cannot say. Every read tells the hub that somebody is
 /// looking, which makes it ask Shipday oftener. With the hub away it keeps its last picture and says it
 /// may be behind.
 class ShipdayScreen extends StatefulWidget {
-  const ShipdayScreen({super.key, required this.api, required this.onOpen, this.board});
+  const ShipdayScreen({super.key, required this.api, required this.onOpen, this.board, this.staffId});
 
   final PosApi api;
+
+  /// Who is signed in: the one who asks for a change in Shipday. Without one nothing is offered.
+  final String? staffId;
 
   /// The picture as the list of checks last read it, to start from.
   final ShipdayBoard? board;
@@ -41,6 +47,7 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
   bool _away = false; // the last read got no answer
   bool _asking = false; // "Ask now" is under way
   bool _showDone = false;
+  final _changing = <int>{}; // the deliveries a change is under way for
   late final _poll = SafetyPoll(widget.api.live);
   late final _reader = Paced(const Duration(seconds: 2), _load);
   StreamSubscription<LiveChange>? _live;
@@ -124,9 +131,112 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
     if (mounted) unawaited(_reader.now());
   }
 
-  List<Widget> _cards(List<ShipdayOrder> orders) => [
-    for (final order in orders) _DeliveryCard(key: ValueKey('shipday-order-${order.id}'), order: order, onOpen: _open),
-  ];
+  /// Who takes it: a driver is picked, and the delivery is given to them in Shipday.
+  Future<void> _give(ShipdayOrder order) async {
+    final board = _board;
+    if (board == null) return;
+    final driver = await ShipdayDriverPicker.ask(context, order: order, board: board);
+    if (driver == null || !mounted) return;
+    await _change(
+      order,
+      (staffId) => widget.api.shipdayGive(order.id, driver.id, staffId: staffId),
+      'Given to ${driver.called}.',
+    );
+  }
+
+  /// Taken back from the driver who has it, after a tap that says so: nobody has it then.
+  Future<void> _takeBack(ShipdayOrder order) async {
+    final driver = order.driver;
+    if (driver == null) return;
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const ValueKey('shipday-back'),
+        title: Text('Take it back from ${driver.called}?'),
+        content: Text(
+          "${order.title}'s delivery goes back to Need a driver. Shipday tells ${driver.called}.",
+          key: const ValueKey('shipday-back-words'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            key: const ValueKey('shipday-back-yes'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take it back'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    await _change(
+      order,
+      (staffId) => widget.api.shipdayTakeBack(order.id, driver.id, staffId: staffId),
+      'Taken back from ${driver.called}. Nobody has it now.',
+    );
+  }
+
+  /// One change in Shipday that a tap asked for: the hub is asked, the screen takes the picture it answers
+  /// with, and says what came of it.
+  Future<void> _change(ShipdayOrder order, Future<ShipdayChanged> Function(String staffId) ask, String did) async {
+    final staffId = widget.staffId;
+    if (staffId == null || _changing.contains(order.id)) return;
+    setState(() => _changing.add(order.id));
+    String words;
+    var bad = false;
+    try {
+      final changed = await ask(staffId);
+      if (!mounted) return;
+      final board = changed.board;
+      if (board != null) setState(() => _board = board);
+      final now = board?.orders.where((each) => each.id == order.id).firstOrNull;
+      words = changed.words(did, order: now);
+      bad = changed.bad;
+    } on ApiException catch (err) {
+      if (!mounted) return;
+      bad = true;
+      words = switch ((err.status, err.detail?['error'])) {
+        (409, _) => 'This hub has no key for Shipday. Nothing was changed.',
+        (404, 'unknown_staff') => 'The hub does not know who is signed in. Nothing was changed.',
+        (404 || 405, _) => 'This hub only reads Shipday. Update it first (sudo hubctl update).',
+        (null, _) => 'The hub did not answer. Look at the list before trying again: it may have been done.',
+        _ => 'Nothing was changed: ${err.message}.',
+      };
+    } finally {
+      if (mounted) setState(() => _changing.remove(order.id));
+    }
+    if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          key: const ValueKey('shipday-said'),
+          backgroundColor: bad ? scheme.errorContainer : null,
+          duration: Duration(seconds: bad ? 8 : 4),
+          content: Text(
+            words,
+            key: const ValueKey('shipday-said-words'),
+            style: bad ? TextStyle(color: scheme.onErrorContainer) : null,
+          ),
+        ),
+      );
+    unawaited(_reader.now());
+  }
+
+  List<Widget> _cards(List<ShipdayOrder> orders) {
+    final acts = widget.staffId != null && (_board?.givesToDrivers ?? false);
+    return [
+      for (final order in orders)
+        _DeliveryCard(
+          key: ValueKey('shipday-order-${order.id}'),
+          order: order,
+          onOpen: _open,
+          onGive: acts && order.canBeGiven ? () => _give(order) : null,
+          onTakeBack: acts && order.canBeTakenBack ? () => _takeBack(order) : null,
+          busy: _changing.contains(order.id),
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -299,8 +409,12 @@ class _ShipdayScreenState extends State<ShipdayScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Text(
           [
-            "This screen only reads Shipday. A delivery is given to a driver, and marked as it goes, in Shipday's "
-                'own app for now.',
+            if (board.givesToDrivers)
+              "A delivery is given to a driver here or in Shipday's own app. It is marked as it goes (picked up, "
+                  "delivered) in Shipday's app for now."
+            else
+              "This screen only reads Shipday. A delivery is given to a driver, and marked as it goes, in Shipday's "
+                  'own app for now.',
             if (board.eta == 'plan')
               "Shipday does not tell this account how far away a delivery is: that is part of Shipday's higher plans.",
           ].join(' '),
@@ -453,12 +567,29 @@ class _DriverChip extends StatelessWidget {
 }
 
 /// One delivery: whose it is and where it goes, who has it and what happened last, when it is expected,
-/// and the check it is on the POS.
+/// and the check it is on the POS. One nobody has can be given to a driver, and one a driver has not picked
+/// up can be taken back, where the screen lets it ([onGive], [onTakeBack]).
 class _DeliveryCard extends StatelessWidget {
-  const _DeliveryCard({super.key, required this.order, required this.onOpen});
+  const _DeliveryCard({
+    super.key,
+    required this.order,
+    required this.onOpen,
+    this.onGive,
+    this.onTakeBack,
+    this.busy = false,
+  });
 
   final ShipdayOrder order;
   final Future<void> Function(ShipdayCheck check) onOpen;
+
+  /// Opens the list of drivers to give it to one; null where it cannot be given.
+  final VoidCallback? onGive;
+
+  /// Asks whether to take it back from its driver; null where it cannot be.
+  final VoidCallback? onTakeBack;
+
+  /// A change is under way for it: the hub is asking Shipday.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -537,6 +668,41 @@ class _DeliveryCard extends StatelessWidget {
               spacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                if (busy)
+                  Padding(
+                    key: ValueKey('shipday-busy-${order.id}'),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                        const SizedBox(width: 8),
+                        Text('Asking Shipday…', style: theme.textTheme.labelLarge?.copyWith(color: soft)),
+                      ],
+                    ),
+                  )
+                else if (onGive != null)
+                  FilledButton.tonalIcon(
+                    key: ValueKey('shipday-give-${order.id}'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    onPressed: onGive,
+                    icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
+                    label: const Text('Give to a driver'),
+                  )
+                else if (onTakeBack != null)
+                  TextButton.icon(
+                    key: ValueKey('shipday-take-${order.id}'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: onTakeBack,
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Take it back'),
+                  ),
                 if (check != null)
                   TextButton.icon(
                     key: ValueKey('shipday-check-${order.id}'),
@@ -567,6 +733,129 @@ class _DeliveryCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Who takes it: the drivers who are on shift in Shipday, as buttons, each with how many deliveries they
+/// have that are not finished, the one with the least first. A tap on a name gives the delivery to that
+/// driver. Like the POS's own picker for its own deliveries (`DriverPicker`), with Shipday's drivers.
+class ShipdayDriverPicker extends StatelessWidget {
+  const ShipdayDriverPicker({super.key, required this.order, required this.board});
+
+  final ShipdayOrder order;
+  final ShipdayBoard board;
+
+  /// Asks, and answers who was tapped: null when nobody was.
+  static Future<ShipdayDriver?> ask(BuildContext context, {required ShipdayOrder order, required ShipdayBoard board}) =>
+      showDialog<ShipdayDriver>(
+        context: context,
+        builder: (_) => ShipdayDriverPicker(order: order, board: board),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final quiet = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final working = board.onShift;
+    final off = board.offShift;
+    return AlertDialog(
+      key: const ValueKey('shipday-picker'),
+      title: const Text('Who takes it?'),
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [order.title, if (order.address.trim().isNotEmpty) order.address.trim()].join(' · '),
+                key: const ValueKey('shipday-picker-order'),
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              if (working.isEmpty)
+                Text(
+                  "No driver is on shift in Shipday. A driver goes on shift in Shipday's own app.",
+                  key: const ValueKey('shipday-picker-none'),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final driver in working)
+                      _PickTile(
+                        key: ValueKey('shipday-pick-${driver.id}'),
+                        driver: driver,
+                        onTap: () => Navigator.of(context).pop(driver),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 12),
+              Text(
+                [
+                  if (working.isNotEmpty) 'A tap gives it to that driver, and Shipday tells them.',
+                  if (off.isNotEmpty)
+                    'Off shift: ${[for (final driver in off.take(8)) driver.called].join(', ')}'
+                        '${off.length > 8 ? ' and ${off.length - 8} more' : ''}.',
+                ].join(' '),
+                key: const ValueKey('shipday-picker-hint'),
+                style: quiet,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
+    );
+  }
+}
+
+class _PickTile extends StatelessWidget {
+  const _PickTile({super.key, required this.driver, required this.onTap});
+
+  final ShipdayDriver driver;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 104, minHeight: 52),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(driver.called, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                Text(
+                  driver.orders == 0 ? 'free' : '${driver.orders} out',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontFeatures: PosTheme.tabular,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

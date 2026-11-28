@@ -1819,6 +1819,28 @@ class PosApi {
     await _post('/shipday/ask', const <String, dynamic>{}, timeout: const Duration(seconds: 30)),
   );
 
+  /// Gives a delivery nobody has to a driver, by Shipday's own ids of both ([staffId] asks). Shipday tells
+  /// the driver. The hub reads Shipday's list first and sends nothing where the delivery no longer stands
+  /// as the screen showed it, then reads it again: this waits for all three. 409 from a hub with no key,
+  /// 404 or 405 from one that only reads Shipday.
+  Future<ShipdayChanged> shipdayGive(int orderId, int driverId, {required String staffId}) async =>
+      ShipdayChanged.fromJson(
+        await _post('/shipday/orders/$orderId/driver', {
+          'staff_id': staffId,
+          'driver_id': driverId,
+        }, timeout: const Duration(seconds: 60)),
+      );
+
+  /// Takes a delivery back from the driver this screen shows it with ([driverId]), so that nobody has it.
+  /// Like [shipdayGive] otherwise.
+  Future<ShipdayChanged> shipdayTakeBack(int orderId, int driverId, {required String staffId}) async =>
+      ShipdayChanged.fromJson(
+        await _post('/shipday/orders/$orderId/driver/back', {
+          'staff_id': staffId,
+          'driver_id': driverId,
+        }, timeout: const Duration(seconds: 60)),
+      );
+
   /// A manager's try of the hub's key for Shipday: Shipday is asked once, for its deliveries and its
   /// drivers, and nothing is changed there. Answers how the keys stand, with what the try came to in
   /// [HubKeys.shipdayTried]. 409 on a hub without the key, 404 from one older than reading Shipday.

@@ -551,7 +551,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Future<void> _openShipday() async {
     await Navigator.of(context).push(
       PosPageRoute(
-        builder: (_) => ShipdayScreen(api: widget.api, board: _shipday, onOpen: _open),
+        builder: (_) =>
+            ShipdayScreen(api: widget.api, board: _shipday, onOpen: _open, staffId: widget.session.staff?.staffId),
       ),
     );
     if (!mounted) return;
