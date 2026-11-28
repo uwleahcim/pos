@@ -70,6 +70,11 @@ picked up says "Left with Tom Reyes" by **Shipday**, and one delivered there "Ma
 the check" by Shipday. Where Shipday said something and the check stayed as it was (delivered while money
 is still due, failed), a step of its own says so: "Shipday says it was delivered" (`shipday.md`).
 
+What the hub told a service is a step too: "Told Shipday it is ready for pickup", with "By itself, as the
+check was marked Ready" under it and **Shipday** as who, where the hub told Shipday because the check was
+marked Ready; or by whoever tapped Ready for pickup on the Shipday screen (`shipday.md`, "Saying it is ready
+for pickup").
+
 ## The pictures
 
 The screens take a picture at the moments that matter (a send, a void, a comp, a payment, a close, a

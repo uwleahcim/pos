@@ -92,11 +92,12 @@ merges after any disconnect.
   key is sealed on the hub, in use at once, and never shown again): `docs/hub-keys.md`
 - Shipday (the hub reads the restaurant's deliveries and drivers in Shipday with its own key, and a screen
   shows them by how far along they are, each beside the check it is on the POS, with when it is expected
-  where Shipday says; from that screen a delivery is given to a driver, taken back, or marked as it goes
-  (started, picked up, delivered, failed), each by a tap that says so, and nothing else is changed in
-  Shipday; the other way, a delivery picked up in Shipday takes its check Out and one delivered there closes
-  it by itself, with no second text and a check with money due left open, unless a manager turns that off
-  under Location): `docs/shipday.md`
+  where Shipday says; from that screen a delivery is given to a driver, taken back, marked as it goes
+  (started, picked up, delivered, failed) or said to be ready for pickup, each by a tap that says so, and
+  nothing else is changed in Shipday; a delivery whose check is marked Ready on the POS is told to Shipday
+  as ready for pickup by the hub itself, once; the other way, a delivery picked up in Shipday takes its
+  check Out and one delivered there closes it by itself, with no second text and a check with money due
+  left open; a manager turns either off under Location): `docs/shipday.md`
 - Tax-exempt checks (a manager marks a check exempt from sales tax with their PIN; the organisation and its
   certificate number stay with the check, print on the bill and are listed in the day's report; every sale
   stays in the sales): `docs/tax-exempt.md`

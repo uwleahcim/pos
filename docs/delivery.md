@@ -1045,7 +1045,9 @@ nothing was taken for it the row says **pay at the door** in place of "pay at pi
 may be sent to the kitchen unpaid (a phone order), that choice is called **At the door**.
 
 - **Ready** texts nobody. The ready text says "ready for pickup", and nobody is coming. (A pickup order
-  still gets its text.)
+  still gets its text.) Where the restaurant dispatches in Shipday and the hub has its key, Ready tells
+  Shipday that the delivery is ready for pickup, for its driver, unless that is turned off under Location
+  (`shipday.md`, "Saying it is ready for pickup").
 - **Out** asks who takes it (see [Drivers](#drivers)). The row then says **OUT** and "Tom since 18:40".
 - **Delivered** closes the check. If money is still due it asks for it first, as "Picked up" does: Cash,
   Paid elsewhere, or Not now.

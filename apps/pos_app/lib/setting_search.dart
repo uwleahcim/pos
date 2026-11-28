@@ -320,6 +320,12 @@ final List<SettingEntry> locationSettings = List.unmodifiable([
     also: 'delivery driver status sync follow automatic out delivered',
   ),
   const SettingEntry(
+    'shipday-ready',
+    'Ready tells Shipday',
+    about: 'A delivery marked Ready on the POS tells Shipday it is ready for pickup by itself',
+    also: 'delivery driver pickup bag made automatic',
+  ),
+  const SettingEntry(
     'kitchen-notes',
     'Kitchen notes',
     about: 'The notes to the kitchen that take one tap on a dish',

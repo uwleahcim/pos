@@ -76,6 +76,10 @@ the menu, and behind their own PIN only the rows they may open. The screen holds
 - **Shipday moves the check**, on the same card: on or off (on to start). Whether a delivery picked up or
   delivered in Shipday takes its check Out or closes it by itself (see `shipday.md`, "Shipday moves the
   check"). A hub from before it shows no such switch.
+- **Ready tells Shipday**, under it: on or off (on to start). Whether a delivery's check marked Ready on the
+  POS tells Shipday it is ready for pickup by itself; off, Shipday is told only by the button on the Shipday
+  screen (see `shipday.md`, "Saying it is ready for pickup"). The two are saved as one part, "Shipday", and
+  only the one that was turned is sent. A hub from before it shows the first switch alone.
 - **Kitchen notes**, on the same card: the one-tap notes a dish's sheet offers over its note ("Rush",
   "Split for 2"), twelve at most (see `kitchen-notes.md`).
 - **Floor plan**: the floor the map shows, drawn in the app: tables moved, sized and turned, new ones

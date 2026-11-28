@@ -37,8 +37,13 @@
   of Shipday's own words (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`,
   `INCOMPLETE`) and one of the steps the picture lists for that delivery (`steps`); `was` is where the
   screen showed it standing.
+- `POST /shipday/orders/{id}/ready` `{staff_id}`: tells Shipday the delivery is made and waits for its
+  driver ("ready for pickup"), with a driver or without one, as long as it was not picked up. Shipday's
+  list never says whether a delivery was marked so: `shown` is always false here, `done` is Shipday's own
+  answer, and the hub remembers that it told (`ready_ms` on the delivery: in memory for the day, and
+  written on the delivery's check where it has one, so a hub that restarted still knows).
 
-  All three: the hub asks Shipday for its list first and sends nothing where the delivery no longer stands
+  All four: the hub asks Shipday for its list first and sends nothing where the delivery no longer stands
   as the screen showed it; after the change it asks once more. The answer says `done` (Shipday made the
   change, as far as it said or its list shows), `sent` (it was asked to), `shown` (its list shows it), why
   not (`reason`: `not_listed`, `has_driver`, `no_driver`, `other_driver`, `on_its_way`, `unsure`,
@@ -50,31 +55,45 @@
   (docs/delivery.md). Staff have no token: a screen passes who is signed in (`staff_id`), as it does for
   the texts, and the hub writes down who asked, by Shipday's ids and with no customer.
 
-`GET /shipday` lists what this hub changes in Shipday when asked (`can`: `driver`, `status`), so a screen
-offers nothing an older hub would not do, and of each delivery what it can be marked as from where it
-stands (`steps`).
+`GET /shipday` lists what this hub changes in Shipday when asked (`can`: `driver`, `status`, `ready`), so a
+screen offers nothing an older hub would not do, and of each delivery what it can be marked as from where
+it stands (`steps`), whether it can be said ready for pickup (`can_ready`) and when this hub said so
+(`ready_ms`, null where it did not).
 
-- `GET /settings/shipday`, `PUT /settings/shipday` `{moves_checks}` (a manager's): whether what Shipday says
-  of a delivery moves its check on the POS. On to start, which is the restaurant's choice.
+- `GET /settings/shipday`, `PUT /settings/shipday` `{moves_checks, tells_ready}` (a manager's): whether
+  what Shipday says of a delivery moves its check on the POS, and whether a check marked Ready on the POS
+  tells Shipday its delivery is ready for pickup. Both on to start, which is the restaurant's choice. A
+  `PUT` may name either or both: one it leaves out stays as it stands (an app from before the second switch
+  sends the first alone). `GET /shipday` says both too (`moves_checks`, `tells_ready`).
 
 **Shipday moves the check** (`follow`, `pos.shipday.follow`). After every round Shipday answered, the hub
 looks at each delivery that is picked up, delivered, failed or incomplete there and has a check here: a
 check that has not left goes Out with Shipday's driver, and a delivered one with nothing left to pay is
 marked delivered and closed; one with money due stays open, with what Shipday said written on it. The
 operations are stored as a screen's are, the screens are told, and **no text is sent**: Shipday tells the
-customer itself. It is one way: nothing a person does to a check on the POS is told to Shipday.
+customer itself.
+
+**A check marked Ready tells Shipday** (`tell_ready`, `pos.shipday.ready`). After the same round, and at
+once when a screen marks a delivery's check Ready (`mark_ready`, which brings the next round forward), the
+hub looks at each delivery Shipday lists that is not picked up, has a check here that is open and marked
+Ready, and was not told yet: Shipday is told it is ready for pickup, and that it was told is written on the
+check, once (an operation with a fixed id), so neither a restart nor the location's other hub tells it
+twice. A hub that stands by tells nothing. No text is sent. That is the one thing the POS tells Shipday by
+itself: nothing else a person does to a check on the POS is told to Shipday.
 
 The key is one of the hub's (`shipday`; `pos.keys`, `pos.api.keys`): `GET /hub/keys` says how the asking
 goes (`shipday`) and `POST /hub/shipday/try` tries the key.
 
-Reading changes nothing in Shipday. The three changes above are the only things the hub ever changes there,
-each because a person tapped exactly that. What Shipday says changes one thing on the POS: where a
-delivery's check stands, as above, while the setting is on.
+Reading changes nothing in Shipday. The four changes above are the only things the hub ever changes there:
+three only because a person tapped exactly that, and ready for pickup also by itself for a check marked
+Ready, while that setting is on. What Shipday says changes one thing on the POS: where a delivery's check
+stands, as above, while its setting is on.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -91,7 +110,10 @@ from ..shipday.board import ShipdayBoard
 from ..shipday.client import Shipday
 from ..shipday.follow import DELIVERED, DEVICE, DUE, FOLLOWED, NOTED, OUT, ops_following
 from ..shipday.match import OnPos, on_pos
+from ..shipday.ready import op_id as ready_op_id
+from ..shipday.ready import op_told, waits
 from ..sync.hlc import Clock
+from ..sync.oplog import Op, is_delivery
 from ..sync.pgstore import ReadOnlyError
 from .auth import manager_from
 from .sales import orders_between
@@ -116,10 +138,16 @@ class MarkIn(BaseModel):
     """Where the screen showed it standing when the person tapped, in Shipday's own word."""
 
 
-class MovesIn(BaseModel):
-    """Whether what Shipday says of a delivery moves its check on the POS."""
+class ReadyIn(BaseModel):
+    staff_id: str = Field(max_length=120)
 
-    moves_checks: StrictBool
+
+class MovesIn(BaseModel):
+    """Whether what Shipday says of a delivery moves its check on the POS, and whether a check marked Ready
+    on the POS tells Shipday its delivery is ready for pickup. One that is left out stays as it stands."""
+
+    moves_checks: StrictBool | None = None
+    tells_ready: StrictBool | None = None
 
 
 SETTING = "shipday"
@@ -214,16 +242,109 @@ def follow(app: FastAPI, clock: Clock) -> int:
     return wrote
 
 
+def tells_ready(app: FastAPI) -> bool:
+    """Whether a check marked Ready here tells Shipday its delivery is ready for pickup: the location's
+    setting, on to start."""
+    settings: SettingStore = app.state.settings
+    return settings.get(SETTING)["tells_ready"] is True
+
+
+def write_told(app: FastAPI, clock: Clock, order_id: str, delivery: int, at_ms: int, *, by: str | None) -> bool:
+    """Writes on a check that Shipday was told its delivery is ready for pickup (`pos.shipday.ready`): once
+    for a check and a delivery, whoever told. `by` is the person who tapped it; None where the hub told
+    Shipday by itself. Stored and told to the screens as a screen's own operation is; no ticket and no text
+    come of it. Answers whether it was written now."""
+    store = app.state.store
+    if ready_op_id(order_id, delivery) in store:
+        return False
+    state = store.view(order_id)
+    if state is None or state.first is None:
+        return False
+    if state.last is not None:
+        clock.observe(state.last)  # after everything a screen wrote on it
+    try:
+        accepted = store.append([op_told(order_id, delivery, at_ms, by=by, stamp=clock.now)])
+    except ReadOnlyError:
+        return False  # a hub that stands by writes nothing
+    if accepted:
+        app.state.feed.poke()
+    return bool(accepted)
+
+
+def tell_ready(app: FastAPI, clock: Clock) -> int:
+    """Tells Shipday of every delivery whose check on the POS is marked Ready that it is ready for pickup
+    (`pos.shipday.ready`), and writes on the check that it was told. Called after every round Shipday
+    answered, inside that round. Answers how many it told.
+
+    Only a delivery Shipday lists as not picked up, matched to a check here that is open and stands at
+    Ready, and not told yet as far as the hub's memory and the check say. A hub that stands by tells
+    nothing: the one that serves does. Nothing is logged of a customer."""
+    if not tells_ready(app):
+        return 0
+    store = app.state.store
+    if getattr(store, "role", "memory") == "replica":
+        return 0
+    board: ShipdayBoard = app.state.shipday
+    told = 0
+    for delivery in board.said()["orders"]:
+        on = delivery["pos"]
+        if on is None or on["status"] != "open" or on["stage"] != "ready" or not delivery["can_ready"]:
+            continue
+        ident = int(delivery["id"])
+        if ready_op_id(on["order_id"], ident) in store:
+            continue  # its check says it was told (and about another delivery since): once is once
+        state = store.view(on["order_id"])
+        if state is None or not waits(state):
+            continue
+        at = board.ready_by_itself(ident)
+        if at is None:
+            continue
+        told += 1
+        # Shipday was told. Where the check cannot be written on, the hub remembers it until it restarts
+        wrote = write_told(app, clock, on["order_id"], ident, at, by=None)
+        log.warning(
+            "shipday: check #%s %s that Shipday was told it is ready (its order %s)",
+            on["order_no"] or "?",
+            "says" if wrote else "could not be written on to say",
+            ident,
+        )
+    return told
+
+
+def mark_ready(app: FastAPI, ops: list[Op]) -> None:
+    """Operations a screen just stored: where one of them marks a delivery's check Ready, Shipday is asked
+    and told now and not at the hub's next turn. Nothing where Shipday is not told by itself."""
+    board: ShipdayBoard = app.state.shipday
+    marked = [op.order_id for op in ops if op.kind == "set_field" and op.data.get("stage") == "ready"]
+    if not marked or not board.configured or not tells_ready(app):
+        return
+    store = app.state.store
+    for order_id in marked:
+        state = store.view(order_id)
+        if state is not None and is_delivery(state.fields):
+            board.hurry()
+            return
+
+
 def add_shipday(app: FastAPI) -> None:
     board: ShipdayBoard = app.state.shipday
     board.pos = lambda: deliveries_on_pos(app)
     board.on_change = lambda: app.state.feed.changed(TOPIC)
     clock = Clock(DEVICE, lambda: app.state.store.now_ms())
-    board.on_round = lambda: follow(app, clock)
+    writing = threading.Lock()  # the clock stamps for one writer at a time: the round's, or a person's change
+
+    def heard() -> None:
+        """Shipday answered a round: its word moves the checks, and the checks marked Ready are told to it."""
+        with writing:
+            follow(app, clock)
+            tell_ready(app, clock)
+
+    board.on_round = heard
 
     def pictured() -> dict[str, Any]:
-        """The picture as a screen is told it: the board's, and whether it moves the checks."""
-        return {**board.said(), "moves_checks": moves_checks(app)}
+        """The picture as a screen is told it: the board's, whether it moves the checks, and whether a
+        check marked Ready tells Shipday."""
+        return {**board.said(), "moves_checks": moves_checks(app), "tells_ready": tells_ready(app)}
 
     @app.get("/shipday")
     def read_shipday(
@@ -281,24 +402,50 @@ def add_shipday(app: FastAPI) -> None:
         answer = await run_in_threadpool(board.mark, order_id, body.status, body.was, by=person.name)
         return {**answer, "shipday": await run_in_threadpool(pictured)}
 
+    @app.post("/shipday/orders/{order_id}/ready")
+    async def ready_for_pickup(order_id: int, body: ReadyIn) -> dict[str, Any]:
+        """Tells Shipday a delivery is made and waits for its driver."""
+        board, person = asking(body.staff_id)
+
+        def tell() -> dict[str, Any]:
+            answer = board.ready(order_id, by=person.name)
+            if answer["done"]:
+                # written on its check where it has one: its history says who told Shipday, and the hub
+                # does not tell it again by itself
+                listed = next((each for each in board.said()["orders"] if each["id"] == order_id), None)
+                if listed is not None and listed["pos"] is not None and listed["ready_ms"] is not None:
+                    with writing:
+                        write_told(app, clock, listed["pos"]["order_id"], order_id, listed["ready_ms"], by=person.name)
+            return answer
+
+        answer = await run_in_threadpool(tell)
+        return {**answer, "shipday": await run_in_threadpool(pictured)}
+
     @app.get("/settings/shipday")
     def read_moves() -> dict[str, Any]:
-        """Whether what Shipday says of a delivery moves its check on the POS (`moves_checks`): on unless a
-        manager turned it off."""
+        """Whether what Shipday says of a delivery moves its check on the POS (`moves_checks`), and whether
+        a check marked Ready tells Shipday its delivery is ready for pickup (`tells_ready`): each on unless
+        a manager turned it off."""
         settings: SettingStore = app.state.settings
         return settings.get(SETTING)
 
     @app.put("/settings/shipday")
     def write_moves(body: MovesIn, authorization: str | None = Header(None)) -> dict[str, Any]:
-        """A manager turns it on or off. Off, the hub still reads Shipday and shows it, and every check is
-        moved by hand; what Shipday moved before stays as it is. On again, the hub acts on what Shipday
-        says at its next reading, also of the deliveries it heard of meanwhile."""
+        """A manager turns either on or off; one the body does not name stays as it stands.
+
+        `moves_checks` off: the hub still reads Shipday and shows it, and every check is moved by hand;
+        what Shipday moved before stays as it is. On again, the hub acts on what Shipday says at its next
+        reading, also of the deliveries it heard of meanwhile.
+
+        `tells_ready` off: Shipday is told a delivery is ready only by the button on the Shipday screen.
+        On again, the hub tells Shipday at its next reading of every delivery whose check stands at Ready
+        and was not told, also the ones marked meanwhile."""
         manager_from(app.state.tokens, authorization)
+        settings: SettingStore = app.state.settings
         try:
-            cleaned = clean_shipday(body.model_dump())
+            cleaned = clean_shipday(body.model_dump(), settings.get(SETTING))
         except ValueError as err:
             raise HTTPException(422, {"error": "bad_value", "message": str(err)}) from err
-        settings: SettingStore = app.state.settings
         try:
             saved = settings.put(SETTING, cleaned)
         except ReadOnlyError as err:

@@ -100,6 +100,12 @@ class Hub {
   bool? shipdayMoves = true;
   String? shipdayMovesAuth;
 
+  /// Whether a delivery's check marked Ready tells Shipday it is ready for pickup (the same call); null is a
+  /// hub from before that, which says nothing of it and keeps nothing it is sent. [shipdaySaved] is every
+  /// body the setting was saved with, as it was sent.
+  bool? shipdayTells = true;
+  final List<Map<String, dynamic>> shipdaySaved = [];
+
   /// What it knows of a customer, by the number's digits (`GET /customers/lookup`): a number it does not
   /// list is answered as everything is that this hub has no word for.
   final customers = <String, Map<String, dynamic>>{};
@@ -1309,8 +1315,9 @@ class Hub {
     bool read = true,
     Map<String, dynamic>? trouble,
     String eta = 'off',
-    List<String>? can = const ['driver', 'status'],
+    List<String>? can = const ['driver', 'status', 'ready'],
     bool? moves = true,
+    bool? tells = true,
     List<Map<String, dynamic>> orders = const [],
     List<Map<String, dynamic>> done = const [],
     List<Map<String, dynamic>> drivers = const [],
@@ -1321,6 +1328,7 @@ class Hub {
     'eta': eta,
     'can': ?can, // null: a hub that only reads Shipday says nothing of what it changes
     'moves_checks': ?moves, // null: a hub from before Shipday moved a check says nothing of it
+    'tells_ready': ?tells, // null: a hub from before a check marked Ready told Shipday
     'orders': orders,
     'done': done,
     'drivers': drivers,
@@ -1367,6 +1375,8 @@ class Hub {
     String note = '',
     Map<String, dynamic>? check,
     List<String>? steps,
+    int? readyMs,
+    bool? canReady,
   }) => {
     'id': id,
     'number': number,
@@ -1395,7 +1405,14 @@ class Hub {
     'scheduled': false,
     'pos': check,
     'steps': steps ?? (endedMs != null ? const <String>[] : shipdayStepsOf(state, driver: driver != null)),
+    'ready_ms': readyMs,
+    'can_ready': canReady ?? (endedMs == null && readyMs == null && shipdayWaits(state)),
   };
+
+  /// Where a delivery stands before it is picked up (`WAITING` in the hub's board.py): it can be said to be
+  /// ready for pickup.
+  static bool shipdayWaits(String state) =>
+      const ['NOT_ASSIGNED', 'NOT_ACCEPTED', 'NOT_STARTED_YET', 'STARTED'].contains(state);
 
   /// A driver of the Shipday account as the hub tells a screen.
   static Map<String, dynamic> shipdayDriver(
@@ -1464,12 +1481,14 @@ class Hub {
       shipdayOnAsk?.call();
       return json({...shipdayAsked, 'shipday': shipday});
     }
-    final change = RegExp(r'^/shipday/orders/(\d+)/(driver|driver/back|status)$').firstMatch(request.url.path);
+    final change = RegExp(r'^/shipday/orders/(\d+)/(driver|driver/back|status|ready)$').firstMatch(request.url.path);
     final marks = change?.group(2) == 'status';
+    final readies = change?.group(2) == 'ready';
     if (change != null &&
         request.method == 'POST' &&
         picture['can'] is List &&
-        (!marks || (picture['can'] as List).contains('status'))) {
+        (!marks || (picture['can'] as List).contains('status')) &&
+        (!readies || (picture['can'] as List).contains('ready'))) {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final staff = body['staff_id'];
       final orderId = int.parse(change.group(1)!);
@@ -1485,7 +1504,12 @@ class Hub {
         'FAILED_DELIVERY',
         'INCOMPLETE',
       ];
-      if (staff is! String || (marks ? !statuses.contains(status) || was is! String : driverId is! int)) {
+      if (staff is! String ||
+          (readies
+              ? false
+              : marks
+              ? !statuses.contains(status) || was is! String
+              : driverId is! int)) {
         return json({'detail': 'Unprocessable'}, 422);
       }
       if (!(roster ?? const <Map<String, dynamic>>[]).any((person) => person['staff_id'] == staff)) {
@@ -1499,7 +1523,11 @@ class Hub {
         }, 409);
       }
       shipdayChanges.add(
-        marks ? 'mark $orderId $status $staff was $was' : '${back ? 'back' : 'give'} $orderId $driverId $staff',
+        readies
+            ? 'ready $orderId $staff'
+            : marks
+            ? 'mark $orderId $status $staff was $was'
+            : '${back ? 'back' : 'give'} $orderId $driverId $staff',
       );
       if (shipdayChangeHeld != null) await shipdayChangeHeld!.future;
       if (shipdayChangeStatus != null) return json({'detail': 'Something went wrong'}, shipdayChangeStatus!);
@@ -1523,7 +1551,10 @@ class Hub {
       final orders = [for (final each in now['orders'] as List) Map<String, dynamic>.of(each as Map<String, dynamic>)];
       final done = [for (final each in now['done'] as List) each as Map<String, dynamic>];
       final order = orders.firstWhere((each) => each['id'] == orderId);
-      if (marks) {
+      if (readies) {
+        // Shipday's list reads as before: the hub says that it told, and when
+        order['ready_ms'] = shipdayAnsweredMs;
+      } else if (marks) {
         order['state'] = status;
         final at = switch (status) {
           'STARTED' => 'started_ms',
@@ -1552,11 +1583,13 @@ class Hub {
       order['steps'] = order['ended_ms'] != null
           ? const <String>[]
           : shipdayStepsOf(order['state'] as String, driver: order['driver'] != null);
+      order['can_ready'] =
+          order['ended_ms'] == null && order['ready_ms'] == null && shipdayWaits(order['state'] as String);
       shipday = {...now, 'orders': orders, 'done': done, 'drivers': drivers};
       return json({
         'done': true,
         'sent': true,
-        'shown': true,
+        'shown': !readies, // nothing Shipday lists says that a delivery was said ready
         'reason': null,
         'said': '',
         'told': '',
@@ -5043,10 +5076,17 @@ class Hub {
         if (shipdayMoves == null) return json({'detail': 'Not Found'}, 404);
         if (request.method == 'PUT') {
           shipdayMovesAuth = request.headers['authorization'];
-          shipdayMoves = (jsonDecode(request.body) as Map<String, dynamic>)['moves_checks'] as bool;
-          if (shipday case final picture?) shipday = {...picture, 'moves_checks': shipdayMoves};
+          final sent = jsonDecode(request.body) as Map<String, dynamic>;
+          shipdaySaved.add(sent);
+          // what the body does not name stays as it stands; a hub from before the second switch takes the
+          // first alone, as it reads no other
+          shipdayMoves = sent['moves_checks'] as bool? ?? shipdayMoves;
+          if (shipdayTells != null) shipdayTells = sent['tells_ready'] as bool? ?? shipdayTells;
+          if (shipday case final picture?) {
+            shipday = {...picture, 'moves_checks': shipdayMoves, 'tells_ready': ?shipdayTells};
+          }
         }
-        return json({'moves_checks': shipdayMoves});
+        return json({'moves_checks': shipdayMoves, 'tells_ready': ?shipdayTells});
       case '/settings/quotes':
         if (request.method == 'PUT') quotes = jsonDecode(request.body) as Map<String, dynamic>;
         return json(quotesOut);

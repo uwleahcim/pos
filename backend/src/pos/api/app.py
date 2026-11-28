@@ -169,7 +169,7 @@ from .prints import add_print_log
 from .reservations import add_reservations
 from .runs import add_runs
 from .sales import add_sales_report
-from .shipday import add_shipday, source_for
+from .shipday import add_shipday, mark_ready, source_for
 from .staff import add_staff_list, use_staff, watch_staff
 from .texts import add_texts
 from .timeclock import add_time_clock
@@ -1384,6 +1384,7 @@ def create_app(
         printing: PrintService = app.state.printing
         jobs = printing.on_ops(store.for_order, list(accepted))
         texts = app.state.notifier.on_ops(store.for_order, list(accepted))
+        mark_ready(app, list(accepted))  # a delivery marked Ready: Shipday is told now where the hub tells it
         return {
             "accepted": [op.op_id for op in accepted],
             "cursor": store.cursor,

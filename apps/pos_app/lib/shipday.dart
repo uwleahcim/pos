@@ -3,8 +3,11 @@
 /// how far along it is. The hub asks Shipday for them with the restaurant's own key and says beside each
 /// which check on the POS it is.
 ///
-/// Three things can be changed there from here, each by a person's tap and never by itself: a delivery is
-/// given to a driver, taken back from one, and marked as it goes ([ShipdayChanged]).
+/// Four things can be changed there from here by a person's tap: a delivery is given to a driver, taken back
+/// from one, marked as it goes, and said to be ready for pickup ([ShipdayChanged]). The first three never
+/// happen by themselves. The last the hub also does by itself where the location has it so
+/// ([ShipdayBoard.tellsReady]): a delivery whose check is marked Ready on the POS is told to Shipday as ready
+/// for pickup, once, and its card then says when ([ShipdayOrder.toldReady]).
 ///
 /// The other way, the hub follows Shipday by itself where the location has it so ([ShipdayBoard.movesChecks]):
 /// a delivery picked up there takes its check Out here, and one delivered there closes it unless money is
@@ -211,9 +214,27 @@ class ShipdayCheck {
       'void' => '$check · voided',
       'closed' => '$check · closed',
       _ when stage == 'out' => '$check · out',
+      _ when stage == 'ready' => '$check · ready',
       _ => check,
     };
   }
+}
+
+/// What the location says of Shipday (`GET /settings/shipday`, Location).
+class ShipdaySetting {
+  const ShipdaySetting({required this.movesChecks, this.tellsReady});
+
+  factory ShipdaySetting.fromJson(Map<String, dynamic> json) => ShipdaySetting(
+    movesChecks: json['moves_checks'] as bool? ?? true,
+    tellsReady: json['tells_ready'] is bool ? json['tells_ready'] as bool : null,
+  );
+
+  /// What Shipday says of a delivery moves its check on the POS.
+  final bool movesChecks;
+
+  /// A delivery's check marked Ready on the POS tells Shipday it is ready for pickup. Null from a hub older
+  /// than that, which tells Shipday only when somebody taps Ready for pickup.
+  final bool? tellsReady;
 }
 
 /// One delivery as Shipday has it.
@@ -243,6 +264,8 @@ class ShipdayOrder {
     this.scheduled = false,
     this.check,
     this.steps = const [],
+    this.readyMs,
+    this.canReady = false,
   });
 
   static ShipdayOrder? fromJson(Object? json) {
@@ -278,6 +301,8 @@ class ShipdayOrder {
         for (final step in json['steps'] is List ? json['steps'] as List : const [])
           if (step is String && shipdaySteps.contains(step)) step,
       ],
+      readyMs: _whole(json['ready_ms']),
+      canReady: json['can_ready'] == true,
     );
   }
 
@@ -336,6 +361,21 @@ class ShipdayOrder {
 
   /// It can be marked as something from where it stands.
   bool get canBeMarked => !finished && steps.isNotEmpty;
+
+  /// When this hub told Shipday that it is ready for pickup (the food is made and waits for its driver);
+  /// null where it did not. Shipday's own list never says so: this is the hub's word, kept for the day and
+  /// forgotten when the hub restarts.
+  final int? readyMs;
+
+  /// The hub would tell Shipday that it is ready for pickup: it was not picked up yet, and this hub has not
+  /// said so already. False from a hub older than that.
+  final bool canReady;
+
+  /// It can be said to be ready for pickup.
+  bool get canBeSaidReady => !finished && canReady;
+
+  /// "Ready for pickup · told 6:12 PM", once this hub told Shipday; null before.
+  String? get toldReady => readyMs == null ? null : 'Ready for pickup · told ${clockTime(readyMs!)}';
 
   bool get needsDriver => state == 'NOT_ASSIGNED';
   bool get onItsWay => state == 'PICKED_UP' || state == 'READY_TO_DELIVER';
@@ -423,6 +463,7 @@ class ShipdayBoard {
     this.eta = 'off',
     this.can = const {},
     this.movesChecks = false,
+    this.tellsReady = false,
     this.orders = const [],
     this.done = const [],
     this.drivers = const [],
@@ -435,6 +476,7 @@ class ShipdayBoard {
     eta: json['eta'] is String ? json['eta'] as String : 'off',
     can: {...(json['can'] is List ? json['can'] as List : const []).whereType<String>()},
     movesChecks: json['moves_checks'] == true,
+    tellsReady: json['tells_ready'] == true,
     orders: [for (final row in json['orders'] is List ? json['orders'] as List : const []) ?ShipdayOrder.fromJson(row)],
     done: [for (final row in json['done'] is List ? json['done'] as List : const []) ?ShipdayOrder.fromJson(row)],
     drivers: [
@@ -464,10 +506,18 @@ class ShipdayBoard {
   /// The hub marks a delivery as it goes (started, picked up, delivered, ...).
   bool get marks => can.contains('status');
 
+  /// The hub tells Shipday that a delivery is ready for pickup.
+  bool get saysReady => can.contains('ready');
+
   /// What Shipday says of a delivery moves its check on the POS: picked up takes it Out, delivered closes it
   /// unless money is due (Location, "Shipday moves the check"). False from a hub older than that, and where
   /// the location turned it off.
   final bool movesChecks;
+
+  /// A delivery's check marked Ready on the POS tells Shipday it is ready for pickup, by itself (Location,
+  /// "Ready tells Shipday"). False from a hub older than that, and where the location turned it off: then
+  /// Shipday is told only by the Ready for pickup button.
+  final bool tellsReady;
 
   /// The deliveries that are not finished, as Shipday lists them.
   final List<ShipdayOrder> orders;
@@ -563,8 +613,9 @@ class ShipdayAsked {
   }
 }
 
-/// What came of a change a person asked for in Shipday (a delivery given to a driver, taken back, or marked
-/// as it goes), with the picture after it. The hub reads Shipday's list before it sends anything and again after.
+/// What came of a change a person asked for in Shipday (a delivery given to a driver, taken back, marked as
+/// it goes, or said ready for pickup), with the picture after it. The hub reads Shipday's list before it
+/// sends anything and again after.
 class ShipdayChanged {
   const ShipdayChanged({
     this.done = false,
@@ -607,9 +658,11 @@ class ShipdayChanged {
   bool get bad => !done;
 
   /// What to tell the person who asked. [did] says the change as done ("Given to Tom Reyes."); [order] is
-  /// the delivery as the picture after it has it, for who has it now and where it stands.
-  String words(String did, {ShipdayOrder? order}) {
-    if (done) return shown ? did : 'Shipday took it. Its list does not show it yet.';
+  /// the delivery as the picture after it has it, for who has it now and where it stands. [listed] is false
+  /// for a change Shipday's list has no place for (ready for pickup): Shipday's own answer is then all there
+  /// is to go by.
+  String words(String did, {ShipdayOrder? order, bool listed = true}) {
+    if (done) return shown || !listed ? did : 'Shipday took it. Its list does not show it yet.';
     final has = order?.driver?.called;
     final why = switch (reason) {
       'not_listed' => "It is no longer on Shipday's list.",
@@ -633,6 +686,8 @@ class ShipdayChanged {
     // asked, and no word that it was done: the list read after it does not show it either
     return switch (reason) {
       'rejected' || 'not_found' => why,
+      // no answer came, and nothing Shipday lists says whether it took: asking again does no harm
+      _ when !listed => '$why It may not have been told. Tap again to be sure.',
       _ => "$why Shipday's list does not show the change.",
     };
   }

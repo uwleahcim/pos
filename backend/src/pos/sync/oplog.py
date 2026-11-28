@@ -130,6 +130,11 @@ ORDER_FIELDS = frozenset(
         # Shipday's own id and number for it, its word for where the delivery stands and when that was,
         # {id, number, state, at_ms}. Only the hub writes it.
         "shipday",
+        # That Shipday was told a delivery is ready for pickup (pos.shipday.ready): Shipday's own id for it,
+        # when Shipday answered that it is, and whether the hub told it by itself because the check was
+        # marked Ready (a person tapped it on the Shipday screen otherwise), {id, at_ms, auto}. Only the hub
+        # writes it.
+        "shipday_ready",
     }
 )
 ALLERGY_NOTE_MAX = 80

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..sync.oplog import OrderState, is_delivery, phone_digits
+from .ready import told as told_ready
 
 BY_NUMBER, BY_PHONE = "number", "phone"
 ONLINE_ID_MIN = 6
@@ -51,6 +52,10 @@ class OnPos:
     online_id: str = ""  # GloriaFood's number for it; empty for an order rung up at the POS
     status: str = "open"
     stage: str = ""
+    # What the check says Shipday was told (`pos.shipday.ready`): Shipday's id of the delivery that was said
+    # to be ready for pickup, and when. The board reads it; a screen is told it on the delivery (`ready_ms`).
+    told_id: int | None = None
+    told_ms: int | None = None
 
     def about(self, how: str) -> dict[str, Any]:
         """What a screen is told of the check a delivery is: enough to name it and open it."""
@@ -70,6 +75,7 @@ def on_pos(state: OrderState) -> OnPos | None:
         return None
     online = fields.get("online")
     number = fields.get("order_no")
+    told = told_ready(fields)
     return OnPos(
         order_id=state.order_id,
         order_no=number if isinstance(number, int) and not isinstance(number, bool) else None,
@@ -79,6 +85,8 @@ def on_pos(state: OrderState) -> OnPos | None:
         online_id=str(online.get("id") or "").strip() if isinstance(online, Mapping) else "",
         status=state.status,
         stage=str(fields.get("stage") or ""),
+        told_id=told[0] if told is not None else None,
+        told_ms=told[1] if told is not None else None,
     )
 
 

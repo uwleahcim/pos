@@ -11,16 +11,22 @@ Four questions, which change nothing:
   is "only available for customer having premium plans" and may be asked three times a minute for one
   order.
 
-And three changes, each made only when a person at a terminal asked for exactly that (`pos.api.shipday`):
+And four changes. The first three are made only when a person at a terminal asked for exactly that
+(`pos.api.shipday`); the fourth also by the hub itself, for a delivery whose check on the POS is marked
+Ready (`pos.shipday.ready`):
 
 - `PUT /orders/assign/{orderId}/{carrierId}`: gives an order to a driver. Shipday tells the driver.
 - `PUT /orders/unassign/{orderId}`: takes it back from whoever has it.
 - `PUT /orders/{orderId}/status` with `{"status": ...}`: says how far along an order is, in one of Shipday's
   own words (`STARTED`, `PICKED_UP`, `READY_TO_DELIVER`, `ALREADY_DELIVERED`, `FAILED_DELIVERY`,
   `INCOMPLETE`), as the driver's app does.
+- `PUT /orders/{orderId}/meta` with `{"readyToPickup": true}`: says the food is made and waits for its
+  driver. Shipday's page for it ("Order Ready to Pickup") says no more than the call: not who is told, and
+  not whether an order needs a driver first. Nothing Shipday answers about an order says afterwards whether
+  it was marked so.
 
-All three go by Shipday's own id of the order (`orderId`), never by the number it is known by. The first two
-carry nothing else, and the third one word of Shipday's own: nothing of the POS.
+All four go by Shipday's own id of the order (`orderId`), never by the number it is known by. The first two
+carry nothing else, the third one word of Shipday's own and the fourth `true`: nothing of the POS.
 
 The key goes in the `Authorization` header as `Basic <key>`: the key itself after the word, which is how
 Shipday's pages and its own client libraries send it (it is not a name and password). The same pages'
@@ -215,6 +221,10 @@ class Shipday:
     def mark(self, order_id: int, status: str) -> None:
         """Says how far along an order is, by Shipday's own id of it and in Shipday's own word for it."""
         self._change(f"/orders/{int(order_id)}/status", {"status": status})
+
+    def ready(self, order_id: int) -> None:
+        """Says an order is ready to be picked up at the restaurant, by Shipday's own id of it."""
+        self._change(f"/orders/{int(order_id)}/meta", {"readyToPickup": True})
 
 
 __all__ = [

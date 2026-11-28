@@ -17,7 +17,10 @@
   refused for it: a dish already on a seat keeps it, on the check and on its ticket.
 - `shipday`: whether what Shipday says of a delivery moves its check on the POS (`moves_checks`, on to start:
   the restaurant's choice, `pos/shipday/follow.py`). Off, the hub still reads Shipday and shows it, and
-  every check is moved by hand as before. It means nothing on a hub without a key for Shipday.
+  every check is moved by hand as before. And whether a delivery's check marked Ready on the POS tells
+  Shipday it is ready for pickup (`tells_ready`, on to start: the restaurant's choice too,
+  `pos/shipday/ready.py`). Off, Shipday is told only by the button on the Shipday screen. Neither means
+  anything on a hub without a key for Shipday.
 - `desk_phones`: which screen each desk phone is linked to (a PBX extension to a device name), so a call
   taken on the phone opens the caller's order on that screen (`pos/phones/deskphones.py`).
 - `faces`: whether staff may sign in by face at this location (`pos/identity/faces.py`); off until a manager
@@ -173,8 +176,9 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "coursing": {"enabled": True, "default": "1", "courses": STANDARD_COURSES},
     # On, as before a location could say: turning seats off is for a house that rings dishes for the table.
     "seats": {"enabled": True},
-    # On: the restaurant chose that Shipday moves the check (2026-11-28). Nothing happens without a key.
-    "shipday": {"moves_checks": True},
+    # Both on: the restaurant chose that Shipday moves the check, and that a check marked Ready tells
+    # Shipday its delivery is ready for pickup (2026-11-28). Nothing happens without a key.
+    "shipday": {"moves_checks": True, "tells_ready": True},
     "desk_phones": {"links": []},
     "faces": {"enabled": False},
     "presence": {"switch": True, "away_seconds": 60},
@@ -396,13 +400,22 @@ def clean_coursing(data: Mapping[str, Any]) -> dict[str, Any]:
     return {"enabled": enabled, "default": default, "courses": courses}
 
 
-def clean_shipday(data: Mapping[str, Any]) -> dict[str, Any]:
+def clean_shipday(data: Mapping[str, Any], was: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The Shipday setting as the app may set it, checked: `moves_checks`, whether a delivery picked up or
-    delivered in Shipday takes its check Out or Delivered on the POS. Raises ValueError on a bad value."""
-    moves = data.get("moves_checks", DEFAULTS["shipday"]["moves_checks"])
-    if not isinstance(moves, bool):
-        raise ValueError("moves_checks must be true or false")
-    return {"moves_checks": moves}
+    delivered in Shipday takes its check Out or Delivered on the POS, and `tells_ready`, whether a delivery's
+    check marked Ready on the POS tells Shipday it is ready for pickup. One that `data` does not name (or
+    names as None) stays as it stands (`was`): an app from before the second switch sends the first alone.
+    Raises ValueError on a bad value."""
+    stands = {**DEFAULTS["shipday"], **(was or {})}
+    cleaned: dict[str, Any] = {}
+    for name in ("moves_checks", "tells_ready"):
+        value = data.get(name)
+        if value is None:
+            value = stands[name]
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false")
+        cleaned[name] = value
+    return cleaned
 
 
 def clean_seats(data: Mapping[str, Any]) -> dict[str, Any]:
